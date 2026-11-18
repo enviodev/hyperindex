@@ -470,6 +470,26 @@ impl Slice {
         low
     }
 
+    /// The slice on a chunk of its own rows when it holds under half of its
+    /// chunk, so the rows a removal dropped are freed; a snapshot still
+    /// reading the old chunk keeps it alive.
+    fn compacted(self, schema: &Schema) -> Slice {
+        if self.len() * 2 >= self.chunk.len() {
+            return self;
+        }
+        let mut out = OutChunk::new(schema, self.len());
+        for row in self.start..self.end {
+            out.push_copy(&self.chunk, row);
+        }
+        let chunk = Arc::new(out.finish());
+        let end = chunk.len();
+        Slice {
+            chunk,
+            start: 0,
+            end,
+        }
+    }
+
     fn sub(&self, start: usize, end: usize) -> Option<Slice> {
         (start < end).then(|| Slice {
             chunk: self.chunk.clone(),
@@ -715,6 +735,7 @@ impl Table {
         let from = first_key_of_block(from_block);
         let below = key_after_block(to_block);
         let mut removed = 0;
+        let schema = self.schema.clone();
         let mut kept = VecDeque::with_capacity(self.slices.len());
         for slice in self.slices.drain(..) {
             let cut_start = slice.lower_bound(from);
@@ -724,8 +745,16 @@ impl Table {
                 continue;
             }
             removed += cut_end - cut_start;
-            kept.extend(slice.sub(slice.start, cut_start));
-            kept.extend(slice.sub(cut_end, slice.end));
+            kept.extend(
+                slice
+                    .sub(slice.start, cut_start)
+                    .map(|kept| kept.compacted(&schema)),
+            );
+            kept.extend(
+                slice
+                    .sub(cut_end, slice.end)
+                    .map(|kept| kept.compacted(&schema)),
+            );
         }
         self.slices = kept;
         self.rows -= removed;
@@ -976,6 +1005,37 @@ mod tests {
                     row(6, 0, Some(6), None)
                 ],
                 3
+            )
+        );
+    }
+
+    #[test]
+    fn a_removal_frees_the_rows_it_drops_once_they_are_most_of_a_chunk() {
+        let mut table = Table::new(schema(false));
+        table.merge(chunk(
+            &table,
+            &(1..=10)
+                .map(|block| (block, 0, Some(block), None))
+                .collect::<Vec<_>>(),
+        ));
+        table.remove_block_range(1, 4);
+        let after_minority_removed: Vec<usize> =
+            table.slices.iter().map(|slice| slice.chunk.len()).collect();
+        table.remove_block_range(5, 8);
+        assert_eq!(
+            (
+                after_minority_removed,
+                table
+                    .slices
+                    .iter()
+                    .map(|slice| slice.chunk.len())
+                    .collect::<Vec<_>>(),
+                describe(&table),
+            ),
+            (
+                vec![10],
+                vec![2],
+                vec![row(9, 0, Some(9), None), row(10, 0, Some(10), None)],
             )
         );
     }
