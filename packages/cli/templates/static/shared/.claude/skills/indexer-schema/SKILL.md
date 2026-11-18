@@ -113,9 +113,11 @@ type Token {
 
 Without `@config`, `BigInt` and `BigDecimal` use unconstrained PostgreSQL
 `NUMERIC` (subject to PostgreSQL's numeric limits). They do not default to a
-76-digit precision or a scale of 32. Adding `@config(precision: N)` constrains
-the total number of decimal digits, including digits to the left of the decimal
-point; a complete `uint256` range needs 78 digits, so precision 76 is not enough.
+76-digit precision or a scale of 32. For `BigInt`, use `@config(precision: N)`.
+For `BigDecimal`, both arguments are required: `@config(precision: N, scale: M)`.
+Precision constrains the total number of decimal digits, including digits to
+the left of the decimal point; a complete `uint256` range needs 78 digits, so
+precision 76 is not enough.
 
 ### ClickHouse numeric storage
 
@@ -132,8 +134,10 @@ text in `String` columns:
 | `BigDecimal!`                                              | `String`          |
 | `BigDecimal! @config(precision: 30, scale: 15)`            | `Decimal(30, 15)` |
 
-Nullable fields wrap the column type in `Nullable(...)`; arrays apply the same
-mapping to their elements. Do not assume a wide numeric field is stored in
+Nullable numeric scalar fields wrap the column type in `Nullable(...)`.
+Non-null numeric lists apply the mapping to their elements. Nullable lists
+(such as `[BigInt!]`) are rejected for ClickHouse storage; they do not become
+`Nullable(Array(...))`. Do not assume a wide numeric field is stored in
 ClickHouse's native `Decimal256` type.
 
 String columns compare and sort lexicographically, not numerically (`"10"` sorts
@@ -142,7 +146,9 @@ before `"2"`). Such fields cannot be used as numeric sorting keys in the storage
 numeric type that can represent the data. Validate the range before converting;
 ClickHouse integer conversion functions can overflow instead of rejecting
 out-of-range input. For example, a known unsigned
-`uint256` amount can use `toUInt256(amount)` for numeric ordering and aggregation.
+`uint256` amount can use `toUInt256(amount)` for numeric ordering. Aggregates
+need a separate range check: even if every input fits UInt256, their sum may
+exceed its range and overflow. Input conversion checks do not bound the total.
 For decimals, `toDecimal256(value, scale)` is suitable only when the value fits
 its precision and scale; a full `uint256` range does not fit Decimal256's
 76-digit precision. PostgreSQL storage does not have this ClickHouse mapping
