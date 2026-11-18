@@ -458,4 +458,60 @@ describe("Postgres going away mid-run", () => {
       },
     )
   })
+
+  // The batch is looked for before its COMMIT reaches the server, so it reads
+  // as unwritten and goes out again. Writing it again waits on the held
+  // transaction's rows and collides with it on the checkpoint key once that
+  // commits, after which the batch is found.
+  let lateCommitErrors = []
+  scenario->Scenario.it(
+    "finds a batch landed when its cut-off COMMIT reaches the server after the batch is looked for",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~postgresPort=proxyPort,
+    ~onError=error => lateCommitErrors->Array.push(error.msg)->ignore,
+    async (~t, ~indexer, ~source) => {
+      let outage = outageWithDatabaseUp()
+      let source = source(1337)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
+      let (handled, releaseHandler) = makeHeldHandler()
+      await source->replyWithOneTally(~handled, ~load=false)
+      await indexer.advanceTime(1_000)
+
+      let commitArrives = MockSource.Gate.make()
+      outage.cutNextCommit(~deliver=true, ~deliverAfter=commitArrives.wait())
+      releaseHandler()
+      await indexer.advanceTime(0)
+      await indexer.advanceTime(5_000)
+      await indexer.usePostgresSql(async sql => {
+        let rec waitForBlockedRewrite = async (~attempts) => {
+          let waiting =
+            (
+              await sql->StorageClient.queryForTests(
+                "SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE wait_event_type = 'Lock'",
+              )
+            )->Array.map(row => row->Dict.getUnsafe("waiting")->(Utils.magic: unknown => int))
+          switch waiting {
+          | [count] if count > 0 => ()
+          | _ if attempts > 0 =>
+            // Real time: the batch is looked for and written again over the
+            // network, off the indexer's clock.
+            await Utils.delay(10)
+            await waitForBlockedRewrite(~attempts=attempts - 1)
+          | _ => JsError.throwWithMessage("The batch was never written again")
+          }
+        }
+        await waitForBlockedRewrite(~attempts=500)
+      })
+      commitArrives.release()
+      await indexer.waitUntilIdle()
+
+      let tallies: array<tally> = await indexer.query("Tally")
+      t.expect((
+        tallies,
+        (await indexer.queryChains())->Array.map(chain => chain.progressBlock),
+        (await indexer.queryCheckpoints())->Array.map(({blockNumber}) => blockNumber),
+        lateCommitErrors,
+      )).toEqual(([{id: "1", count: 1.}], [50], [1, 50], []))
+    },
+  )
 })
