@@ -72,13 +72,6 @@ module Error = {
 }
 
 module Option = {
-  let mapNone = (opt: option<'a>, val: 'b): option<'b> => {
-    switch opt {
-    | None => Some(val)
-    | Some(_) => None
-    }
-  }
-
   let catchToNone: (unit => 'a) => option<'a> = unsafeFunc => {
     try {
       unsafeFunc()->Some
@@ -174,18 +167,6 @@ module Dict = {
   }`)
 
   // Use %raw to support for..in which is a ~10% faster than .forEach
-  let filterMapValues: (dict<'a>, 'a => option<'b>) => dict<'b> = %raw(`(dict, f) => {
-    var target = {}, i, v;
-    for (i in dict) {
-      v = f(dict[i]);
-      if (v !== undefined) {
-        target[i] = v;
-      }
-    }
-    return target;
-  }`)
-
-  // Use %raw to support for..in which is a ~10% faster than .forEach
   let mapValuesToArray: (dict<'a>, 'a => 'b) => array<'b> = %raw(`(dict, f) => {
     var target = [], i;
     for (i in dict) {
@@ -237,21 +218,6 @@ module Dict = {
     }
   `)
 
-  let unsafeDeleteUndefinedFieldsInPlace: 'a => unit = %raw(`(dict) => {
-      for (var key in dict) {
-        if (dict[key] === undefined) {
-          delete dict[key];
-        }
-      }
-    }
-  `)
-
-  let updateImmutable: (
-    dict<'a>,
-    string,
-    'a,
-  ) => dict<'a> = %raw(`(dict, key, value) => ({...dict, [key]: value})`)
-
   let shallowCopy: dict<'a> => dict<'a> = %raw(`(dict) => ({...dict})`)
 
   @set_index
@@ -281,8 +247,6 @@ type asyncIterator<'a>
 
 module Array = {
   include Array
-
-  let immutableEmpty: array<unknown> = []
 
   /** Render names for an error message: `"a", "b"`. */
   let quotedJoin = (names: array<string>) =>
@@ -333,30 +297,6 @@ module Array = {
   /**
   Creates a shallow copy of the array and sets the value at the given index
   */
-  let setIndexImmutable = (arr: array<'a>, index: int, value: 'a): array<'a> => {
-    let shallowCopy = arr->Array.copy
-    shallowCopy->Array.setUnsafe(index, value)
-    shallowCopy
-  }
-
-  let transposeResults = (results: array<result<'a, 'b>>): result<array<'a>, 'b> => {
-    let rec loop = (index: int, output: array<'a>): result<array<'a>, 'b> => {
-      if index >= Array.length(results) {
-        Ok(output)
-      } else {
-        switch results->Array.getUnsafe(index) {
-        | Ok(value) => {
-            output->Array.setUnsafe(index, value)
-            loop(index + 1, output)
-          }
-        | Error(_) as err => err->(magic: result<'a, 'b> => result<array<'a>, 'b>)
-        }
-      }
-    }
-
-    loop(0, jsArrayCreate(results->Array.length))
-  }
-
   /**
 Helper to check if a value exists in an array
 */
@@ -397,22 +337,6 @@ Helper to check if a value exists in an array
 
   let lastUnsafe = (arr: array<'a>): 'a => arr->Array.getUnsafe(arr->Array.length - 1)
   let firstUnsafe = (arr: array<'a>): 'a => arr->Array.getUnsafe(0)
-
-  let findReverseWithIndex = (arr: array<'a>, fn: 'a => bool): option<('a, int)> => {
-    let rec loop = (index: int) => {
-      if index < 0 {
-        None
-      } else {
-        let item = arr->Array.getUnsafe(index)
-        if fn(item) {
-          Some((item, index))
-        } else {
-          loop(index - 1)
-        }
-      }
-    }
-    loop(arr->Array.length - 1)
-  }
 
   /**
   Interleaves an array with a separator
@@ -558,8 +482,6 @@ module Bytes = {
 }
 
 module Schema = {
-  let variantTag = S.union([S.string, S.object(s => s.field("TAG", S.string))])
-
   // A ReScript `option` is `undefined` at runtime, so `S.null`'s serializer
   // treats only `undefined` as the empty case — a genuine `null`, which a JS
   // handler writes for a field it doesn't set, reaches the value serializer
@@ -611,12 +533,6 @@ module Schema = {
     ->(magic: S.t<JSON.t> => S.t<Date.t>)
     ->S.preprocess(_ => {serializer: date => date->magic->Date.toISOString})
 
-  // ClickHouse expects timestamps as numbers (milliseconds), not ISO strings
-  let clickHouseDate =
-    S.json(~validate=false)
-    ->(magic: S.t<JSON.t> => S.t<Date.t>)
-    ->S.preprocess(_ => {serializer: date => date->magic->Date.getTime})
-
   // When trying to serialize data to Json pg type, it will fail with
   // PostgresError: column "params" is of type json but expression is of type boolean
   // If there's bool or null on the root level. It works fine as object field values.
@@ -640,10 +556,6 @@ module Schema = {
       }
     })
   }
-}
-
-let getVariantsTags = variants => {
-  variants->Array.map(variant => variant->S.parseOrThrow(Schema.variantTag))
 }
 
 module Set = {

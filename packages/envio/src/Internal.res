@@ -197,33 +197,6 @@ let evmNullableBlockFields = Utils.Set.fromArray(
     ]: array<evmBlockField>
   ),
 )
-let evmNullableTransactionFields = Utils.Set.fromArray(
-  (
-    [
-      GasPrice,
-      V,
-      R,
-      S,
-      YParity,
-      MaxPriorityFeePerGas,
-      MaxFeePerGas,
-      MaxFeePerBlobGas,
-      BlobVersionedHashes,
-      ContractAddress,
-      Root,
-      Status,
-      L1Fee,
-      L1GasPrice,
-      L1GasUsed,
-      L1FeeScalar,
-      GasUsedForL1,
-      From,
-      To,
-      Type,
-    ]: array<evmTransactionField>
-  ),
-)
-
 type evmBlockInput = {
   number?: int,
   timestamp?: int,
@@ -953,10 +926,6 @@ module EffectCache = {
 }
 
 let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)
-let cacheItemSchema = S.schema((s): effectCacheItem => {
-  id: s.matches(S.string),
-  output: s.matches(cacheOutputSchema),
-})
 let makeCacheTable = (~effectName, ~scope) => {
   Table.mkTable(
     EffectCache.toTableName(~effectName, ~scope),

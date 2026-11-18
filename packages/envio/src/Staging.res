@@ -296,8 +296,6 @@ let writeDeletedValue = (stage, ~column, ~row, value: unknown) => {
   }
 }
 
-let columnCount = stage => stage.builders->Array.length
-
 // Ends the filling phase and returns the handle the write is asked for. Every
 // lent buffer is detached here, so a view left over from this stage throws on
 // its next write instead of reaching memory Rust is reading.

@@ -560,10 +560,17 @@ let run = async (
         let changes = items->S.parseOrThrow(
           S.array(
             S.union([
-              EntityHistory.makeSetUpdateSchema(
-                ~idSchema=entityConfig.table->Table.getIdSchema,
-                entityConfig->storedRowSchema,
-              ),
+              S.object((s): Change.t<Internal.entity> => {
+                s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.SET)
+                Change.Set({
+                  checkpointId: s.field(
+                    EntityHistory.checkpointIdFieldName,
+                    EntityHistory.unsafeCheckpointIdSchema,
+                  ),
+                  entityId: s.field(Table.idFieldName, entityConfig.table->Table.getIdSchema),
+                  entity: s.flatten(entityConfig->storedRowSchema),
+                })
+              }),
               S.object((s): Change.t<Internal.entity> => {
                 s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
                 Delete({

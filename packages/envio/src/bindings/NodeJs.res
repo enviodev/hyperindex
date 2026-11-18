@@ -38,8 +38,6 @@ module Util = {
 
   @module("util") external inspect: ('a, inspectOptions) => string = "inspect"
 
-  let inspectObj = a => inspect(a, {showHidden: false, depth: Null, colors: true})
-
   @module("util") external stripVTControlCharacters: string => string = "stripVTControlCharacters"
 }
 
@@ -259,9 +257,6 @@ module Path = {
   @module("path") external isAbsolute: string => bool = "isAbsolute"
 
   external toString: t => string = "%identity"
-
-  // ESM-compatible __dirname replacement - accepts importMeta from calling file
-  let getDirname = (importMeta: ImportMeta.t) => dirname(Url.fileURLToPath(importMeta.url))
 }
 
 module WorkerThreads = {
