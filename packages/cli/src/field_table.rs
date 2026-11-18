@@ -5,7 +5,7 @@
 //! per response, and a batch that only carries a subset of fields unions it
 //! into whatever the key already has (newest write per field wins).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use hypersync_client::format;
 
@@ -527,18 +527,18 @@ impl Coverage<'_> {
     }
 }
 
-/// Merge-on-insert columnar table: one slot per distinct key. `by_key` backs
-/// point lookup and insert dedup; `order` backs the range scans prune,
-/// rollback, and account-activity read need. `free` holds freed slots for reuse,
-/// so capacity never shrinks but also never leaks.
+/// Merge-on-insert columnar table: one slot per distinct key. `index` holds
+/// every live key with its slot, sorted by key: point lookups binary-search it,
+/// and the range scans prune, rollback and account-activity reads need are
+/// slices of it. `free` holds freed slots for reuse, so capacity never shrinks
+/// but also never leaks.
 ///
 /// Each slot carries two bitsets. `present` marks the fields holding a value —
 /// what reads decode. `coverage` marks the fields that were fetched, whether or
 /// not they held one, and is always a superset of `present`; it is what
 /// `covers` answers from, so a null-valued field counts as fetched.
 pub(crate) struct Table<K> {
-    by_key: HashMap<K, u32>,
-    order: BTreeMap<K, u32>,
+    index: Vec<(K, u32)>,
     present: Vec<u64>,
     coverage: Vec<u64>,
     cols: Vec<Option<StoreCol>>,
@@ -553,8 +553,7 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         // corrupt them in release builds.
         assert!(n_fields <= 64, "Table supports at most 64 fields");
         Self {
-            by_key: HashMap::new(),
-            order: BTreeMap::new(),
+            index: Vec::new(),
             present: Vec::new(),
             coverage: Vec::new(),
             cols: (0..n_fields).map(|_| None).collect(),
@@ -580,14 +579,58 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         }
     }
 
-    fn slot_for(&mut self, key: K) -> u32 {
-        if let Some(&slot) = self.by_key.get(&key) {
-            return slot;
+    fn slot_of(&self, key: &K) -> Option<u32> {
+        self.index
+            .binary_search_by(|(stored, _)| stored.cmp(key))
+            .ok()
+            .map(|position| self.index[position].1)
+    }
+
+    /// Where the keys at or above `key` start in `index`.
+    fn position_of(&self, key: &K) -> usize {
+        self.index.partition_point(|(stored, _)| stored < key)
+    }
+
+    /// Gives every key of `keys` the table doesn't hold yet a slot, merging
+    /// them into `index` in one pass.
+    fn add_keys(&mut self, keys: &[K]) {
+        let mut new_keys: Vec<K> = keys
+            .iter()
+            .filter(|key| self.slot_of(key).is_none())
+            .cloned()
+            .collect();
+        if new_keys.is_empty() {
+            return;
         }
-        let slot = self.alloc_slot();
-        self.order.insert(key.clone(), slot);
-        self.by_key.insert(key, slot);
-        slot
+        new_keys.sort_unstable();
+        new_keys.dedup();
+        let added: Vec<(K, u32)> = new_keys
+            .into_iter()
+            .map(|key| (key, self.alloc_slot()))
+            .collect();
+        // Keys mostly arrive past every stored one, which is an append.
+        if self.index.last().is_none_or(|(last, _)| *last < added[0].0) {
+            self.index.extend(added);
+            return;
+        }
+        let stored = std::mem::take(&mut self.index);
+        let mut merged = Vec::with_capacity(stored.len() + added.len());
+        let mut stored = stored.into_iter().peekable();
+        let mut added = added.into_iter().peekable();
+        loop {
+            let take_stored = match (stored.peek(), added.peek()) {
+                (Some((a, _)), Some((b, _))) => a < b,
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
+            };
+            merged.push(if take_stored {
+                stored.next().unwrap()
+            } else {
+                added.next().unwrap()
+            });
+        }
+        self.index = merged;
     }
 
     fn ensure_col(&mut self, field: usize, template: &AnyCol) {
@@ -626,8 +669,9 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         covering: Coverage,
     ) {
         debug_assert_eq!(cols.len(), self.n_fields);
-        for (row, key) in keys.into_iter().enumerate() {
-            let slot = self.slot_for(key) as usize;
+        self.add_keys(&keys);
+        for (row, key) in keys.iter().enumerate() {
+            let slot = self.slot_of(key).expect("added above") as usize;
             for (f, col_opt) in cols.iter().enumerate() {
                 if let Some(col) = col_opt {
                     if col.is_valid(row) {
@@ -650,19 +694,17 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         if required == 0 {
             return true;
         }
-        self.by_key
-            .get(key)
-            .is_some_and(|&slot| self.coverage[slot as usize] & required == required)
+        self.slot_of(key)
+            .is_some_and(|slot| self.coverage[slot as usize] & required == required)
     }
 
     /// Move every live row from `other` into this table (a fetch-response page
     /// merging into the persistent per-chain table). `other` is left empty.
     pub(crate) fn append_from(&mut self, other: &mut Table<K>) {
-        let live_keys: Vec<K> = other.order.keys().cloned().collect();
-        if live_keys.is_empty() {
+        if other.index.is_empty() {
             return;
         }
-        let slots: Vec<u32> = live_keys.iter().map(|k| other.by_key[k]).collect();
+        let (live_keys, slots): (Vec<K>, Vec<u32>) = other.index.iter().cloned().unzip();
         let cols: Vec<Option<AnyCol>> = (0..other.n_fields)
             .map(|f| {
                 other.cols[f].as_ref().map(|col| {
@@ -686,7 +728,7 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
     /// Bytes of `field`'s cell for `key`, if the row exists and carries the
     /// field.
     pub(crate) fn field_bytes(&self, key: &K, field: usize) -> Option<&[u8]> {
-        let &slot = self.by_key.get(key)?;
+        let slot = self.slot_of(key)?;
         if self.present[slot as usize] & (1u64 << field) == 0 {
             return None;
         }
@@ -698,7 +740,7 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
     /// Value of `field`'s `I64` cell for `key`, if the row exists and carries
     /// the field.
     pub(crate) fn field_i64(&self, key: &K, field: usize) -> Option<i64> {
-        let &slot = self.by_key.get(key)?;
+        let slot = self.slot_of(key)?;
         if self.present[slot as usize] & (1u64 << field) == 0 {
             return None;
         }
@@ -707,16 +749,16 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
 
     /// Whether the table holds a row for `key`, whatever fields it carries.
     pub(crate) fn contains_key(&self, key: &K) -> bool {
-        self.by_key.contains_key(key)
+        self.slot_of(key).is_some()
     }
 
     /// Highest key `< below` carrying `field`.
     pub(crate) fn last_key_with_field(&self, below: K, field: usize) -> Option<K> {
         let bit = 1u64 << field;
-        self.order
-            .range(..below)
+        self.index[..self.position_of(&below)]
+            .iter()
             .rev()
-            .find(|(_, &slot)| self.present[slot as usize] & bit != 0)
+            .find(|(_, slot)| self.present[*slot as usize] & bit != 0)
             .map(|(k, _)| k.clone())
     }
 
@@ -728,7 +770,7 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         field: usize,
         from: K,
     ) -> Option<(K, Vec<u8>, Vec<u8>)> {
-        for key in other.order.range(from..).map(|(k, _)| k) {
+        for (key, _) in &other.index[other.position_of(&from)..] {
             if let (Some(a), Some(b)) =
                 (self.field_bytes(key, field), other.field_bytes(key, field))
             {
@@ -787,72 +829,57 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         self.coverage[slot as usize] = 1u64 << field;
     }
 
-    fn drop_row(&mut self, key: &K, slot: u32) {
-        self.by_key.remove(key);
-        self.order.remove(key);
-        self.free_slot(slot);
-    }
-
     /// Drop rows with keys `<= up_to` (processed), except rows with keys
     /// `>= keep_from` that carry `field`: those are reduced to that one field,
     /// so it stays readable after the rest of the row is gone.
     pub(crate) fn prune_keeping_field(&mut self, up_to: K, keep_from: K, field: usize) {
         let bit = 1u64 << field;
-        let pruned: Vec<K> = self.order.range(..=up_to).map(|(k, _)| k.clone()).collect();
-        for k in pruned {
-            let slot = self.by_key[&k];
-            if k >= keep_from && self.present[slot as usize] & bit != 0 {
+        let end = self.index.partition_point(|(key, _)| *key <= up_to);
+        let pruned: Vec<(K, u32)> = self.index.drain(..end).collect();
+        let mut kept = Vec::new();
+        for (key, slot) in pruned {
+            if key >= keep_from && self.present[slot as usize] & bit != 0 {
                 self.reduce_row_to_field(slot, field);
+                kept.push((key, slot));
             } else {
-                self.drop_row(&k, slot);
+                self.free_slot(slot);
             }
         }
+        self.index.splice(..0, kept);
     }
 
     /// Keys in `[from, below)` whose row carries `field`, ascending.
     pub(crate) fn keys_with_field(&self, from: K, below: K, field: usize) -> Vec<K> {
         let bit = 1u64 << field;
-        self.order
-            .range(from..below)
-            .filter(|(_, &slot)| self.present[slot as usize] & bit != 0)
+        let start = self.position_of(&from);
+        let end = self.position_of(&below).max(start);
+        self.index[start..end]
+            .iter()
+            .filter(|(_, slot)| self.present[*slot as usize] & bit != 0)
             .map(|(k, _)| k.clone())
             .collect()
     }
 
     /// Drop rows with keys `<= up_to` (processed).
     pub(crate) fn prune(&mut self, up_to: K) {
-        let dead: Vec<K> = self.order.range(..=up_to).map(|(k, _)| k.clone()).collect();
-        for k in dead {
-            if let Some(slot) = self.by_key.remove(&k) {
-                self.order.remove(&k);
-                self.free_slot(slot);
-            }
+        let end = self.index.partition_point(|(key, _)| *key <= up_to);
+        let dead: Vec<u32> = self.index.drain(..end).map(|(_, slot)| slot).collect();
+        for slot in dead {
+            self.free_slot(slot);
         }
     }
 
     /// Drop rows with keys `> target` (rolled back).
     pub(crate) fn rollback(&mut self, target: K) {
-        for k in self.keys_above(target) {
-            if let Some(slot) = self.by_key.remove(&k) {
-                self.order.remove(&k);
-                self.free_slot(slot);
-            }
+        let start = self.index.partition_point(|(key, _)| *key <= target);
+        let dead: Vec<u32> = self.index.drain(start..).map(|(_, slot)| slot).collect();
+        for slot in dead {
+            self.free_slot(slot);
         }
     }
 
-    fn keys_above(&self, target: K) -> Vec<K> {
-        self.order
-            .range((
-                std::ops::Bound::Excluded(target),
-                std::ops::Bound::Unbounded,
-            ))
-            .map(|(k, _)| k.clone())
-            .collect()
-    }
-
     pub(crate) fn clear(&mut self) {
-        self.by_key.clear();
-        self.order.clear();
+        self.index.clear();
         self.present.clear();
         self.coverage.clear();
         self.cols = (0..self.n_fields).map(|_| None).collect();
@@ -867,7 +894,7 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
     pub(crate) fn gather_scratch(&self, keys: &[Option<K>], masks: &[u64]) -> Vec<Option<AnyCol>> {
         let slots: Vec<Option<u32>> = keys
             .iter()
-            .map(|k| k.as_ref().and_then(|k| self.by_key.get(k)).copied())
+            .map(|k| k.as_ref().and_then(|k| self.slot_of(k)))
             .collect();
         let union = masks.iter().fold(0u64, |acc, &m| acc | m);
         (0..self.n_fields)
@@ -905,10 +932,10 @@ impl Table<(u64, u32, Box<str>)> {
         block: u64,
         tx_index: u32,
     ) -> impl Iterator<Item = (&(u64, u32, Box<str>), u32)> {
-        self.order
-            .range((block, tx_index, Box::from(""))..)
+        self.index[self.position_of(&(block, tx_index, Box::from("")))..]
+            .iter()
             .take_while(move |(k, _)| k.0 == block && k.1 == tx_index)
-            .map(|(k, &slot)| (k, slot))
+            .map(|(k, slot)| (k, *slot))
     }
 
     /// Raw string bytes for one account-activity field at `slot`, or `None` if

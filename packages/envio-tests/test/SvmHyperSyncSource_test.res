@@ -57,24 +57,21 @@ let makeReg = (~eventConfig=makeEventConfig(), ~where=None, ~index=0) => {
   {...reg, Internal.index}
 }
 
-let mockResponse: SvmHyperSyncClient.Items.response = {
-  nextSlot: slot + 1,
-  blockItems: [],
-  eventItems: [
-    {
-      onEventRegistrationIndex: 0,
-      slot,
-      transactionIndex: 965,
-      path: [1],
-      programId: metaplexProgramId,
-      accounts: [],
-      data: Uint8Array.fromArray([0x21]),
-      isInner: false,
-      args: Nullable.undefined,
-      logs: Nullable.undefined,
-    },
-  ],
+let mockItem: SvmHyperSyncClient.Items.item = {
+  slot,
+  transactionIndex: 965,
+  path: [1],
+  programId: metaplexProgramId,
+  accounts: [],
+  data: Uint8Array.fromArray([0x21]),
+  isInner: false,
+  args: Nullable.undefined,
+  logs: Nullable.undefined,
 }
+
+// The real Rust client returns its routed items as a page; the mock's is empty,
+// and this test only checks the source hands it on untouched.
+let mockPage = EventStore.make()
 
 let capturedQueries: array<SvmHyperSyncClient.Items.query> = []
 let capturedPrograms: array<array<SvmHyperSyncClient.Registration.program>> = []
@@ -93,7 +90,7 @@ let addressStore = TestAddresses.storeOf(
   ~ecosystem=Svm,
 )
 
-let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
+let makeMockClient = (): SvmHyperSyncClient.t => {
   getHeight: () => Promise.resolve(slot + 1000),
   getBlockHashes: (~blockNumbers as _) =>
     JsError.throwWithMessage("getBlockHashes should not be used in these tests"),
@@ -103,9 +100,10 @@ let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
     // mock returns empty pages (materialisation is covered by the Rust unit
     // tests).
     Promise.resolve((
-      response,
+      {SvmHyperSyncClient.Items.nextSlot: slot + 1},
       TransactionStore.make(~ecosystem=Ecosystem.Svm),
       BlockStore.make(~ecosystem=Ecosystem.Svm),
+      mockPage,
     ))
   },
 }
@@ -179,17 +177,18 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       ~logger=Logger.makeInMemory()->Logger.withFields({"test": "SvmHyperSyncSource"}),
     )
 
-    let item = switch response.parsedQueueItems {
-    | [
-        Internal.Event({
-          blockNumber,
-          logIndex,
-          orderPath,
-          transactionIndex,
-          payload,
-          onEventRegistration,
-        }),
-      ] =>
+    let item = switch mockItem->SvmEventItem.toInternalItem(
+      ~onEventRegistration=(reg :> Internal.onEventRegistration),
+      ~chainId,
+    ) {
+    | Internal.Event({
+        blockNumber,
+        logIndex,
+        orderPath,
+        transactionIndex,
+        payload,
+        onEventRegistration,
+      }) =>
       let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
       Some({
         "blockNumber": blockNumber,
@@ -210,8 +209,10 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
 
     t.expect({
       "item": item,
+      "forwardsClientPage": response.items === mockPage,
       "query": capturedQueries->Array.getUnsafe(0),
     }).toEqual({
+      "forwardsClientPage": true,
       "item": Some({
         "blockNumber": slot,
         "logIndex": 965,

@@ -68,20 +68,16 @@ external fromJsSvm: (Core.transactionStoreCtor, array<svmTxInput>, array<svmActi
 let fromSvmJs = (transactions: array<svmTxInput>, activities: array<svmActivityInput>): t =>
   Core.getAddon().transactionStore->fromJsSvm(transactions, activities)
 
-// Bulk-materialise transactions off the JS thread, one row per
-// (blockNumbers[i], transactionIndices[i]) key, decoding only the fields set in
-// that row's own masks[i]. Result is aligned with the input. `shouldChecksum` is
-// the caller's spelling for the addresses decoded out of the store: the rows
-// themselves are raw bytes, so a page merged from a differently configured store
-// can't fix it in.
+// The selected fields of the transactions a batch's take keyed, read off the
+// JS thread.
 @send
-external materialize: (
+external readFields: (
   t,
-  ~blockNumbers: array<int>,
-  ~transactionIndices: array<int>,
-  ~masks: array<float>,
-  ~shouldChecksum: bool,
-) => promise<array<Internal.eventTransaction>> = "materialize"
+  Float64Array.t,
+  Uint32Array.t,
+  Float64Array.t,
+  bool,
+) => promise<EventStore.fieldRead> = "readFields"
 
 // Drop transactions for blocks at or below the given block (already processed).
 @send external prune: (t, int) => unit = "prune"

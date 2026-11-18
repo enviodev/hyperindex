@@ -135,7 +135,7 @@ Vitest.it("asks for the blocks and each transaction's slot and outcome alone", t
     "max_num_instructions": null,
     "max_num_transactions": 1000000,
     "logs": [],
-    "max_num_blocks": 10000,
+    "max_num_blocks": 20000,
     "max_num_logs": null,
     "account_activity": [],
     "max_num_account_activity": null

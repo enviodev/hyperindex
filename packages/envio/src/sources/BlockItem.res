@@ -1,11 +1,3 @@
-// The block itself is in the response's block store, materialised at batch
-// prep.
-type t = {
-  blockNumber: int,
-  onBlockRegistrationIndex: int,
-  skipped: bool,
-}
-
 let isFetched = (reg: Internal.onBlockRegistration) => reg.blockFieldMask->Option.isSome
 
 // Mirrors `Registration::runs_on` in `block_selection.rs`.
@@ -41,13 +33,3 @@ let toRegistrationInputs = (onBlockRegistrations: array<Internal.onBlockRegistra
       blockFieldMask,
     })
   )
-
-let toInternalItems = (
-  items: array<t>,
-  ~onBlockRegistrations: array<Internal.onBlockRegistration>,
-): array<Internal.item> =>
-  items->Array.map(({blockNumber, onBlockRegistrationIndex, skipped}) => Internal.Block({
-    onBlockRegistration: onBlockRegistrations->Array.getUnsafe(onBlockRegistrationIndex),
-    blockNumber,
-    skipped: ?(skipped ? Some(true) : None),
-  }))

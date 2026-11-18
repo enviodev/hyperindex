@@ -1,20 +1,20 @@
-//! Columnar materialisation shared by the per-chain field stores
+//! Columnar field reads shared by the per-chain field stores
 //! (`TransactionStore`, `BlockStore`). Selected fields are decoded in bulk, off
-//! the JS thread, into a struct-of-arrays form; the main thread then zips the
-//! columns into plain JS objects, setting only the fields a row selected. The
-//! cell type is concrete per column, so decode runs off-thread and only the
-//! object zip touches the JS thread.
+//! the JS thread, into an arena `Reading` builds the JS objects from.
 
+use alloy_primitives::U256;
 use anyhow::{Context, Result};
-use napi::bindgen_prelude::{BigInt, ToNapiValue};
-use napi::sys;
+use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 
+use crate::columnar::{Arena, ColumnSpec};
+use crate::event_store::ArenaShape;
 use crate::evm_hypersync_source::types::{
     AccessList as AccessListItem, Authorization as AuthorizationItem,
 };
+use crate::storage::rows::{ColumnRead, ReadKind};
 
-/// Ecosystem selecting `materialize`'s decoder, shared by every per-chain field
+/// Ecosystem selecting a store's field decoder, shared by every per-chain field
 /// store (`TransactionStore`, `BlockStore`). A store is per-chain, hence
 /// single-ecosystem, and is fixed at construction.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -67,15 +67,13 @@ pub struct SvmAccountActivityOut {
     pub token: Option<SvmAccountTokenOut>,
 }
 
-/// One materialised field across all rows: struct-of-arrays, one entry per row,
-/// `None` where the row is missing or the value is absent. Every variant's
-/// element type is `Send` and `ToNapiValue`. New ecosystems/field kinds extend
-/// the type set as needed.
+/// One field across all rows: struct-of-arrays, one entry per row, `None`
+/// where the row is missing or the value is absent.
 pub enum Column {
     I64(Vec<Option<i64>>),
     F64(Vec<Option<f64>>),
     Bool(Vec<Option<bool>>),
-    Big(Vec<Option<BigInt>>),
+    Big(Vec<Option<U256>>),
     Str(Vec<Option<String>>),
     StrVec(Vec<Option<Vec<String>>>),
     AccessList(Vec<Option<Vec<AccessListItem>>>),
@@ -83,95 +81,164 @@ pub enum Column {
     AccountActivities(Vec<Option<Vec<SvmAccountActivityOut>>>),
 }
 
-impl Column {
-    /// Set this column's value on each object under `key`, skipping `None` cells
-    /// so unselected/absent fields stay absent on the JS object.
-    unsafe fn set_on(
-        self,
-        env: sys::napi_env,
-        objs: &[sys::napi_value],
-        key: sys::napi_value,
-    ) -> napi::Result<()> {
-        match self {
-            Column::I64(v) => set_col(env, objs, key, v),
-            Column::F64(v) => set_col(env, objs, key, v),
-            Column::Bool(v) => set_col(env, objs, key, v),
-            Column::Big(v) => set_col(env, objs, key, v),
-            Column::Str(v) => set_col(env, objs, key, v),
-            Column::StrVec(v) => set_col(env, objs, key, v),
-            Column::AccessList(v) => set_col(env, objs, key, v),
-            Column::AuthList(v) => set_col(env, objs, key, v),
-            Column::AccountActivities(v) => set_col(env, objs, key, v),
-        }
-    }
-}
-
-unsafe fn set_col<T: ToNapiValue>(
-    env: sys::napi_env,
-    objs: &[sys::napi_value],
-    key: sys::napi_value,
-    values: Vec<Option<T>>,
-) -> napi::Result<()> {
-    for (obj, cell) in objs.iter().zip(values) {
-        if let Some(v) = cell {
-            let js = T::to_napi_value(env, v)?;
-            if sys::napi_set_property(env, *obj, key, js) != sys::Status::napi_ok {
-                return Err(napi::Error::from_reason("napi_set_property failed"));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// A page of materialised rows in columnar form. `ToNapiValue` zips it into a JS
-/// array of objects on the main thread; each object carries only the selected
-/// fields.
+/// A page of field cells in columnar form, before `into_arena` lays the flat
+/// columns out for `Reading`.
 pub struct Columns {
     pub len: usize,
     pub columns: Vec<(&'static str, Column)>,
 }
 
-impl ToNapiValue for Columns {
-    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
-        let mut arr = std::ptr::null_mut();
-        if sys::napi_create_array_with_length(env, val.len, &mut arr) != sys::Status::napi_ok {
-            return Err(napi::Error::from_reason(
-                "napi_create_array_with_length failed",
-            ));
+/// A batch's blocks or transactions on their way to JavaScript: an arena with
+/// a row per block or transaction and a column per selected field `Reading`
+/// reads, null where a row has no value. The nested fields, which have no
+/// column shape, come as values beside it, `None` where absent.
+#[napi(object, object_from_js = false)]
+pub struct FieldRows {
+    pub shape: ArenaShape,
+    pub access_list: Option<Vec<Option<Vec<AccessListItem>>>>,
+    pub authorization_list: Option<Vec<Option<Vec<AuthorizationItem>>>>,
+    pub account_activities: Option<Vec<Option<Vec<SvmAccountActivityOut>>>>,
+}
+
+/// A store's read of a batch's transactions or blocks: the arena behind
+/// `handle`, which `EventStore.lendRows` lends, and its shape.
+#[napi(object, object_from_js = false)]
+pub struct FieldRead {
+    pub handle: u32,
+    pub rows: FieldRows,
+}
+
+impl Columns {
+    /// Lays the columns out and holds the arena for JavaScript to read.
+    pub fn hold(self) -> Result<FieldRead> {
+        let (arena, rows) = self.into_arena()?;
+        Ok(FieldRead {
+            handle: crate::event_store::hold(vec![arena])?,
+            rows,
+        })
+    }
+}
+
+fn write_cells<T>(
+    arena: &mut Arena,
+    column: usize,
+    cells: &[Option<T>],
+    mut write: impl FnMut(&mut Arena, usize, &T) -> Result<()>,
+) -> Result<()> {
+    for (row, cell) in cells.iter().enumerate() {
+        match cell {
+            Some(value) => write(arena, row, value)?,
+            None => arena.mark_null(column, row),
+        }
+    }
+    Ok(())
+}
+
+impl Columns {
+    /// Lays the flat columns out as a sealed arena; the nested ones travel
+    /// beside it.
+    pub fn into_arena(self) -> Result<(Arena, FieldRows)> {
+        let mut reads = Vec::new();
+        let mut flat = Vec::new();
+        let mut rows = FieldRows {
+            shape: ArenaShape::of(&[], self.len),
+            access_list: None,
+            authorization_list: None,
+            account_activities: None,
+        };
+        for (name, column) in self.columns {
+            let column = match column {
+                Column::AccessList(values) => {
+                    rows.access_list = Some(values);
+                    continue;
+                }
+                Column::AuthList(values) => {
+                    rows.authorization_list = Some(values);
+                    continue;
+                }
+                Column::AccountActivities(values) => {
+                    rows.account_activities = Some(values);
+                    continue;
+                }
+                column => column,
+            };
+            reads.push(match &column {
+                Column::Bool(_) => ColumnRead::scalar(name, ReadKind::Bool),
+                Column::Big(_) => ColumnRead::scalar(name, ReadKind::BigInt),
+                Column::Str(_) => ColumnRead::scalar(name, ReadKind::Text),
+                Column::StrVec(_) => ColumnRead::list(name, ReadKind::Text),
+                _ => ColumnRead::scalar(name, ReadKind::Float),
+            });
+            flat.push(column);
         }
 
-        let mut objs = Vec::with_capacity(val.len);
-        for _ in 0..val.len {
-            let mut obj = std::ptr::null_mut();
-            if sys::napi_create_object(env, &mut obj) != sys::Status::napi_ok {
-                return Err(napi::Error::from_reason("napi_create_object failed"));
+        let specs: Vec<ColumnSpec> = reads
+            .iter()
+            .zip(&flat)
+            .map(|(read, column)| match column {
+                Column::StrVec(lists) => ColumnSpec::List {
+                    element: ReadKind::Text.slot(),
+                    elements: lists.iter().flatten().map(Vec::len).sum(),
+                },
+                _ => ColumnSpec::Scalar(read.kind.slot()),
+            })
+            .collect();
+        let mut arena = Arena::new_filled(self.len, &specs);
+        for (index, column) in flat.into_iter().enumerate() {
+            match column {
+                Column::I64(cells) => {
+                    write_cells(&mut arena, index, &cells, |arena, row, value| {
+                        arena.set_f64(index, row, *value as f64);
+                        Ok(())
+                    })?
+                }
+                Column::F64(cells) => {
+                    write_cells(&mut arena, index, &cells, |arena, row, value| {
+                        arena.set_f64(index, row, *value);
+                        Ok(())
+                    })?
+                }
+                Column::Bool(cells) => {
+                    write_cells(&mut arena, index, &cells, |arena, row, value| {
+                        arena.set_f64(index, row, if *value { 1.0 } else { 0.0 });
+                        Ok(())
+                    })?
+                }
+                Column::Big(cells) => {
+                    write_cells(&mut arena, index, &cells, |arena, row, value| {
+                        arena.set_bytes(index, row, value.to_string().as_bytes());
+                        Ok(())
+                    })?
+                }
+                Column::Str(cells) => {
+                    write_cells(&mut arena, index, &cells, |arena, row, value| {
+                        arena.set_bytes(index, row, value.as_bytes());
+                        Ok(())
+                    })?
+                }
+                Column::StrVec(cells) => {
+                    let mut written = 0;
+                    for (row, cell) in cells.iter().enumerate() {
+                        match cell {
+                            Some(values) => {
+                                for value in values {
+                                    arena.set_element_bytes(index, written, value.as_bytes());
+                                    written += 1;
+                                }
+                            }
+                            None => arena.mark_null(index, row),
+                        }
+                        arena.end_list_row(index, row, written);
+                    }
+                }
+                Column::AccessList(_) | Column::AuthList(_) | Column::AccountActivities(_) => {
+                    unreachable!("nested columns travel beside the arena")
+                }
             }
-            objs.push(obj);
         }
-
-        for (name, col) in val.columns {
-            // Create the JS property-key string once per column and reuse it for
-            // every row; `napi_set_named_property` would re-create it per cell.
-            let mut key = std::ptr::null_mut();
-            if sys::napi_create_string_utf8(
-                env,
-                name.as_ptr() as *const std::os::raw::c_char,
-                name.len() as isize,
-                &mut key,
-            ) != sys::Status::napi_ok
-            {
-                return Err(napi::Error::from_reason("napi_create_string_utf8 failed"));
-            }
-            col.set_on(env, &objs, key)?;
-        }
-
-        for (i, obj) in objs.iter().enumerate() {
-            if sys::napi_set_element(env, arr, i as u32, *obj) != sys::Status::napi_ok {
-                return Err(napi::Error::from_reason("napi_set_element failed"));
-            }
-        }
-
-        Ok(arr)
+        rows.shape = ArenaShape::of(&reads, self.len);
+        arena.seal(&rows.shape.names)?;
+        Ok((arena, rows))
     }
 }
 
@@ -221,5 +288,83 @@ pub(crate) mod test_support {
             Some(Column::Str(values)) => values.clone(),
             _ => panic!("expected a {name} string column"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lays_flat_columns_out_with_nulls_and_keeps_nested_ones_beside() {
+        let columns = Columns {
+            len: 2,
+            columns: vec![
+                ("number", Column::I64(vec![Some(7), None])),
+                ("value", Column::Big(vec![Some(U256::from(5u64)), None])),
+                ("hash", Column::Str(vec![None, Some("0xab".into())])),
+                (
+                    "uncles",
+                    Column::StrVec(vec![Some(vec!["a".into(), "b".into()]), None]),
+                ),
+                (
+                    "accessList",
+                    Column::AccessList(vec![
+                        None,
+                        Some(vec![AccessListItem {
+                            address: Some("0xcc".into()),
+                            storage_keys: None,
+                        }]),
+                    ]),
+                ),
+            ],
+        };
+        let (arena, rows) = columns.into_arena().unwrap();
+        let columns = arena.columns();
+        let (elements, ends) = columns[3].list().unwrap();
+        let nested: Vec<Option<usize>> = rows
+            .access_list
+            .unwrap()
+            .iter()
+            .map(|cell| cell.as_ref().map(Vec::len))
+            .collect();
+        assert_eq!(
+            (
+                rows.shape.names,
+                rows.shape.kinds,
+                columns[0].f64_at(0),
+                columns[0].is_null(1),
+                columns[1].str_at(0).unwrap(),
+                columns[2].is_null(0),
+                columns[2].str_at(1).unwrap(),
+                (
+                    elements.str_at(1).unwrap(),
+                    ends.to_vec(),
+                    columns[3].is_null(1)
+                ),
+                nested,
+            ),
+            (
+                vec![
+                    "number".to_string(),
+                    "value".to_string(),
+                    "hash".to_string(),
+                    "uncles".to_string()
+                ],
+                vec![
+                    ReadKind::Float as u8,
+                    ReadKind::BigInt as u8,
+                    ReadKind::Text as u8,
+                    ReadKind::List as u8
+                ],
+                7.0,
+                true,
+                "5",
+                true,
+                "0xab",
+                ("b", vec![2, 2], true),
+                vec![None, Some(1)],
+            )
+        );
     }
 }

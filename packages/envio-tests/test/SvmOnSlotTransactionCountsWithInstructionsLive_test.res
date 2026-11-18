@@ -156,7 +156,7 @@ Vitest.it("counts the transactions in a query apart from the instructions", t =>
     "max_num_instructions": null,
     "max_num_transactions": 1000000,
     "logs": [],
-    "max_num_blocks": 5000,
+    "max_num_blocks": 10000,
     "max_num_logs": null,
     "account_activity": [],
     "max_num_account_activity": null
@@ -211,7 +211,7 @@ Vitest.it("counts the transactions in a query apart from the instructions", t =>
       "account_activity": [],
       "reward": []
     },
-    "max_num_instructions": 5000,
+    "max_num_instructions": 10000,
     "max_num_transactions": null,
     "logs": [],
     "max_num_blocks": null,

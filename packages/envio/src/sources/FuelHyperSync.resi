@@ -1,5 +1,5 @@
 type logsQueryPage = {
-  items: array<FuelHyperSyncClient.EventItems.item>,
+  items: EventStore.t,
   rejectedLogData: array<FuelHyperSyncClient.EventItems.rejectedLogData>,
   nextBlock: int,
   archiveHeight: int,

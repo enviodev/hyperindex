@@ -42,8 +42,6 @@ type nextPageResult = {
   kind: pageOutcome,
   requestStats: array<Source.requestStat>,
   toBlock: int,
-  eventItems: array<EvmEventItem.t>,
-  blockItems: array<BlockItem.t>,
   message: option<string>,
   providerMessage: option<string>,
   blockNumber: option<int>,
@@ -67,7 +65,7 @@ type t = {
     AddressSet.t,
     BlockStore.t,
     TransactionStore.t,
-  ) => promise<(nextPageResult, BlockStore.t, TransactionStore.t)>,
+  ) => promise<(nextPageResult, BlockStore.t, TransactionStore.t, EventStore.t)>,
   getBlockHashes: array<int> => promise<(blockHashResult, BlockStore.t)>,
   onReorg: unit => unit,
 }
