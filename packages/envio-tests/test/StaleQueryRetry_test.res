@@ -62,8 +62,8 @@ describe("A query in flight when a rollback lands", () => {
     async (~t, ~indexer, ~source) => {
       let first = source(1)
       let second = source(2)
-      first.resolveGetHeightOrThrow(300)
-      second.resolveGetHeightOrThrow(300)
+      await Scenario.resolveInitialHeight(~source=first, ~head=300)
+      await Scenario.resolveInitialHeight(~source=second, ~head=300)
       // A chain enters its reorg threshold only once every chain reaches its own.
       await first.respondEmptyUpTo(100)
       await second.respondEmptyUpTo(100)

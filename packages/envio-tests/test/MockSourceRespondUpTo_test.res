@@ -48,7 +48,7 @@ describe("MockSource.respondUpTo", () => {
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
-      mock.resolveGetHeightOrThrow(100_000)
+      await Scenario.resolveInitialHeight(~source=mock, ~head=100_000)
       await mock.respondUpTo(
         300,
         ~items=[
@@ -89,7 +89,7 @@ describe("MockSource.respondUpTo", () => {
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
-      mock.resolveGetHeightOrThrow(100_000)
+      await Scenario.resolveInitialHeight(~source=mock, ~head=100_000)
       await mock.expectItemsQueries([
         {
           reply: Respond({
@@ -119,7 +119,7 @@ describe("MockSource.respondUpTo", () => {
     ~sources=[{chain: 1}],
     async (~t, ~indexer as _, ~source) => {
       let mock = source(1)
-      mock.resolveGetHeightOrThrow(200)
+      await Scenario.resolveInitialHeight(~source=mock, ~head=200)
       t.expect(
         switch await mock.respondEmptyUpTo(300) {
         | () => None
@@ -138,7 +138,7 @@ describe("MockSource.respondUpTo", () => {
     ~source,
   ) => {
     let mock = source(1)
-    mock.resolveGetHeightOrThrow(100_000)
+    await Scenario.resolveInitialHeight(~source=mock, ~head=100_000)
     await mock.expectItemsQueries([{reply: Respond({items: [], latestFetchedBlockNumber: 100})}])
     t.expect(
       switch await mock.respondUpTo(
@@ -165,7 +165,7 @@ describe("MockSource.respondUpTo", () => {
     ~sources=[{chain: 1}],
     async (~t, ~indexer as _, ~source) => {
       let mock = source(1)
-      mock.resolveGetHeightOrThrow(100_000)
+      await Scenario.resolveInitialHeight(~source=mock, ~head=100_000)
       await mock.respondUpTo(
         100,
         ~items=[

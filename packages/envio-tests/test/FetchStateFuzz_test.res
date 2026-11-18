@@ -219,6 +219,7 @@ type fuzz = {
   // What lookups during a rollback report as still on the canonical chain.
   mutable validUpTo: int,
   mutable reorgsSeen: int,
+  mutable reorgsInjected: int,
   mutable injectedValidUpTo: option<int>,
 }
 
@@ -540,6 +541,7 @@ let injectReorg = async (fuzz, ~seed) => {
     )
     fuzz.validUpTo = validUpTo
     fuzz.injectedValidUpTo = Some(validUpTo)
+    fuzz.reorgsInjected = fuzz.reorgsInjected + 1
     let before = fuzz->reorgsDetected
     fuzz->respond(
       query,
@@ -637,6 +639,7 @@ let fuzzSeed = async (~t: Vitest.testContext, ~indexer, ~source: MockSource.t, ~
     observedBlocks: Set.make(),
     validUpTo: worldEnd,
     reorgsSeen: 0,
+    reorgsInjected: 0,
     injectedValidUpTo: None,
   }
   source.setAutoHeight(fuzz.height)
@@ -646,6 +649,14 @@ let fuzzSeed = async (~t: Vitest.testContext, ~indexer, ~source: MockSource.t, ~
   }
   await fuzz->drainHonestly(~seed)
   await indexer.waitUntilIdle()
+
+  // A conflict against a hash the store doesn't hold goes unnoticed, so not
+  // every injection rolls back; none rolling back means reorg detection is gone.
+  if fuzz.reorgsInjected > 0 && fuzz.reorgsSeen === 0 {
+    fuzz->violate(
+      `none of the ${fuzz.reorgsInjected->Int.toString} conflicting hashes injected triggered a rollback`,
+    )
+  }
   let handled =
     (await indexer.query("Handled"): array<handled>)->Array.toSorted((a, b) =>
       String.compare(a.id, b.id)

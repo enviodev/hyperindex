@@ -45,7 +45,7 @@ describe("MockSource's own registration", () => {
     ~sources=[{chain: 1, mockEventContract: "Token"}],
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
-      mock.resolveGetHeightOrThrow(100_000)
+      await Scenario.resolveInitialHeight(~source=mock, ~head=100_000)
       await mock.expectItemsQueries([{reply: LeavePending}])
       await indexer.waitUntilIdle()
       t.expect(
@@ -61,7 +61,7 @@ describe("MockSource's own registration", () => {
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
-      mock.resolveGetHeightOrThrow(100_000)
+      await Scenario.resolveInitialHeight(~source=mock, ~head=100_000)
       await mock.expectItemsQueries([
         {
           reply: Respond({
