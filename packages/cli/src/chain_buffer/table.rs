@@ -73,6 +73,9 @@ impl Presence {
 
     fn set(&mut self, row: usize, present: bool) {
         let word = row / 64;
+        if !present && self.words.len() <= word {
+            return;
+        }
         if self.words.len() <= word {
             self.words.resize(word + 1, 0);
         }
@@ -92,6 +95,8 @@ enum Values {
     Var { ends: Vec<u32>, bytes: Vec<u8> },
 }
 
+/// A column no row has set yet holds no values, only rows that are all null;
+/// the first value fills the rows before it.
 #[derive(Clone, Debug)]
 struct ColumnData {
     values: Values,
@@ -109,16 +114,16 @@ impl ColumnData {
         values + self.presence.words.capacity() * 8
     }
 
-    fn new(kind: ColumnKind, capacity: usize) -> Self {
+    fn new(kind: ColumnKind) -> Self {
         let values = match kind {
-            ColumnKind::U32 => Values::U32(Vec::with_capacity(capacity)),
-            ColumnKind::U64 => Values::U64(Vec::with_capacity(capacity)),
+            ColumnKind::U32 => Values::U32(Vec::new()),
+            ColumnKind::U64 => Values::U64(Vec::new()),
             ColumnKind::Fixed(width) => Values::Fixed {
                 width,
-                bytes: Vec::with_capacity(capacity * width),
+                bytes: Vec::new(),
             },
             ColumnKind::Var => Values::Var {
-                ends: Vec::with_capacity(capacity),
+                ends: Vec::new(),
                 bytes: Vec::new(),
             },
         };
@@ -128,7 +133,31 @@ impl ColumnData {
         }
     }
 
+    fn is_all_null(&self) -> bool {
+        match &self.values {
+            Values::U32(values) => values.is_empty(),
+            Values::U64(values) => values.is_empty(),
+            Values::Fixed { bytes, .. } => bytes.is_empty(),
+            Values::Var { ends, .. } => ends.is_empty(),
+        }
+    }
+
+    fn fill_nulls_up_to(&mut self, rows: usize) {
+        if !self.is_all_null() {
+            return;
+        }
+        match &mut self.values {
+            Values::U32(values) => values.resize(rows, 0),
+            Values::U64(values) => values.resize(rows, 0),
+            Values::Fixed { width, bytes } => bytes.resize(rows * *width, 0),
+            Values::Var { ends, .. } => ends.resize(rows, 0),
+        }
+    }
+
     fn push_null(&mut self, row: usize) {
+        if self.is_all_null() {
+            return;
+        }
         match &mut self.values {
             Values::U32(values) => values.push(0),
             Values::U64(values) => values.push(0),
@@ -166,6 +195,11 @@ impl ColumnData {
     /// Appends `other`'s cell at `row` as this column's row `to`.
     fn push_from(&mut self, to: usize, other: &ColumnData, row: usize) {
         let present = other.presence.get(row);
+        if !present {
+            self.push_null(to);
+            return;
+        }
+        self.fill_nulls_up_to(to);
         match (&mut self.values, &other.values) {
             (Values::U32(values), Values::U32(from)) => values.push(from[row]),
             (Values::U64(values), Values::U64(from)) => values.push(from[row]),
@@ -271,7 +305,7 @@ impl ChunkBuilder {
         let columns = schema
             .columns
             .iter()
-            .map(|kind| ColumnData::new(*kind, capacity))
+            .map(|kind| ColumnData::new(*kind))
             .collect();
         ChunkBuilder {
             keys: Vec::with_capacity(capacity),
@@ -305,6 +339,7 @@ impl ChunkBuilder {
     pub(crate) fn set_u64(&mut self, column: usize, value: u64) {
         let row = self.last_row();
         let data = &mut self.columns[column];
+        data.fill_nulls_up_to(row + 1);
         match &mut data.values {
             Values::U32(values) => {
                 values[row] = u32::try_from(value).expect("value fits a u32 column");
@@ -318,6 +353,7 @@ impl ChunkBuilder {
     pub(crate) fn set_bytes(&mut self, column: usize, value: &[u8]) {
         let row = self.last_row();
         let data = &mut self.columns[column];
+        data.fill_nulls_up_to(row + 1);
         match &mut data.values {
             Values::Fixed { width, bytes } => {
                 assert_eq!(
@@ -353,16 +389,27 @@ impl ChunkBuilder {
     /// Sorts by key and tiebreak and folds rows of the same key together:
     /// the first keeps its cells, and fills the ones it lacks from the rest.
     pub(crate) fn finish(self) -> Chunk {
-        let raw = Chunk {
+        let sorted = (1..self.keys.len()).all(|row| {
+            let sort_key = |row: usize| (self.keys[row], self.tiebreaks.get(row).copied());
+            sort_key(row - 1) < sort_key(row)
+        });
+        let raw = OutChunk {
             keys: self.keys,
             tiebreaks: self.tiebreaks,
             fetched: self.fetched,
             columns: self.columns,
+            has_tiebreak: self.schema.has_tiebreak,
+            has_fetched: self.schema.has_fetched,
         };
-        let sorted = (1..raw.len()).all(|row| raw.sort_key(row - 1) < raw.sort_key(row));
         if sorted {
-            return raw;
+            return raw.finish();
         }
+        let raw = Chunk {
+            keys: raw.keys,
+            tiebreaks: raw.tiebreaks,
+            fetched: raw.fetched,
+            columns: raw.columns,
+        };
         let mut order: Vec<usize> = (0..raw.len()).collect();
         order.sort_by_key(|&row| raw.sort_key(row));
         let mut out = OutChunk::new(&self.schema, raw.len());
@@ -400,7 +447,7 @@ impl OutChunk {
             columns: schema
                 .columns
                 .iter()
-                .map(|kind| ColumnData::new(*kind, capacity))
+                .map(|kind| ColumnData::new(*kind))
                 .collect(),
             has_tiebreak: schema.has_tiebreak,
             has_fetched: schema.has_fetched,
@@ -492,8 +539,8 @@ impl Slice {
     }
 
     /// The slice on a chunk of its own rows when it holds under half of its
-    /// chunk, so the rows a removal dropped are freed; a snapshot still
-    /// reading the old chunk keeps it alive.
+    /// chunk, so the rows a removal or merge dropped are freed; a snapshot
+    /// still reading the old chunk keeps it alive.
     fn compacted(self, schema: &Schema) -> Slice {
         if self.len() * 2 >= self.chunk.len() {
             return self;
@@ -681,7 +728,10 @@ impl Table {
         // they are; only the run they land among is rebuilt.
         let head = &overlapped[0];
         let head_end = head.lower_bound_sort_key(first);
-        replacement.extend(head.sub(head.start, head_end));
+        replacement.extend(
+            head.sub(head.start, head_end)
+                .map(|kept| kept.compacted(&self.schema)),
+        );
         let tail = &overlapped[overlapped.len() - 1];
         let tail_start = {
             let at = tail.lower_bound_sort_key(last);
@@ -739,7 +789,10 @@ impl Table {
             chunk: Arc::new(merged),
             start: 0,
         });
-        replacement.extend(tail.sub(tail_start, tail.end));
+        replacement.extend(
+            tail.sub(tail_start, tail.end)
+                .map(|kept| kept.compacted(&self.schema)),
+        );
         for (offset, slice) in replacement.into_iter().enumerate() {
             self.slices.insert(start + offset, slice);
         }
@@ -1110,5 +1163,55 @@ mod tests {
             .map(|row| (row.tiebreak(), row.u64_at(0).unwrap()))
             .collect();
         assert_eq!((added, read), (0, vec![(1, 10), (2, 20), (3, 30)]));
+    }
+
+    #[test]
+    fn columns_no_row_sets_take_no_value_bytes() {
+        let mut table = Table::new(Schema {
+            columns: vec![ColumnKind::U64, ColumnKind::Fixed(32), ColumnKind::Var],
+            has_tiebreak: false,
+            has_fetched: false,
+        });
+        let mut builder = table.builder();
+        for block in 0..1000 {
+            builder.push_row(make_key(block, 0), 0, 0);
+            builder.set_u64(0, block);
+        }
+        table.merge(builder.finish());
+        let read: Vec<_> = table
+            .rows_in_block_range(998, LAST_BLOCK)
+            .map(|row| (row.u64_at(0), row.bytes_at(1), row.bytes_at(2)))
+            .collect();
+        assert_eq!(
+            (table.heap_bytes(), read),
+            (
+                16_128,
+                vec![(Some(998), None, None), (Some(999), None, None)]
+            )
+        );
+    }
+
+    #[test]
+    fn a_merge_inside_a_chunk_frees_the_rows_it_rebuilt() {
+        let mut table = Table::new(schema(false));
+        table.merge(chunk(
+            &table,
+            &(0..1000)
+                .map(|block| (block * 2, 0, Some(block), None))
+                .collect::<Vec<_>>(),
+        ));
+        let stored_bytes = table.heap_bytes();
+        table.merge(chunk(
+            &table,
+            &(10..990)
+                .map(|block| (block * 2 + 1, 0, Some(block), None))
+                .collect::<Vec<_>>(),
+        ));
+        assert!(
+            table.heap_bytes() < stored_bytes * 2,
+            "{} bytes after merging {} rows into {stored_bytes}",
+            table.heap_bytes(),
+            980
+        );
     }
 }
