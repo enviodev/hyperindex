@@ -17,7 +17,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures_util::future::try_join_all;
 
 use super::ch_type::{self, ChType};
-use super::client::{error_code, insert_tag_prefix, Client, Connection, Tuning, Warn};
+use super::client::{error_code, Client, Connection, Tuning, Warn};
 use super::ddl::{self, Topology, CHAIN_ID_COLUMN, ID_COLUMN};
 use super::row_binary::{self, encode_values, EncodedRows, Value};
 use super::select;
@@ -348,14 +348,6 @@ impl Storage {
             .map(|entity| ddl::create_history_table(entity, self.database(), topology))
             .collect::<Result<Vec<_>>>()?;
 
-        self.stop_inserts_left_running(Some(
-            &input
-                .chains
-                .iter()
-                .map(|chain| chain.id)
-                .collect::<Vec<_>>(),
-        ))
-        .await?;
         // Read before the reset empties it: a previous run's commit still in
         // flight lands in the tables built here, and its rows must lose. A
         // table an older envio built has no version column, and a database or
@@ -496,40 +488,6 @@ impl Storage {
             [Cell::Str(instance)] => Ok(Some(instance.to_string())),
             other => bail!("Unexpected info record {other:?}"),
         }
-    }
-
-    /// Stops the inserts a process before this one left running on any of
-    /// `chain_ids` — on any chain, given none — and tags this one's inserts as
-    /// writing them. An insert keeps running on the server after the process
-    /// that sent it is gone, and one landing after a trim would leave rows the
-    /// next batches reuse the checkpoints of.
-    async fn stop_inserts_left_running(&self, chain_ids: Option<&[i64]>) -> Result<()> {
-        let prefix = insert_tag_prefix(self.database());
-        let mut filter = format!("startsWith(query_id, {})", literal(&prefix));
-        if let Some(chain_ids) = chain_ids {
-            self.client.tag_inserts(chain_ids);
-            let needles = chain_ids
-                .iter()
-                .map(|chain_id| literal(&format!(",{chain_id},")))
-                .collect::<Vec<_>>()
-                .join(", ");
-            // Past the prefix, so a database name holding `,1,` names no chain.
-            filter.push_str(&format!(
-                " AND multiSearchAny(substring(query_id, {}), [{needles}])",
-                prefix.len() + 1
-            ));
-        }
-        self.client
-            .statement(format!(
-                "KILL QUERY{} WHERE {filter} SYNC FORMAT TabSeparated",
-                ddl::on_cluster_clause(self.topology().replicated),
-            ))
-            .await
-            .context(
-                "Couldn't stop the ClickHouse inserts a previous run may have left running. Start \
-                 again once ClickHouse answers.",
-            )?;
-        Ok(())
     }
 
     /// Emptied rather than dropped, so a database the operator provisioned
@@ -736,32 +694,6 @@ impl Storage {
         }
     }
 
-    /// A replica answering for the first time since a restart can still be
-    /// fetching what another took: the last batches it committed, and what a
-    /// crash left uncommitted. Checked and trimmed before then, a resume would
-    /// read entities without those batches for good, and leave the leftovers it
-    /// fetches afterwards above the frontier for the next batch to collide
-    /// with.
-    async fn sync_replica(&self, tables: &[Arc<Table>]) -> Result<()> {
-        let names = tables
-            .iter()
-            .map(|table| table.entity.history_table.as_str())
-            .chain([CHECKPOINTS_TABLE, CHAINS_TABLE]);
-        try_join_all(names.map(|name| {
-            self.client.statement(format!(
-                "SYSTEM SYNC REPLICA {} LIGHTWEIGHT",
-                table_ref(self.database(), name)
-            ))
-        }))
-        .await
-        .context(
-            "Couldn't wait for this ClickHouse replica to fetch what the other replicas took. \
-             Start again once they are reachable, or point ENVIO_CLICKHOUSE_HOST at the node that \
-             took the writes.",
-        )?;
-        Ok(())
-    }
-
     async fn missing_checkpoints(&self, committed: &[(i64, i64)]) -> Result<Vec<(i64, i64)>> {
         let answer = self
             .client
@@ -804,14 +736,6 @@ impl Storage {
     /// written past a fence, so a previous process's commit still in flight
     /// can't land over them.
     async fn resume_inner(&self, input: &Resume) -> Result<()> {
-        self.stop_inserts_left_running(Some(
-            &input
-                .committed
-                .iter()
-                .map(|chain| chain.id)
-                .collect::<Vec<_>>(),
-        ))
-        .await?;
         let version = self.read_version().await?.max(unix_micros());
         *self.chains.lock().unwrap() = Chains {
             frontier: Frontier::new(),
@@ -829,9 +753,6 @@ impl Storage {
             return Ok(());
         }
         let tables = self.all_tables();
-        if self.topology().replicated {
-            self.sync_replica(&tables).await?;
-        }
         self.check_holds(&frontier).await?;
         self.write_chains(frontier.clone()).await?;
         self.trim_above(self.schema.sequence, &frontier, &tables)
@@ -966,7 +887,6 @@ impl Storage {
     /// Refuses a database it may not empty, as initializing would.
     pub async fn reset(&self) -> Result<()> {
         self.check_for_initialize().await?;
-        self.stop_inserts_left_running(None).await?;
         self.reset_database().await?;
         *self.chains.lock().unwrap() = Chains::default();
         Ok(())
@@ -1266,57 +1186,6 @@ mod tests {
                 checkpoint_id: 7,
             }],
         }
-    }
-
-    /// An insert a previous run left running can land after the trim. One
-    /// that can't be stopped leaves the resume nothing safe to do but wait
-    /// for a later start.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_resume_refuses_when_it_cannot_stop_what_a_previous_run_left_running() {
-        let server = MockClickHouse::answering_statements(Arc::new(|statement: &str| {
-            if statement.starts_with("KILL QUERY") {
-                (
-                    500,
-                    "Code: 497. DB::Exception: Not enough privileges. (ACCESS_DENIED)".to_string(),
-                )
-            } else {
-                after_a_clean_stop(statement)
-            }
-        }))
-        .await;
-        let storage = storage_at(&server);
-        let resumed = storage.resume(&resume_at_checkpoint_7()).await;
-
-        assert_eq!(
-            resumed.map_err(|error| format!("{error:#}").contains("ACCESS_DENIED")),
-            Err(true)
-        );
-    }
-
-    /// A replica that hasn't fetched the chains' rows yet reads an older
-    /// version, and the resume's frontier rows would lose to the ones it
-    /// hasn't fetched.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_replicated_resume_waits_for_the_chains_rows_too() {
-        let server = MockClickHouse::answering_statements(Arc::new(after_a_clean_stop)).await;
-        let storage = storage_with(&server, true);
-
-        storage.resume(&resume_at_checkpoint_7()).await.unwrap();
-
-        let mut synced = server
-            .statements_seen()
-            .into_iter()
-            .filter(|statement| statement.starts_with("SYSTEM SYNC REPLICA"))
-            .collect::<Vec<_>>();
-        synced.sort();
-        assert_eq!(
-            synced,
-            vec![
-                "SYSTEM SYNC REPLICA `mock`.`envio_chains` LIGHTWEIGHT".to_string(),
-                "SYSTEM SYNC REPLICA `mock`.`envio_checkpoints` LIGHTWEIGHT".to_string(),
-                "SYSTEM SYNC REPLICA `mock`.`envio_history_Account` LIGHTWEIGHT".to_string(),
-            ]
-        );
     }
 
     /// A restart after a clean stop finds nothing above the frontier, so it

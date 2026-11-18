@@ -133,7 +133,6 @@ pub struct Client {
     /// the writes, so an address that starts balancing across replicas is an
     /// error, not a slower path.
     served_by: Mutex<Option<String>>,
-    tag: Mutex<String>,
 }
 
 fn http_client(tuning: &Tuning, idle_timeout: Duration) -> Result<reqwest::Client> {
@@ -181,7 +180,6 @@ impl Client {
             url: connection.url.trim_end_matches('/').to_string(),
             username: connection.username,
             password: connection.password,
-            tag: Mutex::new(insert_tag(&connection.database, &[])),
             database: connection.database,
             tuning,
             warn,
@@ -216,10 +214,6 @@ impl Client {
         if let Ok(client) = http_client(&self.tuning, timeout) {
             *http = (client, timeout);
         }
-    }
-
-    pub fn tag_inserts(&self, chain_ids: &[i64]) {
-        *self.tag.lock().unwrap() = insert_tag(&self.database, chain_ids);
     }
 
     pub async fn statement(&self, query: String) -> Result<String> {
@@ -402,7 +396,6 @@ impl Client {
         // answering success. The setting that turns deduplication off is named
         // differently across server versions; the token works on all of them.
         let token = insert_token();
-        let query_id = format!("{}{token}", self.tag.lock().unwrap());
         let request = self
             .http()
             .post(&self.url)
@@ -411,7 +404,6 @@ impl Client {
                 ("database", &self.database),
                 ("async_insert", "0"),
                 ("insert_deduplication_token", &token),
-                ("query_id", &query_id),
             ])
             // Base64 of the credentials rather than the X-ClickHouse-User/Key
             // headers: a header value may only carry visible ASCII, so a password
@@ -592,27 +584,6 @@ fn multipart(sql: &str, external: &[External]) -> (String, Vec<u8>) {
     }
     form.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
     (boundary, form)
-}
-
-/// What every insert of a process driving `chain_ids` in `database` starts its
-/// query id with, so the next process driving any of them can find the ones it
-/// left running. The chains sit between commas, each findable as `,<id>,`.
-pub fn insert_tag(database: &str, chain_ids: &[i64]) -> String {
-    let mut chain_ids = chain_ids.to_vec();
-    chain_ids.sort_unstable();
-    let chains = chain_ids
-        .iter()
-        .map(i64::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("{},{chains},:", insert_tag_prefix(database))
-}
-
-/// What every [`insert_tag`] in `database` starts with, whatever its chains.
-/// The name's length goes first: a database name may hold `:`, and without it
-/// `idx`'s prefix would also start every tag of `idx:v2`.
-pub fn insert_tag_prefix(database: &str) -> String {
-    format!("envio:{}:{database}:", database.len())
 }
 
 /// Unique to this insert among every process writing to the database.
