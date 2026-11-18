@@ -14,10 +14,10 @@ module Registration = {
     | @as("Call") Call
 
   // The full per-(event, chain) registration passed to the Rust client at
-  // construction: routing identity plus the receipt-selection state queries
+  // construction: matching identity plus the receipt-selection state queries
   // are built from.
   type input = {
-    // Chain-scoped sequential registration index, echoed back on routed items.
+    // Chain-scoped sequential registration index, echoed back on matched items.
     index: int,
     eventName: string,
     contractName: string,
@@ -61,7 +61,7 @@ module Registration = {
 module EventItems = {
   // The whole per-query input beside the partition's address set: block range
   // and the registration selection (by index). Receipt selections, field
-  // selection, and routing are derived on the Rust side.
+  // selection, and matching are derived on the Rust side.
   type query = {
     fromBlock: int,
     // Inclusive; None queries to the end of available data.

@@ -1,4 +1,4 @@
-//! Fills a page's block and transaction stores for the logs a query returned.
+//! Fills a page's blocks and transactions for the logs a query returned.
 //! `plan_blocks` and `plan_transactions` decide what that costs in requests.
 //!
 //! Whether a response is fetched is decided by what the page itself wants; how
@@ -217,7 +217,7 @@ struct ReferencedTransaction {
     hash: format::Hash,
 }
 
-/// The blocks and transactions a page's routed logs reference, with the fields
+/// The blocks and transactions a page's matched logs reference, with the fields
 /// their items selected unioned per key.
 #[derive(Default)]
 pub(crate) struct PageRefs {

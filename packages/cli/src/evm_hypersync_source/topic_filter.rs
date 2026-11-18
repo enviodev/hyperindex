@@ -25,7 +25,7 @@ enum TopicConstraint {
     Values(Vec<[u8; 32]>),
     /// The topic must be the padded form of an address this partition holds
     /// for the registration's own contract, at or before the log's block. A
-    /// query expands it to those addresses' topics. In routing, ownership is
+    /// query expands it to those addresses' topics. In matching, ownership is
     /// the partition set's answer — the query materialised this position from
     /// that same set, so a sibling selection's log carrying another
     /// partition's address must not fan out here. The store answers only the

@@ -110,7 +110,7 @@ impl FuelHyperSyncClient {
 /// The whole per-query input for `get_event_items`: the block range and the
 /// partition's registration selection (by index). The partition's addresses
 /// arrive separately, as the `AddressSet` handle. Receipt selections, field
-/// selection, and routing are all derived internally from the registrations
+/// selection, and matching are all derived internally from the registrations
 /// passed at construction.
 #[napi(object)]
 pub struct EventItemsQuery {
@@ -249,6 +249,7 @@ fn build_page(
     store: &StoreInner,
 ) -> Result<PageData, ConvertError> {
     let mut page = PageData::new(Ecosystem::Fuel);
+    let heights: std::collections::HashSet<i64> = blocks.iter().map(|block| block.height).collect();
     let mut rows = page.blocks.builder();
     for block in blocks {
         let height = u64::try_from(block.height).context("block.height negative")?;
@@ -279,10 +280,7 @@ fn build_page(
         }
         // Every kept receipt's block must resolve: JS reads it onto the
         // payload unconditionally.
-        if !blocks
-            .iter()
-            .any(|block| block.height == receipt.block_height)
-        {
+        if !heights.contains(&receipt.block_height) {
             push_unique(&mut missing, "block");
         }
         if registers {
@@ -569,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn unrouted_receipt_is_dropped() {
+    fn unmatched_receipt_is_dropped() {
         let (_store, matcher) = build(
             &[reg_input(0, "C", FuelEventKind::LogData, true, Some("9"))],
             &[("C", &[])],

@@ -185,10 +185,10 @@ module Registration = {
   }
 
   // The full per-(event, chain) registration passed to the Rust clients at
-  // construction: decode metadata, routing identity, and the fetch state
+  // construction: decode metadata, matching identity, and the fetch state
   // queries are built from.
   type input = {
-    // Chain-scoped sequential registration index, echoed back on routed items.
+    // Chain-scoped sequential registration index, echoed back on matched items.
     index: int,
     // `None` for an anonymous event.
     sighash: option<string>,
@@ -253,7 +253,7 @@ module Registration = {
 module Items = {
   // The whole per-query input beside the partition's address set: block range
   // and what it selects from each table. Log selections, field selection, and
-  // the routing index are derived on the Rust side.
+  // the matching index are derived on the Rust side.
   type query = {
     fromBlock: int,
     // Inclusive; None queries to the end of available data.
@@ -275,7 +275,7 @@ module Items = {
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    // Blocks the server returned for the query, counted before routing drops
+    // Blocks the server returned for the query, counted before matching drops
     // the ones no item joins to.
     responseBlocks: int,
   }

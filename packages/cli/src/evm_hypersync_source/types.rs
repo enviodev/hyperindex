@@ -270,11 +270,11 @@ pub struct ParamMeta {
 
 /// The full per-(event, chain) registration crossing the boundary once at
 /// client construction: decode metadata (`sighash`/`topic_count`/`params`),
-/// routing identity (`id`/`contract_name`/`is_wildcard`), and the fetch state
+/// matching identity (`id`/`contract_name`/`is_wildcard`), and the fetch state
 /// queries are built from (`topic_filters`, field selections).
 #[napi(object)]
 pub struct OnEventRegistrationInput {
-    /// Chain-scoped sequential registration index; returned on every routed
+    /// Chain-scoped sequential registration index; returned on every matched
     /// item so JS resolves the registration by array index.
     pub index: i64,
     /// The event's topic0; absent for an anonymous event, whose topic0 is its

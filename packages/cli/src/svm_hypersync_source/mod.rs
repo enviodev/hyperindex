@@ -251,7 +251,7 @@ impl SvmHyperSyncClient {
         let mut field_selection = SolanaFieldSelection {
             block: parse_columns(&block_columns).map_err(map_err)?,
             // Instructions are exempt from merge-mode "empty = no rows", so an
-            // empty list would fetch every column. Spell the routing set.
+            // empty list would fetch every column. Spell the matching set.
             instruction_call: parse_columns(&built.instruction_columns).map_err(map_err)?,
             ..Default::default()
         };

@@ -6,7 +6,7 @@ type options = {
   apiToken: option<string>,
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.onEventRegistration>,
-  // The chain's address index; the client reads it while routing.
+  // The chain's address index; the client reads it while matching.
   addressStore: AddressStore.t,
   logger: Logger.t,
 }

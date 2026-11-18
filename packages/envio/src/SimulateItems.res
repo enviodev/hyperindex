@@ -646,11 +646,11 @@ let parse = (
       }
 
       // Fan the simulated event out to every registration that would actually
-      // run here the way real routing does (one item per registration).
+      // run here the way real matching does (one item per registration).
       // Registrations are built the same way `HandlerRegister.finishRegistration`
       // does at startup (not stubs), so the address filter and `where` behave
       // identically to real indexing — the dead-input tracker relies on the
-      // source's address gate actually dropping unrouted items. Drop registrations
+      // source's address gate actually dropping unmatched items. Drop registrations
       // whose `where` excludes this chain (they wouldn't be fetched live), so a
       // missing handler surfaces below instead of silently running nothing.
       let liveRegistrations = liveRegistrationsFor(~config, ~chainId, ~eventConfig)

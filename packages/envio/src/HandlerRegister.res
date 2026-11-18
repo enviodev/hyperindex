@@ -476,7 +476,7 @@ let isWildcard = (~contractName, ~eventName) =>
   }
 
 // Every registration for one event on a chain, so simulate fans a simulated
-// event out to each the way real routing does.
+// event out to each the way real matching does.
 let getSimulateOnEventRegistrations = (
   ~config: Config.t,
   ~chainId: ChainId.t,

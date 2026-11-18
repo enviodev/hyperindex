@@ -17,7 +17,7 @@ use crate::config_parsing::human_config::svm::ArgDef;
 use crate::hex::to_hex;
 use crate::registration_start_block::has_started;
 
-/// One instruction call with the fields routing and item building read, lifted
+/// One instruction call with the fields matching and item building read, lifted
 /// out of the client's all-`Option` row once per instruction: base58 is
 /// rendered here rather than at every account comparison. Discriminator
 /// prefixes are sliced from `data` so the query does not fetch `d1`–`d8`.
@@ -71,12 +71,12 @@ pub struct SvmAccountFilterInput {
 }
 
 /// One `onInstruction`/`contractRegister` binding of a config instruction on a
-/// chain: the handler-specific routing state and what the fetch state queries
+/// chain: the handler-specific matching state and what the fetch state queries
 /// are built from.
 #[napi(object)]
 #[derive(Clone)]
 pub struct SvmOnEventRegistrationInput {
-    /// Chain-scoped sequential registration index; returned on every routed
+    /// Chain-scoped sequential registration index; returned on every matched
     /// item so JS resolves the registration by array index.
     pub index: i64,
     pub is_wildcard: bool,
@@ -123,7 +123,7 @@ pub struct SvmProgramInput {
     /// The config's program name.
     pub name: String,
     /// Base58 program id. Empty means the config carries no real program
-    /// (placeholder); such a program is never fetched or routed.
+    /// (placeholder); such a program is never fetched or matched.
     pub program_id: String,
     /// Program-level nominal-type registry (`BTreeMap<String, ArgType>` JSON).
     pub defined_types_json: Option<String>,
@@ -251,7 +251,7 @@ impl Instruction {
         self.program_id == call.program_id && call.data.starts_with(&self.prefix)
     }
 
-    /// The longest `dN` the wire can filter on inside the prefix. Routing
+    /// The longest `dN` the wire can filter on inside the prefix. Matching
     /// compares the whole prefix, so a longer or odd-length prefix over-fetches
     /// by at most the bytes the wire cannot see.
     fn wire_prefix(&self) -> &[u8] {
@@ -339,10 +339,10 @@ pub(crate) struct BuiltSelection {
     pub account_activity_columns: Vec<&'static str>,
     /// Empty iff no registration selected any log field.
     pub log_columns: Vec<&'static str>,
-    /// Always at least the routing + always-on payload columns.
+    /// Always at least the matching + always-on payload columns.
     pub instruction_columns: Vec<&'static str>,
     /// The instructions the selection's registrations belong to, each with
-    /// those registrations, for routing.
+    /// those registrations, for matching.
     pub instructions: Vec<SelectedInstruction>,
 }
 
@@ -728,7 +728,7 @@ mod tests {
     }
 
     // Serum v3 dispatches on a version byte plus a 4-byte tag. The wire can
-    // filter on the first four of those five bytes; routing checks all five.
+    // filter on the first four of those five bytes; matching checks all five.
     #[test]
     fn a_prefix_the_wire_cannot_express_filters_on_its_longest_dn_and_routes_on_all_of_it() {
         let (store, set, built) =

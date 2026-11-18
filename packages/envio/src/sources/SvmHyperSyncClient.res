@@ -15,8 +15,8 @@ module Registration = {
   }
 
   // One `onInstruction`/`contractRegister` binding of an instruction on a
-  // chain: the handler-specific routing state and the fetch state queries are
-  // built from. Chain-scoped `index` is echoed back on routed items.
+  // chain: the handler-specific matching state and the fetch state queries are
+  // built from. Chain-scoped `index` is echoed back on matched items.
   type input = {
     index: int,
     isWildcard: bool,
@@ -143,7 +143,7 @@ module Items = {
     message: Nullable.t<string>,
   }
 
-  // One routed instruction; its `block` and `transaction` are read from the
+  // One matched instruction; its `block` and `transaction` are read from the
   // per-chain stores when a batch takes it.
   type item = {
     slot: int,
@@ -154,10 +154,10 @@ module Items = {
     data: Uint8Array.t,
     isInner: bool,
     // Borsh-decoded args as a JS value tree (wide integers as bigint).
-    // Present exactly when the routed registration selected `args`: an
+    // Present exactly when the matched registration selected `args`: an
     // instruction its layout rejects is dropped in Rust.
     args: Nullable.t<unknown>,
-    // Present exactly when the routed registration selected `fields.log`.
+    // Present exactly when the matched registration selected `fields.log`.
     logs: Nullable.t<array<log>>,
   }
 

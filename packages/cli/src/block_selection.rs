@@ -160,7 +160,7 @@ impl BlockSelection {
         self.registrations.is_empty()
     }
 
-    /// Every block field some handler selected, as the block store's bitmask.
+    /// Every block field some handler selected, as the blocks table's bitmask.
     pub(crate) fn mask(&self) -> u64 {
         self.registrations
             .iter()

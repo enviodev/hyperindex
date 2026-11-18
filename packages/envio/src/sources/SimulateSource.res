@@ -119,7 +119,7 @@ let make = (
 
       // A client-filtered contract is queried address-free, so this partition
       // holds none of its addresses and only the chain-wide store can answer
-      // for it — exactly the fallback every real source's router makes.
+      // for it, as matching does for every source.
       let isAddressAllowed = (address, ~contractName, ~blockNumber) =>
         switch selection.clientFilteredContracts {
         | Some(contractNames) if contractNames->Array.includes(contractName) =>
@@ -128,7 +128,7 @@ let make = (
         }
 
       // The registration's own start block, which the contract-wide address gate
-      // can't express. Every native router applies it while routing.
+      // can't express. Matching applies it for every other source.
       let hasStarted = (onEventRegistration: Internal.onEventRegistration, ~blockNumber) =>
         switch onEventRegistration.startBlock {
         | Some(startBlock) => blockNumber >= startBlock

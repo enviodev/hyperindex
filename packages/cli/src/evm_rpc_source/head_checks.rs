@@ -4,7 +4,7 @@
 //! covers has its header read beside the logs, and a block the answer has none
 //! of the selection's logs for is asked again by its hash whenever its
 //! `logsBloom` can't rule them out. The logs' hashes themselves are checked
-//! against the headers by the page's block store.
+//! against the headers by the page's blocks.
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;

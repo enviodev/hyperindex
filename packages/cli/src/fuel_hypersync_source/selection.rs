@@ -60,11 +60,11 @@ impl RegistrationKind {
 }
 
 /// The full per-(event, chain) registration crossing the boundary once at
-/// client construction: routing identity plus the receipt-selection state
+/// client construction: matching identity plus the receipt-selection state
 /// queries are built from.
 #[napi(object)]
 pub struct FuelOnEventRegistrationInput {
-    /// Chain-scoped sequential registration index; returned on every routed
+    /// Chain-scoped sequential registration index; returned on every matched
     /// item so JS resolves the registration by array index.
     pub index: i64,
     pub event_name: String,
@@ -273,7 +273,7 @@ impl SelectionBuilder {
             }
             // A client-filtered contract is fetched address-free — the query
             // carries none of its addresses — so its receipt types pool with the
-            // wildcards. Routing gates the over-fetched receipts on the store
+            // wildcards. Matching gates the over-fetched receipts on the store
             // alone (`force_wildcard`); dropping them from the query instead
             // would mean never fetching the contract at all.
             let address_free = reg.is_wildcard || client_filtered.applies(&reg.contract_name);
@@ -387,7 +387,7 @@ mod tests {
     }
 
     /// A store over `entries` plus a set spanning all of them — the pair a
-    /// query is built and routed from. Keep the store alive: the set borrows it.
+    /// query is built and matched from. Keep the store alive: the set borrows it.
     fn addresses(entries: &[(&str, &[&str])]) -> (AddressStore, AddressSet) {
         let store = fuel_store(entries);
         let names: Vec<&str> = entries.iter().map(|(name, _)| *name).collect();
@@ -542,7 +542,7 @@ mod tests {
         // A contract switched to client-side filtering carries none of its
         // addresses in the query, so its receipt types have to pool with the
         // wildcards. Leaving them out of the selection would mean never
-        // fetching the contract at all, while routing — which accepts its
+        // fetching the contract at all, while matching — which accepts its
         // receipts under `force_wildcard` — waited for receipts that were
         // never requested.
         let store = fuel_store(&[("C1", &[ADDR_1]), ("C2", &[ADDR_2])]);

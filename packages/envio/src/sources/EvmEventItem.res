@@ -1,4 +1,4 @@
-// The item of a decoded EVM log that routed to `onEventRegistration`. Its
+// The item of a decoded EVM log that matched `onEventRegistration`. Its
 // `block` and `transaction` are left out of the payload: a batch reads them
 // from the chain's stores.
 let toInternalItem = (

@@ -207,7 +207,7 @@ impl EvmHyperSyncClient {
                 !selects_logs,
                 params.reorgable_from,
                 params.items_target,
-                |block, mask| buffer.holds_block_fields(block, mask),
+                |block, mask| buffer.has_block_fields(block, mask),
             )
             .map_err(map_err)?;
         let block_selection = &block_query.selection;
@@ -356,7 +356,7 @@ impl EvmHyperSyncClient {
 
 /// The whole per-query input for `get_items` beside the partition's address
 /// set: the block range and what it selects from each table. Log selections,
-/// field selection, and the routing index are all derived internally from the
+/// field selection, and the matching index are all derived internally from the
 /// registrations passed at construction and the set.
 #[napi(object)]
 pub struct ItemsQuery {
@@ -409,14 +409,13 @@ pub struct QueryResponse {
     pub rollback_guard: Option<RollbackGuard>,
 }
 
-/// What a page of items covered. The items themselves are in the `EventStore`
-/// returned beside it, and the rows they join to in the other stores.
+/// What a page covered. Its rows are in the `Page` returned beside it.
 #[napi(object, object_from_js = false)]
 pub struct ItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
-    /// Blocks the server returned for this query, before routing drops the ones
-    /// no item joins to. The server returns one block per number, so this is a
+    /// Blocks the server returned for this query, before the page drops the
+    /// ones no kept log joins to. The server returns one block per number, so this is a
     /// distinct count.
     pub response_blocks: i64,
 }
@@ -857,7 +856,7 @@ mod tests {
 
     /// Same shape as `full_log`, but on a topic0 no fixture registration pins —
     /// so it routes nowhere.
-    fn unrouted_log(block_number: u64) -> simple_types::Log {
+    fn unmatched_log(block_number: u64) -> simple_types::Log {
         let mut topic0 = [0u8; 32];
         topic0[31] = 1;
         let topic0 = hypersync_client::format::LogArgument::from(topic0);
@@ -1075,7 +1074,7 @@ mod tests {
     }
 
     #[test]
-    fn unrouted_logs_keep_a_hash_only_block_and_no_transaction() {
+    fn unmatched_logs_keep_a_hash_only_block_and_no_transaction() {
         // Block 1's log matches; block 2's doesn't. Both blocks and both
         // transactions come back from the server. Block 1 is kept in full and
         // its transaction kept; block 2's transaction is dropped, but the block
@@ -1096,7 +1095,7 @@ mod tests {
         let page = process_response(
             vec![vec![block(1), block(2)]],
             vec![vec![tx(1), tx(2)]],
-            vec![vec![full_log(1), unrouted_log(2)]],
+            vec![vec![full_log(1), unmatched_log(2)]],
             &zero_event_matcher(),
             REQUIRED_BLOCK_FIELDS,
             &[TransactionField::Hash],
@@ -1131,7 +1130,7 @@ mod tests {
     }
 
     #[test]
-    fn unrouted_logs_do_not_demand_their_block_and_transaction() {
+    fn unmatched_logs_do_not_demand_their_block_and_transaction() {
         // The mirror of `missing_transaction_when_not_returned`: the source
         // returned neither the block nor the transaction for this log, but it
         // routes nowhere, so nothing will ever read them and the page stands.
@@ -1140,13 +1139,13 @@ mod tests {
         let page = process_response(
             vec![],
             vec![],
-            vec![vec![unrouted_log(1)]],
+            vec![vec![unmatched_log(1)]],
             &zero_event_matcher(),
             REQUIRED_BLOCK_FIELDS,
             &[TransactionField::Hash],
             &[],
         )
-        .expect("an unrouted log's absent block and transaction are not missing fields");
+        .expect("an unmatched log's absent block and transaction are not missing fields");
 
         assert_eq!(page.events.len(), 0);
     }
@@ -1166,7 +1165,7 @@ mod tests {
         let page = process_response(
             vec![vec![block(1), block(2)]],
             vec![],
-            vec![vec![full_log(1), unrouted_log(2)]],
+            vec![vec![full_log(1), unmatched_log(2)]],
             &zero_event_matcher(),
             &[
                 BlockField::Number,
@@ -1186,7 +1185,7 @@ mod tests {
     fn keyless_transaction_is_dropped_unjudged() {
         // The source returned a transaction with no (blockNumber, txIndex), so
         // it joins to nothing; its absent `hash` must not fail a page whose
-        // routed item got the transaction it asked for.
+        // matched item got the transaction it asked for.
         let block = simple_types::Block {
             number: Some(1),
             hash: Some(Default::default()),

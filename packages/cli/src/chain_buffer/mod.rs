@@ -566,14 +566,6 @@ impl ChainBuffer {
         (tables.events.len() + tables.decoded.len()) as u32
     }
 
-    /// Memory the tables hold.
-    #[napi]
-    pub fn heap_bytes(&self) -> f64 {
-        let tables = self.tables();
-        (tables.events.heap_bytes() + tables.transactions.heap_bytes() + tables.blocks.heap_bytes())
-            as f64
-    }
-
     #[napi]
     pub fn get_block_hash(&self, block_number: i64) -> Option<String> {
         let tables = self.tables();
@@ -640,14 +632,6 @@ impl ChainBuffer {
         latest
     }
 
-    /// Whether the stored block holds every field of `mask`.
-    pub(crate) fn holds_block_fields(&self, block_number: u64, mask: u64) -> bool {
-        self.tables()
-            .blocks
-            .find(make_key(block_number, 0), 0)
-            .is_some_and(|row| row.fetched() & mask == mask)
-    }
-
     /// The time of a stored block. With `allow_skipped_slot`, an SVM slot
     /// with no block reads the time of the last slot below it that has one.
     #[napi]
@@ -661,11 +645,11 @@ impl ChainBuffer {
         if ecosystem != Ecosystem::Svm || !allow_skipped_slot {
             return None;
         }
-        tables
+        let timestamp = tables
             .blocks
-            .rows_in_block_range(0, number)
-            .filter_map(|row| ecosystem.block_timestamp(&row))
-            .last()
+            .rows_down_from_block(number)
+            .find_map(|row| ecosystem.block_timestamp(&row));
+        timestamp
     }
 
     #[napi]

@@ -7,7 +7,7 @@ type options = {
   onEventRegistrations: array<Internal.svmOnEventRegistration>,
   onBlockRegistrations?: array<Internal.onBlockRegistration>,
   clientTimeoutMillis: int,
-  // The chain's address index; the client reads it while routing.
+  // The chain's address index; the client reads it while matching.
   addressStore: AddressStore.t,
 }
 
@@ -29,7 +29,7 @@ let make = (
 
   // The whole per-(instruction, chain) registration set crosses the boundary
   // once at construction; the client derives instruction selections, field
-  // selections, Borsh decoders, and the routing index from it.
+  // selections, Borsh decoders, and the matching index from it.
   let client = SvmHyperSyncClient.make(
     ~url=endpointUrl,
     ~apiToken,

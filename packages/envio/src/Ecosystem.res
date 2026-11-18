@@ -2,9 +2,9 @@ type name = | @as("evm") Evm | @as("fuel") Fuel | @as("svm") Svm
 
 /** What a block handler's `fields` option selects from. */
 type onBlockFields = {
-  /** In store order: a field's index is its bit in the block store's mask. */
+  /** In mask order: a field's index is its bit in the blocks table's mask. */
   fields: array<string>,
-  /** The field keying a block in the store, which a handler always has. */
+  /** The field keying a block in the buffer, which a handler always has. */
   keyField: string,
   mask: Utils.Set.t<string> => float,
 }

@@ -144,7 +144,7 @@ pub struct NextPageParams {
     pub to_block_ceiling: i64,
     pub partition_id: String,
     /// The event registrations selecting logs, by chain-scoped id. Log
-    /// selections and the routing index are derived internally from the
+    /// selections and the matching index are derived internally from the
     /// registrations passed at construction. Empty selects no logs.
     pub on_event_registration_indexes: Vec<i64>,
     /// The block handlers selecting blocks, by chain-scoped id.
@@ -527,7 +527,7 @@ impl EvmRpcClient {
 
     /// Reads one page: decides the actual `toBlock` from this partition's
     /// AIMD-suggested interval, fans out one `eth_getLogs` per selection, then
-    /// fills the page's block and transaction stores for the fields the routed
+    /// fills the page's blocks and transactions for the fields the matched
     /// items selected. On success, grows the partition's interval when the full
     /// suggested range was applied. Everything a caller is expected to handle
     /// — a narrower range to retry, a backoff, a selection the provider cannot
@@ -713,7 +713,7 @@ impl EvmRpcClient {
     }
 
     /// Reads the logs, with the headers of the head blocks they are checked
-    /// against, then everything the routed items need to be materialised.
+    /// against, then everything the matched items need to be materialised.
     async fn read_page(&self, query: &PageQuery<'_>) -> Result<PageData, PageError> {
         let checked_blocks = head_checks::blocks_to_check(
             query.from_block,

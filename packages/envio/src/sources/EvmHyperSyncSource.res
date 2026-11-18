@@ -12,7 +12,7 @@ type options = {
   serializationFormat: HyperSyncClient.serializationFormat,
   enableQueryCaching: bool,
   logLevel: HyperSyncClient.logLevel,
-  // The chain's address index; the client reads it while routing.
+  // The chain's address index; the client reads it while matching.
   addressStore: AddressStore.t,
   // Read by the client while planning, to fetch only blocks it lacks.
   chainBuffer: ChainBuffer.t,

@@ -939,10 +939,10 @@ let bufferReadyCount = (fetchState: t, ~buffer: ChainBuffer.t, ~processingBlockN
       a->Array.everyWithIndex((step, index) => step === b->Array.getUnsafe(index))
 )
 
-// Whether two adjacent buffer items came from one log routed to two
-// registrations: everything the event store orders on except the registration
-// index is equal. Only meaningful on neighbours in store order, where such
-// items sit next to each other.
+// Whether two adjacent built items came from one log matching two
+// registrations: everything a build orders on except the registration index is
+// equal. Only meaningful on neighbours in build order, where such items sit
+// next to each other.
 let isSameLog = (a: Internal.item, b: Internal.item): bool =>
   a->Internal.getItemKind === 0 &&
   b->Internal.getItemKind === 0 &&
@@ -1038,7 +1038,7 @@ let switchToClientSideFiltering = (
 
 // The block a partition will have fetched to once everything on its pending
 // queue lands — not the block it has fetched to now. A backfill has to reach it
-// rather than the frontier: a query that was routed before this batch's
+// rather than the frontier: a query whose page was built before this batch's
 // addresses reached the address store carries no events for them, yet it still
 // advances the frontier over its range on arrival, and nothing else would ever
 // refetch it. An in-flight open-ended query has no toBlock of its own; it can't
@@ -2272,7 +2272,7 @@ let getNextQuery = (
 
     // Single scan over every partition, regardless of this tick's budget:
     // waiting-for-new-block bookkeeping, in-flight accounting, and the
-    // id → index routing the acceptance pass uses.
+    // id → index lookup the acceptance pass uses.
     //
     // In-flight means fetchedBlock === None: a query whose response already
     // landed has had its reservation released by ChainState even while it

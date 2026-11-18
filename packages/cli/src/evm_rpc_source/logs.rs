@@ -1,5 +1,5 @@
 //! Reads the raw logs one log selection matches over a block range, or in one
-//! block named by its hash. Routing them to registrations is the caller's next
+//! block named by its hash. Matching them to registrations is the caller's next
 //! step: everything here stays in the provider's own terms, `blockHash`
 //! included.
 

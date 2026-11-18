@@ -190,16 +190,6 @@ impl ColumnData {
         }
         self.presence.words.shrink_to_fit();
     }
-
-    fn heap_bytes(&self) -> usize {
-        let values = match &self.values {
-            Values::U32(values) => values.capacity() * 4,
-            Values::U64(values) => values.capacity() * 8,
-            Values::Fixed { bytes, .. } => bytes.capacity(),
-            Values::Var { ends, bytes } => ends.capacity() * 4 + bytes.capacity(),
-        };
-        values + self.presence.words.capacity() * 8
-    }
 }
 
 /// Sorted, deduplicated rows. Never changes once built.
@@ -238,17 +228,6 @@ impl Chunk {
 
     fn sort_key(&self, row: usize) -> (u64, u64) {
         (self.key(row), self.tiebreak(row))
-    }
-
-    fn heap_bytes(&self) -> usize {
-        self.keys.capacity() * 8
-            + self.tiebreaks.capacity() * 8
-            + self.fetched.capacity() * 8
-            + self
-                .columns
-                .iter()
-                .map(ColumnData::heap_bytes)
-                .sum::<usize>()
     }
 }
 
@@ -810,18 +789,19 @@ impl Table {
         })
     }
 
-    /// Memory held by the chunks the table references, each counted once.
-    pub(crate) fn heap_bytes(&self) -> usize {
-        let mut seen: Vec<*const Chunk> = Vec::new();
-        let mut total = 0;
-        for slice in &self.slices {
-            let pointer = Arc::as_ptr(&slice.chunk);
-            if !seen.contains(&pointer) {
-                seen.push(pointer);
-                total += slice.chunk.heap_bytes();
-            }
-        }
-        total
+    /// The rows of blocks at or below `to_block`, highest key first.
+    pub(crate) fn rows_down_from_block(
+        &self,
+        to_block: u64,
+    ) -> impl Iterator<Item = RowRef<'_>> + '_ {
+        let below = key_after_block(to_block);
+        self.slices.iter().rev().flat_map(move |slice| {
+            let end = slice.lower_bound(below);
+            (slice.start..end).rev().map(move |row| RowRef {
+                chunk: &slice.chunk,
+                row,
+            })
+        })
     }
 
     #[cfg(test)]

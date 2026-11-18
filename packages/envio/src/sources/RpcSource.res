@@ -9,7 +9,7 @@ type options = {
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
   onBlockRegistrations?: array<Internal.onBlockRegistration>,
   lowercaseAddresses: bool,
-  // The chain's address index; the client reads it while routing.
+  // The chain's address index; the client reads it while matching.
   addressStore: AddressStore.t,
   // Read by the client while planning, to fetch only what it lacks; the pages
   // it returns are separate, and the caller merges them.

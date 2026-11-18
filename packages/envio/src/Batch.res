@@ -18,8 +18,8 @@ type chainAfterBatch = {
 
 // A per-chain snapshot of the scanned block hashes still inside the reorg
 // threshold, taken when the batch is assembled. Immutable for the batch's
-// lifetime, unlike the live block store it is read from - so checkpoint hashes
-// can't shift under a concurrent store mutation. `blockNumbers` is ascending;
+// lifetime, unlike the chain buffer it is read from - so checkpoint hashes
+// can't shift under a concurrent merge. `blockNumbers` is ascending;
 // `hashByBlockNumber` is keyed by block number.
 type reorgHashSnapshot = {
   blockNumbers: array<int>,
@@ -59,7 +59,7 @@ type t = {
   checkpointBlockHashes: array<Null.t<string>>,
   // Items the checkpoint carries, which is what indexes `items`.
   checkpointItemsCount: array<int>,
-  // Logs the checkpoint carries: one log routed to several registrations is one
+  // Logs the checkpoint carries: one log matched to several registrations is one
   // event, however many items it made.
   checkpointEventsProcessed: array<int>,
   registeredAddresses: array<AddressRows.staged>,

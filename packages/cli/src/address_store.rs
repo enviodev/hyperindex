@@ -1038,7 +1038,7 @@ impl SetCache {
 /// (`addresses`, `entries`, `slice`, `merge`, the cache) reports them, on
 /// purpose. A rollback rebuilds the fetch state's partitions from filtered sets
 /// straight after, and a stale set that outlives that still can't fetch a dead
-/// address: `is_indexed_at` answers `false` for it, so every router drops the
+/// address: `is_indexed_at` answers `false` for it, so matching drops the
 /// items it would bring back. Pruning here instead would shift the offsets
 /// `start_block_groups` hands to `slice` mid-flight.
 #[napi]
@@ -1056,10 +1056,10 @@ impl AddressSet {
     }
 
     /// Whether this set holds the address under `contract_name` and it has
-    /// already started at `block_number` — the gate a real source's router
-    /// applies to a server-side address-filtered query: ownership answered by
-    /// the partition's own set, the temporal half by the store (a merged
-    /// partition's addresses don't all start at the same block).
+    /// already started at `block_number`, the gate the mock and simulate
+    /// sources apply to a partition's query: ownership answered by the set, the
+    /// temporal half by the store (a merged partition's addresses don't all
+    /// start at the same block).
     #[napi]
     pub fn contains_at(&self, address: String, contract_name: String, block_number: i64) -> bool {
         let store = self.store.read().unwrap();
@@ -1994,7 +1994,7 @@ mod tests {
                 // Still listed: only filter_by_registration_block prunes.
                 before.addresses_for_test(),
                 before.size(),
-                // But dead to every router, whichever gate it applies.
+                // But dead to the gate.
                 before.contains_at(B.to_string(), "C".to_string(), 600),
                 store.is_indexed_at(B.to_string(), "C".to_string(), 600),
                 before

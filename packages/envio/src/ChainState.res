@@ -477,7 +477,7 @@ let resetEntities = (cs: t, ~perChainEntities) => cs.entities = EntityTables.mak
 let sourceManager = (cs: t) => cs.sourceManager
 let chainConfig = (cs: t) => cs.chainConfig
 let shouldRollbackOnReorg = (cs: t) => cs.shouldRollbackOnReorg
-// Reorg-scan reads over the block store, for the rollback flow: the scanned
+// Reorg-scan reads over the buffer's blocks, for the rollback flow: the scanned
 // block numbers still inside the reorg threshold, and the highest of them whose
 // re-fetched hash still matches.
 let getReorgThresholdBlockNumbersBelow = (cs: t, ~blockNumber) =>

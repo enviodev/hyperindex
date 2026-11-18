@@ -47,8 +47,8 @@
     out->Dict.set(name, value->(Utils.magic: 'a => unknown))
 )
 
-// `block` and `transaction` are omitted; they're read from the stores when a
-// batch takes the item. Named-account `.activity` is attached then too.
+// `block` and `transaction` are omitted; the build joins them onto the item.
+// Named-account `.activity` is attached then too.
 // Unselected instruction keys must be omitted, not assigned `undefined`.
 let toSvmInstruction = (
   item: SvmHyperSyncClient.Items.item,
