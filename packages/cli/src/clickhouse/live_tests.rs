@@ -1250,6 +1250,25 @@ async fn the_indexer_runs_within_the_grants_envio_cloud_gives_it() {
             ),
         )
         .await?;
+        let never_committed = first_run
+            .write_batch(
+                &batch(
+                    &account,
+                    &[("a", Some(("mallory", "9")), 2)],
+                    &[(2, 1, 20)],
+                    (1, 2),
+                ),
+                Handoff {
+                    landed: None,
+                    commit: Some(Box::pin(async { false })),
+                    committed: None,
+                },
+            )
+            .await;
+        anyhow::ensure!(
+            matches!(never_committed, Err(WriteError::Gated)),
+            "the uncommitted write wasn't gated"
+        );
         let restarted = as_indexer();
         restarted
             .resume(&Resume {
@@ -1271,6 +1290,15 @@ async fn the_indexer_runs_within_the_grants_envio_cloud_gives_it() {
     }
     .await
     .map_err(|error| format!("{error:#}"));
+    let trimmed_rows_left = execute_on(
+        &writer_node,
+        format!(
+            "SELECT (SELECT count() FROM `{database}`.envio_history_Account WHERE \
+             envio_checkpoint_id > 1) + (SELECT count() FROM `{database}`.envio_checkpoints \
+             WHERE id > 1)"
+        ),
+    )
+    .await;
 
     execute_on(
         &writer_node,
@@ -1283,7 +1311,11 @@ async fn the_indexer_runs_within_the_grants_envio_cloud_gives_it() {
     )
     .await;
     assert_eq!(
-        (outcome, warnings.lock().unwrap().clone()),
-        (Ok(vec![row(&["a", "alice", "1"])]), Vec::<String>::new())
+        (outcome, trimmed_rows_left, warnings.lock().unwrap().clone()),
+        (
+            Ok(vec![row(&["a", "alice", "1"])]),
+            "0".to_string(),
+            Vec::<String>::new()
+        )
     );
 }
