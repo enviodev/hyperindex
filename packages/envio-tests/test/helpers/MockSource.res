@@ -136,6 +136,7 @@ type mockSourceState = {
   // The chain's own registrations, for items that name the event they are.
   chainRegistrationsRef: ref<array<Internal.onEventRegistration>>,
   isWildcard: bool,
+  mockEventContract: option<string>,
 }
 
 @get external getMockSourceState: Source.t => option<mockSourceState> = "__mockSourceState"
@@ -158,11 +159,27 @@ let installMockSourceRegistrations = (
       sources->Array.filterMap(source => source->getMockSourceState)
     | _ => []
     }
-    // A chain without contracts has no address index for the synthetic
-    // registration to live in, and nothing for a mock item to be delivered to.
-    switch chainConfig.contracts->Array.get(0) {
-    | Some(contract) if !(sourceStates->Utils.Array.isEmpty) =>
-      let key = chainConfig.id->ChainId.toString
+    let key = chainConfig.id->ChainId.toString
+    // Mock items without an event of their own reach their callbacks through
+    // the synthetic registration, so its contract's addresses are fetched like
+    // any other's. It joins the contract a source names, or else the config's
+    // first one. A chain without contracts has no address index for it to live
+    // in, and nothing for a mock item to be delivered to.
+    let contractName = switch sourceStates
+    ->Array.filterMap(state => state.mockEventContract)
+    ->Utils.Set.fromArray
+    ->Utils.Set.toArray {
+    | [] => chainConfig.contracts->Array.get(0)->Option.map(contract => contract.name)
+    | [contractName] => Some(contractName)
+    | contractNames =>
+      JsError.throwWithMessage(
+        `The mock sources of chain ${chainConfig.id->ChainId.toString} name different contracts for their mock event: ${contractNames->Array.join(
+            ", ",
+          )}. A chain has one.`,
+      )
+    }
+    switch contractName {
+    | Some(contractName) if !(sourceStates->Utils.Array.isEmpty) =>
       let registrations = switch registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
       | Some(registrations) => registrations
       | None =>
@@ -176,9 +193,7 @@ let installMockSourceRegistrations = (
       let mockRegistration = makeMockSourceRegistration(
         ~isWildcard=sourceStates->Array.some(state => state.isWildcard),
         ~index=registrations.onEventRegistrations->Array.length,
-        // Any contract from the chain keeps the synthetic registration in the
-        // address-dependent partition of a real contract.
-        ~contractName=contract.name,
+        ~contractName,
       )
       let chainRegistrations = registrations.onEventRegistrations->Array.copy
       registrations.onEventRegistrations->Array.push(mockRegistration)->ignore
@@ -234,6 +249,10 @@ type pendingItemsQuery = {
 // pending queries doesn't have to spell them out.
 @get external addresses: pendingItemsQuery => array<Address.t> = "addresses"
 @get external reorgableFrom: pendingItemsQuery => option<int> = "reorgableFrom"
+// The item count the indexer asked the source to stop at, if any.
+@get external itemsTarget: pendingItemsQuery => option<int> = "itemsTarget"
+// The registrations the query fetches for.
+@get external selection: pendingItemsQuery => FetchState.selection = "selection"
 
 // A block the chain has, for the block handlers of the query's selection that
 // run on it. Its number, timestamp and hash are those of `itemMock`'s block.
@@ -341,12 +360,21 @@ type t = {
   // The queries the last `expectItemsQueries` replied to, in entry order, for an
   // assert on what the indexer asked.
   repliedItemsQueries: array<pendingItemsQuery>,
-  // Lets the chain fetch empty ranges up to `blockNumber`: waits for each wave of
-  // queries and answers every one up to its own toBlock, never past
-  // `blockNumber`, until every partition it answers gets there. A query starting
-  // past `blockNumber` fails it as unlisted, like any query no entry names. For
-  // a test that just needs the chain somewhere.
+  // Lets the chain fetch up to `blockNumber`: waits for the indexer to settle,
+  // answers every query starting at or below `blockNumber` up to its own
+  // toBlock, never past `blockNumber`, with the `items` its range covers, and
+  // repeats until a settled indexer has no such query left, then fails unless
+  // the chain got to `blockNumber`. A query starting past `blockNumber` stays
+  // pending. Only inside a scenario, which hands the mock its indexer.
+  respondUpTo: (int, ~items: array<itemMock>=?) => promise<unit>,
+  // `respondUpTo` without items, for a test that just needs the chain somewhere.
   respondEmptyUpTo: int => promise<unit>,
+  // Helpers only: how `respondUpTo` waits for the indexer to settle, and reads
+  // the block the settled chain has fetched and processed up to.
+  attachIndexer: (
+    ~waitUntilIdle: unit => promise<unit>,
+    ~progressBlock: unit => promise<option<int>>,
+  ) => unit,
   // Empty-responds every pending query, up to its own toBlock unless
   // `~latestFetchedBlockNumber` says otherwise. Never waits, and throws with none.
   drainPendingItemsQueries: (~latestFetchedBlockNumber: int=?) => unit,
@@ -382,6 +410,15 @@ type t = {
   triggerHeightSubscription: int => unit,
   setHeightSubscriptionStatus: Source.heightSubscriptionStatus => unit,
   unsubscribeHeightSubscription: unit => unit,
+}
+
+// The pending item queries that aren't in `seen`, in arrival order, added to
+// `seen` so the next call returns only later ones. Only the test answers a
+// query, so none comes and goes between two calls without the test knowing.
+let takeNewPendingItemsQueries = (mock: t, ~seen: array<pendingItemsQuery>) => {
+  let fresh = mock.pendingItemsQueries->Array.filter(query => !(seen->Array.includes(query)))
+  fresh->Array.forEach(query => seen->Array.push(query)->ignore)
+  fresh
 }
 
 // The Rust ledger (`mock_source.rs`) that records every call the source takes
@@ -494,6 +531,9 @@ let make = (
   ~sourceFor=Source.Sync,
   ~pollingInterval=1000,
   ~isWildcard=false,
+  // The contract whose address partition the source's own registration joins.
+  // A contract without handlers that gets it has its addresses fetched.
+  ~mockEventContract=?,
   // Pre-configures the standing height answer at construction time, before
   // the mock is handed to the indexer - needed for a call that happens during
   // startup itself (e.g. resolving a `latest` start block), which completes
@@ -574,11 +614,14 @@ let make = (
     onEventRegistrationRef: ref(None),
     chainRegistrationsRef: ref([]),
     isWildcard,
+    mockEventContract,
   }
 
   // The ledger's pending queries as the objects a test holds, in the same
   // arrival order, so the same query stays the same object while it's pending.
   let pendingItemsQueries: array<pendingItemsQuery> = []
+  // Items a reply carried that the query doesn't fetch, for the failure report.
+  let droppedItems: array<string> = []
   let queriesById: Map.t<int, pendingItemsQuery> = Map.make()
   let repliedItemsQueries: array<pendingItemsQuery> = []
 
@@ -713,12 +756,41 @@ let make = (
     })
   }
 
+  // Like a real source, an item that names its emitter reaches an
+  // address-bound registration only through a query fetching that address,
+  // from the block it was registered at. A client-filtered contract is fetched
+  // address-free and gated on the chain's address store, which the mock can't
+  // see, so its items arrive as given, as does an item that names no emitter.
+  let isFetchedFor = (
+    item: itemMock,
+    registration: Internal.onEventRegistration,
+    ~selection: FetchState.selection,
+    ~addressSet,
+  ) => {
+    let contractName = registration.eventConfig.contractName
+    let isClientFiltered =
+      selection.clientFilteredContracts->Option.mapOr(false, names =>
+        names->Array.includes(contractName)
+      )
+    switch item.srcAddress {
+    | Some(srcAddress) if registration.dependsOnAddresses && !isClientFiltered =>
+      addressSet->AddressSet.containsAt(
+        srcAddress->Address.unsafeFromString,
+        contractName,
+        item.blockNumber,
+      )
+    | _ => true
+    }
+  }
+
   let makeItemsResponse = (
     response: itemsResponse,
+    ~partitionId,
     ~fromBlock,
     ~toBlock,
     ~knownHeight,
     ~selection: FetchState.selection,
+    ~addressSet: AddressSet.t,
   ): Source.blockRangeFetchResponse => {
     let items = response.items
     let blocks = response.blocks->Option.getOr([])
@@ -818,7 +890,21 @@ let make = (
             | registrations => registrations
             }
           }
-          registrations->Array.map(onEventRegistration => makeEventItem(item, onEventRegistration))
+          switch registrations->Array.filter(registration =>
+            item->isFetchedFor(registration, ~selection, ~addressSet)
+          ) {
+          | [] =>
+            droppedItems
+            ->Array.push(
+              `block ${item.blockNumber->Int.toString} log ${item.logIndex->Int.toString} from ${item.srcAddress->Option.getOr(
+                  "",
+                )} by partition ${partitionId} at ${fromBlock->Int.toString}..${latestFetchedBlockNumber->Int.toString}`,
+            )
+            ->ignore
+            []
+          | fetched =>
+            fetched->Array.map(onEventRegistration => makeEventItem(item, onEventRegistration))
+          }
         })
         ->Array.concat(
           blocks->Array.flatMap(({blockNumber, ?blockFields}) =>
@@ -845,6 +931,66 @@ let make = (
         totalTimeElapsed: 0.,
       },
       requestStats: response.requestStats->Option.getOr([]),
+    }
+  }
+
+  let notAttached = () =>
+    JsError.throwWithMessage(
+      "respondUpTo needs the indexer to wait for, which only a scenario hands the mock",
+    )
+  let waitUntilIdle = ref(async () => notAttached())
+  let progressBlock = ref(async () => notAttached())
+  let respondUpTo = async (blockNumber, ~items: array<itemMock>=[]) => {
+    switch items->Array.find(item => item.blockNumber > blockNumber) {
+    | Some(item) =>
+      JsError.throwWithMessage(
+        `respondUpTo(${blockNumber->Int.toString}) has an item at block ${item.blockNumber->Int.toString}, past the block it fetches to, so no query would deliver it.`,
+      )
+    | None => ()
+    }
+    let covered = Utils.Set.make()
+    let rec wave = async (~count) => {
+      if count > 1000 {
+        JsError.throwWithMessage(
+          `respondUpTo(${blockNumber->Int.toString}) still had queries to answer after 1000 waves`,
+        )
+      }
+      await waitUntilIdle.contents()
+      let due = pendingItemsQueries->Array.filter(query => query.fromBlock <= blockNumber)
+      if due->Utils.Array.notEmpty {
+        due->Array.forEach(query => {
+          let latest = switch query.toBlock {
+          | Bounded(toBlock) => Math.Int.min(toBlock, blockNumber)
+          | Unbounded => blockNumber
+          }
+          let inRange =
+            items->Array.filter(item =>
+              item.blockNumber >= query.fromBlock && item.blockNumber <= latest
+            )
+          inRange->Array.forEach(item => covered->Utils.Set.add(item)->ignore)
+          (query->control).respond({items: inRange, latestFetchedBlockNumber: latest})
+        })
+        await wave(~count=count + 1)
+      }
+    }
+    await wave(~count=0)
+    switch items->Array.find(item => !(covered->Utils.Set.has(item))) {
+    | Some(item) =>
+      JsError.throwWithMessage(
+        `respondUpTo(${blockNumber->Int.toString}) answered no query covering block ${item.blockNumber->Int.toString} log ${item.logIndex->Int.toString}, so no reply delivered it.`,
+      )
+    | None => ()
+    }
+    switch await progressBlock.contents() {
+    | Some(reached) if reached >= blockNumber => ()
+    | Some(reached) =>
+      JsError.throwWithMessage(
+        `respondUpTo(${blockNumber->Int.toString}) stopped with the chain at block ${reached->Int.toString}: no query asks for a block up to ${blockNumber->Int.toString}. A height the chain doesn't know yet, or a timer it waits on, holds it back.`,
+      )
+    | None =>
+      JsError.throwWithMessage(
+        `respondUpTo(${blockNumber->Int.toString}) found no progress block reported for the chain`,
+      )
     }
   }
 
@@ -976,41 +1122,11 @@ let make = (
     pendingItemsQueries,
     expectItemsQueries,
     repliedItemsQueries,
-    respondEmptyUpTo: async blockNumber => {
-      let rec wave = async (~count) => {
-        if count > 1000 {
-          JsError.throwWithMessage(
-            `respondEmptyUpTo(${blockNumber->Int.toString}) didn't get there in 1000 waves`,
-          )
-        }
-        await expectItemsQueries([
-          {where: query => query.fromBlock <= blockNumber, reply: LeavePending},
-        ])
-        // Every partition answered in this wave has to get there, not just one:
-        // a partition behind the others asks again from where it was left. A
-        // chunked partition gets there through its last chunk, so it is judged
-        // by the furthest of its queries, not by each one.
-        let furthestByPartition = Dict.make()
-        pendingItemsQueries
-        ->Array.copy
-        ->Array.forEach(query =>
-          if query.fromBlock <= blockNumber {
-            let latest = switch query.toBlock {
-            | Bounded(toBlock) => Math.Int.min(toBlock, blockNumber)
-            | Unbounded => blockNumber
-            }
-            (query->control).respond({items: [], latestFetchedBlockNumber: latest})
-            let furthest = furthestByPartition->Dict.get(query.partitionId)->Option.getOr(0)
-            furthestByPartition->Dict.set(query.partitionId, Math.Int.max(furthest, latest))
-          }
-        )
-        let allReached =
-          furthestByPartition->Dict.valuesToArray->Array.every(latest => latest === blockNumber)
-        if !allReached {
-          await wave(~count=count + 1)
-        }
-      }
-      await wave(~count=0)
+    respondUpTo,
+    respondEmptyUpTo: blockNumber => respondUpTo(blockNumber),
+    attachIndexer: (~waitUntilIdle as wait, ~progressBlock as progress) => {
+      waitUntilIdle := wait
+      progressBlock := progress
     },
     drainPendingItemsQueries: (~latestFetchedBlockNumber=?) =>
       ledger
@@ -1066,7 +1182,15 @@ let make = (
         }
       }
     },
-    describeState: () => ledger->Ledger.describeState,
+    describeState: () =>
+      ledger->Ledger.describeState ++
+        switch droppedItems {
+        | [] => ""
+        | dropped =>
+          `\n  items dropped by a query that doesn't fetch their address: ${dropped->Array.join(
+              "; ",
+            )}`
+        },
     dropPendingCalls: () => {
       ledger
       ->Ledger.dropPendingCalls
@@ -1141,7 +1265,7 @@ let make = (
           ~knownHeight,
           ~partitionId,
           ~selection,
-          ~itemsTarget as _,
+          ~itemsTarget,
           ~retry,
           ~logger as _,
         ) => {
@@ -1184,10 +1308,12 @@ let make = (
                 // Built first, so a reply that can't be built leaves the query pending.
                 let built = makeItemsResponse(
                   response,
+                  ~partitionId,
                   ~fromBlock,
                   ~toBlock,
                   ~knownHeight,
                   ~selection,
+                  ~addressSet,
                 )
                 settle()
                 resolve(built)
@@ -1206,6 +1332,14 @@ let make = (
             ->Utils.Object.definePropertyWithValue(
               "reorgableFrom",
               {enumerable: false, value: reorgableFrom},
+            )
+            ->Utils.Object.definePropertyWithValue(
+              "itemsTarget",
+              {enumerable: false, value: itemsTarget},
+            )
+            ->Utils.Object.definePropertyWithValue(
+              "selection",
+              {enumerable: false, value: selection},
             )
             ->Utils.Object.definePropertyWithValue(
               "__control",
