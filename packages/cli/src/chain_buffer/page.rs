@@ -217,6 +217,26 @@ impl Page {
         Ok(Page::from_data(data))
     }
 
+    /// A page of simulated SVM transactions, their account activity and
+    /// slots, which simulated instructions read from the buffer as fetched
+    /// ones do.
+    #[napi(factory)]
+    pub fn from_svm_js(
+        transactions: Vec<crate::chain_buffer::svm::SvmTxInput>,
+        activities: Vec<crate::chain_buffer::svm::SvmActivityInput>,
+        blocks: Vec<ObservedBlock>,
+    ) -> napi::Result<Self> {
+        let page = Page::from_js("svm".to_string(), blocks, None)?;
+        {
+            let mut data = page.data.lock().unwrap();
+            let mut rows = data.transactions.builder();
+            crate::chain_buffer::svm::push_simulated_transactions(&mut rows, transactions, activities)
+                .map_err(to_napi)?;
+            data.add_transactions(rows.finish());
+        }
+        Ok(page)
+    }
+
     /// Event rows: the logs, instructions or receipts the page keeps, and its
     /// decoded events.
     #[napi]

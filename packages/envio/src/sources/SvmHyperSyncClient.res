@@ -118,9 +118,9 @@ module Registration = {
 }
 
 module Items = {
-  // The whole per-query input beside the partition's address set: slot range
-  // and what it selects from each table. Instruction selections, field
-  // selection, and routing are derived on the Rust side.
+  // The whole per-query input: slot range and what it selects from each
+  // table. Instruction selections and field selection are derived on the Rust
+  // side.
   type query = {
     fromSlot: int,
     // Inclusive; None queries to the end of available data.
@@ -130,10 +130,6 @@ module Items = {
     itemsTarget?: int,
     onEventRegistrationIndexes: array<int>,
     onBlockRegistrationIndexes: array<int>,
-    // Program names to fetch address-free even though their registrations
-    // depend on addresses (client-side filtering). None/empty means every
-    // address-dependent program is filtered server-side.
-    clientFilteredContracts: option<array<string>>,
     // Slots at or above this one can still be reorged, so a page reaching
     // them reads every slot of its range, which also tells a skipped slot from
     // an unfetched one. Absent when the range is final.
@@ -175,10 +171,7 @@ type t = {
   getBlockHashes: (~blockNumbers: array<int>) => promise<(BufferPage.t, array<RequestStat.t>)>,
   // Returns the page of raw instructions some registration matches, with the
   // transactions and slots they read.
-  getItems: (
-    ~query: Items.query,
-    ~addressSet: AddressSet.t,
-  ) => promise<(Items.response, BufferPage.t)>,
+  getItems: (~query: Items.query) => promise<(Items.response, BufferPage.t)>,
 }
 
 @send

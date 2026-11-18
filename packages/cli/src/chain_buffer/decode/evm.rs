@@ -68,10 +68,7 @@ impl EvmDecoder {
             .map_while(|topic| *topic)
             .map(|topic| B256::try_from(topic).ok())
             .collect::<Option<Vec<_>>>()?;
-        let decoded = registration
-            .decoder
-            .decode_log_parts(topics.into_iter(), data)
-            .ok()?;
+        let decoded = registration.decoder.decode_log_parts(topics, data).ok()?;
         EvmParams::from_decoded(decoded, &registration.schema)
     }
 }

@@ -8,8 +8,9 @@ use anyhow::Result;
 use super::decoded::DecodedEvent;
 use super::deliver::{Columns, EMPTY_LINK};
 use super::evm::{self, log_column, LogView};
+use super::svm::InstructionView;
 use super::table::{make_key, RowRef, Snapshot};
-use super::Shared;
+use super::{decode, Ecosystem, Shared};
 use crate::evm_hypersync_source::types::EvmParams;
 use crate::js_value::JsTape;
 
@@ -245,6 +246,14 @@ impl Walker<'_> {
         for event in block_decoded.iter().filter(|event| event.is_block) {
             self.push_decoded(event, false);
         }
+        // A slot the chain skipped has no block: a handler that fetched its
+        // slots finds none there and runs without one.
+        let has_block = || {
+            self.snapshots
+                .blocks
+                .find(make_key(block_number, 0), 0)
+                .is_some()
+        };
         for handler in self.shared.schedule.handlers_on(block_number) {
             // A simulated block item stands in for the scheduled one, carrying
             // the block the test gave it.
@@ -254,10 +263,13 @@ impl Walker<'_> {
             {
                 continue;
             }
+            let skipped = self.shared.ecosystem == Ecosystem::Svm
+                && handler.block_field_mask.is_some()
+                && !has_block();
             self.items.push(Item::Block {
                 block_number,
                 registration: handler.index,
-                skipped: false,
+                skipped,
             });
         }
     }
@@ -278,6 +290,31 @@ impl Walker<'_> {
     }
 
     fn push_row(&mut self, row: &RowRef, contract_register_only: bool) {
+        match self.shared.ecosystem {
+            Ecosystem::Evm => self.push_log(row, contract_register_only),
+            Ecosystem::Svm => self.push_instruction(row, contract_register_only),
+            Ecosystem::Fuel => {}
+        }
+    }
+
+    fn push_instruction(&mut self, row: &RowRef, contract_register_only: bool) {
+        let Some(svm) = &self.shared.svm else { return };
+        let Some(call) = InstructionView::of_row(row) else {
+            return;
+        };
+        let store = svm.matcher.read_store();
+        let matched = svm.matcher.matches(&call, &store);
+        decode::svm::instruction_items(
+            &call,
+            &matched,
+            |registration| {
+                !contract_register_only || svm.matcher.has_contract_register(registration)
+            },
+            &mut self.items,
+        );
+    }
+
+    fn push_log(&mut self, row: &RowRef, contract_register_only: bool) {
         let Some(evm) = &self.shared.evm else { return };
         let Some(log) = LogView::of_row(row) else {
             return;

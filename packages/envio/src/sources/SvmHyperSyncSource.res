@@ -45,7 +45,7 @@ let make = (
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
-    ~addressSet,
+    ~addressSet as _,
     ~reorgableFrom,
     ~knownHeight,
     ~partitionId as _,
@@ -65,11 +65,10 @@ let make = (
       ?itemsTarget,
       onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
       onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
-      clientFilteredContracts: selection.clientFilteredContracts,
       ?reorgableFrom,
     }
 
-    let (resp, page) = try await client.getItems(~query, ~addressSet) catch {
+    let (resp, page) = try await client.getItems(~query) catch {
     | exn =>
       // A rate limit or a replica behind the head is recoverable and has its own
       // backoff and failover, so it must not be buried in a generic retry.

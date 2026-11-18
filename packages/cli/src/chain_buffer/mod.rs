@@ -8,9 +8,11 @@ pub(crate) mod decoded;
 pub(crate) mod deliver;
 pub(crate) mod evm;
 pub(crate) mod matching;
+pub(crate) mod matching_svm;
 pub(crate) mod merge;
 pub(crate) mod page;
 pub(crate) mod schedule;
+pub(crate) mod svm;
 pub(crate) mod table;
 pub(crate) mod walk;
 
@@ -23,6 +25,7 @@ use napi_derive::napi;
 
 use crate::address_store::AddressStore;
 use crate::evm_hypersync_source::types::OnEventRegistrationInput;
+use crate::svm_hypersync_source::selection::SvmProgramInput;
 use decoded::DecodedEvents;
 use deliver::{BuiltItems, Columns};
 use merge::HashMismatch;
@@ -55,7 +58,12 @@ impl Ecosystem {
                 evm::transactions_schema(),
                 evm::blocks_schema(),
             ],
-            Ecosystem::Svm | Ecosystem::Fuel => [
+            Ecosystem::Svm => [
+                svm::instructions_schema(),
+                svm::transactions_schema(),
+                svm::blocks_schema(),
+            ],
+            Ecosystem::Fuel => [
                 evm::logs_schema(),
                 evm::transactions_schema(),
                 evm::blocks_schema(),
@@ -64,15 +72,24 @@ impl Ecosystem {
     }
 
     pub(crate) fn hash_column(self) -> usize {
-        evm::BLOCK_HASH_COLUMN
+        match self {
+            Ecosystem::Svm => svm::BLOCK_HASH_COLUMN,
+            Ecosystem::Evm | Ecosystem::Fuel => evm::BLOCK_HASH_COLUMN,
+        }
     }
 
     pub(crate) fn hash_text(self, bytes: &[u8]) -> String {
-        evm::hash_text(bytes)
+        match self {
+            Ecosystem::Svm => svm::hash_text(bytes),
+            Ecosystem::Evm | Ecosystem::Fuel => evm::hash_text(bytes),
+        }
     }
 
     pub(crate) fn parse_hash(self, text: &str) -> Result<Vec<u8>> {
-        evm::hash_bytes(text)
+        match self {
+            Ecosystem::Svm => Ok(svm::hash_bytes(text)),
+            Ecosystem::Evm | Ecosystem::Fuel => evm::hash_bytes(text),
+        }
     }
 
     pub(crate) fn push_observed_block(
@@ -82,11 +99,19 @@ impl Ecosystem {
         hash: Option<&[u8]>,
         timestamp: Option<u64>,
     ) {
-        evm::push_observed_block(builder, number, hash, timestamp)
+        match self {
+            Ecosystem::Svm => svm::push_observed_block(builder, number, hash, timestamp),
+            Ecosystem::Evm | Ecosystem::Fuel => {
+                evm::push_observed_block(builder, number, hash, timestamp)
+            }
+        }
     }
 
     fn block_timestamp(self, row: &RowRef) -> Option<i64> {
-        evm::block_timestamp(row)
+        match self {
+            Ecosystem::Svm => svm::block_timestamp(row),
+            Ecosystem::Evm | Ecosystem::Fuel => evm::block_timestamp(row),
+        }
     }
 }
 
@@ -95,11 +120,16 @@ pub(crate) struct EvmRegistrations {
     pub(crate) decoder: decode::evm::EvmDecoder,
 }
 
+pub(crate) struct SvmRegistrations {
+    pub(crate) matcher: matching_svm::SvmMatcher,
+}
+
 /// What a build needs beside the rows, fixed when the buffer is made.
 pub(crate) struct Shared {
     pub(crate) ecosystem: Ecosystem,
     pub(crate) should_checksum: bool,
     pub(crate) evm: Option<EvmRegistrations>,
+    pub(crate) svm: Option<SvmRegistrations>,
     pub(crate) schedule: Schedule,
     /// By event registration index.
     transaction_masks: Vec<u64>,
@@ -141,7 +171,12 @@ impl Shared {
         indexes: &[u32],
         masks: &[u64],
     ) -> Result<Columns> {
-        evm::transaction_columns(rows, indexes, masks, self.should_checksum)
+        match self.ecosystem {
+            Ecosystem::Svm => svm::transaction_columns(rows, indexes, masks),
+            Ecosystem::Evm | Ecosystem::Fuel => {
+                evm::transaction_columns(rows, indexes, masks, self.should_checksum)
+            }
+        }
     }
 
     pub(crate) fn block_columns(
@@ -150,7 +185,12 @@ impl Shared {
         numbers: &[u64],
         masks: &[u64],
     ) -> Result<Columns> {
-        evm::block_columns(rows, numbers, masks, self.should_checksum)
+        match self.ecosystem {
+            Ecosystem::Svm => svm::block_columns(rows, numbers, masks),
+            Ecosystem::Evm | Ecosystem::Fuel => {
+                evm::block_columns(rows, numbers, masks, self.should_checksum)
+            }
+        }
     }
 }
 
@@ -167,6 +207,9 @@ pub struct ChainBufferConfig {
     pub ecosystem: String,
     pub should_checksum: bool,
     pub evm_registrations: Option<Vec<OnEventRegistrationInput>>,
+    /// The SVM programs with their instructions and registrations, as the
+    /// SVM HyperSync client takes them.
+    pub svm_registrations: Option<Vec<SvmProgramInput>>,
     pub contract_register_indexes: Vec<i64>,
     pub block_handlers: Vec<BlockHandlerInput>,
     /// By event registration index: the transaction fields each selects.
@@ -226,6 +269,23 @@ impl ChainBuffer {
         }
     }
 
+    /// The items of blocks `[from_block, to_block]`, built on this thread.
+    #[cfg(test)]
+    pub(crate) fn build_items_for_test(&self, from_block: u64, to_block: u64) -> Vec<walk::Item> {
+        let snapshots = self.snapshots(from_block, to_block);
+        walk::build(
+            &self.shared,
+            &snapshots,
+            walk::Range::Handlers {
+                from_block,
+                max_block: to_block,
+            },
+            usize::MAX,
+        )
+        .unwrap()
+        .items
+    }
+
     async fn build(
         &self,
         range: walk::Range,
@@ -270,6 +330,17 @@ impl ChainBuffer {
     #[napi(factory)]
     pub fn make(config: ChainBufferConfig, address_store: &AddressStore) -> napi::Result<Self> {
         let ecosystem = Ecosystem::parse(&config.ecosystem).map_err(to_napi)?;
+        let svm = match &config.svm_registrations {
+            Some(programs) => Some(SvmRegistrations {
+                matcher: matching_svm::SvmMatcher::new(
+                    programs,
+                    &config.contract_register_indexes,
+                    address_store,
+                )
+                .map_err(to_napi)?,
+            }),
+            None => None,
+        };
         let evm = match &config.evm_registrations {
             Some(registrations) => Some(EvmRegistrations {
                 matcher: matching::EvmMatcher::new(
@@ -298,6 +369,7 @@ impl ChainBuffer {
                 ecosystem,
                 should_checksum: config.should_checksum,
                 evm,
+                svm,
                 schedule: Schedule::new(&config.block_handlers).map_err(to_napi)?,
                 transaction_masks: config.transaction_masks.iter().map(|m| *m as u64).collect(),
                 event_block_masks: config.event_block_masks.iter().map(|m| *m as u64).collect(),

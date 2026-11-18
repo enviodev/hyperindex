@@ -19,7 +19,7 @@ type config = {
   ecosystem: string,
   shouldChecksum: bool,
   evmRegistrations?: array<HyperSyncClient.Registration.input>,
-  svmRegistrations?: unknown,
+  svmRegistrations?: array<SvmHyperSyncClient.Registration.program>,
   fuelRegistrations?: unknown,
   contractRegisterIndexes: array<int>,
   blockHandlers: array<BlockItem.blockHandlerInput>,
@@ -200,6 +200,19 @@ let makeForChain = (
           ->HyperSyncClient.Registration.fromOnEventRegistrations,
         )
       | Svm | Fuel => None
+      },
+      svmRegistrations: ?switch ecosystem {
+      | Svm =>
+        Some(
+          onEventRegistrations
+          ->(
+            Utils.magic: array<Internal.onEventRegistration> => array<
+              Internal.svmOnEventRegistration,
+            >
+          )
+          ->SvmHyperSyncClient.Registration.fromOnEventRegistrations,
+        )
+      | Evm | Fuel => None
       },
       contractRegisterIndexes: onEventRegistrations->contractRegisterIndexesOf,
       blockHandlers: onBlockRegistrations->BlockItem.toBlockHandlerInputs,
