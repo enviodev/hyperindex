@@ -111,7 +111,7 @@ type Token {
 }
 ```
 
-Without `@config`, `BigInt` and `BigDecimal` use unconstrained PostgreSQL
+Without `@config`, scalar `BigInt` and `BigDecimal` fields use unconstrained PostgreSQL
 `NUMERIC` (subject to PostgreSQL's numeric limits). They do not default to a
 76-digit precision or a scale of 32. For `BigInt`, use `@config(precision: N)`.
 For `BigDecimal`, both arguments are required: `@config(precision: N, scale: M)`.
@@ -119,12 +119,18 @@ Precision constrains the total number of decimal digits, including digits to
 the left of the decimal point; a complete `uint256` range needs 78 digits, so
 precision 76 is not enough.
 
+Unconfigured numeric lists use PostgreSQL `TEXT[]` when Hasura is enabled,
+because Hasura cannot read `NUMERIC[]`. With Hasura disabled, those lists use
+`NUMERIC[]`. This workaround does not apply to scalar fields or explicitly
+configured numeric lists, which retain their numeric types.
+
 ### ClickHouse numeric storage
 
 ClickHouse uses a different mapping. The current RowBinary encoder supports
-Decimal widths up to 128 bits, so configured precision must be between 1 and 38
-for a numeric Decimal column. Unconfigured or wider fields are stored as decimal
-text in `String` columns:
+Decimal widths up to 128 bits, so a numeric Decimal column requires configured
+precision between 1 and 38 and scale no greater than precision. Unconfigured
+fields, wider fields, and configurations with scale above precision are stored
+as decimal text in `String` columns:
 
 | Schema field                                               | ClickHouse column |
 | ---------------------------------------------------------- | ----------------- |
@@ -133,6 +139,7 @@ text in `String` columns:
 | `BigInt! @config(precision: 39)` (or any higher precision) | `String`          |
 | `BigDecimal!`                                              | `String`          |
 | `BigDecimal! @config(precision: 30, scale: 15)`            | `Decimal(30, 15)` |
+| `BigDecimal! @config(precision: 10, scale: 12)`            | `String`          |
 
 Nullable numeric scalar fields wrap the column type in `Nullable(...)`.
 Non-null numeric lists apply the mapping to their elements. Nullable lists
