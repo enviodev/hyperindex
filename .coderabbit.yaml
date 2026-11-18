@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Keep the dashboard settings for everything not set here.
+inheritance: true
+reviews:
+  auto_review:
+    # Review only PRs labeled `coderabbit`. The gate-coderabbit workflow adds
+    # it for maintainers; a maintainer adds it by hand to approve anyone else.
+    enabled: false
+    labels: ["coderabbit"]

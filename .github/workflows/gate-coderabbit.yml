@@ -1,0 +1,24 @@
+name: Gate CodeRabbit
+
+# pull_request_target runs for fork PRs without approval and has a write token.
+# It is safe only because no step checks out or runs the PR's code.
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  label:
+    if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: context.payload.pull_request.number,
+              labels: ["coderabbit"],
+            });
