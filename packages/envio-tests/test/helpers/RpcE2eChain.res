@@ -34,15 +34,19 @@ let blockJson = (blockNumber, ~extraFields="") =>
         ->blockHash}"${extraFields}}`,
   )
 
-let logJson = ({blockNumber, value, logIndex, ?sighash}) =>
+// `withBlockTimestamp` serves the log's `blockTimestamp` the way geth 1.16+
+// does, equal to the block's own `timestamp` in `blockJson`.
+let logJson = ({blockNumber, value, logIndex, ?sighash}, ~withBlockTimestamp=false) => {
+  let blockTimestamp = withBlockTimestamp ? `,"blockTimestamp":"${blockNumber->hex}"` : ""
   JSON.parseOrThrow(
     `{"address":"${contractAddress}","topics":["${sighash->Option.getOr(
         transferSighash,
       )}","${sender->addressTopic}","${recipient->addressTopic}"],"data":"${value
       ->hex
       ->dropPrefix
-      ->padded}","blockNumber":"${blockNumber->hex}","transactionHash":"${blockNumber->transactionHash}","transactionIndex":"0x0","blockHash":"${blockNumber->blockHash}","logIndex":"${logIndex->hex}","removed":false}`,
+      ->padded}","blockNumber":"${blockNumber->hex}","transactionHash":"${blockNumber->transactionHash}","transactionIndex":"0x0","blockHash":"${blockNumber->blockHash}"${blockTimestamp},"logIndex":"${logIndex->hex}","removed":false}`,
   )
+}
 
 let hexParam = json => {
   let quantity = json->JSON.Decode.string->Option.getOrThrow(~message="expected a hex quantity")
@@ -55,7 +59,15 @@ let hexParam = json => {
 // The `result` this chain answers a JSON-RPC method with. `receiptFor` is the
 // chain's receipt for a transaction hash; without one the chain serves no
 // receipts, which is what a selection reading only log-derived fields expects.
-let resultFor = (~transfers, ~height, ~blockFields=_ => "", ~receiptFor=?, ~method, ~params) => {
+let resultFor = (
+  ~transfers,
+  ~height,
+  ~blockFields=_ => "",
+  ~receiptFor=?,
+  ~logsWithBlockTimestamp=false,
+  ~method,
+  ~params,
+) => {
   let arg = i => params->JSON.Decode.array->Option.getOrThrow->Array.getUnsafe(i)
   switch method {
   | "eth_blockNumber" => JSON.String(height->hex)
@@ -81,7 +93,7 @@ let resultFor = (~transfers, ~height, ~blockFields=_ => "", ~receiptFor=?, ~meth
     JSON.Array(
       transfers
       ->Array.filter(({blockNumber}) => blockNumber >= fromBlock && blockNumber <= toBlock)
-      ->Array.map(logJson),
+      ->Array.map(transfer => transfer->logJson(~withBlockTimestamp=logsWithBlockTimestamp)),
     )
   | _ => JsError.throwWithMessage(`Unexpected RPC method ${method}`)
   }
