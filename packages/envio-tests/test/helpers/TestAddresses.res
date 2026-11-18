@@ -249,11 +249,12 @@ let query = (q: FetchState.query): FetchState.query => {
   addresses: q.addresses->comparable,
 }
 
-// A fetch state with the items its store holds: the store is a handle, so it
-// compares by its items. An expected record built by hand passes its store.
+// A fetch state with the block of each row its store holds: the store is a
+// handle, so it compares by its rows. An expected record built by hand passes
+// its store.
 type bufferedFetchState = {
   fetchState: FetchState.t,
-  bufferedItems: array<Internal.item>,
+  bufferedBlockNumbers: array<int>,
 }
 
 let fetchState = (fs: FetchState.t, ~eventStore=?): bufferedFetchState => {
@@ -266,7 +267,7 @@ let fetchState = (fs: FetchState.t, ~eventStore=?): bufferedFetchState => {
       ...fs,
       optimizedPartitions: partitions(fs.optimizedPartitions),
     },
-    bufferedItems: fs->TestFetchState.bufferedItems,
+    bufferedBlockNumbers: fs->TestFetchState.bufferedBlockNumbers,
   }
 }
 

@@ -54,9 +54,8 @@ type fieldRead = {handle: int, rows: fieldRows}
 
 // Items on their way to JS: the arenas behind `handle` hold `items`, a row per
 // item in processing order, then each registration's `params`, then `fuel` and
-// `svm`, then for a joined take `links`: each item's row among the
-// transactions and blocks it reads, whose keys `transactionKeys` and
-// `blockKeys` give. `tapes` holds what has no column shape.
+// `svm`, then `links`: each item's row among the transactions and blocks it
+// reads, whose keys `transactionKeys` and `blockKeys` give. `tapes` holds what has no column shape.
 type storedRows = {
   handle: int,
   items: arenaShape,
@@ -64,7 +63,7 @@ type storedRows = {
   // The whole item record of each Fuel receipt and SVM instruction row.
   fuel: arenaShape,
   svm: arenaShape,
-  links?: arenaShape,
+  links: arenaShape,
   transactionKeys?: transactionKeys,
   blockKeys?: blockKeys,
   tapes: array<unknown>,
@@ -189,9 +188,6 @@ external insertBlockItems: (
 @send
 external eventsOfRegistrationsRaw: (t, array<int>, joinedFields) => storedRows =
   "eventsOfRegistrations"
-
-// Copies of every row, in order.
-@send external allItemsRaw: t => storedRows = "allItems"
 
 // Drops every row above the block.
 @send external rollback: (t, int) => unit = "rollback"

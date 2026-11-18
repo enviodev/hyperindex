@@ -2,14 +2,23 @@ open Vitest
 
 let chainId = 1->ChainId.fromInt
 
-let noRegistrations = TestEventStore.noRegistrations(~chainId)
+let registration = {
+  "index": 0,
+  "fieldSelection": {"transactionMask": 0., "blockMask": 0.},
+}->(Utils.magic: {..} => Internal.onEventRegistration)
+
+let context: StoredItems.context = {
+  chainId,
+  onEventRegistrations: [registration],
+  onBlockRegistrations: [],
+}
 
 let eventWithPayload = (payload: dict<unknown>): Internal.item => Internal.Event({
   chainId,
   blockNumber: 1,
   logIndex: 0,
   transactionIndex: 0,
-  onEventRegistration: {"index": 0}->(Utils.magic: {"index": int} => Internal.onEventRegistration),
+  onEventRegistration: registration,
   payload: payload->(Utils.magic: dict<unknown> => Internal.eventPayload),
 })
 
@@ -28,11 +37,16 @@ describe("EventStore.fromJsItems", () => {
       "absent": %raw(`undefined`),
       "text": "0xabc"->(Utils.magic: string => unknown),
     }
-    let item = eventWithPayload(payload)
+    let taken =
+      TestEventStore.pageOf([eventWithPayload(payload->Dict.copy)])->TestEventStore.takeAll(
+        ~context,
+      )
 
-    t.expect(
-      TestEventStore.pageOf([item])->TestEventStore.itemsOf(~context=noRegistrations),
-    ).toEqual([item])
+    // A payload without its own transaction and block reads them from the
+    // chain's stores; with no field selected, each is an empty object.
+    payload->Dict.set("transaction", %raw(`{}`))
+    payload->Dict.set("block", %raw(`{}`))
+    t.expect(taken).toEqual([eventWithPayload(payload)])
   })
 
   it("refuses an object that isn't plain data instead of storing its keys alone", t => {

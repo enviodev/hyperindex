@@ -75,7 +75,7 @@ let onBlockRegistrations = () => {
 let named = name => onBlockRegistrations()->Array.filter(reg => reg.name === name)
 
 let responseItems = (response: Source.blockRangeFetchResponse) =>
-  response.items->TestEventStore.itemsOf(
+  response.items->TestEventStore.takeAll(
     ~context={
       chainId: 1->ChainId.fromInt,
       onEventRegistrations: [],

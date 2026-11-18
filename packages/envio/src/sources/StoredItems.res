@@ -195,15 +195,12 @@ type fieldsToRead = {
   }
 )
 
-// Every row as an item. A JS-built row gets its registration back from
-// `jsItemRegistration`, given the item's kind (0 for an event) and the index
-// it was stored under.
+// Every row as an item, and what the items read from the chain's stores.
 %%private(
-  let buildReading = (
-    rows: EventStore.storedRows,
-    ~context: context,
-    ~jsItemRegistration: (~kind: int, ~index: int) => unknown,
-  ): (array<Internal.item>, option<fieldsToRead>) =>
+  let buildReading = (rows: EventStore.storedRows, ~context: context): (
+    array<Internal.item>,
+    fieldsToRead,
+  ) =>
     EventStore.readHandle(rows.handle, buffers => {
       let cursor = ref(0)
       let columns = Reading.columns(
@@ -243,30 +240,27 @@ type fieldsToRead = {
         ->Int.bitwiseAnd(7)
         ->(Utils.magic: int => EventStore.format) {
         | EvmLog =>
-          let item: EvmEventItem.t = {
-            logIndex: logIndexes->numberAt(row)->Float.toInt,
-            srcAddress: srcAddresses->valueAt(row),
-            blockNumber: blockNumbers->numberAt(row)->Float.toInt,
-            transactionIndex: transactionIndexes->numberAt(row)->Float.toInt,
-            onEventRegistrationIndex: registrationIndex,
-            params: params
+          EvmEventItem.toInternalItem(
+            ~logIndex=logIndexes->numberAt(row)->Float.toInt,
+            ~srcAddress=srcAddresses->valueAt(row),
+            ~blockNumber=blockNumbers->numberAt(row)->Float.toInt,
+            ~transactionIndex=transactionIndexes->numberAt(row)->Float.toInt,
+            ~params=params
             ->Array.getUnsafe(registrationIndex)
             ->Array.getUnsafe(row->detailRow)
             ->(Utils.magic: dict<unknown> => Internal.eventParams),
-          }
-          item->EvmEventItem.toInternalItem(
             ~onEventRegistration=context.onEventRegistrations
             ->Array.getUnsafe(registrationIndex)
             ->(Utils.magic: Internal.onEventRegistration => Internal.evmOnEventRegistration),
             ~chainId=context.chainId,
           )
         | Block =>
-          let item: BlockItem.t = {
+          let skipped: bool = skipped->valueAt(row)
+          Internal.Block({
+            onBlockRegistration: context.onBlockRegistrations->Array.getUnsafe(registrationIndex),
             blockNumber: blockNumbers->numberAt(row)->Float.toInt,
-            onBlockRegistrationIndex: registrationIndex,
-            skipped: skipped->valueAt(row),
-          }
-          item->BlockItem.toInternalItem(~onBlockRegistrations=context.onBlockRegistrations)
+            skipped: ?(skipped ? Some(true) : None),
+          })
         | FuelReceipt =>
           let item =
             fuel
@@ -287,51 +281,45 @@ type fieldsToRead = {
           )
         | JsItem =>
           let item = tapeAt(row)->(Utils.magic: unknown => dict<unknown>)
-          let kind = item->Dict.getUnsafe("kind")->(Utils.magic: unknown => int)
-          item->Dict.set(
-            kind === 0 ? "onEventRegistration" : "onBlockRegistration",
-            jsItemRegistration(~kind, ~index=registrationIndex),
-          )
+          switch item->Dict.getUnsafe("kind")->(Utils.magic: unknown => int) {
+          | 0 =>
+            item->Dict.set(
+              "onEventRegistration",
+              context.onEventRegistrations
+              ->Array.getUnsafe(registrationIndex)
+              ->(Utils.magic: Internal.onEventRegistration => unknown),
+            )
+          | _ =>
+            item->Dict.set(
+              "onBlockRegistration",
+              context.onBlockRegistrations
+              ->Array.getUnsafe(registrationIndex)
+              ->(Utils.magic: Internal.onBlockRegistration => unknown),
+            )
+          }
           item->(Utils.magic: dict<unknown> => Internal.item)
         }
       })
-      let toRead = rows.links->Option.map(links => {
-        let columns = Reading.columns(
-          ~buffers,
-          ~cursor,
-          ~kinds=links.kinds,
-          ~elementKinds=links.elementKinds,
-          ~rows=links.rows,
-        )
-        // Named as `link_columns` in `event_store.rs`.
-        let column = name => columns->Array.getUnsafe(links.names->Array.indexOf(name))
+      let links = rows.links
+      let linkColumns = Reading.columns(
+        ~buffers,
+        ~cursor,
+        ~kinds=links.kinds,
+        ~elementKinds=links.elementKinds,
+        ~rows=links.rows,
+      )
+      // Named as `link_columns` in `event_store.rs`.
+      let linkColumn = name => linkColumns->Array.getUnsafe(links.names->Array.indexOf(name))
+      (
+        items,
         {
-          transactionRows: column("transactionRow"),
-          blockRows: column("blockRow"),
+          transactionRows: linkColumn("transactionRow"),
+          blockRows: linkColumn("blockRow"),
           transactionKeys: rows.transactionKeys,
           blockKeys: rows.blockKeys,
-        }
-      })
-      (items, toRead)
+        },
+      )
     })
-)
-
-let build = (rows, ~context, ~jsItemRegistration) => {
-  let (items, _) = rows->buildReading(~context, ~jsItemRegistration)
-  items
-}
-
-%%private(
-  let toItemsReading = (rows: EventStore.storedRows, ~context: context) =>
-    rows->buildReading(~context, ~jsItemRegistration=(~kind, ~index) =>
-      kind === 0
-        ? context.onEventRegistrations
-          ->Array.getUnsafe(index)
-          ->(Utils.magic: Internal.onEventRegistration => unknown)
-        : context.onBlockRegistrations
-          ->Array.getUnsafe(index)
-          ->(Utils.magic: Internal.onBlockRegistration => unknown)
-    )
 )
 
 // Items with the read that gives them their transactions and blocks before
@@ -342,11 +330,10 @@ let build = (rows, ~context, ~jsItemRegistration) => {
     unit => promise<unit>,
   ) =>
     switch toRead {
-    | Some({transactionKeys: None, blockKeys: None} as toRead) =>
+    | {transactionKeys: None, blockKeys: None} =>
       items->attach(toRead, ~transactions=[], ~blocks=[])
       (items, () => Promise.resolve())
-    | Some(toRead) => (items, () => items->readFields(toRead, ~fields))
-    | None => (items, () => Promise.resolve())
+    | _ => (items, () => items->readFields(toRead, ~fields))
     }
 )
 
@@ -355,7 +342,7 @@ let build = (rows, ~context, ~jsItemRegistration) => {
 let takeWithFields = (store: EventStore.t, count: int, ~context: context, ~fields: fields) =>
   store
   ->EventStore.takeJoinedRaw(count, joinedFields(context))
-  ->toItemsReading(~context)
+  ->buildReading(~context)
   ->withFields(~fields)
 
 // The events routed to the given registrations, which the store keeps, with
@@ -368,5 +355,5 @@ let eventsOfRegistrations = (
 ) =>
   store
   ->EventStore.eventsOfRegistrationsRaw(registrationIndexes, joinedFields(context))
-  ->toItemsReading(~context)
+  ->buildReading(~context)
   ->withFields(~fields)

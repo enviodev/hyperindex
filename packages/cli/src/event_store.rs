@@ -1212,7 +1212,7 @@ impl Chunk {
 
     /// Hands the arenas to JavaScript to read, with the links and keys `joined`
     /// planned for them.
-    fn lay_out(mut self, joined: Option<Joined>) -> Result<StoredRows> {
+    fn lay_out(mut self, mut joined: Joined) -> Result<StoredRows> {
         // `take` hands over a chunk whole only from its first row, and every
         // other result is a fresh chunk.
         debug_assert_eq!(self.start, 0);
@@ -1237,13 +1237,8 @@ impl Chunk {
         arenas.push(self.fuel);
         let svm = seal(&svm_columns(), &mut self.svm)?;
         arenas.push(self.svm);
-        let (mut links, mut transaction_keys, mut block_keys) = (None, None, None);
-        if let Some(mut joined) = joined {
-            links = Some(seal(&link_columns(), &mut joined.links)?);
-            arenas.push(joined.links);
-            transaction_keys = joined.transaction_keys;
-            block_keys = joined.block_keys;
-        }
+        let links = seal(&link_columns(), &mut joined.links)?;
+        arenas.push(joined.links);
 
         let handle = hold(arenas)?;
         Ok(StoredRows {
@@ -1253,8 +1248,8 @@ impl Chunk {
             fuel,
             svm,
             links,
-            transaction_keys,
-            block_keys,
+            transaction_keys: joined.transaction_keys,
+            block_keys: joined.block_keys,
             tapes: self.tapes,
         })
     }
@@ -1293,8 +1288,7 @@ pub struct ParamsShape {
 
 /// Items on their way to JS. The arenas behind `handle` hold `items`, one row
 /// per item in processing order; then each registration's EVM `params`; then
-/// `fuel` and `svm`, the whole item record of each such row; then, for a
-/// joined take, `links`. `tapes` carries what has no column shape.
+/// `fuel` and `svm`, the whole item record of each such row; then `links`. `tapes` carries what has no column shape.
 /// `EventStore.lendRows` lends the arenas' buffers in that order, and
 /// `EventStore.releaseRows` takes them back.
 #[napi(object, object_from_js = false)]
@@ -1304,10 +1298,10 @@ pub struct StoredRows {
     pub params: Vec<ParamsShape>,
     pub fuel: ArenaShape,
     pub svm: ArenaShape,
-    /// For a joined result, each item's row among the transactions and the
-    /// blocks it reads from the chain's stores, null where it reads none;
-    /// `EMPTY_LINK` gives it an empty object of its own.
-    pub links: Option<ArenaShape>,
+    /// Each item's row among the transactions and the blocks it reads from
+    /// the chain's stores, null where it reads none; `EMPTY_LINK` gives it an
+    /// empty object of its own.
+    pub links: ArenaShape,
     /// The keys and selected fields of those transactions, for
     /// `TransactionStore.readFields`; absent when no item selects any.
     pub transaction_keys: Option<TransactionKeys>,
@@ -1723,13 +1717,6 @@ impl EventStore {
         count
     }
 
-    /// Removes the first `count` rows and lays them out, with no join.
-    #[cfg(test)]
-    pub fn take(&self, count: u32) -> napi::Result<StoredRows> {
-        let taken = self.rows().take(count as usize);
-        taken.lay_out(None).map_err(to_napi)
-    }
-
     /// Removes the first `count` rows and lays them out for JS, with what each
     /// item reads from the chain's transaction and block stores planned: its
     /// links, and the keys the stores read.
@@ -1737,7 +1724,7 @@ impl EventStore {
     pub fn take_joined(&self, count: u32, fields: JoinedFields) -> napi::Result<StoredRows> {
         let taken = self.rows().take(count as usize);
         let joined = taken.join(&fields);
-        taken.lay_out(Some(joined)).map_err(to_napi)
+        taken.lay_out(joined).map_err(to_napi)
     }
 
     /// The event rows routed to any of `registration_indexes`, in order, laid
@@ -1753,14 +1740,7 @@ impl EventStore {
                 && registration_indexes.contains(&chunk.registrations[row])
         });
         let joined = selected.join(&fields);
-        selected.lay_out(Some(joined)).map_err(to_napi)
-    }
-
-    /// Every row, in order, laid out for JS. The rows stay.
-    #[napi]
-    pub fn all_items(&self) -> napi::Result<StoredRows> {
-        let all = self.rows().select(|_, _| true);
-        all.lay_out(None).map_err(to_napi)
+        selected.lay_out(joined).map_err(to_napi)
     }
 
     /// Drops every row above `target_block_number`.
@@ -1888,7 +1868,7 @@ mod tests {
     }
 
     fn take_all(store: &EventStore) -> Vec<JsValue> {
-        read(store.take(u32::MAX).unwrap())
+        read(store.take_joined(u32::MAX, no_fields()).unwrap())
     }
 
     #[test]
@@ -1914,17 +1894,24 @@ mod tests {
 
     #[test]
     fn orders_svm_instructions_parent_before_child() {
+        // A deep call of one transaction and a shallower call of a later one
+        // stay two rows; an exact repeat is one.
         let store = EventStore::from_rows(vec![
             svm(7, 3, &[1, 0], "child"),
             svm(7, 3, &[2], "sibling"),
             svm(7, 3, &[1], "parent"),
+            svm(7, 3, &[1, 0], "child again"),
+            svm(7, 16, &[0, 0], "later transaction"),
+            svm(7, 0, &[0, 0, 0], "deep call"),
         ]);
         assert_eq!(
             take_all(&store),
             vec![
+                JsValue::str("deep call"),
                 JsValue::str("parent"),
                 JsValue::str("child"),
-                JsValue::str("sibling")
+                JsValue::str("sibling"),
+                JsValue::str("later transaction"),
             ]
         );
     }
@@ -2047,7 +2034,10 @@ mod tests {
         store.merge(&EventStore::from_rows(vec![evm(3, 1, "3")]));
         let chunks = store.rows().chunks.len();
         assert_eq!(
-            (chunks, describe(store.take(u32::MAX).unwrap())),
+            (
+                chunks,
+                describe(store.take_joined(u32::MAX, no_fields()).unwrap())
+            ),
             (
                 2,
                 vec![
@@ -2091,7 +2081,7 @@ mod tests {
         store.rollback(3);
         store.merge(&EventStore::from_rows(vec![svm_at(6, &[2, 3], "f")]));
         assert_eq!(
-            describe(store.take(u32::MAX).unwrap()),
+            describe(store.take_joined(u32::MAX, no_fields()).unwrap()),
             vec![
                 "svm 1 [0.0] a Str(\"a args\")".to_string(),
                 "svm 2 [0.0, 1.0] b Str(\"b args\")".to_string(),
@@ -2111,7 +2101,7 @@ mod tests {
         ]);
         store.merge(&EventStore::from_rows(vec![svm_at(4, &[0], "d")]));
         store.rollback(3);
-        let rows = store.take(u32::MAX).unwrap();
+        let rows = store.take_joined(u32::MAX, no_fields()).unwrap();
         let tapes = rows.tapes.len();
         describe(rows);
         assert_eq!(tapes, 3);
@@ -2157,8 +2147,8 @@ mod tests {
             evm(2, 0, "2"),
             evm(3, 1, "3 refetched"),
         ]));
-        let first = describe(store.take(2).unwrap());
-        let rest = describe(store.take(u32::MAX).unwrap());
+        let first = describe(store.take_joined(2, no_fields()).unwrap());
+        let rest = describe(store.take_joined(u32::MAX, no_fields()).unwrap());
         assert_eq!(
             (first, rest),
             (
@@ -2451,7 +2441,11 @@ mod tests {
     #[test]
     fn take_and_rollback_cut_through_chunks() {
         let store = chunked(&[1..3, 3..5, 5..7]);
-        let taken = blocks_of(read(store.take(COALESCE_BELOW as u32 + 1).unwrap()));
+        let taken = blocks_of(read(
+            store
+                .take_joined(COALESCE_BELOW as u32 + 1, no_fields())
+                .unwrap(),
+        ));
         store.rollback(4);
         let chunks = store.rows().chunks.len();
         assert_eq!(
@@ -2555,7 +2549,9 @@ mod tests {
     #[allow(clippy::single_range_in_vec_init)]
     fn appending_to_a_mostly_taken_chunk_drops_its_taken_rows() {
         let store = chunked(&[1..3]);
-        store.take(COALESCE_BELOW as u32 + 1).unwrap();
+        store
+            .take_joined(COALESCE_BELOW as u32 + 1, no_fields())
+            .unwrap();
         store.merge(&EventStore::from_rows(vec![event(9, 0, 0, "9-0")]));
         let rows = store.rows();
         let chunk = (rows.chunks[0].start, rows.chunks[0].keys.len());
@@ -2626,7 +2622,7 @@ mod tests {
         let contract_registers = read(store.events_of_registrations(vec![4], no_fields()).unwrap());
         let first_event = store.first_event_block_number();
         let second = store.block_number_at(1);
-        let taken = read(store.take(1).unwrap());
+        let taken = read(store.take_joined(1, no_fields()).unwrap());
         assert_eq!(
             (
                 contract_registers,

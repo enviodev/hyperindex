@@ -80,8 +80,12 @@ let getItems = async (
     ~retry=0,
     ~logger=Logger.makeInMemory(),
   )
+  let onEventRegistrations = []
+  selection.onEventRegistrations->Array.forEach(registration =>
+    onEventRegistrations->Array.setUnsafe(registration.index, registration)
+  )
   response.items
-  ->TestEventStore.itemsOf(~context=TestEventStore.noRegistrations(~chainId))
+  ->TestEventStore.takeAll(~context={chainId, onEventRegistrations, onBlockRegistrations: []})
   ->Array.map(item => {
     let eventItem = item->Internal.castUnsafeEventItem
     (

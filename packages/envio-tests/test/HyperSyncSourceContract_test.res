@@ -82,7 +82,7 @@ let onEventRegistrations = () => {
 }
 
 let responseItems = (response: Source.blockRangeFetchResponse) =>
-  response.items->TestEventStore.itemsOf(
+  response.items->TestEventStore.takeAll(
     ~context={
       chainId: 1->ChainId.fromInt,
       onEventRegistrations: onEventRegistrations()->(

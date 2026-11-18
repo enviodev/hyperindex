@@ -274,7 +274,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       BlockStore.make(~ecosystem=Ecosystem.Evm),
       TransactionStore.make(~ecosystem=Ecosystem.Evm),
     )
-    (result, items->TestEventStore.evmLogsOf, blockStore)
+    (result, items->TestEventStore.evmLogsOf(~registrationIndexes=indexes), blockStore)
   }
 
   // The chain's address index, holding the one ERC20 address these logs are

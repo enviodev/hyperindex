@@ -27,18 +27,8 @@ let keepStore = (next: FetchState.t, ~from: FetchState.t) =>
 let update = (fetchState: FetchState.t, change: FetchState.t => FetchState.t) =>
   fetchState->change->keepStore(~from=fetchState)
 
-// Rows name block handlers by their index into the chain's full list, which the
-// fetch state keeps only the generated ones of.
-let contextOf = (fetchState: FetchState.t): StoredItems.context => {
-  let onBlockRegistrations = []
-  fetchState.onBlockRegistrations->Array.forEach(registration =>
-    onBlockRegistrations->Array.setUnsafe(registration.index, registration)
-  )
-  {chainId: fetchState.chainId, onEventRegistrations: [], onBlockRegistrations}
-}
-
-let bufferedItems = (fetchState: FetchState.t): array<Internal.item> =>
-  fetchState->eventStoreOf->TestEventStore.itemsOf(~context=fetchState->contextOf)
+let bufferedBlockNumbers = (fetchState: FetchState.t) =>
+  fetchState->eventStoreOf->TestEventStore.blockNumbers
 
 // Puts `items` in the fetch state's store, as an applied response would.
 let withItems = (fetchState: FetchState.t, items: array<Internal.item>) => {

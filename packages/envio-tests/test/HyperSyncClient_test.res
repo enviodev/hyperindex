@@ -74,7 +74,7 @@ let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => 
     },
     ~addressSet=usdcSet,
   )
-  (res, items->TestEventStore.evmLogsOf)
+  (res, items->TestEventStore.evmLogsOf(~registrationIndexes))
 }
 
 describe("HyperSync client getItems (live)", () => {
