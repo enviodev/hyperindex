@@ -318,15 +318,6 @@ pub struct Query {
     /// Field selection. The user can select which fields they are interested in, requesting less fields will improve
     ///  query execution time and reduce the payload size so the user should always use a minimal number of fields.
     pub field_selection: FieldSelection,
-    /// Maximum number of blocks that should be returned, the server might return more blocks than this number but
-    ///  it won't overshoot by too much.
-    pub max_num_blocks: Option<i64>,
-    /// Maximum number of transactions that should be returned, the server might return more transactions than this number but
-    ///  it won't overshoot by too much.
-    pub max_num_transactions: Option<i64>,
-    /// Maximum number of logs that should be returned, the server might return more logs than this number but
-    ///  it won't overshoot by too much.
-    pub max_num_logs: Option<i64>,
     /// Selects join mode for the query,
     /// Default: join in this order logs -> transactions -> traces -> blocks
     /// JoinAll: join everything to everything. For example if logSelection matches log0, we get the
@@ -398,18 +389,6 @@ impl TryFrom<Query> for net_types::Query {
             .to_block
             .map(|b| u64::try_from(b).context("to_block must be >= 0"))
             .transpose()?;
-        let max_num_blocks = query
-            .max_num_blocks
-            .map(|n| usize::try_from(n).context("max_num_blocks must be >= 0"))
-            .transpose()?;
-        let max_num_transactions = query
-            .max_num_transactions
-            .map(|n| usize::try_from(n).context("max_num_transactions must be >= 0"))
-            .transpose()?;
-        let max_num_logs = query
-            .max_num_logs
-            .map(|n| usize::try_from(n).context("max_num_logs must be >= 0"))
-            .transpose()?;
 
         Ok(net_types::Query {
             from_block,
@@ -420,9 +399,9 @@ impl TryFrom<Query> for net_types::Query {
             blocks,
             include_all_blocks: query.include_all_blocks.unwrap_or(false),
             field_selection,
-            max_num_blocks,
-            max_num_transactions,
-            max_num_logs,
+            max_num_blocks: None,
+            max_num_transactions: None,
+            max_num_logs: None,
             max_num_traces: None,
             join_mode,
         })
@@ -790,9 +769,6 @@ impl From<net_types::Query> for Query {
                 None
             },
             field_selection: query.field_selection.into(),
-            max_num_blocks: query.max_num_blocks.map(|n| n as i64),
-            max_num_transactions: query.max_num_transactions.map(|n| n as i64),
-            max_num_logs: query.max_num_logs.map(|n| n as i64),
             join_mode,
         }
     }

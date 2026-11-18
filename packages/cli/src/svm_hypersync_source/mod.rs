@@ -837,7 +837,6 @@ mod tests {
                 executing_account: Some(vec![TOKEN_METADATA_PROGRAM.into()]),
                 ..Default::default()
             }]),
-            max_num_instructions: Some(200),
             ..Default::default()
         };
 
