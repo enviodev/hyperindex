@@ -132,4 +132,58 @@ describe("MockSource.respondUpTo", () => {
       )
     },
   )
+  scenario->Scenario.it("fails on an item no reply covers", ~sources=[{chain: 1}], async (
+    ~t,
+    ~indexer as _,
+    ~source,
+  ) => {
+    let mock = source(1)
+    mock.resolveGetHeightOrThrow(100_000)
+    await mock.expectItemsQueries([{reply: Respond({items: [], latestFetchedBlockNumber: 100})}])
+    t.expect(
+      switch await mock.respondUpTo(
+        300,
+        ~items=[
+          {
+            event: "Gravatar.TestEvent",
+            blockNumber: 50,
+            logIndex: 0,
+            srcAddress: "0x0000000000000000000000000000000000000001",
+          },
+        ],
+      ) {
+      | () => None
+      | exception JsExn(error) => error->JsExn.message
+      },
+    ).toEqual(
+      Some("respondUpTo(300) answered no query covering block 50 log 0, so no reply delivered it."),
+    )
+  })
+
+  scenario->Scenario.it(
+    "names the query that dropped an item it doesn't fetch the address of",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer as _, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(100_000)
+      await mock.respondUpTo(
+        100,
+        ~items=[
+          {
+            event: "Gravatar.TestEvent",
+            blockNumber: 40,
+            logIndex: 0,
+            srcAddress: "0x0000000000000000000000000000000000000099",
+          },
+        ],
+      )
+      t.expect(
+        mock.describeState()
+        ->String.split("\n")
+        ->Array.filter(line => line->String.includes("dropped")),
+      ).toEqual([
+        "  items dropped by a query that doesn't fetch their address: block 40 log 0 from 0x0000000000000000000000000000000000000099 by partition 0 at 1..100",
+      ])
+    },
+  )
 })

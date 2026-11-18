@@ -785,6 +785,7 @@ let make = (
 
   let makeItemsResponse = (
     response: itemsResponse,
+    ~partitionId,
     ~fromBlock,
     ~toBlock,
     ~knownHeight,
@@ -897,7 +898,7 @@ let make = (
             ->Array.push(
               `block ${item.blockNumber->Int.toString} log ${item.logIndex->Int.toString} from ${item.srcAddress->Option.getOr(
                   "",
-                )}`,
+                )} by partition ${partitionId} at ${fromBlock->Int.toString}..${latestFetchedBlockNumber->Int.toString}`,
             )
             ->ignore
             []
@@ -947,6 +948,7 @@ let make = (
       )
     | None => ()
     }
+    let covered = Utils.Set.make()
     let rec wave = async (~count) => {
       if count > 1000 {
         JsError.throwWithMessage(
@@ -961,23 +963,34 @@ let make = (
           | Bounded(toBlock) => Math.Int.min(toBlock, blockNumber)
           | Unbounded => blockNumber
           }
-          (query->control).respond({
-            items: items->Array.filter(item =>
+          let inRange =
+            items->Array.filter(item =>
               item.blockNumber >= query.fromBlock && item.blockNumber <= latest
-            ),
-            latestFetchedBlockNumber: latest,
-          })
+            )
+          inRange->Array.forEach(item => covered->Utils.Set.add(item)->ignore)
+          (query->control).respond({items: inRange, latestFetchedBlockNumber: latest})
         })
         await wave(~count=count + 1)
       }
     }
     await wave(~count=0)
+    switch items->Array.find(item => !(covered->Utils.Set.has(item))) {
+    | Some(item) =>
+      JsError.throwWithMessage(
+        `respondUpTo(${blockNumber->Int.toString}) answered no query covering block ${item.blockNumber->Int.toString} log ${item.logIndex->Int.toString}, so no reply delivered it.`,
+      )
+    | None => ()
+    }
     switch await progressBlock.contents() {
-    | Some(reached) if reached < blockNumber =>
+    | Some(reached) if reached >= blockNumber => ()
+    | Some(reached) =>
       JsError.throwWithMessage(
         `respondUpTo(${blockNumber->Int.toString}) stopped with the chain at block ${reached->Int.toString}: no query asks for a block up to ${blockNumber->Int.toString}. A height the chain doesn't know yet, or a timer it waits on, holds it back.`,
       )
-    | _ => ()
+    | None =>
+      JsError.throwWithMessage(
+        `respondUpTo(${blockNumber->Int.toString}) found no progress block reported for the chain`,
+      )
     }
   }
 
@@ -1174,7 +1187,7 @@ let make = (
         switch droppedItems {
         | [] => ""
         | dropped =>
-          `\n  items dropped as no query fetching their address carried them: ${dropped->Array.join(
+          `\n  items dropped by a query that doesn't fetch their address: ${dropped->Array.join(
               "; ",
             )}`
         },
@@ -1295,6 +1308,7 @@ let make = (
                 // Built first, so a reply that can't be built leaves the query pending.
                 let built = makeItemsResponse(
                   response,
+                  ~partitionId,
                   ~fromBlock,
                   ~toBlock,
                   ~knownHeight,
