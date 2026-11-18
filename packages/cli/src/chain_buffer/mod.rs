@@ -559,6 +559,14 @@ impl ChainBuffer {
         }
     }
 
+    /// The bytes the buffer's tables hold.
+    #[napi]
+    pub fn heap_bytes(&self) -> f64 {
+        let tables = self.tables();
+        (tables.events.heap_bytes() + tables.transactions.heap_bytes() + tables.blocks.heap_bytes())
+            as f64
+    }
+
     /// Every stored event row.
     #[napi]
     pub fn row_count(&self) -> u32 {

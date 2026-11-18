@@ -143,6 +143,9 @@ external getBlockNumberOfRowAt: (t, ~fromBlock: int, ~rowOffset: int) => Null.t<
 // Every stored event row.
 @send external rowCount: t => int = "rowCount"
 
+// The bytes the buffer's tables hold.
+@send external heapBytes: t => float = "heapBytes"
+
 @send external getBlockHash: (t, int) => Null.t<string> = "getBlockHash"
 
 type hashedBlocks = {blockNumbers: array<int>, hashes: array<string>}

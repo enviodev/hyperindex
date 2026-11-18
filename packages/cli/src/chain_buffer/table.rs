@@ -97,6 +97,16 @@ struct ColumnData {
 }
 
 impl ColumnData {
+    fn heap_bytes(&self) -> usize {
+        let values = match &self.values {
+            Values::U32(values) => values.capacity() * 4,
+            Values::U64(values) => values.capacity() * 8,
+            Values::Fixed { bytes, .. } => bytes.capacity(),
+            Values::Var { ends, bytes } => ends.capacity() * 4 + bytes.capacity(),
+        };
+        values + self.presence.words.capacity() * 8
+    }
+
     fn new(kind: ColumnKind, capacity: usize) -> Self {
         let values = match kind {
             ColumnKind::U32 => Values::U32(Vec::with_capacity(capacity)),
@@ -224,6 +234,15 @@ impl Chunk {
 
     pub(crate) fn bytes_at(&self, column: usize, row: usize) -> Option<&[u8]> {
         self.columns[column].bytes_at(row)
+    }
+
+    fn heap_bytes(&self) -> usize {
+        (self.keys.capacity() + self.tiebreaks.capacity() + self.fetched.capacity()) * 8
+            + self
+                .columns
+                .iter()
+                .map(ColumnData::heap_bytes)
+                .sum::<usize>()
     }
 
     fn sort_key(&self, row: usize) -> (u64, u64) {
@@ -831,6 +850,17 @@ impl Table {
                 row,
             })
         })
+    }
+
+    /// The bytes the table's chunks hold, a chunk shared by several slices
+    /// counted once.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        let mut seen = std::collections::HashSet::new();
+        self.slices
+            .iter()
+            .filter(|slice| seen.insert(Arc::as_ptr(&slice.chunk)))
+            .map(|slice| slice.chunk.heap_bytes())
+            .sum()
     }
 
     #[cfg(test)]

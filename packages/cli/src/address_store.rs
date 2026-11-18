@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard};
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
+use crate::address_columns::{Entries, Id, KeyIndex};
 use crate::chain_buffer::Ecosystem;
 
 /// Binary form of an address, the identity the store keys on.
@@ -87,6 +88,7 @@ fn address_topic(key: &[u8]) -> String {
     format!("0x{}", faster_hex::hex_string(&topic))
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn ecosystem_by_name(name: &str) -> napi::Result<Ecosystem> {
     match name {
         "evm" => Ok(Ecosystem::Evm),
@@ -101,6 +103,7 @@ fn ecosystem_by_name(name: &str) -> napi::Result<Ecosystem> {
 /// Encodes address strings to their store keys, one buffer per address. The one
 /// encoder: config addresses reach storage through here, so the bytes a row
 /// holds and the bytes a store keys on can't fork.
+#[cfg_attr(test, allow(dead_code))]
 #[napi]
 pub fn encode_addresses(ecosystem: String, addresses: Vec<String>) -> napi::Result<Vec<Buffer>> {
     let ecosystem = ecosystem_by_name(&ecosystem)?;
@@ -162,6 +165,7 @@ fn key_slices<'a>(
 
 /// Renders packed address keys back to the canonical strings the JS side shows.
 /// The inverse of `encode_addresses`, and the only decoder.
+#[cfg_attr(test, allow(dead_code))]
 #[napi]
 pub fn render_addresses(
     ecosystem: String,
@@ -179,6 +183,7 @@ pub fn render_addresses(
 /// The addresses of one contract inside a packed column of seeded rows, as
 /// canonical strings — what `chain.<Contract>.addresses` answers before the
 /// indexer state exists and the resumed rows are all there is.
+#[cfg_attr(test, allow(dead_code))]
 #[napi]
 pub fn render_contract_addresses(
     ecosystem: String,
@@ -208,6 +213,7 @@ pub fn render_contract_addresses(
 /// The config's contract names in canonical order — their position is the id
 /// `envio_contracts` stores and every address row references. Byte order, so
 /// the ids never depend on the order contracts happen to be declared in.
+#[cfg_attr(test, allow(dead_code))]
 #[napi]
 pub fn canonical_contract_names(mut names: Vec<String>) -> Vec<String> {
     names.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
@@ -222,19 +228,13 @@ fn derive_effective_start_block(registration_block: i64, contract_start_block: i
     registration_block.max(0).max(contract_start_block)
 }
 
-struct Entry {
-    key: Key,
+/// One registration, read off the store's columns.
+#[derive(Clone, Copy)]
+struct Entry<'a> {
+    key: &'a [u8],
     contract_idx: u32,
     registration_block: i64,
     effective_start_block: i64,
-    /// Rolled back past its registration block. The slot stays so live ids
-    /// never shift; the entry is unlinked from its key's chain so the address
-    /// can be registered afresh for that contract.
-    dead: bool,
-    /// Next live entry registered for the same address under another contract.
-    /// A chain rather than a per-key list keeps the common single-owner case
-    /// free of a second allocation per address.
-    next_by_key: Option<u64>,
 }
 
 pub struct StoreInner {
@@ -243,20 +243,28 @@ pub struct StoreInner {
     contract_start_blocks: Vec<i64>,
     contract_depends_on_addresses: Vec<bool>,
     contract_idx_by_name: HashMap<String, u32>,
-    entries: Vec<Entry>,
-    /// Head of each key's chain of live entries — one per contract the address
-    /// is registered for.
-    id_by_key: HashMap<Key, u64>,
+    entries: Entries,
+    index: KeyIndex,
     live_count_by_contract: Vec<u32>,
-    /// Ids of dynamic registrations not yet persisted to `envio_addresses`,
-    /// in registration order. Drained by `drain_for_write` when the batch
-    /// covering their registration block is written.
-    unwritten: Vec<u64>,
+    /// Dynamic registrations not yet persisted to `envio_addresses`, in
+    /// registration order. Drained by `drain_for_write` when the batch covering
+    /// their registration block is written.
+    unwritten: Vec<Id>,
 }
 
 impl StoreInner {
-    fn entry(&self, id: u64) -> &Entry {
-        &self.entries[id as usize]
+    fn entry(&self, id: Id) -> Entry<'_> {
+        let contract_idx = self.entries.contract_idx(id);
+        let registration_block = self.entries.registration_block(id);
+        Entry {
+            key: self.entries.key(id),
+            contract_idx,
+            registration_block,
+            effective_start_block: derive_effective_start_block(
+                registration_block,
+                self.contract_start_blocks[contract_idx as usize],
+            ),
+        }
     }
 
     fn contract_name(&self, idx: u32) -> &str {
@@ -264,98 +272,137 @@ impl StoreInner {
     }
 
     /// Sort key giving a set its id-independent order.
-    fn sort_key(&self, id: u64) -> (i64, &[u8], u32) {
+    fn sort_key(&self, id: Id) -> (i64, &[u8], u32) {
         let entry = self.entry(id);
-        (entry.effective_start_block, &entry.key, entry.contract_idx)
+        (entry.effective_start_block, entry.key, entry.contract_idx)
     }
 
-    /// Live ids registered for an address, one per owning contract.
-    fn live_ids(&self, key: &[u8]) -> Vec<u64> {
-        let mut ids = Vec::new();
-        let mut cursor = self.id_by_key.get(key).copied();
+    fn live_id_for(&self, key: &[u8], contract_idx: u32) -> Option<Id> {
+        let mut cursor = self.index.head(key, &self.entries);
         while let Some(id) = cursor {
-            ids.push(id);
-            cursor = self.entry(id).next_by_key;
-        }
-        ids
-    }
-
-    fn live_id_for(&self, key: &[u8], contract_idx: u32) -> Option<u64> {
-        let mut cursor = self.id_by_key.get(key).copied();
-        while let Some(id) = cursor {
-            let entry = self.entry(id);
-            if entry.contract_idx == contract_idx {
+            if self.entries.contract_idx(id) == contract_idx {
                 return Some(id);
             }
-            cursor = entry.next_by_key;
+            cursor = self.index.next(id);
         }
         None
     }
 
-    /// Drops a dead entry out of its key's chain, so the address can be
-    /// registered for that contract again while its siblings stay live.
-    fn unlink(&mut self, id: u64) {
-        let key = self.entries[id as usize].key.clone();
-        let next = self.entries[id as usize].next_by_key;
-        self.entries[id as usize].next_by_key = None;
-        match self.id_by_key.get(&key).copied() {
-            Some(head) if head == id => match next {
-                Some(next) => {
-                    self.id_by_key.insert(key, next);
-                }
-                None => {
-                    self.id_by_key.remove(&key);
-                }
-            },
-            Some(head) => {
-                let mut cursor = head;
-                while let Some(candidate) = self.entries[cursor as usize].next_by_key {
-                    if candidate == id {
-                        self.entries[cursor as usize].next_by_key = next;
-                        break;
-                    }
-                    cursor = candidate;
-                }
-            }
-            None => (),
-        }
-    }
-
-    /// The gate every address-dependent registration applies to a routed item:
-    /// the address is registered for this contract and its effective start
-    /// block is at or before the item's block.
+    /// The gate every address-dependent registration applies to a matched
+    /// item: the address is registered for this contract and its effective
+    /// start block is at or before the item's block.
     pub fn is_indexed_at(&self, key: &[u8], contract_idx: u32, block_number: i64) -> bool {
-        match self.live_id_for(key, contract_idx) {
-            Some(id) => self.entry(id).effective_start_block <= block_number,
-            None => false,
-        }
+        self.live_id_for(key, contract_idx)
+            .is_some_and(|id| self.entry(id).effective_start_block <= block_number)
     }
 
     pub fn contract_idx(&self, name: &str) -> Option<u32> {
         self.contract_idx_by_name.get(name).copied()
     }
 
-    fn sorted_ids(&self, mut ids: Vec<u64>) -> Vec<u64> {
+    fn sorted_ids(&self, mut ids: Vec<Id>) -> Vec<Id> {
         ids.sort_unstable_by(|&a, &b| self.sort_key(a).cmp(&self.sort_key(b)));
         ids
     }
 
-    /// Live ids from `min_id` up that `keep` accepts, in set order. Every
-    /// selection the store makes runs through here, so "skips tombstones,
-    /// comes out sorted" is one rule rather than four copies of a scan.
-    fn sorted_live_ids(&self, min_id: u64, keep: impl Fn(&Entry) -> bool) -> Vec<u64> {
-        let ids = (min_id..self.entries.len() as u64)
-            .filter(|&id| {
-                let entry = self.entry(id);
-                !entry.dead && keep(entry)
-            })
+    /// Live ids from `min_id` up that `keep` accepts, in set order.
+    fn sorted_live_ids(&self, min_id: Id, keep: impl Fn(&Entry) -> bool) -> Vec<Id> {
+        let ids = (min_id..self.entries.len() as Id)
+            .filter(|&id| !self.entries.is_dead(id) && keep(&self.entry(id)))
             .collect();
         self.sorted_ids(ids)
     }
+
+    /// Infallible: `register_all` has already rejected every unknown contract
+    /// name and out-of-range block, so nothing here can fail partway through a
+    /// batch.
+    fn register_one(
+        &mut self,
+        reg: &AddressRegistration,
+        track_unwritten: bool,
+    ) -> RegistrationVerdict {
+        let Some(key) = address_key(self.ecosystem, &reg.address) else {
+            return RegistrationVerdict {
+                kind: VERDICT_INVALID.to_string(),
+                fetchable: false,
+                effective_start_block: 0,
+                existing_effective_start_block: None,
+            };
+        };
+        let contract_idx = self
+            .contract_idx(&reg.contract_name)
+            .expect("register_all validates every contract name before applying the batch");
+        let effective_start_block = derive_effective_start_block(
+            reg.registration_block,
+            self.contract_start_blocks[contract_idx as usize],
+        );
+        if let Some(id) = self.live_id_for(&key, contract_idx) {
+            return RegistrationVerdict {
+                kind: VERDICT_DUPLICATE.to_string(),
+                fetchable: false,
+                effective_start_block,
+                existing_effective_start_block: Some(self.entry(id).effective_start_block),
+            };
+        }
+        let id = self.insert(&key, contract_idx, reg.registration_block);
+        if track_unwritten {
+            self.unwritten.push(id);
+        }
+        RegistrationVerdict {
+            kind: VERDICT_ADDED.to_string(),
+            fetchable: self.contract_depends_on_addresses[contract_idx as usize],
+            effective_start_block,
+            existing_effective_start_block: None,
+        }
+    }
+
+    /// Registers a row read back from storage, whose key is already the store's
+    /// own encoding. Returns the rejection to warn about, or `None` when the
+    /// row landed.
+    fn seed_one(
+        &mut self,
+        key: &[u8],
+        contract_idx: u32,
+        registration_block: i64,
+    ) -> Option<RejectedRow> {
+        let effective_start_block = derive_effective_start_block(
+            registration_block,
+            self.contract_start_blocks[contract_idx as usize],
+        );
+        if let Some(id) = self.live_id_for(key, contract_idx) {
+            return Some(RejectedRow {
+                address: address_string(self.ecosystem, key),
+                contract_name: self.contract_name(contract_idx).to_string(),
+                effective_start_block,
+                existing_effective_start_block: self.entry(id).effective_start_block,
+            });
+        }
+        self.insert(key, contract_idx, registration_block);
+        None
+    }
+
+    fn insert(&mut self, key: &[u8], contract_idx: u32, registration_block: i64) -> Id {
+        let id = self
+            .entries
+            .push(key, contract_idx as u16, registration_block as i32);
+        self.index.insert(id, &self.entries);
+        self.live_count_by_contract[contract_idx as usize] += 1;
+        id
+    }
 }
 
-/// Every config contract, on any chain: `context.chain.<Contract>.add` validates
-/// against that whole set. Position is the stored `contract_idx`.
+/// A registration block the columns hold: -1 for a config address, else a
+/// block number, which the runtime keeps in 32 bits.
+fn check_registration_block(registration_block: i64) -> napi::Result<()> {
+    if (-1..=i64::from(i32::MAX)).contains(&registration_block) {
+        Ok(())
+    } else {
+        Err(napi::Error::from_reason(format!(
+            "Address registration block {registration_block} is out of range."
+        )))
+    }
+}
+
 #[napi(object)]
 pub struct AddressStoreContract {
     pub name: String,
@@ -387,14 +434,6 @@ pub const VERDICT_INVALID: &str = "invalid";
 pub struct StartBlockGroup {
     pub start_block: i64,
     pub count: i64,
-}
-
-#[napi(object)]
-pub struct AddressEntry {
-    pub address: String,
-    pub contract_name: String,
-    pub registration_block: i64,
-    pub effective_start_block: i64,
 }
 
 #[napi(object)]
@@ -484,10 +523,8 @@ impl AddressStore {
     /// address keys with their `lengths`, plus the parallel contract ids and
     /// registration blocks. The only way in for a stored address — config ones
     /// and the dynamic ones a resume restores — and nothing it adds is marked
-    /// pending, so nothing is ever written back. A resume seeds millions of
-    /// rows, so nothing here allocates a string per row: the keys are already
-    /// the store's own encoding, and only the (defensive) rejections come back
-    /// rendered.
+    /// pending, so nothing is ever written back. Only the (defensive)
+    /// rejections come back rendered.
     #[napi]
     pub fn seed_rows(
         &self,
@@ -514,16 +551,17 @@ impl AddressStore {
                 )));
             }
         }
-        let keys = key_slices(store.ecosystem, &addresses, &lengths)?;
-
-        let mut rejected = Vec::new();
-        for (idx, key) in keys.into_iter().enumerate() {
-            let key: Key = key.to_vec().into_boxed_slice();
-            if let Some(reason) = store.seed_one(key, contract_ids[idx], registration_blocks[idx]) {
-                rejected.push(reason);
-            }
+        for &registration_block in &registration_blocks {
+            check_registration_block(registration_block)?;
         }
-        Ok(rejected)
+        let keys = key_slices(store.ecosystem, &addresses, &lengths)?;
+        Ok(keys
+            .into_iter()
+            .enumerate()
+            .filter_map(|(row, key)| {
+                store.seed_one(key, contract_ids[row], registration_blocks[row])
+            })
+            .collect())
     }
 
     /// Drains the registrations awaiting persistence whose registration block is
@@ -542,6 +580,12 @@ impl AddressStore {
         checkpoint_block_numbers: Vec<i64>,
     ) -> napi::Result<Vec<DrainedAddress>> {
         let mut store = self.inner.write().unwrap();
+        let checkpoint_by_block: HashMap<i64, u32> = checkpoint_block_numbers
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(idx, &block)| (block, idx as u32))
+            .collect();
         let mut drained = Vec::new();
         let mut pending = Vec::new();
         for &id in store.unwritten.iter() {
@@ -550,14 +594,11 @@ impl AddressStore {
                 pending.push(id);
                 continue;
             }
-            let Some(checkpoint_idx) = checkpoint_block_numbers
-                .iter()
-                .position(|&block| block == entry.registration_block)
-            else {
+            let Some(&checkpoint_idx) = checkpoint_by_block.get(&entry.registration_block) else {
                 return Err(napi::Error::from_reason(format!(
                     "Registered address {} at block {} has no checkpoint in the batch that writes \
                      it.",
-                    address_string(store.ecosystem, &entry.key),
+                    address_string(store.ecosystem, entry.key),
                     entry.registration_block
                 )));
             };
@@ -565,7 +606,7 @@ impl AddressStore {
                 address: entry.key.to_vec().into(),
                 contract_id: entry.contract_idx,
                 registration_block: entry.registration_block,
-                checkpoint_idx: checkpoint_idx as u32,
+                checkpoint_idx,
             });
         }
         store.unwritten = pending;
@@ -578,29 +619,6 @@ impl AddressStore {
         self.read().unwritten.len() as i64
     }
 
-    /// The registrations still awaiting persistence, in registration order.
-    ///
-    /// For assertions only; nothing in the indexer reads it. The write path
-    /// drains instead, and `pending_count` is what the runtime asks — neither
-    /// lets a test see which registrations are queued without consuming them.
-    #[napi]
-    pub fn pending_entries_for_test(&self) -> Vec<AddressEntry> {
-        let store = self.read();
-        store
-            .unwritten
-            .iter()
-            .map(|&id| {
-                let entry = store.entry(id);
-                AddressEntry {
-                    address: address_string(store.ecosystem, &entry.key),
-                    contract_name: store.contract_name(entry.contract_idx).to_string(),
-                    registration_block: entry.registration_block,
-                    effective_start_block: entry.effective_start_block,
-                }
-            })
-            .collect()
-    }
-
     /// An ordered snapshot of one contract's addresses. Empty selections are
     /// legal — a wildcard partition carries an empty set rather than none.
     #[napi]
@@ -610,7 +628,7 @@ impl AddressStore {
         let ids = match store.contract_idx(&contract_name) {
             None => Vec::new(),
             Some(contract_idx) => {
-                let min_id = options.min_id.unwrap_or(0).max(0) as u64;
+                let min_id = options.min_id.unwrap_or(0).clamp(0, i64::from(Id::MAX)) as Id;
                 let ids = store.sorted_live_ids(min_id, |entry| {
                     entry.contract_idx == contract_idx
                         && options
@@ -658,10 +676,17 @@ impl AddressStore {
     #[napi]
     pub fn contract_count(&self, contract_name: String) -> i64 {
         let store = self.read();
-        match store.contract_idx(&contract_name) {
-            Some(idx) => i64::from(store.live_count_by_contract[idx as usize]),
-            None => 0,
-        }
+        store.contract_idx(&contract_name).map_or(0, |idx| {
+            i64::from(store.live_count_by_contract[idx as usize])
+        })
+    }
+
+    /// The bytes the store's registrations and their index hold.
+    #[napi]
+    pub fn heap_bytes(&self) -> f64 {
+        let store = self.read();
+        (store.entries.heap_bytes() + store.index.heap_bytes() + store.unwritten.capacity() * 4)
+            as f64
     }
 
     /// Every live registration across every contract — the count the chain
@@ -669,16 +694,16 @@ impl AddressStore {
     /// counts twice, once per registration.
     #[napi]
     pub fn size(&self) -> i64 {
-        let store = self.read();
-        let live: u32 = store.live_count_by_contract.iter().sum();
-        i64::from(live)
+        self.read()
+            .live_count_by_contract
+            .iter()
+            .map(|&count| i64::from(count))
+            .sum()
     }
 
     /// Whether an address is registered for a contract and already started at
     /// `block_number` — the chain-wide gate, exposed for the simulate source,
-    /// which has no real query boundary to gate at. Chain-wide, not partition
-    /// membership: a caller that means "this partition holds it" wants
-    /// `AddressSet::contains_at`.
+    /// which has no real query boundary to gate at.
     #[napi]
     pub fn is_indexed_at(&self, address: String, contract_name: String, block_number: i64) -> bool {
         let store = self.read();
@@ -702,64 +727,32 @@ impl AddressStore {
     /// dropped at all (their registration block is below every target).
     #[napi]
     pub fn rollback(&self, target_block: i64) -> Vec<RolledBackAddress> {
-        let mut store = self.inner.write().unwrap();
-        let pending_insert: HashSet<u64> = store.unwritten.iter().copied().collect();
+        let mut guard = self.inner.write().unwrap();
+        let store = &mut *guard;
+        let pending_insert: HashSet<Id> = store.unwritten.iter().copied().collect();
         let mut rolled_back = Vec::new();
-        for id in 0..store.entries.len() {
-            let entry = &store.entries[id];
-            if entry.dead || entry.registration_block <= target_block {
+        for id in 0..store.entries.len() as Id {
+            if store.entries.is_dead(id) || store.entries.registration_block(id) <= target_block {
                 continue;
             }
-            let contract_idx = entry.contract_idx;
-            let key = entry.key.clone();
-            store.entries[id].dead = true;
-            // Only this registration leaves the key's chain: the same address
+            let contract_idx = store.entries.contract_idx(id);
+            // Only this registration leaves the key's index: the same address
             // registered for another contract survives the rollback.
-            store.unlink(id as u64);
+            store.index.remove(id, &store.entries);
+            store.entries.kill(id);
             store.live_count_by_contract[contract_idx as usize] -= 1;
-            if !pending_insert.contains(&(id as u64)) {
+            if !pending_insert.contains(&id) {
                 rolled_back.push(RolledBackAddress {
-                    address: key.to_vec().into(),
+                    address: store.entries.key(id).to_vec().into(),
                     contract_id: contract_idx,
                 });
             }
         }
         // A pending write whose entry just died must never reach the database:
         // the refetch registers the address afresh under a new id.
-        let live_unwritten = std::mem::take(&mut store.unwritten)
-            .into_iter()
-            .filter(|&id| !store.entry(id).dead)
-            .collect();
-        store.unwritten = live_unwritten;
+        let entries = &store.entries;
+        store.unwritten.retain(|&id| !entries.is_dead(id));
         rolled_back
-    }
-
-    /// Every entry an address is registered under, in set order — one per
-    /// owning contract. Empty once every registration is rolled back.
-    ///
-    /// For assertions only; nothing in the indexer reads it. The gate the
-    /// runtime asks is `is_indexed_at`, and what the user sees is
-    /// `contract_addresses` — neither exposes an entry's own start blocks or
-    /// the order registrations sort into, which is what a test needs to pin.
-    #[napi]
-    pub fn get_all_for_test(&self, address: String) -> Vec<AddressEntry> {
-        let store = self.read();
-        let Some(key) = address_key(store.ecosystem, &address) else {
-            return Vec::new();
-        };
-        store
-            .sorted_ids(store.live_ids(&key))
-            .into_iter()
-            .map(|id| {
-                let entry = store.entry(id);
-                AddressEntry {
-                    address: address_string(store.ecosystem, &entry.key),
-                    contract_name: store.contract_name(entry.contract_idx).to_string(),
-                    registration_block: entry.registration_block,
-                    effective_start_block: entry.effective_start_block,
-                }
-            })
-            .collect()
     }
 
     /// Contract names holding at least one dynamically registered address. The
@@ -769,9 +762,9 @@ impl AddressStore {
     pub fn dynamic_contract_names(&self) -> Vec<String> {
         let store = self.read();
         let mut seen = vec![false; store.contract_names.len()];
-        for entry in store.entries.iter() {
-            if !entry.dead && entry.registration_block != -1 {
-                seen[entry.contract_idx as usize] = true;
+        for id in 0..store.entries.len() as Id {
+            if !store.entries.is_dead(id) && store.entries.registration_block(id) != -1 {
+                seen[store.entries.contract_idx(id) as usize] = true;
             }
         }
         seen.iter()
@@ -793,7 +786,7 @@ impl AddressStore {
                 .sorted_live_ids(0, |entry| entry.contract_idx == contract_idx)
                 .into_iter()
                 .map(|id| {
-                    shown_address_string(store.ecosystem, should_checksum, &store.entry(id).key)
+                    shown_address_string(store.ecosystem, should_checksum, store.entries.key(id))
                 })
                 .collect(),
         }
@@ -805,6 +798,13 @@ impl AddressStore {
         ecosystem: Ecosystem,
         contracts: Vec<AddressStoreContract>,
     ) -> napi::Result<Self> {
+        if contracts.len() > usize::from(u16::MAX) {
+            return Err(napi::Error::from_reason(format!(
+                "The address store holds at most {} contracts, not {}.",
+                u16::MAX,
+                contracts.len()
+            )));
+        }
         let mut contract_names = Vec::with_capacity(contracts.len());
         let mut contract_start_blocks = Vec::with_capacity(contracts.len());
         let mut contract_idx_by_name = HashMap::with_capacity(contracts.len());
@@ -829,8 +829,8 @@ impl AddressStore {
                 contract_start_blocks,
                 contract_depends_on_addresses,
                 contract_idx_by_name,
-                entries: Vec::new(),
-                id_by_key: HashMap::new(),
+                entries: Entries::new(key_width(ecosystem)),
+                index: KeyIndex::default(),
                 live_count_by_contract,
                 unwritten: Vec::new(),
             })),
@@ -841,15 +841,16 @@ impl AddressStore {
         self.inner.read().unwrap()
     }
 
-    /// Shared handle for the source clients, which hold the store for the
-    /// lifetime of the chain and read it while routing responses.
+    /// Shared handle for the matchers, which hold the store for the lifetime
+    /// of the chain and read it while matching rows.
     pub fn handle(&self) -> Arc<RwLock<StoreInner>> {
         self.inner.clone()
     }
 
     /// Rejects the whole batch before applying any of it: an unknown contract
-    /// name is a bug upstream, and a caller that survives the error must not
-    /// find the earlier registrations already applied.
+    /// name or an out-of-range block is a bug upstream, and a caller that
+    /// survives the error must not find the earlier registrations already
+    /// applied.
     fn register_all(
         &self,
         registrations: Vec<AddressRegistration>,
@@ -863,6 +864,7 @@ impl AddressStore {
                     reg.address, reg.contract_name
                 )));
             }
+            check_registration_block(reg.registration_block)?;
         }
         Ok(registrations
             .iter()
@@ -871,104 +873,7 @@ impl AddressStore {
     }
 }
 
-impl StoreInner {
-    /// Infallible: `register_all` has already rejected every unknown contract
-    /// name, so nothing here can fail partway through a batch.
-    fn register_one(
-        &mut self,
-        reg: &AddressRegistration,
-        track_unwritten: bool,
-    ) -> RegistrationVerdict {
-        let Some(key) = address_key(self.ecosystem, &reg.address) else {
-            return RegistrationVerdict {
-                kind: VERDICT_INVALID.to_string(),
-                fetchable: false,
-                effective_start_block: 0,
-                existing_effective_start_block: None,
-            };
-        };
-
-        let contract_idx = self
-            .contract_idx(&reg.contract_name)
-            .expect("register_all validates every contract name before applying the batch");
-        let contract_start_block = self.contract_start_blocks[contract_idx as usize];
-        let effective_start_block =
-            derive_effective_start_block(reg.registration_block, contract_start_block);
-
-        if let Some(id) = self.live_id_for(&key, contract_idx) {
-            return RegistrationVerdict {
-                kind: VERDICT_DUPLICATE.to_string(),
-                fetchable: false,
-                effective_start_block,
-                existing_effective_start_block: Some(self.entry(id).effective_start_block),
-            };
-        }
-
-        let id = self.insert(
-            key,
-            contract_idx,
-            reg.registration_block,
-            effective_start_block,
-        );
-        if track_unwritten {
-            self.unwritten.push(id);
-        }
-        RegistrationVerdict {
-            kind: VERDICT_ADDED.to_string(),
-            fetchable: self.contract_depends_on_addresses[contract_idx as usize],
-            effective_start_block,
-            existing_effective_start_block: None,
-        }
-    }
-
-    /// Registers a row read back from storage, whose key is already the store's
-    /// own encoding. Returns the rejection to warn about, or `None` when the
-    /// row landed.
-    fn seed_one(
-        &mut self,
-        key: Key,
-        contract_idx: u32,
-        registration_block: i64,
-    ) -> Option<RejectedRow> {
-        let contract_start_block = self.contract_start_blocks[contract_idx as usize];
-        let effective_start_block =
-            derive_effective_start_block(registration_block, contract_start_block);
-        if let Some(id) = self.live_id_for(&key, contract_idx) {
-            return Some(RejectedRow {
-                address: address_string(self.ecosystem, &key),
-                contract_name: self.contract_name(contract_idx).to_string(),
-                effective_start_block,
-                existing_effective_start_block: self.entry(id).effective_start_block,
-            });
-        }
-        self.insert(key, contract_idx, registration_block, effective_start_block);
-        None
-    }
-
-    /// Appends a live entry and links it at the head of its key's chain.
-    fn insert(
-        &mut self,
-        key: Key,
-        contract_idx: u32,
-        registration_block: i64,
-        effective_start_block: i64,
-    ) -> u64 {
-        let id = self.entries.len() as u64;
-        let next_by_key = self.id_by_key.insert(key.clone(), id);
-        self.entries.push(Entry {
-            key,
-            contract_idx,
-            registration_block,
-            effective_start_block,
-            dead: false,
-            next_by_key,
-        });
-        self.live_count_by_contract[contract_idx as usize] += 1;
-        id
-    }
-}
-
-fn apply_window(ids: &[u64], offset: Option<i64>, limit: Option<i64>) -> Vec<u64> {
+fn apply_window(ids: &[Id], offset: Option<i64>, limit: Option<i64>) -> Vec<Id> {
     let start = offset.unwrap_or(0).max(0) as usize;
     if start >= ids.len() {
         return Vec::new();
@@ -982,7 +887,7 @@ fn apply_window(ids: &[u64], offset: Option<i64>, limit: Option<i64>) -> Vec<u64
 }
 
 /// Ids must already be in set order, so equal start blocks are adjacent.
-fn group_start_blocks(store: &StoreInner, ids: &[u64]) -> Vec<StartBlockGroup> {
+fn group_start_blocks(store: &StoreInner, ids: &[Id]) -> Vec<StartBlockGroup> {
     let mut groups: Vec<StartBlockGroup> = Vec::new();
     for &id in ids {
         let start_block = store.entry(id).effective_start_block;
@@ -997,55 +902,42 @@ fn group_start_blocks(store: &StoreInner, ids: &[u64]) -> Vec<StartBlockGroup> {
     groups
 }
 
-/// One contract's slice of a set, materialised in set order: the strings a
-/// query's address filter needs and their padded topic forms for events that
-/// filter an indexed address param by `chain.<Contract>.addresses`.
-pub struct ContractSlice {
-    pub name: String,
-    pub contract_idx: u32,
+/// One contract's addresses in a set, rendered for a query: the strings an
+/// address filter takes and, for EVM, their padded topic forms.
+#[derive(Default)]
+pub struct ContractAddresses {
     pub addresses: Vec<String>,
     pub topics: Vec<String>,
 }
 
-/// Everything derived from a set's ids, built once on first use: a partition
-/// makes many queries from one set, so the padded topics are computed once per
-/// set rather than once per query.
-pub struct SetCache {
-    contracts: Vec<ContractSlice>,
-    index_by_name: HashMap<String, usize>,
-    len: usize,
+/// A set's addresses by contract, rendered for one query. Rendered per query
+/// rather than kept: a set of thousands renders in about a millisecond, and
+/// keeping the strings would cost every partition hundreds of bytes per
+/// address.
+pub struct RenderedSet {
+    by_contract: HashMap<String, ContractAddresses>,
 }
 
-impl SetCache {
-    pub fn slice(&self, contract_name: &str) -> Option<&ContractSlice> {
-        self.index_by_name
-            .get(contract_name)
-            .map(|&idx| &self.contracts[idx])
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
+impl RenderedSet {
+    pub fn slice(&self, contract_name: &str) -> Option<&ContractAddresses> {
+        self.by_contract.get(contract_name)
     }
 }
 
 /// A snapshot: the ids are fixed at construction, so a rollback that tombstones
 /// an entry leaves sets built before it still holding that id. Only
-/// `filter_by_registration_block` prunes those — everything else
-/// (`addresses`, `entries`, `slice`, `merge`, the cache) reports them, on
-/// purpose. A rollback rebuilds the fetch state's partitions from filtered sets
-/// straight after, and a stale set that outlives that still can't fetch a dead
-/// address: `is_indexed_at` answers `false` for it, so matching drops the
+/// `filter_by_registration_block` prunes those — everything else reports them,
+/// on purpose. A rollback rebuilds the fetch state's partitions from filtered
+/// sets straight after, and a stale set that outlives that still can't fetch a
+/// dead address: `is_indexed_at` answers `false` for it, so matching drops the
 /// items it would bring back. Pruning here instead would shift the offsets
 /// `start_block_groups` hands to `slice` mid-flight.
 #[napi]
 pub struct AddressSet {
     store: Arc<RwLock<StoreInner>>,
-    ids: Arc<[u64]>,
-    cache: OnceLock<Arc<SetCache>>,
+    ids: Arc<[Id]>,
+    /// Each contract's address count, in the order the contracts first appear.
+    counts: OnceLock<Vec<(u32, u32)>>,
 }
 
 #[napi]
@@ -1071,25 +963,39 @@ impl AddressSet {
         };
         store.is_indexed_at(&key, contract_idx, block_number)
             && self.ids.iter().any(|&id| {
-                let entry = store.entry(id);
-                entry.contract_idx == contract_idx && entry.key == key
+                store.entries.contract_idx(id) == contract_idx && store.entries.key(id) == &*key
             })
     }
 
     /// How many of one contract's addresses this set holds.
     #[napi]
     pub fn count_for(&self, contract_name: String) -> i64 {
-        self.cache()
-            .slice(&contract_name)
-            .map_or(0, |slice| slice.addresses.len() as i64)
+        let Some(contract_idx) = self.store.read().unwrap().contract_idx(&contract_name) else {
+            return 0;
+        };
+        self.counts()
+            .iter()
+            .find(|(idx, _)| *idx == contract_idx)
+            .map_or(0, |(_, count)| i64::from(*count))
     }
 
     #[napi]
     pub fn contract_names(&self) -> Vec<String> {
-        self.cache()
-            .contracts
+        let store = self.store.read().unwrap();
+        self.counts()
             .iter()
-            .map(|slice| slice.name.clone())
+            .map(|(idx, _)| store.contract_name(*idx).to_string())
+            .collect()
+    }
+
+    /// The set's addresses in set order, spelled canonically: what a query
+    /// built from the set asks for.
+    #[napi]
+    pub fn addresses(&self) -> Vec<String> {
+        let store = self.store.read().unwrap();
+        self.ids
+            .iter()
+            .map(|&id| address_string(store.ecosystem, store.entries.key(id)))
             .collect()
     }
 
@@ -1110,7 +1016,7 @@ impl AddressSet {
     #[napi]
     pub fn filter_by_contracts(&self, contract_names: Vec<String>) -> AddressSet {
         let store = self.store.read().unwrap();
-        let kept: std::collections::HashSet<u32> = contract_names
+        let kept: HashSet<u32> = contract_names
             .iter()
             .filter_map(|name| store.contract_idx(name))
             .collect();
@@ -1118,7 +1024,7 @@ impl AddressSet {
             .ids
             .iter()
             .copied()
-            .filter(|&id| kept.contains(&store.entry(id).contract_idx))
+            .filter(|&id| kept.contains(&store.entries.contract_idx(id)))
             .collect();
         drop(store);
         AddressSet::new(self.store.clone(), ids)
@@ -1130,13 +1036,12 @@ impl AddressSet {
     #[napi]
     pub fn filter_by_registration_block(&self, target_block: i64) -> AddressSet {
         let store = self.store.read().unwrap();
-        let ids: Vec<u64> = self
+        let ids = self
             .ids
             .iter()
             .copied()
             .filter(|&id| {
-                let entry = store.entry(id);
-                !entry.dead && entry.registration_block <= target_block
+                !store.entries.is_dead(id) && store.entries.registration_block(id) <= target_block
             })
             .collect();
         drop(store);
@@ -1181,30 +1086,30 @@ impl AddressSet {
         drop(store);
         AddressSet::new(self.store.clone(), ids)
     }
-
-    /// Canonical strings in set order.
-    ///
-    /// For assertions only; nothing in the indexer reads it. A query gets its
-    /// address filter from the cached per-contract slices, and the runtime asks
-    /// `contains_at` — so this is the only way a test can compare two sets by
-    /// what they hold rather than by handle identity.
-    #[napi]
-    pub fn addresses_for_test(&self) -> Vec<String> {
-        let store = self.store.read().unwrap();
-        self.ids
-            .iter()
-            .map(|&id| address_string(store.ecosystem, &store.entry(id).key))
-            .collect()
-    }
 }
 
 impl AddressSet {
-    fn new(store: Arc<RwLock<StoreInner>>, ids: Vec<u64>) -> Self {
+    fn new(store: Arc<RwLock<StoreInner>>, ids: Vec<Id>) -> Self {
         Self {
             store,
             ids: ids.into(),
-            cache: OnceLock::new(),
+            counts: OnceLock::new(),
         }
+    }
+
+    fn counts(&self) -> &[(u32, u32)] {
+        self.counts.get_or_init(|| {
+            let store = self.store.read().unwrap();
+            let mut counts: Vec<(u32, u32)> = Vec::new();
+            for &id in self.ids.iter() {
+                let contract_idx = store.entries.contract_idx(id);
+                match counts.iter_mut().find(|(idx, _)| *idx == contract_idx) {
+                    Some((_, count)) => *count += 1,
+                    None => counts.push((contract_idx, 1)),
+                }
+            }
+            counts
+        })
     }
 
     /// Every address the store holds for `contract_names`, each contract on
@@ -1212,7 +1117,7 @@ impl AddressSet {
     /// holding one contract becomes one request rather than one per contract.
     pub fn contract_chunks(&self, contract_names: &[String], max_addresses: usize) -> Vec<Self> {
         let store = self.store.read().unwrap();
-        let ids_by_contract: Vec<Vec<u64>> = contract_names
+        let ids_by_contract: Vec<Vec<Id>> = contract_names
             .iter()
             .filter_map(|name| store.contract_idx(name))
             .map(|contract_idx| {
@@ -1227,80 +1132,27 @@ impl AddressSet {
             .collect()
     }
 
-    pub fn cache(&self) -> &Arc<SetCache> {
-        self.cache.get_or_init(|| {
-            let store = self.store.read().unwrap();
-            let mut contracts: Vec<ContractSlice> = Vec::new();
-            let mut index_by_contract_idx: HashMap<u32, usize> = HashMap::new();
-            for &id in self.ids.iter() {
-                let entry = store.entry(id);
-                let slot = *index_by_contract_idx
-                    .entry(entry.contract_idx)
-                    .or_insert_with(|| {
-                        contracts.push(ContractSlice {
-                            name: store.contract_name(entry.contract_idx).to_string(),
-                            contract_idx: entry.contract_idx,
-                            addresses: Vec::new(),
-                            topics: Vec::new(),
-                        });
-                        contracts.len() - 1
-                    });
-                contracts[slot]
-                    .addresses
-                    .push(address_string(store.ecosystem, &entry.key));
-                if matches!(store.ecosystem, Ecosystem::Evm) {
-                    contracts[slot].topics.push(address_topic(&entry.key));
-                }
+    /// The set's addresses by contract, in set order, rendered for a query.
+    pub fn render(&self) -> RenderedSet {
+        let store = self.store.read().unwrap();
+        let mut by_contract: HashMap<String, ContractAddresses> = HashMap::new();
+        for &id in self.ids.iter() {
+            let entry = store.entry(id);
+            let rendered = by_contract
+                .entry(store.contract_name(entry.contract_idx).to_string())
+                .or_default();
+            rendered
+                .addresses
+                .push(address_string(store.ecosystem, entry.key));
+            if store.ecosystem == Ecosystem::Evm {
+                rendered.topics.push(address_topic(entry.key));
             }
-            let index_by_name = contracts
-                .iter()
-                .enumerate()
-                .map(|(idx, slice)| (slice.name.clone(), idx))
-                .collect();
-            Arc::new(SetCache {
-                contracts,
-                index_by_name,
-                len: self.ids.len(),
-            })
-        })
+        }
+        RenderedSet { by_contract }
     }
 
     pub fn store(&self) -> &Arc<RwLock<StoreInner>> {
         &self.store
-    }
-}
-
-#[cfg(test)]
-impl AddressSet {
-    /// The set's entries in set order. A projection only assertions need: the
-    /// query path reads `cache()`, and everything else reads the store.
-    pub(crate) fn entries(&self) -> Vec<AddressEntry> {
-        let store = self.store.read().unwrap();
-        self.ids
-            .iter()
-            .map(|&id| {
-                let entry = store.entry(id);
-                AddressEntry {
-                    address: address_string(store.ecosystem, &entry.key),
-                    contract_name: store.contract_name(entry.contract_idx).to_string(),
-                    registration_block: entry.registration_block,
-                    effective_start_block: entry.effective_start_block,
-                }
-            })
-            .collect()
-    }
-}
-
-#[cfg(test)]
-impl AddressStore {
-    /// Seeds already-stored registrations from address strings, which the
-    /// storage-shaped `seed_rows` makes awkward for a fixture. Tests never
-    /// register an unknown contract name.
-    pub(crate) fn register_seed(
-        &self,
-        registrations: Vec<AddressRegistration>,
-    ) -> Vec<RegistrationVerdict> {
-        self.register_all(registrations, false).unwrap()
     }
 }
 
@@ -1335,7 +1187,7 @@ pub(crate) mod test_support {
                 })
             })
             .collect();
-        for verdict in store.register_seed(registrations) {
+        for verdict in store.register_all(registrations, false).unwrap() {
             assert_eq!(verdict.kind, VERDICT_ADDED, "test fixture address rejected");
         }
         store
@@ -1355,940 +1207,10 @@ pub(crate) mod test_support {
         store_of(Ecosystem::Svm, entries)
     }
 
-    /// One set spanning every named contract's addresses, with its cache
-    /// materialised — routing helpers read the cache while holding the store
-    /// guard, and initialising it there would take the same lock twice.
+    /// One set spanning every named contract's addresses.
     pub(crate) fn set_of(store: &AddressStore, contract_names: &[&str]) -> AddressSet {
-        let set = contract_names.iter().fold(store.empty_set(), |acc, name| {
+        contract_names.iter().fold(store.empty_set(), |acc, name| {
             acc.merge(&store.make_set(name.to_string(), None))
-        });
-        let _ = set.cache();
-        set
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const A: &str = "0x00000000000000000000000000000000000000aa";
-    const B: &str = "0x00000000000000000000000000000000000000bb";
-    const C: &str = "0x00000000000000000000000000000000000000cc";
-
-    struct Packed {
-        bytes: Buffer,
-        lengths: Vec<u32>,
-    }
-
-    /// The packed column `seed_rows` and `render_addresses` read, built the way
-    /// storage builds it: encode each address, then concatenate.
-    fn pack_addresses(ecosystem: String, addresses: Vec<String>) -> napi::Result<Packed> {
-        let keys = encode_addresses(ecosystem, addresses)?;
-        Ok(Packed {
-            lengths: keys.iter().map(|key| key.len() as u32).collect(),
-            bytes: keys
-                .iter()
-                .flat_map(|key| key.iter().copied())
-                .collect::<Vec<u8>>()
-                .into(),
         })
-    }
-
-    fn contracts(entries: &[(&str, Option<i64>)]) -> Vec<AddressStoreContract> {
-        entries
-            .iter()
-            .map(|(name, start_block)| AddressStoreContract {
-                name: name.to_string(),
-                start_block: *start_block,
-                depends_on_addresses: true,
-            })
-            .collect()
-    }
-
-    /// A contract nothing on this chain fetches by address — either it has no
-    /// events here, or they're all wildcard. Registered and persisted like any
-    /// other, never fetched.
-    fn address_independent_contract(name: &str) -> AddressStoreContract {
-        AddressStoreContract {
-            name: name.to_string(),
-            start_block: None,
-            depends_on_addresses: false,
-        }
-    }
-
-    fn reg(address: &str, contract_name: &str, registration_block: i64) -> AddressRegistration {
-        AddressRegistration {
-            address: address.to_string(),
-            contract_name: contract_name.to_string(),
-            registration_block,
-        }
-    }
-
-    fn store() -> AddressStore {
-        AddressStore::new_evm(contracts(&[("C", Some(100)), ("D", None)])).unwrap()
-    }
-
-    fn kinds(verdicts: &[RegistrationVerdict]) -> Vec<&str> {
-        verdicts.iter().map(|v| v.kind.as_str()).collect()
-    }
-
-    fn set_entries(set: &AddressSet) -> Vec<(String, String, i64, i64)> {
-        set.entries()
-            .into_iter()
-            .map(|e| {
-                (
-                    e.address,
-                    e.contract_name,
-                    e.registration_block,
-                    e.effective_start_block,
-                )
-            })
-            .collect()
-    }
-
-    #[test]
-    fn derives_effective_start_block_from_contract_and_registration() {
-        let store = store();
-        let verdicts = store.register_seed(vec![
-            // Config address of a contract starting at 100.
-            reg(A, "C", -1),
-            // Dynamic registration below the contract start block.
-            reg(B, "C", 50),
-            // Dynamic registration for a contract with no start block.
-            reg(C, "D", 70),
-        ]);
-        assert_eq!(
-            verdicts
-                .iter()
-                .map(|v| (v.kind.as_str(), v.effective_start_block))
-                .collect::<Vec<_>>(),
-            vec![("added", 100), ("added", 100), ("added", 70)]
-        );
-    }
-
-    #[test]
-    fn duplicate_carries_the_existing_registration() {
-        let store = store();
-        let verdicts = store.register_seed(vec![
-            reg(A, "C", 10),
-            // Same address, same contract — duplicate, with what's already held.
-            reg(A, "C", 20),
-            // Same address, another contract — a registration of its own.
-            reg(A, "D", 20),
-            // And a duplicate of that one, resolved inside the same batch.
-            reg(A, "D", 30),
-        ]);
-        assert_eq!(
-            verdicts
-                .iter()
-                .map(|v| (v.kind.as_str(), v.existing_effective_start_block))
-                .collect::<Vec<_>>(),
-            vec![
-                ("added", None),
-                ("duplicate", Some(100)),
-                ("added", None),
-                ("duplicate", Some(20)),
-            ]
-        );
-    }
-
-    #[test]
-    fn an_address_is_registered_per_contract() {
-        // "D" stands in for a contract nothing on this chain fetches by
-        // address: the store treats it like any other, and the fetch state
-        // decides nothing is queried for it.
-        let store = store();
-        let verdicts = store.register_seed(vec![reg(A, "D", 10), reg(A, "C", 20), reg(A, "D", 30)]);
-        assert_eq!(
-            (
-                kinds(&verdicts),
-                store.size(),
-                store.contract_addresses("C".to_string(), false),
-                store.contract_addresses("D".to_string(), false),
-                store.get_all_for_test(A.to_string()).len(),
-            ),
-            (
-                vec!["added", "added", "duplicate"],
-                2,
-                vec![A.to_string()],
-                vec![A.to_string()],
-                2,
-            )
-        );
-    }
-
-    #[test]
-    fn rolling_back_one_owner_leaves_the_others_indexing() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 100), reg(A, "D", 500)]);
-        assert_eq!(
-            (
-                // Only D's registration of the address is handed over.
-                rolled_back(&store, 300),
-                // C registered A at 100, so it survives...
-                store.is_indexed_at(A.to_string(), "C".to_string(), 600),
-                // ...while D's registration at 500 is gone.
-                store.is_indexed_at(A.to_string(), "D".to_string(), 600),
-                store.contract_addresses("C".to_string(), false),
-                store.contract_addresses("D".to_string(), false),
-                // And the surviving registration is still reachable by key.
-                store.get_all_for_test(A.to_string()).len(),
-            ),
-            (
-                vec![(A.to_string(), 1)],
-                true,
-                false,
-                vec![A.to_string()],
-                vec![],
-                1
-            )
-        );
-    }
-
-    #[test]
-    fn rolling_back_an_owner_in_the_middle_of_a_key_leaves_the_rest() {
-        // Three contracts holding one address. Registrations are linked
-        // newest-first, so registering D second but at the highest block puts
-        // the one the rollback kills in the middle of that chain.
-        let store =
-            AddressStore::new_evm(contracts(&[("C", None), ("D", None), ("E", None)])).unwrap();
-        store
-            .register_batch(vec![reg(A, "C", 100), reg(A, "D", 700), reg(A, "E", 200)])
-            .unwrap();
-        store.rollback(600);
-
-        assert_eq!(
-            (
-                store.is_indexed_at(A.to_string(), "C".to_string(), 800),
-                store.is_indexed_at(A.to_string(), "D".to_string(), 800),
-                store.is_indexed_at(A.to_string(), "E".to_string(), 800),
-                store
-                    .get_all_for_test(A.to_string())
-                    .into_iter()
-                    .map(|e| e.contract_name)
-                    .collect::<Vec<_>>(),
-                store.size(),
-                // The killed registration can be made afresh.
-                kinds(&store.register_seed(vec![reg(A, "D", 800)])),
-            ),
-            (
-                true,
-                false,
-                true,
-                vec!["C".to_string(), "E".to_string()],
-                2,
-                vec!["added"],
-            )
-        );
-    }
-
-    #[test]
-    fn a_shared_address_sorts_by_contract_within_its_start_block() {
-        // The sort key must stay total over live entries: two registrations of
-        // one address at one start block differ only by contract.
-        let store = AddressStore::new_evm(contracts(&[("C", None), ("D", None)])).unwrap();
-        store.register_seed(vec![reg(A, "D", 10), reg(A, "C", 10)]);
-        let merged = store
-            .make_set("C".to_string(), None)
-            .merge(&store.make_set("D".to_string(), None));
-        assert_eq!(
-            (
-                merged.size(),
-                merged
-                    .entries()
-                    .into_iter()
-                    .map(|e| e.contract_name)
-                    .collect::<Vec<_>>(),
-                // Merging the same set twice still collapses: equal sort keys
-                // are the same id, never two registrations.
-                merged.merge(&merged).size(),
-            ),
-            (2, vec!["C".to_string(), "D".to_string()], 2)
-        );
-    }
-
-    #[test]
-    fn registering_for_a_contract_the_chain_doesnt_index_is_an_error() {
-        let store = store();
-        assert!(store.register_batch(vec![reg(A, "Unknown", 10)]).is_err());
-    }
-
-    #[test]
-    fn a_batch_with_an_unknown_name_applies_none_of_itself() {
-        let store = store();
-        assert!(store
-            .register_batch(vec![reg(A, "C", 10), reg(B, "Unknown", 20)])
-            .is_err());
-        // The valid registration ahead of the bad one must not have landed —
-        // a caller that survives the error would otherwise see a store holding
-        // an address it was never told about.
-        assert_eq!(
-            (store.size(), store.pending_entries_for_test().len()),
-            (0, 0)
-        );
-    }
-
-    #[test]
-    fn only_an_address_dependent_contract_is_fetchable() {
-        let store = AddressStore::new_evm(vec![
-            contracts(&[("C", None)]).remove(0),
-            address_independent_contract("D"),
-        ])
-        .unwrap();
-        let verdicts = store.register_seed(vec![reg(A, "C", 10), reg(B, "D", 20)]);
-        assert_eq!(
-            verdicts.iter().map(|v| v.fetchable).collect::<Vec<_>>(),
-            vec![true, false]
-        );
-    }
-
-    #[test]
-    fn contract_addresses_are_listed_per_contract_in_set_order() {
-        let store = AddressStore::new_evm(contracts(&[("C", None), ("D", None)])).unwrap();
-        let verdicts = store.register_seed(vec![reg(B, "C", 20), reg(A, "C", 10), reg(C, "D", 30)]);
-        assert_eq!(
-            (
-                kinds(&verdicts),
-                store.contract_addresses("C".to_string(), false),
-                store.contract_addresses("D".to_string(), false),
-                store.contract_addresses("Missing".to_string(), false),
-            ),
-            (
-                vec!["added", "added", "added"],
-                // Set order: A(10) before B(20).
-                vec![A.to_string(), B.to_string()],
-                vec![C.to_string()],
-                vec![],
-            )
-        );
-    }
-
-    /// The registrations a rollback hands over for deletion, rendered.
-    fn rolled_back(store: &AddressStore, target_block: i64) -> Vec<(String, u32)> {
-        let ecosystem = Ecosystem::Evm;
-        store
-            .rollback(target_block)
-            .into_iter()
-            .map(|r| (address_string(ecosystem, &r.address), r.contract_id))
-            .collect()
-    }
-
-    fn drained(
-        store: &AddressStore,
-        to_block: i64,
-        checkpoints: &[i64],
-    ) -> Vec<(String, i64, u32)> {
-        let ecosystem = Ecosystem::Evm;
-        store
-            .drain_for_write(to_block, checkpoints.to_vec())
-            .unwrap()
-            .into_iter()
-            .map(|e| {
-                (
-                    address_string(ecosystem, &e.address),
-                    e.registration_block,
-                    e.checkpoint_idx,
-                )
-            })
-            .collect()
-    }
-
-    // A chain with no stored addresses seeds an empty column: asking for its
-    // contract's addresses must answer with none rather than refuse to read it.
-    #[test]
-    fn an_empty_column_renders_as_no_addresses() {
-        assert_eq!(
-            (
-                render_contract_addresses(
-                    "svm".to_string(),
-                    false,
-                    vec![].into(),
-                    vec![],
-                    vec![],
-                    0
-                )
-                .unwrap(),
-                render_addresses("svm".to_string(), false, vec![].into(), vec![]).unwrap(),
-                encode_addresses("svm".to_string(), vec![]).unwrap().len(),
-            ),
-            (Vec::<String>::new(), Vec::<String>::new(), 0)
-        );
-    }
-
-    #[test]
-    fn unwritten_entries_drain_up_to_the_written_block() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 100)]);
-        store
-            .register_batch(vec![reg(B, "C", 200), reg(C, "C", 400)])
-            .unwrap();
-
-        assert_eq!(
-            (
-                // The seeded address is already stored, so it never drains.
-                drained(&store, 300, &[100, 200]),
-                drained(&store, 300, &[100, 200]),
-                drained(&store, 400, &[400]),
-            ),
-            (
-                vec![(B.to_string(), 200, 1)],
-                vec![],
-                vec![(C.to_string(), 400, 0)]
-            )
-        );
-    }
-
-    #[test]
-    fn draining_without_a_checkpoint_errors_and_keeps_the_queue() {
-        let store = store();
-        store
-            .register_batch(vec![reg(A, "C", 100), reg(B, "C", 200)])
-            .unwrap();
-
-        // Block 200 has no checkpoint: the batch never processed the event that
-        // registered B, so the row would be unreachable by a rollback.
-        assert!(store.drain_for_write(300, vec![100]).is_err());
-        // Nothing was consumed, so a retry with the right checkpoints still
-        // sees both — the failed drain didn't silently swallow A.
-        assert_eq!(
-            drained(&store, 300, &[100, 200]),
-            vec![(A.to_string(), 100, 0), (B.to_string(), 200, 1)]
-        );
-    }
-
-    #[test]
-    fn only_registrations_the_database_may_hold_are_handed_over_for_deletion() {
-        let store = store();
-        // Already stored: the database has a row for it.
-        store.register_seed(vec![reg(A, "C", 500)]);
-        // Still queued for insert: nothing to delete.
-        store.register_batch(vec![reg(B, "C", 500)]).unwrap();
-        assert_eq!(
-            (
-                rolled_back(&store, 300),
-                store.size(),
-                store.pending_count()
-            ),
-            (vec![(A.to_string(), 0)], 0, 0)
-        );
-    }
-
-    #[test]
-    fn rollback_drops_pending_writes_of_the_addresses_it_kills() {
-        let store = store();
-        store
-            .register_batch(vec![reg(A, "C", 100), reg(B, "C", 400)])
-            .unwrap();
-        store.rollback(200);
-        // Re-registering after the rollback makes the address pending again.
-        store.register_batch(vec![reg(B, "C", 500)]).unwrap();
-
-        assert_eq!(
-            drained(&store, 1000, &[100, 500]),
-            vec![(A.to_string(), 100, 0), (B.to_string(), 500, 1)]
-        );
-    }
-
-    #[test]
-    fn checksummed_and_lowercase_spellings_are_one_address() {
-        let store = AddressStore::new_evm(contracts(&[("C", None)])).unwrap();
-        let verdicts = store.register_seed(vec![
-            reg("0x85149247691df622eaf1a8bd0cafd40bc45154a9", "C", 1),
-            reg("0x85149247691df622eaF1a8Bd0CaFd40BC45154a9", "C", 2),
-        ]);
-        assert_eq!(
-            (
-                kinds(&verdicts),
-                store.contract_addresses("C".to_string(), true),
-                store.contract_addresses("C".to_string(), false),
-            ),
-            (
-                vec!["added", "duplicate"],
-                // One key, spelled the way the reader asks for.
-                vec!["0x85149247691df622eaF1a8Bd0CaFd40BC45154a9".to_string()],
-                vec!["0x85149247691df622eaf1a8bd0cafd40bc45154a9".to_string()],
-            )
-        );
-    }
-
-    #[test]
-    fn malformed_address_is_rejected_not_registered() {
-        let store = store();
-        let verdicts = store.register_seed(vec![reg("not-an-address", "C", 1)]);
-        assert_eq!((kinds(&verdicts), store.size()), (vec!["invalid"], 0));
-    }
-
-    #[test]
-    fn set_order_is_independent_of_registration_order() {
-        // The same addresses registered in three different orders (and split
-        // across batches differently) must produce byte-identical sets — that's
-        // what lets a restored indexer rebuild the partitions it had.
-        let expected = {
-            let store = store();
-            store.register_seed(vec![reg(A, "C", 30), reg(B, "C", 10), reg(C, "C", 20)]);
-            set_entries(&store.make_set("C".to_string(), None))
-        };
-
-        let reversed = {
-            let store = store();
-            store.register_seed(vec![reg(C, "C", 20), reg(B, "C", 10), reg(A, "C", 30)]);
-            set_entries(&store.make_set("C".to_string(), None))
-        };
-
-        let split_batches = {
-            let store = store();
-            store.register_seed(vec![reg(B, "C", 10)]);
-            store.register_seed(vec![reg(A, "C", 30)]);
-            store.register_seed(vec![reg(C, "C", 20)]);
-            set_entries(&store.make_set("C".to_string(), None))
-        };
-
-        assert_eq!(
-            (&reversed, &split_batches),
-            (&expected, &expected),
-            "set order must be derived from (effectiveStartBlock, address), not insertion order",
-        );
-    }
-
-    #[test]
-    fn min_id_selects_only_a_batch_additions() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 10)]);
-        let cursor = store.next_id();
-        store.register_seed(vec![reg(B, "C", 20), reg(C, "C", 30)]);
-        let added = store.make_set(
-            "C".to_string(),
-            Some(MakeSetOptions {
-                min_id: Some(cursor),
-                ..Default::default()
-            }),
-        );
-        assert_eq!(
-            added.addresses_for_test(),
-            vec![B.to_string(), C.to_string()]
-        );
-    }
-
-    #[test]
-    fn start_block_windows_and_grouping() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 300), reg(B, "C", 100), reg(C, "C", 300)]);
-        let window = store.make_set(
-            "C".to_string(),
-            Some(MakeSetOptions {
-                from_start_block: Some(300),
-                ..Default::default()
-            }),
-        );
-        assert_eq!(
-            (
-                store
-                    .make_set("C".to_string(), None)
-                    .start_block_groups()
-                    .into_iter()
-                    .map(|g| (g.start_block, g.count))
-                    .collect::<Vec<_>>(),
-                window.addresses_for_test(),
-            ),
-            (
-                // 100 is the contract's start block, which B's registration
-                // block of 100 also lands on.
-                vec![(100, 1), (300, 2)],
-                vec![A.to_string(), C.to_string()],
-            )
-        );
-    }
-
-    #[test]
-    fn merge_and_slice_keep_set_order_and_dedupe() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 300), reg(B, "C", 100), reg(C, "D", 200)]);
-        let c_set = store.make_set("C".to_string(), None);
-        let d_set = store.make_set("D".to_string(), None);
-        let merged = c_set.merge(&d_set).merge(&c_set);
-        assert_eq!(
-            (
-                merged.addresses_for_test(),
-                merged.slice(1, Some(1)).addresses_for_test(),
-                merged.count_for("C".to_string()),
-                merged.count_for("D".to_string()),
-            ),
-            (
-                // Ordered by effectiveStartBlock: B(100), C(200), A(300).
-                vec![B.to_string(), C.to_string(), A.to_string()],
-                vec![C.to_string()],
-                2,
-                1,
-            )
-        );
-    }
-
-    #[test]
-    fn contract_chunks_split_each_contract_on_its_own_in_set_order() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 300), reg(B, "C", 100), reg(C, "D", 200)]);
-        let chunks = |names: &[&str], max_addresses| {
-            store
-                .empty_set()
-                .contract_chunks(
-                    &names
-                        .iter()
-                        .map(|name| name.to_string())
-                        .collect::<Vec<_>>(),
-                    max_addresses,
-                )
-                .iter()
-                .map(AddressSet::addresses_for_test)
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            (
-                chunks(&["C", "D"], 2),
-                chunks(&["C"], 5),
-                chunks(&["Unknown"], 5)
-            ),
-            (
-                // A chunk holds one contract's addresses, so a request built
-                // from it carries a single contract's selection.
-                vec![vec![B.to_string(), A.to_string()], vec![C.to_string()]],
-                vec![vec![B.to_string(), A.to_string()]],
-                Vec::<Vec<String>>::new(),
-            )
-        );
-    }
-
-    #[test]
-    fn rollback_tombstones_and_filters_existing_sets() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 100), reg(B, "C", 300), reg(C, "C", 500)]);
-        let before = store.make_set("C".to_string(), None);
-        assert_eq!(
-            (
-                rolled_back(&store, 300),
-                store.contract_count("C".to_string()),
-                before
-                    .filter_by_registration_block(300)
-                    .addresses_for_test(),
-                store.make_set("C".to_string(), None).addresses_for_test(),
-            ),
-            (
-                vec![(C.to_string(), 0)],
-                2,
-                vec![A.to_string(), B.to_string()],
-                vec![A.to_string(), B.to_string()],
-            )
-        );
-    }
-
-    #[test]
-    fn a_set_built_before_a_rollback_keeps_tombstones_but_cant_fetch_them() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 100), reg(B, "C", 500)]);
-        // Cache the set before the rollback too, the way a partition that is
-        // mid-query would have.
-        let before = store.make_set("C".to_string(), None);
-        let _ = before.cache();
-        store.rollback(300);
-        assert_eq!(
-            (
-                // Still listed: only filter_by_registration_block prunes.
-                before.addresses_for_test(),
-                before.size(),
-                // But dead to the gate.
-                before.contains_at(B.to_string(), "C".to_string(), 600),
-                store.is_indexed_at(B.to_string(), "C".to_string(), 600),
-                before
-                    .filter_by_registration_block(300)
-                    .addresses_for_test(),
-            ),
-            (
-                vec![A.to_string(), B.to_string()],
-                2,
-                false,
-                false,
-                vec![A.to_string()],
-            )
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "merging address sets from different stores")]
-    fn merging_sets_from_different_stores_panics() {
-        let left = store();
-        let right = store();
-        left.register_seed(vec![reg(A, "C", 100)]);
-        right.register_seed(vec![reg(B, "C", 100)]);
-        let _ = left
-            .make_set("C".to_string(), None)
-            .merge(&right.make_set("C".to_string(), None));
-    }
-
-    #[test]
-    fn seeded_rows_carry_their_own_encoding() {
-        let store = store();
-        let packed = pack_addresses(
-            "evm".to_string(),
-            vec![A.to_string(), A.to_string(), B.to_string()],
-        )
-        .unwrap();
-        let rejected = store
-            .seed_rows(
-                packed.bytes,
-                packed.lengths,
-                vec![0, 1, 0],
-                vec![-1, 40, 50],
-            )
-            .unwrap();
-        assert_eq!(
-            (
-                rejected.len(),
-                store.contract_addresses("C".to_string(), false),
-                store.contract_addresses("D".to_string(), false),
-                store.contract_count("C".to_string()),
-                // Nothing seeded is ever written back.
-                store.pending_count(),
-            ),
-            (
-                0,
-                vec![A.to_string(), B.to_string()],
-                vec![A.to_string()],
-                2,
-                0
-            )
-        );
-    }
-
-    #[test]
-    fn a_seeded_row_repeating_a_registration_is_rejected_not_registered() {
-        let store = store();
-        let packed = pack_addresses("evm".to_string(), vec![A.to_string(), A.to_string()]).unwrap();
-        let rejected = store
-            .seed_rows(packed.bytes, packed.lengths, vec![0, 0], vec![-1, 200])
-            .unwrap();
-        assert_eq!(
-            (
-                rejected
-                    .iter()
-                    .map(|r| {
-                        (
-                            r.address.as_str(),
-                            r.contract_name.as_str(),
-                            r.existing_effective_start_block,
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-                store.size(),
-            ),
-            // The registration already held starts at the contract's start block.
-            (vec![(A, "C", 100)], 1)
-        );
-    }
-
-    #[test]
-    fn seeding_rejects_a_column_the_keys_dont_account_for() {
-        let store = store();
-        let packed = pack_addresses("evm".to_string(), vec![A.to_string(), B.to_string()]).unwrap();
-        // One row's worth of columns over a two-address buffer: B's bytes are
-        // unaccounted for, so the column is not what the row count claims.
-        let error = store
-            .seed_rows(packed.bytes, vec![20], vec![0], vec![-1])
-            .map(|_| ())
-            .unwrap_err();
-        assert_eq!(
-            (error.reason.as_str(), store.size()),
-            (
-                "Packed addresses are 40 bytes, but their keys account for 20.",
-                0
-            )
-        );
-    }
-
-    #[test]
-    fn seeding_rejects_a_key_that_isnt_the_ecosystems_width() {
-        let store = store();
-        let packed = pack_addresses("evm".to_string(), vec![A.to_string(), B.to_string()]).unwrap();
-        // Widths that still consume the whole buffer, so only the ecosystem's
-        // own key width can catch them.
-        let error = store
-            .seed_rows(packed.bytes, vec![19, 21], vec![0, 0], vec![-1, -1])
-            .map(|_| ())
-            .unwrap_err();
-        assert_eq!(
-            (error.reason.as_str(), store.size()),
-            ("Address keys are 20 bytes, but a row claims 19.", 0)
-        );
-    }
-
-    #[test]
-    fn seeding_rejects_a_bad_contract_id_before_inserting() {
-        let store = store();
-        let packed = pack_addresses("evm".to_string(), vec![A.to_string(), B.to_string()]).unwrap();
-        let error = store
-            .seed_rows(packed.bytes, packed.lengths, vec![0, 99], vec![-1, -1])
-            .map(|_| ())
-            .unwrap_err();
-        assert_eq!(
-            (error.reason.as_str(), store.size()),
-            (
-                "Seeded address row names contract id 99, which the chain's store doesn't hold.",
-                0
-            )
-        );
-    }
-
-    #[test]
-    fn seeding_reads_svm_keys_at_the_widths_they_carry() {
-        let store =
-            AddressStore::with_ecosystem(Ecosystem::Svm, contracts(&[("C", None)])).unwrap();
-        let short = "So11111111111111111111111111111111111111112";
-        let long = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-        let packed =
-            pack_addresses("svm".to_string(), vec![short.to_string(), long.to_string()]).unwrap();
-        let rejected = store
-            .seed_rows(packed.bytes, packed.lengths, vec![0, 0], vec![-1, -1])
-            .unwrap();
-        assert_eq!(
-            (
-                rejected.len(),
-                store.contract_addresses("C".to_string(), false)
-            ),
-            (0, vec![short.to_string(), long.to_string()])
-        );
-    }
-
-    #[test]
-    fn contract_names_get_canonical_ids_by_byte_order() {
-        assert_eq!(
-            canonical_contract_names(vec![
-                "Pool".to_string(),
-                "Factory".to_string(),
-                "Pool".to_string(),
-                "ERC20".to_string(),
-            ]),
-            vec![
-                "ERC20".to_string(),
-                "Factory".to_string(),
-                "Pool".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn dynamic_contract_names_are_the_ones_with_a_registration_block() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", -1), reg(B, "D", 10)]);
-        assert_eq!(store.dynamic_contract_names(), vec!["D".to_string()]);
-    }
-
-    #[test]
-    fn rolled_back_address_can_be_registered_again() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 500)]);
-        store.rollback(300);
-        let verdicts = store.register_seed(vec![reg(A, "C", 400)]);
-        assert_eq!(
-            (
-                kinds(&verdicts),
-                store.contract_addresses("C".to_string(), false)
-            ),
-            (vec!["added"], vec![A.to_string()])
-        );
-    }
-
-    #[test]
-    fn is_indexed_at_gates_on_contract_and_effective_start_block() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 300)]);
-        assert_eq!(
-            (
-                store.is_indexed_at(A.to_string(), "C".to_string(), 300),
-                store.is_indexed_at(A.to_string(), "C".to_string(), 299),
-                // Registered for C only, so D's gate stays shut for it.
-                store.is_indexed_at(A.to_string(), "D".to_string(), 300),
-                store.is_indexed_at(B.to_string(), "C".to_string(), 300),
-            ),
-            (true, false, false, false)
-        );
-    }
-
-    #[test]
-    fn contains_at_scopes_the_gate_to_the_set() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 300), reg(B, "C", 300)]);
-        // A partition holding the first of C's two addresses.
-        let set = store.make_set("C".to_string(), None).slice(0, Some(1));
-        assert_eq!(
-            (
-                set.contains_at(A.to_string(), "C".to_string(), 300),
-                set.contains_at(A.to_string(), "C".to_string(), 299),
-                set.contains_at(A.to_string(), "D".to_string(), 300),
-                // Registered for the same contract, but held by another set;
-                // only the chain-wide gate on the store answers for it.
-                set.contains_at(B.to_string(), "C".to_string(), 300),
-                store.is_indexed_at(B.to_string(), "C".to_string(), 300),
-            ),
-            (true, false, false, false, true)
-        );
-    }
-
-    #[test]
-    fn set_cache_slices_addresses_with_padded_topics() {
-        let store = store();
-        // A is shared by both contracts; C (the address) only by "D".
-        store.register_seed(vec![reg(A, "C", 100), reg(A, "D", 100), reg(C, "D", 200)]);
-        let set = store
-            .make_set("C".to_string(), None)
-            .merge(&store.make_set("D".to_string(), None));
-        let cache = set.cache();
-        assert_eq!(
-            (
-                cache.slice("C").map(|s| s.topics.clone()),
-                cache.slice("Missing").is_none(),
-                cache.len(),
-            ),
-            (
-                Some(vec![
-                    "0x00000000000000000000000000000000000000000000000000000000000000aa"
-                        .to_string()
-                ]),
-                true,
-                3,
-            )
-        );
-    }
-
-    #[test]
-    fn contains_at_is_a_membership_test_over_every_owner() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 100), reg(A, "D", 100)]);
-        let set = store.make_set("C".to_string(), None);
-        assert_eq!(
-            (
-                set.contains_at(A.to_string(), "C".to_string(), 100),
-                // Registered for D chain-wide, but this set holds only C's
-                // registration of it.
-                set.contains_at(A.to_string(), "D".to_string(), 100),
-                store
-                    .make_set("C".to_string(), None)
-                    .merge(&store.make_set("D".to_string(), None))
-                    .contains_at(A.to_string(), "D".to_string(), 100),
-            ),
-            (true, false, true)
-        );
-    }
-
-    #[test]
-    fn svm_keys_on_the_base58_text() {
-        let store = AddressStore::new_svm(contracts(&[("P", None)])).unwrap();
-        let program = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-        let verdicts = store.register_seed(vec![reg(program, "P", 5)]);
-        assert_eq!(
-            (
-                kinds(&verdicts),
-                store.contract_addresses("P".to_string(), false),
-                store.is_indexed_at(program.to_string(), "P".to_string(), 5),
-            ),
-            (vec!["added"], vec![program.to_string()], true)
-        );
     }
 }

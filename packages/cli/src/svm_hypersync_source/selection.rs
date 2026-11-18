@@ -1016,11 +1016,13 @@ mod tests {
             depends_on_addresses: true,
         }])
         .unwrap();
-        store.register_seed(vec![crate::address_store::AddressRegistration {
-            address: PROG_A.to_string(),
-            contract_name: "Owned".to_string(),
-            registration_block: 70,
-        }]);
+        store
+            .register_batch(vec![crate::address_store::AddressRegistration {
+                address: PROG_A.to_string(),
+                contract_name: "Owned".to_string(),
+                registration_block: 70,
+            }])
+            .unwrap();
         let set = set_of(&store, &["Owned"]);
         let built = SelectionBuilder::from_programs(
             std::slice::from_ref(&owned),

@@ -320,9 +320,9 @@ impl SelectionBuilder {
                 ..Default::default()
             });
         }
-        let cache = address_set.cache();
+        let rendered = address_set.render();
         for contract_name in ordered_contracts {
-            let addresses = match cache.slice(contract_name) {
+            let addresses = match rendered.slice(contract_name) {
                 Some(slice) if !slice.addresses.is_empty() => {
                     parse_root_contract_ids(&slice.addresses)?
                 }
@@ -684,11 +684,13 @@ mod tests {
             depends_on_addresses: true,
         }])
         .unwrap();
-        store.register_seed(vec![crate::address_store::AddressRegistration {
-            address: ADDR_1.to_string(),
-            contract_name: "Owned".to_string(),
-            registration_block: 50,
-        }]);
+        store
+            .register_batch(vec![crate::address_store::AddressRegistration {
+                address: ADDR_1.to_string(),
+                contract_name: "Owned".to_string(),
+                registration_block: 50,
+            }])
+            .unwrap();
         let regs = parsed(&[reg(0, "Owned", FuelEventKind::Mint, false, None)], &store);
         let owned_key = key_of(ADDR_1);
         assert_eq!(

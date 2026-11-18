@@ -250,6 +250,8 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           concurrency: 2,
           partitionsCount: 3,
           bufferSize: 42,
+          bufferBytes: 0.,
+          addressStoreBytes: 0.,
           bufferBlockNumber: 260,
           idleSeconds: 1.5,
           waitingForNewBlockSeconds: 2.5,
@@ -474,6 +476,14 @@ envio_indexing_source_rate_limited_seconds{chainId="1"} 1.5
 # HELP envio_indexing_buffer_size The current number of items in the indexing buffer.
 # TYPE envio_indexing_buffer_size gauge
 envio_indexing_buffer_size{chainId="1"} 42
+
+# HELP envio_indexing_buffer_bytes The memory the chain's buffer of fetched rows holds.
+# TYPE envio_indexing_buffer_bytes gauge
+envio_indexing_buffer_bytes{chainId="1"} 0
+
+# HELP envio_indexing_address_store_bytes The memory the chain's registered addresses and their index hold.
+# TYPE envio_indexing_address_store_bytes gauge
+envio_indexing_address_store_bytes{chainId="1"} 0
 
 # HELP envio_indexing_target_buffer_size The indexer-wide target buffer size shared across all chains. The actual number of items in the queue may exceed this value, but the indexer always tries to keep the buffer filled up to this target.
 # TYPE envio_indexing_target_buffer_size gauge

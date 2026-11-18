@@ -252,12 +252,9 @@ impl SelectionBuilder {
 
         let mut log_selections = address_free_selections(no_address);
 
-        // The set's per-contract slices carry both the address strings the
-        // filter needs and their padded topic forms, materialised once when the
-        // partition's set was first used rather than per query.
-        let cache = address_set.cache();
+        let rendered = address_set.render();
         for contract_name in ordered_contracts {
-            let slice = match cache.slice(contract_name) {
+            let slice = match rendered.slice(contract_name) {
                 Some(slice) if !slice.addresses.is_empty() => slice,
                 _ => continue,
             };

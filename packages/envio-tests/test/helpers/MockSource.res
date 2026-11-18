@@ -1295,7 +1295,7 @@ let make = (
           ~retry,
           ~logger as _,
         ) => {
-          let addresses = addressSet->AddressSet.addressesForTest
+          let addresses = addressSet->AddressSet.addresses
           let id =
             ledger->Ledger.takeItemsQuery(
               partitionId,

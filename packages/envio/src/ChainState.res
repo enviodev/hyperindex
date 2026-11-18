@@ -1093,6 +1093,8 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   concurrency: cs.sourceManager->SourceManager.inFlightCount,
   partitionsCount: cs.fetchState->FetchState.partitionsCount,
   bufferSize: cs->bufferSize,
+  bufferBytes: cs.chainBuffer->ChainBuffer.heapBytes,
+  addressStoreBytes: cs.addressStore->AddressStore.heapBytes,
   bufferBlockNumber: cs.fetchState->FetchState.bufferBlockNumber,
   idleSeconds: cs.sourceManager->SourceManager.idleSeconds,
   waitingForNewBlockSeconds: cs.sourceManager->SourceManager.waitingForNewBlockSeconds,

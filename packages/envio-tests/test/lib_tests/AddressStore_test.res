@@ -41,9 +41,8 @@ describe("AddressStore", () => {
       "countA": store->AddressStore.contractCount("A"),
       "countB": store->AddressStore.contractCount("B"),
       "size": store->AddressStore.size,
-      // Lookup finds every contract holding an address.
-      "ownersOfAddr1": store->AddressStore.getAllForTest(addr(1))->Array.map(ia => ia.contractName),
-      "addr2Gone": store->AddressStore.getAllForTest(addr(2))->Utils.Array.isEmpty,
+      "addr1IndexedForA": store->AddressStore.isIndexedAt(addr(1), "A", 5),
+      "addr2Gone": !(store->AddressStore.isIndexedAt(addr(2), "B", 8)),
       "addressesOfA": store->AddressStore.contractAddresses("A", ~shouldChecksum=true),
       "addressesOfMissing": store->AddressStore.contractAddresses("MISSING", ~shouldChecksum=true),
     }).toEqual({
@@ -51,7 +50,7 @@ describe("AddressStore", () => {
       "countA": 2,
       "countB": 0,
       "size": 2,
-      "ownersOfAddr1": ["A"],
+      "addr1IndexedForA": true,
       "addr2Gone": true,
       // Set order is (effectiveStartBlock, address): addr(0) starts at 0,
       // addr(1) at its registration block.
@@ -198,7 +197,7 @@ describe("AddressStore", () => {
     let added = store->AddressStore.makeSet(~contractName="B", ~options={minId: cursor})
     t.expect({
       "verdicts": verdicts,
-      "added": added->AddressSet.addressesForTest,
+      "added": added->AddressSet.addresses,
       "noEventsIsStillReported": store->AddressStore.contractAddresses(
         "NoEvents",
         ~shouldChecksum=true,
@@ -250,13 +249,13 @@ describe("AddressStore", () => {
       "upToBlock20": drain(~toBlockInclusive=20, ~checkpointBlockNumbers=[5, 10]),
       "drainedOnce": drain(~toBlockInclusive=20, ~checkpointBlockNumbers=[5, 10]),
       "rest": drain(~toBlockInclusive=30, ~checkpointBlockNumbers=[30]),
-      "nothingLeftPending": store->AddressStore.pendingEntriesForTest,
+      "nothingLeftPending": store->AddressStore.pendingCount,
     }).toEqual({
       // The checkpoint index points back at the block numbers passed in.
       "upToBlock20": [(0, 1)],
       "drainedOnce": [],
       "rest": [(0, 0)],
-      "nothingLeftPending": [],
+      "nothingLeftPending": 0,
     })
   })
 
@@ -276,9 +275,14 @@ describe("AddressStore", () => {
     t.expect(
       // The failed drain consumed nothing, so the registration is still there
       // to be written by a batch that does cover it.
-      (threw, store->AddressStore.pendingEntriesForTest->Array.map(ia => ia.address)),
+      (
+        threw,
+        store
+        ->AddressStore.drainForWrite(20, [10])
+        ->Array.map(({registrationBlock}) => registrationBlock),
+      ),
       ~message="a failed drain leaves the queue intact",
-    ).toEqual((true, TestAddresses.canonical([addr(1)])))
+    ).toEqual((true, [10]))
   })
 
   // https://github.com/enviodev/hyperindex/issues/1187
@@ -292,7 +296,6 @@ describe("AddressStore", () => {
         {address: addr(0), contractName: "B", registrationBlock: 7},
         {address: addr(0), contractName: "B", registrationBlock: 9},
       ]),
-      "ownersOfAddr0": store->AddressStore.getAllForTest(addr(0))->Array.map(ia => ia.contractName),
       "indexedForA": store->AddressStore.isIndexedAt(addr(0), "A", 7),
       "indexedForB": store->AddressStore.isIndexedAt(addr(0), "B", 7),
       // B's registration only starts where it was registered.
@@ -303,7 +306,6 @@ describe("AddressStore", () => {
         AddressStore.Added({effectiveStartBlock: 7, fetchable: true}),
         Duplicate({effectiveStartBlock: 9, existingEffectiveStartBlock: 7}),
       ],
-      "ownersOfAddr0": ["A", "B"],
       "indexedForA": true,
       "indexedForB": true,
       "indexedForBBefore": false,
@@ -365,7 +367,7 @@ describe("AddressStore", () => {
         TestAddresses.makeStore(~onEventRegistrations, ~addresses)->AddressStore.makeSet(
           ~contractName="A",
         )
-      (set->AddressSet.addressesForTest, set->AddressSet.startBlockGroups)
+      (set->AddressSet.addresses, set->AddressSet.startBlockGroups)
     }
 
     t.expect({
