@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard};
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
-use crate::field_columns::Ecosystem;
+use crate::chain_buffer::Ecosystem;
 
 /// Binary form of an address, the identity the store keys on.
 ///

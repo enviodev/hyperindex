@@ -1,6 +1,6 @@
 let isFetched = (reg: Internal.onBlockRegistration) => reg.blockFieldMask->Option.isSome
 
-// Mirrors `Registration::runs_on` in `block_selection.rs`.
+// Mirrors `BlockHandler::runs_on` in `chain_buffer/schedule.rs`.
 let runsOn = (
   {startBlock, endBlock, interval}: Internal.onBlockRegistration,
   ~blockNumber,
@@ -12,29 +12,6 @@ let runsOn = (
   Pervasives.mod(blockNumber - startBlock, interval) === 0
 }
 
-type registrationInput = {
-  index: int,
-  startBlock: int,
-  endBlock: option<int>,
-  interval: int,
-  blockFieldMask: float,
-}
-
-// The chain's block handlers a source fetches blocks for: those selecting
-// fields, the rest being generated without one.
-let toRegistrationInputs = (onBlockRegistrations: array<Internal.onBlockRegistration>) =>
-  onBlockRegistrations->Array.filterMap(({index, startBlock, endBlock, interval, blockFieldMask}) =>
-    blockFieldMask->Option.map(blockFieldMask => {
-      index,
-      // Resolved to the chain's start block by `ChainState` when absent.
-      startBlock: startBlock->Option.getOr(0),
-      endBlock,
-      interval,
-      blockFieldMask,
-    })
-  )
-
-// Every block handler of a chain, as the buffer schedules their items.
 type blockHandlerInput = {
   index: int,
   startBlock: int,
@@ -43,6 +20,7 @@ type blockHandlerInput = {
   blockFieldMask: option<float>,
 }
 
+// Every block handler of a chain, as the buffer schedules their items.
 let toBlockHandlerInputs = (onBlockRegistrations: array<Internal.onBlockRegistration>) =>
   onBlockRegistrations->Array.map(({index, startBlock, endBlock, interval, blockFieldMask}) => {
     index,
@@ -52,3 +30,8 @@ let toBlockHandlerInputs = (onBlockRegistrations: array<Internal.onBlockRegistra
     interval,
     blockFieldMask,
   })
+
+// The chain's block handlers a source fetches blocks for: those selecting
+// fields, the rest being generated without one.
+let toFetchedBlockHandlerInputs = (onBlockRegistrations: array<Internal.onBlockRegistration>) =>
+  onBlockRegistrations->Array.filter(isFetched)->toBlockHandlerInputs

@@ -4,9 +4,6 @@
 mod address_store;
 mod block_hash_pagination;
 mod block_selection;
-#[allow(dead_code)]
-mod block_store;
-#[allow(dead_code)]
 mod chain_buffer;
 mod cli_args;
 mod clickhouse;
@@ -20,16 +17,10 @@ mod commands;
 pub mod config_parsing;
 pub mod constants;
 pub mod docker_env;
-#[allow(dead_code)]
-mod event_store;
 mod evm;
 mod evm_hypersync_source;
 mod evm_rpc_source;
 pub mod executor;
-#[allow(dead_code)]
-mod field_columns;
-#[allow(dead_code)]
-mod field_table;
 mod fuel;
 mod fuel_hypersync_source;
 mod hbs_templating;
@@ -54,8 +45,6 @@ mod template_dirs;
 #[cfg(test)]
 mod test_servers;
 mod text_position;
-#[allow(dead_code)]
-mod transaction_store;
 mod ts_loader;
 mod tui;
 mod type_schema;

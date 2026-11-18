@@ -78,6 +78,7 @@ let runQuery = async (
       clientFilteredContracts: None,
     },
     ~addressSet=usdcSet,
+    ~buffer=TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
   )
   (res, await page->TestChainBuffer.evmLogsOf(~registrations=eventRegistrations, ~addressStore))
 }

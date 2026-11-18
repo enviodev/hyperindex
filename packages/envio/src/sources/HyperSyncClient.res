@@ -285,10 +285,13 @@ type t = {
   // Block-hash query construction and pagination live in Rust; only the
   // aggregate response store crosses the boundary.
   getBlockHashes: (~blockNumbers: array<int>) => promise<(BufferPage.t, array<RequestStat.t>)>,
-  // Returns the response plus the page of rows some registration matches.
+  // Returns the response plus the page of rows some registration matches. A
+  // query for blocks alone skips the blocks `buffer` holds with every field
+  // its handlers select.
   getItems: (
     ~query: Items.query,
     ~addressSet: AddressSet.t,
+    ~buffer: BufferPage.buffer,
   ) => promise<(Items.response, BufferPage.t)>,
   getHeight: unit => promise<int>,
 }
@@ -299,7 +302,7 @@ external classNew: (
   cfg,
   string,
   array<Registration.input>,
-  array<BlockItem.registrationInput>,
+  array<BlockItem.blockHandlerInput>,
   // The registrations with a contractRegister, whose events a page reports.
   array<int>,
   AddressStore.t,
@@ -349,7 +352,7 @@ let make = (
     },
     `hyperindex/${envioVersion}`,
     eventRegistrations,
-    onBlockRegistrations->BlockItem.toRegistrationInputs,
+    onBlockRegistrations->BlockItem.toFetchedBlockHandlerInputs,
     contractRegisterIndexes,
     addressStore,
   )

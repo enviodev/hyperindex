@@ -2,7 +2,7 @@
 // from the moment a source returns them until the chain removes them. It keeps
 // no processing state; the chain says which range a build reads and when
 // processed rows go.
-type t
+type t = BufferPage.buffer
 
 module Page = BufferPage
 

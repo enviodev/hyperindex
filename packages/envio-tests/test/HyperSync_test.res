@@ -54,6 +54,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
         clientFilteredContracts: None,
       },
       ~addressSet=addressStore->AddressStore.emptySet,
+      ~buffer=TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     )
   })
 })

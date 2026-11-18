@@ -27,9 +27,10 @@ use hypersync_solana_net_types::query::SolanaQuery;
 
 use crate::address_store::AddressStore;
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
-use crate::block_selection::{BlockRegistrations, OnBlockRegistrationInput};
+use crate::block_selection::BlockRegistrations;
 use crate::chain_buffer::matching_svm::SvmMatcher;
 use crate::chain_buffer::page::{Page, PageData};
+use crate::chain_buffer::schedule::BlockHandlerInput;
 use crate::chain_buffer::svm::{
     push_block, push_instruction, push_transaction, InstructionRow, InstructionView, SvmBlockField,
     SvmTransactionCounts,
@@ -130,7 +131,7 @@ impl SvmHyperSyncClient {
         cfg: SvmClientConfig,
         user_agent: String,
         programs: Vec<SvmProgramInput>,
-        block_registrations: Vec<OnBlockRegistrationInput>,
+        block_registrations: Vec<BlockHandlerInput>,
         contract_register_indexes: Vec<i64>,
         address_store: &AddressStore,
     ) -> napi::Result<SvmHyperSyncClient> {
@@ -229,6 +230,7 @@ impl SvmHyperSyncClient {
                 !selects_instructions,
                 params.reorgable_from,
                 params.items_target,
+                |_, _| false,
             )
             .map_err(map_err)?;
         let block_selection = &block_query.selection;

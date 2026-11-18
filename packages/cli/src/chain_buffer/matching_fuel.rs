@@ -6,7 +6,6 @@ use std::sync::{Arc, RwLock, RwLockReadGuard};
 use anyhow::Result;
 
 use super::fuel::ReceiptView;
-use super::matching::RowMatch;
 use crate::address_store::{AddressStore, StoreInner};
 use crate::fuel_hypersync_source::selection::{
     parse_registrations, FuelOnEventRegistrationInput, Registration,
@@ -82,16 +81,5 @@ impl FuelMatcher {
                 f(registration);
             }
         }
-    }
-
-    /// Whether any registration keeps the receipt, and whether one of those
-    /// registers contracts.
-    pub(crate) fn classify(&self, receipt: &ReceiptView, store: &StoreInner) -> RowMatch {
-        let mut found = RowMatch::default();
-        self.for_each_match(receipt, store, |registration| {
-            found.kept = true;
-            found.registers |= registration.has_contract_register;
-        });
-        found
     }
 }

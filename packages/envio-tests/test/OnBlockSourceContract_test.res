@@ -111,6 +111,7 @@ let makeHyperSyncSource = (~url) => {
     enableQueryCaching: false,
     logLevel: #error,
     addressStore,
+    chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     logger: Logger.makeInMemory(),
   })
   (source, addressStore->AddressStore.emptySet)

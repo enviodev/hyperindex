@@ -23,11 +23,28 @@ pub(crate) struct BlockHandler {
     start_block: u64,
     /// Inclusive. Negative when the handler ends before it starts.
     end_block: Option<i64>,
-    interval: u64,
+    pub(crate) interval: u64,
     pub(crate) block_field_mask: Option<u64>,
 }
 
 impl BlockHandler {
+    pub(crate) fn new(input: &BlockHandlerInput) -> Result<Self> {
+        ensure!(
+            input.start_block >= 0 && input.interval > 0 && input.index >= 0,
+            "block handler {} has start block {} and interval {}",
+            input.index,
+            input.start_block,
+            input.interval,
+        );
+        Ok(BlockHandler {
+            index: input.index as u32,
+            start_block: input.start_block as u64,
+            end_block: input.end_block,
+            interval: input.interval as u64,
+            block_field_mask: input.block_field_mask.map(|mask| mask as u64),
+        })
+    }
+
     fn ends_before(&self, block_number: u64) -> bool {
         self.end_block.is_some_and(|end| end < block_number as i64)
     }
@@ -39,7 +56,7 @@ impl BlockHandler {
     }
 
     /// The first block at or after `block_number` the handler runs on.
-    fn first_from(&self, block_number: u64) -> Option<u64> {
+    pub(crate) fn first_from(&self, block_number: u64) -> Option<u64> {
         let from = block_number.max(self.start_block);
         let offset = (from - self.start_block) % self.interval;
         let first = if offset == 0 {
@@ -61,29 +78,10 @@ impl Schedule {
     pub(crate) fn new(inputs: &[BlockHandlerInput]) -> Result<Self> {
         let mut handlers = inputs
             .iter()
-            .map(|input| {
-                ensure!(
-                    input.start_block >= 0 && input.interval > 0 && input.index >= 0,
-                    "block handler {} has start block {} and interval {}",
-                    input.index,
-                    input.start_block,
-                    input.interval,
-                );
-                Ok(BlockHandler {
-                    index: input.index as u32,
-                    start_block: input.start_block as u64,
-                    end_block: input.end_block,
-                    interval: input.interval as u64,
-                    block_field_mask: input.block_field_mask.map(|mask| mask as u64),
-                })
-            })
+            .map(BlockHandler::new)
             .collect::<Result<Vec<_>>>()?;
         handlers.sort_by_key(|handler| handler.index);
         Ok(Schedule { handlers })
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.handlers.is_empty()
     }
 
     /// The first block at or after `block_number` some handler runs on.
@@ -135,28 +133,6 @@ impl Schedule {
                 _ => 0,
             })
             .sum()
-    }
-
-    /// The scheduled blocks of `[from_block, to_block]` the handlers selecting
-    /// fields run on, ascending.
-    pub(crate) fn fetched_blocks(&self, from_block: u64, to_block: u64) -> Vec<u64> {
-        let mut blocks = Vec::new();
-        let mut block = from_block;
-        while block <= to_block {
-            let Some(next) = self
-                .handlers
-                .iter()
-                .filter(|handler| handler.block_field_mask.is_some())
-                .filter_map(|handler| handler.first_from(block))
-                .min()
-                .filter(|next| *next <= to_block)
-            else {
-                break;
-            };
-            blocks.push(next);
-            block = next + 1;
-        }
-        blocks
     }
 }
 

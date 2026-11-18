@@ -2,6 +2,10 @@
 // event a contractRegister runs on, and what validating the response needs.
 type t
 
+// The chain buffer pages merge into, as the source bindings name it: those
+// take the buffer to read what it already holds.
+type buffer
+
 // A block a source saw: its hash, and maybe its time.
 type observedBlock = {blockNumber: int, blockHash?: string, blockTimestamp?: int}
 

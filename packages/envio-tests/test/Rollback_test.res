@@ -3319,7 +3319,7 @@ describe("E2E rollback tests", () => {
       ])
 
       // Chain 1337 fetches block 101 with 0 events.
-      // registerReorgGuard stores block hash "0x101" for block 101.
+      // Merging the page stores block hash "0x101" for block 101.
       await sourceMock1.expectItemsQueries([
         {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 101})},
       ])
@@ -3340,7 +3340,7 @@ describe("E2E rollback tests", () => {
       // Chain 1337 now has a pending fetch from block 102 (started by NextQuery
       // once chain 100's budget released). Resolve it with prevRangeLastBlock
       // having a DIFFERENT hash for block 101.
-      // registerReorgGuard compares stored "0x101" vs received "0x101a" → MISMATCH.
+      // The merge compares stored "0x101" vs received "0x101a" → MISMATCH.
       // Reorg is detected while the batch write is still in-flight,
       // so chain 1337 never gets a checkpoint at block 101.
       // getRollbackProgressDiff won't return an entry for chain 1337 (None branch).

@@ -65,6 +65,7 @@ let makeSources = (
         enableQueryCaching: Env.hypersyncClientEnableQueryCaching,
         logLevel: Env.hypersyncLogLevel,
         addressStore,
+        chainBuffer,
         logger,
       }),
     ]

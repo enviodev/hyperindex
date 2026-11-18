@@ -125,6 +125,7 @@ let makeSource = (~url, ~lowercaseAddresses=true) => {
     enableQueryCaching: false,
     logLevel: #error,
     addressStore,
+    chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     logger: Logger.makeInMemory(),
   })
   (source, addressStore->AddressStore.makeSet(~contractName="Token"))

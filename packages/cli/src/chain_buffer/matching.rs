@@ -271,13 +271,6 @@ impl EvmMatcher {
         });
         found
     }
-
-    pub(crate) fn registration(&self, index: u32) -> Option<&EvmRegistration> {
-        self.registrations
-            .binary_search_by_key(&index, |registration| registration.index)
-            .ok()
-            .map(|position| &self.registrations[position])
-    }
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]

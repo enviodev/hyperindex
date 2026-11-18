@@ -6,13 +6,14 @@ use napi_derive::napi;
 
 use crate::address_store::{AddressSet, AddressStore};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
-use crate::block_selection::{BlockRegistrations, OnBlockRegistrationInput};
+use crate::block_selection::BlockRegistrations;
+use crate::chain_buffer::schedule::BlockHandlerInput;
 use crate::chain_buffer::{
     self,
     evm::LogView,
     matching::EvmMatcher,
     page::{Page, PageData},
-    Ecosystem,
+    ChainBuffer, Ecosystem,
 };
 use crate::evm_rpc_source;
 use crate::request_stats::{rate_limited_err, RequestStat};
@@ -84,7 +85,7 @@ impl EvmHyperSyncClient {
         cfg: ClientConfig,
         user_agent: String,
         event_registrations: Vec<OnEventRegistrationInput>,
-        block_registrations: Vec<OnBlockRegistrationInput>,
+        block_registrations: Vec<BlockHandlerInput>,
         contract_register_indexes: Vec<i64>,
         address_store: &AddressStore,
     ) -> napi::Result<EvmHyperSyncClient> {
@@ -183,6 +184,7 @@ impl EvmHyperSyncClient {
         &self,
         params: ItemsQuery,
         address_set: &AddressSet,
+        buffer: &ChainBuffer,
     ) -> napi::Result<(ItemsResponse, Page)> {
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
@@ -205,6 +207,7 @@ impl EvmHyperSyncClient {
                 !selects_logs,
                 params.reorgable_from,
                 params.items_target,
+                |block, mask| buffer.holds_block_fields(block, mask),
             )
             .map_err(map_err)?;
         let block_selection = &block_query.selection;
@@ -1246,6 +1249,110 @@ mod tests {
                 transaction_field_missing(&tx, TransactionField::AuthorizationList),
             ),
             (Some("accessList"), Some("authorizationList"))
+        );
+    }
+
+    fn hash_handler_mask() -> u64 {
+        (1 << EvmBlockField::Number as u32) | (1 << EvmBlockField::Hash as u32)
+    }
+
+    /// A block handler selecting the hash every 10 blocks from 10, beside a
+    /// buffer an event query already filled with blocks 10 and 20 and their
+    /// hashes.
+    async fn blocks_only_queries(ranges: &[(i64, i64)]) -> (Vec<i64>, Vec<Option<i64>>) {
+        let server =
+            crate::mock_hypersync_server::MockHyperSyncServer::new(Some(1000), None).unwrap();
+        let blocks: Vec<serde_json::Value> = (0..=1000)
+            .map(|number| serde_json::json!({"number": number, "timestamp": number, "hash": format!("0x{number:064x}")}))
+            .collect();
+        server
+            .serve_chain(serde_json::json!({"blocks": blocks, "logs": []}).to_string())
+            .unwrap();
+        let store = evm_store(&[]);
+        let handler = BlockHandlerInput {
+            index: 0,
+            start_block: 10,
+            end_block: None,
+            interval: 10,
+            block_field_mask: Some(hash_handler_mask() as f64),
+        };
+        let client = EvmHyperSyncClient::new(
+            ClientConfig {
+                url: server.url(),
+                api_token: "00000000-0000-0000-0000-000000000000".to_string(),
+                serialization_format: Some(config::SerializationFormat::Json),
+                ..Default::default()
+            },
+            "test".to_string(),
+            vec![],
+            vec![handler],
+            vec![],
+            &store,
+        )
+        .unwrap();
+        let buffer = ChainBuffer::make(
+            chain_buffer::ChainBufferConfig {
+                ecosystem: "evm".to_string(),
+                should_checksum: false,
+                evm_registrations: Some(vec![]),
+                svm_registrations: None,
+                fuel_registrations: None,
+                contract_register_indexes: vec![],
+                block_handlers: vec![],
+                transaction_masks: vec![],
+                event_block_masks: vec![],
+            },
+            &store,
+        )
+        .unwrap();
+        let mut fetched = PageData::new(Ecosystem::Evm);
+        let mut rows = fetched.blocks.builder();
+        for number in [10u64, 20] {
+            let block = simple_types::Block {
+                number: Some(number),
+                hash: Some([number as u8; 32].into()),
+                ..Default::default()
+            };
+            chain_buffer::evm::push_block(&mut rows, &block, hash_handler_mask());
+        }
+        fetched.add_blocks(rows.finish());
+        buffer.merge_page(&Page::from_data(fetched), 0, false);
+
+        let mut next_blocks = Vec::new();
+        for (from_block, to_block) in ranges {
+            let (response, _page) = client
+                .get_items(
+                    ItemsQuery {
+                        from_block: *from_block,
+                        to_block: Some(*to_block),
+                        items_target: None,
+                        on_event_registration_indexes: vec![],
+                        on_block_registration_indexes: vec![0],
+                        client_filtered_contracts: None,
+                        reorgable_from: None,
+                    },
+                    &store.empty_set(),
+                    &buffer,
+                )
+                .await
+                .unwrap();
+            next_blocks.push(response.next_block);
+        }
+        let requested_from = server
+            .take_queries()
+            .iter()
+            .map(|query| {
+                serde_json::from_str::<serde_json::Value>(query).unwrap()["from_block"].as_i64()
+            })
+            .collect();
+        (next_blocks, requested_from)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_blocks_only_query_requests_only_the_handler_blocks_the_buffer_lacks() {
+        assert_eq!(
+            blocks_only_queries(&[(10, 25), (10, 35)]).await,
+            (vec![26, 36], vec![Some(30)])
         );
     }
 }

@@ -854,8 +854,3 @@ fn give_back(mut lent: Lent, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
         }
     }
 }
-
-#[cfg(test)]
-pub(crate) fn take_for_test(handle: u32) -> Vec<Arena> {
-    RESULTS.lock().unwrap().remove(handle).unwrap().arenas
-}

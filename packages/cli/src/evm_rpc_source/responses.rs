@@ -13,9 +13,9 @@ use hypersync_client::simple_types::{Block, Transaction};
 use serde_json::Value as Json;
 
 use super::fields::{set_block_field, set_tx_field, tx_carrier, tx_field_column, Carrier};
+use crate::chain_buffer::evm::EvmTxField;
 use crate::evm_hypersync_source::query::{BlockField, TransactionField};
 use crate::evm_hypersync_source::{block_field_missing, transaction_field_missing};
-use crate::transaction_store::EvmTxField;
 
 /// Why a response could not be turned into a row. The two are handled very
 /// differently — one stops the source, the other only delays it — so they are
@@ -78,7 +78,7 @@ pub(crate) fn build_block(
         .ok_or_else(|| ResponseError::Malformed(anyhow!("block response carries no \"number\"")))?;
     set_block_field(
         &mut block,
-        crate::block_store::EvmBlockField::Number,
+        crate::chain_buffer::evm::EvmBlockField::Number,
         number,
     )
     .map_err(ResponseError::Malformed)?;

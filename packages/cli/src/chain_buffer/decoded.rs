@@ -143,11 +143,4 @@ impl DecodedEvents {
     pub(crate) fn first_block(&self) -> Option<u64> {
         self.events.keys().next().map(|key| key.0)
     }
-
-    pub(crate) fn block_number_of_event_at(&self, from_block: u64, offset: usize) -> Option<u64> {
-        self.events
-            .range((from_block, false, 0, Vec::new(), 0)..)
-            .nth(offset)
-            .map(|(key, _)| key.0)
-    }
 }

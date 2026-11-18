@@ -47,13 +47,6 @@ impl EvmDecoder {
         Ok(EvmDecoder { by_index })
     }
 
-    pub(crate) fn schema(&self, registration: u32) -> Option<&Arc<ParamSchema>> {
-        self.by_index
-            .get(registration as usize)?
-            .as_ref()
-            .map(|registration| &registration.schema)
-    }
-
     /// The log's params under the registration's own declaration, `None`
     /// when the log doesn't decode under it.
     pub(crate) fn decode(

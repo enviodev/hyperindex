@@ -51,5 +51,6 @@ module GetItems: {
     ~client: HyperSyncClient.t,
     ~query: HyperSyncClient.Items.query,
     ~addressSet: AddressSet.t,
+    ~buffer: BufferPage.buffer,
   ) => promise<itemsPage>
 }

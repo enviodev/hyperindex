@@ -180,7 +180,7 @@ external classFromConfig: (
   cfg,
   string,
   array<Registration.program>,
-  array<BlockItem.registrationInput>,
+  array<BlockItem.blockHandlerInput>,
   // The registrations with a contractRegister, whose events a page reports.
   array<int>,
   AddressStore.t,
@@ -208,7 +208,7 @@ let make = (
     },
     `hyperindex/${envioVersion}`,
     programs,
-    onBlockRegistrations->BlockItem.toRegistrationInputs,
+    onBlockRegistrations->BlockItem.toFetchedBlockHandlerInputs,
     contractRegisterIndexes,
     addressStore,
   )

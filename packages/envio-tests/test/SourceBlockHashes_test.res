@@ -107,6 +107,7 @@ let makeHyperSyncSource = () =>
     enableQueryCaching: false,
     logLevel: Env.hypersyncLogLevel,
     addressStore,
+    chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     logger: Logger.makeInMemory(),
   })
 

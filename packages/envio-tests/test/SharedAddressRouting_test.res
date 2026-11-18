@@ -83,6 +83,7 @@ let makeSource = (~url) => {
     enableQueryCaching: false,
     logLevel: #error,
     addressStore,
+    chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     logger: Logger.makeInMemory(),
   })
   let addressSet =

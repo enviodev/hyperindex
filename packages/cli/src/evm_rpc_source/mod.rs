@@ -17,10 +17,11 @@ mod logs;
 mod responses;
 
 use crate::address_store::{AddressSet, AddressStore};
-use crate::block_selection::{BlockRegistrations, BlockSelection, OnBlockRegistrationInput};
+use crate::block_selection::{BlockRegistrations, BlockSelection};
 use crate::chain_buffer::evm::{log_column, LogView};
 use crate::chain_buffer::matching::EvmMatcher;
 use crate::chain_buffer::page::{Page, PageData};
+use crate::chain_buffer::schedule::BlockHandlerInput;
 use crate::chain_buffer::table::make_key;
 use crate::chain_buffer::{ChainBuffer, Ecosystem};
 use crate::evm_hypersync_source::query::BlockField;
@@ -349,7 +350,7 @@ impl EvmRpcClient {
     pub fn new(
         cfg: EvmRpcClientConfig,
         event_registrations: Vec<OnEventRegistrationInput>,
-        block_registrations: Vec<OnBlockRegistrationInput>,
+        block_registrations: Vec<BlockHandlerInput>,
         contract_register_indexes: Vec<i64>,
         address_store: &AddressStore,
         logger: &Logger,

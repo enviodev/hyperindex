@@ -136,8 +136,9 @@ module GetItems = {
     ~client: HyperSyncClient.t,
     ~query: HyperSyncClient.Items.query,
     ~addressSet,
+    ~buffer,
   ): itemsPage => {
-    let (res, page) = switch await client.getItems(~query, ~addressSet) {
+    let (res, page) = switch await client.getItems(~query, ~addressSet, ~buffer) {
     | res => res
     | exception exn =>
       reraiseIfRecoverable(exn)

@@ -14,6 +14,8 @@ type options = {
   logLevel: HyperSyncClient.logLevel,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
+  // Read by the client while planning, to fetch only blocks it lacks.
+  chainBuffer: ChainBuffer.t,
   logger: Logger.t,
 }
 
@@ -30,6 +32,7 @@ let make = (
     enableQueryCaching,
     logLevel,
     addressStore,
+    chainBuffer,
     logger,
   }: options,
 ): t => {
@@ -96,6 +99,7 @@ let make = (
         ?reorgableFrom,
       },
       ~addressSet,
+      ~buffer=chainBuffer,
     ) catch {
     | HyperSync.GetItems.Error(WrongInstance) =>
       throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: fetchStats()}))

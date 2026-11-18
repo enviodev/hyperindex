@@ -281,14 +281,6 @@ impl ChunkBuilder {
         }
     }
 
-    pub(crate) fn len(&self) -> usize {
-        self.keys.len()
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.keys.is_empty()
-    }
-
     /// Starts a row. `fetched` is ignored by a table that keeps no mask, and
     /// `tiebreak` by one that has no second sort word.
     pub(crate) fn push_row(&mut self, key: u64, tiebreak: u64, fetched: u64) {
@@ -588,10 +580,6 @@ impl Snapshot {
             row,
         })
     }
-
-    pub(crate) fn len(&self) -> usize {
-        self.slices.iter().map(Slice::len).sum()
-    }
 }
 
 pub(crate) struct Table {
@@ -819,12 +807,6 @@ impl Table {
                 row,
             })
         })
-    }
-
-    pub(crate) fn last_block_number(&self) -> Option<u64> {
-        self.slices
-            .back()
-            .map(|slice| block_of_key(slice.chunk.key(slice.end - 1)))
     }
 
     /// Memory held by the chunks the table references, each counted once.

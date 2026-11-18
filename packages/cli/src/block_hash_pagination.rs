@@ -9,34 +9,14 @@ use crate::request_stats::{
     error_with_request_stats, source_behind_head_err, RequestStat, QUERY_BLOCK_HASHES_METHOD,
 };
 
-/// Where a block-hash query's pages are gathered.
-pub(crate) trait HashPages {
-    type Page;
-    fn append(&self, page: Self::Page);
-}
-
-impl HashPages for Page {
-    type Page = PageData;
-    fn append(&self, page: PageData) {
-        self.data.lock().unwrap().append(page);
-    }
-}
-
-impl HashPages for crate::block_store::BlockStore {
-    type Page = crate::block_store::BlockStore;
-    fn append(&self, page: crate::block_store::BlockStore) {
-        self.append_page(&page);
-    }
-}
-
 /// One page of a block-hash query.
-pub(crate) struct HashPage<P> {
+pub(crate) struct HashPage {
     /// Where the backend stopped: the first block it has not processed.
     pub next: i64,
     /// The last block the page actually returned, if any. Not always
     /// `next - 1`: SVM slots can be skipped, and a page can return nothing.
     pub last_returned: Option<i64>,
-    pub page: P,
+    pub page: PageData,
 }
 
 /// Drive a block-hash query across pages into one response store.
@@ -51,16 +31,15 @@ pub(crate) struct HashPage<P> {
 ///
 /// `fetch_page` receives the block to request from and the exclusive upper
 /// bound, and appends whatever bookkeeping its ecosystem needs to the page.
-pub(crate) async fn paginate_block_hashes<Pages, Fetch, Fut>(
+pub(crate) async fn paginate_block_hashes<Fetch, Fut>(
     block_numbers: &[i64],
-    aggregate: &Pages,
+    aggregate: &Page,
     unit: &str,
     mut fetch_page: Fetch,
 ) -> napi::Result<Vec<RequestStat>>
 where
-    Pages: HashPages,
     Fetch: FnMut(i64, i64) -> Fut,
-    Fut: Future<Output = napi::Result<HashPage<Pages::Page>>>,
+    Fut: Future<Output = napi::Result<HashPage>>,
 {
     let Some(from) = block_numbers.iter().copied().min() else {
         return Ok(Vec::new());
@@ -89,7 +68,7 @@ where
             seconds: started.elapsed().as_secs_f64(),
         });
         let page = page.map_err(|error| error_with_request_stats(error, &request_stats))?;
-        aggregate.append(page.page);
+        aggregate.data.lock().unwrap().append(page.page);
         if page.next >= to_exclusive {
             return Ok(request_stats);
         }

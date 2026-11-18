@@ -24,6 +24,7 @@ use anyhow::Result;
 use napi::bindgen_prelude::ArrayBuffer;
 use napi::Env;
 use napi_derive::napi;
+use strum::VariantArray;
 
 use crate::address_store::AddressStore;
 use crate::evm_hypersync_source::types::OnEventRegistrationInput;
@@ -261,10 +262,6 @@ const LAST_BLOCK: u64 = u64::MAX >> POSITION_BITS;
 impl ChainBuffer {
     pub(crate) fn tables(&self) -> MutexGuard<'_, Tables> {
         self.tables.lock().unwrap()
-    }
-
-    pub(crate) fn shared(&self) -> &Arc<Shared> {
-        &self.shared
     }
 
     fn snapshots(&self, from_block: u64, to_block: u64) -> walk::Snapshots {
@@ -643,6 +640,14 @@ impl ChainBuffer {
         latest
     }
 
+    /// Whether the stored block holds every field of `mask`.
+    pub(crate) fn holds_block_fields(&self, block_number: u64, mask: u64) -> bool {
+        self.tables()
+            .blocks
+            .find(make_key(block_number, 0), 0)
+            .is_some_and(|row| row.fetched() & mask == mask)
+    }
+
     /// The time of a stored block. With `allow_skipped_slot`, an SVM slot
     /// with no block reads the time of the last slot below it that has one.
     #[napi]
@@ -672,4 +677,45 @@ impl ChainBuffer {
     pub fn release_rows(handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
         deliver::release_rows(handle, buffers)
     }
+}
+
+fn field_names<F: Copy>(variants: &[F], name: impl Fn(F) -> &'static str) -> Vec<String> {
+    variants
+        .iter()
+        .map(|&field| name(field).to_string())
+        .collect()
+}
+
+// The field orders below are the bit positions of the selection masks, which
+// the ReScript field arrays are tested against. Reached only through the
+// addon's C ABI, which the test target does not build.
+
+#[allow(dead_code)]
+#[napi]
+pub fn evm_block_field_names() -> Vec<String> {
+    field_names(evm::EvmBlockField::VARIANTS, evm::EvmBlockField::name)
+}
+
+#[allow(dead_code)]
+#[napi]
+pub fn evm_transaction_field_names() -> Vec<String> {
+    field_names(evm::EvmTxField::VARIANTS, evm::EvmTxField::name)
+}
+
+#[allow(dead_code)]
+#[napi]
+pub fn svm_block_field_names() -> Vec<String> {
+    field_names(svm::SvmBlockField::VARIANTS, svm::SvmBlockField::name)
+}
+
+#[allow(dead_code)]
+#[napi]
+pub fn svm_transaction_field_names() -> Vec<String> {
+    field_names(svm::SvmTxField::VARIANTS, svm::SvmTxField::name)
+}
+
+#[allow(dead_code)]
+#[napi]
+pub fn fuel_block_field_names() -> Vec<String> {
+    field_names(fuel::FuelBlockField::VARIANTS, fuel::FuelBlockField::name)
 }
