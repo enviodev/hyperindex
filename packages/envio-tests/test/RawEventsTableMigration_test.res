@@ -55,7 +55,7 @@ describe("Raw Events Table Migrations", () => {
             {"column_name": "event_name", "data_type": "text"},
             {"column_name": "contract_name", "data_type": "text"},
             {"column_name": "block_number", "data_type": "integer"},
-            {"column_name": "log_index", "data_type": "bigint"},
+            {"column_name": "log_index", "data_type": "integer"},
             {"column_name": "src_address", "data_type": "text"},
             {"column_name": "block_hash", "data_type": "text"},
             {"column_name": "block_timestamp", "data_type": "integer"},

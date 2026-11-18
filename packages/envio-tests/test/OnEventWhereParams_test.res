@@ -395,8 +395,7 @@ indexer.onEvent(
 )
 
 type whereCalls = {id: string, count: int}
-// `log_index` is a BIGINT, which Postgres hands back as its digits.
-type rawEvent = {chain_id: int, event_name: string, block_number: int, log_index: string}
+type rawEvent = {chain_id: int, event_name: string, block_number: int, log_index: int}
 
 let routed = ServedEvmChain.routed
 
@@ -459,12 +458,12 @@ describe("onEvent where params", () => {
           await indexer.usePostgresSql(
             async sql =>
               t.expect(await sql->readRawEvents(~pgSchema=indexer.pgSchema)).toEqual([
-                {chain_id: 1, event_name: "Dropped", block_number: 21, log_index: "0"},
-                {chain_id: 1, event_name: "Bare", block_number: 23, log_index: "0"},
-                {chain_id: 2, event_name: "Bare", block_number: 23, log_index: "0"},
-                {chain_id: 3, event_name: "Dropped", block_number: 21, log_index: "0"},
-                {chain_id: 3, event_name: "Bare", block_number: 23, log_index: "0"},
-                {chain_id: 4, event_name: "Bare", block_number: 23, log_index: "0"},
+                {chain_id: 1, event_name: "Dropped", block_number: 21, log_index: 0},
+                {chain_id: 1, event_name: "Bare", block_number: 23, log_index: 0},
+                {chain_id: 2, event_name: "Bare", block_number: 23, log_index: 0},
+                {chain_id: 3, event_name: "Dropped", block_number: 21, log_index: 0},
+                {chain_id: 3, event_name: "Bare", block_number: 23, log_index: 0},
+                {chain_id: 4, event_name: "Bare", block_number: 23, log_index: 0},
               ]),
           )
         },

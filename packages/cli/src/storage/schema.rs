@@ -316,7 +316,7 @@ pub fn raw_event_fields() -> Vec<Field> {
         field("event_name", FieldType::String),
         field("contract_name", FieldType::String),
         field("block_number", FieldType::Int32),
-        field("log_index", FieldType::Uint32),
+        field("log_index", FieldType::Int32),
         field("src_address", FieldType::String),
         field("block_hash", FieldType::String),
         field("block_timestamp", FieldType::Int32),

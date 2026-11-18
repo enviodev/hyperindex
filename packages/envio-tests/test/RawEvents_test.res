@@ -39,8 +39,7 @@ type row = {
   chain_id: int,
   contract_name: string,
   block_number: int,
-  // A BIGINT, which Postgres hands back as its digits.
-  log_index: string,
+  log_index: int,
 }
 
 let read = async (sql, ~pgSchema) => {
@@ -61,7 +60,7 @@ let row = (~block, ~logIndex) => {
   chain_id: 1,
   contract_name: "Gravatar",
   block_number: block,
-  log_index: logIndex->Int.toString,
+  log_index: logIndex,
 }
 
 describe("Raw events", () => {
@@ -118,14 +117,19 @@ describe("Raw events", () => {
     },
   )
 
-  // Some RPC providers number synthetic logs from the top of the 32-bit range,
-  // such as 0xffffffe2. A row keeps such an index whole, and an index past
-  // 16 bits doesn't give an event the id of one in the next block.
+  // `event_id` keeps 16 bits for the log index, so a log above 65535 can't have
+  // a row of its own: some providers number synthetic logs as high as
+  // 0xffffffe2. Its handler still runs; the row is skipped with a warning.
   scenario->Scenario.it(
-    "keep log indexes up to the 32-bit maximum, each under an id of its own",
+    "skip a log whose index event_id can't hold, with a warning",
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
-      let largeLogIndex = 4294967266.->(Utils.magic: float => int)
+      let handled = ref(0)
+      let counted = (~block, ~logIndex): MockSource.itemMock => {
+        blockNumber: block,
+        logIndex,
+        handler: async _ => handled := handled.contents + 1,
+      }
       let source = source(1)
       source.resolveGetHeightOrThrow(300)
       await source.expectItemsQueries([
@@ -133,9 +137,10 @@ describe("Raw events", () => {
           fromBlock: 1,
           reply: Respond({
             items: [
-              event(~block=4, ~logIndex=65536),
-              event(~block=5, ~logIndex=0),
-              event(~block=5, ~logIndex=largeLogIndex),
+              counted(~block=4, ~logIndex=65535),
+              counted(~block=4, ~logIndex=65536),
+              counted(~block=5, ~logIndex=0),
+              counted(~block=5, ~logIndex=4294967266.->(Utils.magic: float => int)),
             ],
             latestFetchedBlockNumber: 100,
           }),
@@ -144,20 +149,28 @@ describe("Raw events", () => {
       await indexer.getBatchWritePromise()
 
       await indexer.usePostgresSql(
-        async sql => {
-          let rows: array<JSON.t> = await sql->Sql.queryForTests(
-            `SELECT "event_id"::text AS "event_id", "block_number", "log_index"
-               FROM "${indexer.pgSchema}"."raw_events" ORDER BY "serial";`,
-          )
-
-          t.expect(rows).toEqual([
-            JSON.parseOrThrow(`{"event_id": "17179934720", "block_number": 4, "log_index": "65536"}`),
-            JSON.parseOrThrow(`{"event_id": "21474836480", "block_number": 5, "log_index": "0"}`),
-            JSON.parseOrThrow(
-              `{"event_id": "25769803746", "block_number": 5, "log_index": "4294967266"}`,
+        async sql =>
+          t.expect((
+            await sql->read(~pgSchema=indexer.pgSchema),
+            indexer.infoAndAboveLogs()->Array.filter(
+              ({msg}) => msg->String.startsWith("Not storing a raw event"),
             ),
-          ])
-        },
+            handled.contents,
+          )).toEqual((
+            [row(~block=4, ~logIndex=65535), row(~block=5, ~logIndex=0)],
+            [(4, 65536.), (5, 4294967266.)]->Array.map(((block, logIndex)): IndexerRunner.logEntry => {
+              msg: "Not storing a raw event for a log whose index is above 65535, the most raw_events' event_id holds",
+              params: dict{
+                "chainId": JSON.Number(1.),
+                "contract": JSON.String("Gravatar"),
+                "event": JSON.String("MockEvent"),
+                "block": JSON.Number(block->Int.toFloat),
+                "logIndex": JSON.Number(logIndex),
+                "address": JSON.String("0x0000000000000000000000000000000000000000"),
+              },
+            }),
+            4,
+          )),
       )
     },
   )
@@ -216,7 +229,7 @@ describe("Raw events", () => {
           "event_name": "MockEvent",
           "contract_name": "Gravatar",
           "block_number": 5,
-          "log_index": "3",
+          "log_index": 3,
           "src_address": "0x0000000000000000000000000000000000000000",
           "block_hash": "0xblockhash",
           "block_timestamp": 9999,

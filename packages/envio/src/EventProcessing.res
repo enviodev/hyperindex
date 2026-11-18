@@ -198,6 +198,20 @@ let processEventBatch = async (~batch: Batch.t, ~runtime: HandlerRuntime.t) => {
 
     let elapsedTimeAfterProcessing = timeRef->Performance.secondsSince
 
+    if (indexerState->IndexerState.config).enableRawEvents {
+      batch.items
+      ->RawEvent.eventItemsOnePerLog
+      ->Array.forEach(item =>
+        if !(item->Internal.castUnsafeEventItem->RawEvent.logIndexFitsEventId) {
+          indexerState
+          ->IndexerState.loggerForItem(item)
+          ->Logger.warn(
+            `Not storing a raw event for a log whose index is above ${RawEvent.maxLogIndex->Int.toString}, the most raw_events' event_id holds`,
+          )
+        }
+      )
+    }
+
     indexerState->Writing.commitBatch(~batch)
 
     let loaderDuration = elapsedTimeAfterLoaders

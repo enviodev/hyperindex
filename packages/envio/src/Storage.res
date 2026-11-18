@@ -601,25 +601,16 @@ let make = (
       (chainIds, chainIds->Array.map(chainId => frontier->Frontier.get(chainId)))
     }
 
-    // A single on-chain log fans out to one item per matching registration;
-    // `raw_events` records the log itself, so it is deduped by its coordinate
-    // (chain, block, logIndex) to keep one row per log.
+    // A log `event_id` can't hold is warned about when its batch is processed.
     let rawEvents = if config.enableRawEvents {
-      let seenLogCoordinates = Utils.Set.make()
-      batch.items->Array.filterMap(item =>
-        switch item {
-        | Internal.Event(_) =>
-          let eventItem = item->Internal.castUnsafeEventItem
-          let coordinate = `${eventItem.chainId->ChainId.toString}-${eventItem.blockNumber->Int.toString}-${eventItem.logIndex->Int.toString}`
-          if seenLogCoordinates->Utils.Set.has(coordinate) {
-            None
-          } else {
-            seenLogCoordinates->Utils.Set.add(coordinate)->ignore
-            Some(config.ecosystem.toRawEvent(eventItem))
-          }
-        | Internal.Block(_) => None
-        }
-      )
+      batch.items
+      ->RawEvent.eventItemsOnePerLog
+      ->Array.filterMap(item => {
+        let eventItem = item->Internal.castUnsafeEventItem
+        eventItem->RawEvent.logIndexFitsEventId
+          ? Some(config.ecosystem.toRawEvent(eventItem))
+          : None
+      })
     } else {
       []
     }
