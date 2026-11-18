@@ -23,20 +23,8 @@ let eventStoreOf = (fetchState: FetchState.t) =>
 let keepStore = (next: FetchState.t, ~from: FetchState.t) =>
   next->pair(~eventStore=from->eventStoreOf)
 
-// A changed copy of a fetch state, on the same store.
-let update = (fetchState: FetchState.t, change: FetchState.t => FetchState.t) =>
-  fetchState->change->keepStore(~from=fetchState)
-
 let bufferedBlockNumbers = (fetchState: FetchState.t) =>
   fetchState->eventStoreOf->TestEventStore.blockNumbers
-
-// Puts `items` in the fetch state's store, as an applied response would.
-let withItems = (fetchState: FetchState.t, items: array<Internal.item>) => {
-  fetchState->eventStoreOf->EventStore.merge(TestEventStore.pageOf(items))
-  fetchState
-}
-
-let bufferSize = (fetchState: FetchState.t) => fetchState->eventStoreOf->EventStore.length
 
 let make = (
   ~startBlock,
@@ -80,16 +68,6 @@ let make = (
   )->pair(~eventStore)
 }
 
-let updateInternal = (fetchState, ~optimizedPartitions=?, ~blockLag=?, ~knownHeight=?) =>
-  fetchState
-  ->FetchState.updateInternal(
-    ~eventStore=fetchState->eventStoreOf,
-    ~optimizedPartitions?,
-    ~blockLag?,
-    ~knownHeight?,
-  )
-  ->keepStore(~from=fetchState)
-
 let handleQueryResult = (fetchState, ~query, ~latestFetchedBlock, ~page) =>
   fetchState
   ->FetchState.handleQueryResult(
@@ -100,69 +78,10 @@ let handleQueryResult = (fetchState, ~query, ~latestFetchedBlock, ~page) =>
   )
   ->keepStore(~from=fetchState)
 
-let registerDynamicContracts = (
-  fetchState,
-  ~addressStore,
-  ~onNotice,
-  ~claimCeiling=?,
-  registrations,
-) =>
-  fetchState
-  ->FetchState.registerDynamicContracts(
-    ~addressStore,
-    ~eventStore=fetchState->eventStoreOf,
-    ~onNotice,
-    ~claimCeiling?,
-    registrations,
-  )
-  ->keepStore(~from=fetchState)
-
 let updateKnownHeight = (fetchState, ~knownHeight) =>
   fetchState
   ->FetchState.updateKnownHeight(~eventStore=fetchState->eventStoreOf, ~knownHeight)
   ->keepStore(~from=fetchState)
 
-let rollback = (
-  fetchState,
-  ~rolledBackAddressStore,
-  ~targetBlockNumber,
-): FetchState.rollbackResult => {
-  let result =
-    fetchState->FetchState.rollback(
-      ~rolledBackAddressStore,
-      ~eventStore=fetchState->eventStoreOf,
-      ~targetBlockNumber,
-    )
-  {...result, fetchState: result.fetchState->keepStore(~from=fetchState)}
-}
-
-let getReadyItemsCount = (fetchState, ~targetSize) =>
-  fetchState->FetchState.getReadyItemsCount(~eventStore=fetchState->eventStoreOf, ~targetSize)
-
-let bufferReadyCount = fetchState =>
-  fetchState->FetchState.bufferReadyCount(~eventStore=fetchState->eventStoreOf)
-
-let getProgressBlockNumberAt = (fetchState, ~index) =>
-  fetchState->FetchState.getProgressBlockNumberAt(~eventStore=fetchState->eventStoreOf, ~index)
-
 let getProgressPercentage = fetchState =>
   fetchState->FetchState.getProgressPercentage(~eventStore=fetchState->eventStoreOf)
-
-let isActivelyIndexing = fetchState =>
-  fetchState->FetchState.isActivelyIndexing(~eventStore=fetchState->eventStoreOf)
-
-let isReadyToEnterReorgThreshold = (~tolerance, fetchState) =>
-  fetchState->FetchState.isReadyToEnterReorgThreshold(
-    ~tolerance,
-    ~eventStore=fetchState->eventStoreOf,
-  )
-
-let sortForBatch = (fetchStates, ~batchSizeTarget) =>
-  fetchStates->FetchState.sortForBatch(
-    ~fetchStateOf=fetchState => fetchState,
-    ~eventStoreOf,
-    ~batchSizeTarget,
-  )
-
-let resetPendingQueries = fetchState =>
-  fetchState->FetchState.resetPendingQueries->keepStore(~from=fetchState)

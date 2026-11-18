@@ -110,9 +110,6 @@ let canonical = (addresses: array<Address.t>) =>
 // compares by contents instead, so `setOf` hands back a double whose addresses
 // live in an own enumerable property and whose methods are non-enumerable.
 //
-// Assertions run both sides through `partition`/`query`/`fetchState`/`nextQuery`
-// below, which turn a real handle into the same shape.
-//
 // A fixture that stands in for state the fetch state will go on to *operate* on
 // (merge, split, roll back) must pass `~store` instead: those operations resolve
 // each address against the store that owns it, so only a real set of that store
@@ -216,65 +213,3 @@ function makeFakeSet(unordered) {
   Object.defineProperties(set, descriptors);
   return set;
 }`)
-
-// A real handle in the same shape, so both sides of an assertion compare by
-// the addresses they hold rather than by handle identity.
-let comparable: AddressSet.t => AddressSet.t = %raw(`function (set) {
-  if (!(set instanceof Object) || typeof set.addressesForTest !== "function") return set;
-  if (set.__entries !== undefined) return set;
-  var entries = [];
-  set.contractNames().forEach(function (contractName) {
-    set.filterByContracts([contractName]).addressesForTest().forEach(function (address) {
-      entries.push({address: address, contractName: contractName});
-    });
-  });
-  // Set order, not per-contract order.
-  var order = set.addressesForTest();
-  entries.sort(function (a, b) { return order.indexOf(a.address) - order.indexOf(b.address) });
-  return makeFakeSet(entries);
-}`)
-
-let partition = (p: FetchState.partition): FetchState.partition => {
-  ...p,
-  addresses: p.addresses->comparable,
-}
-
-let partitions = (optimizedPartitions: FetchState.OptimizedPartitions.t) => {
-  ...optimizedPartitions,
-  entities: optimizedPartitions.entities->Utils.Dict.mapValues(partition),
-}
-
-let query = (q: FetchState.query): FetchState.query => {
-  ...q,
-  addresses: q.addresses->comparable,
-}
-
-// A fetch state with the block of each row its store holds: the store is a
-// handle, so it compares by its rows. An expected record built by hand passes
-// its store.
-type bufferedFetchState = {
-  fetchState: FetchState.t,
-  bufferedBlockNumbers: array<int>,
-}
-
-let fetchState = (fs: FetchState.t, ~eventStore=?): bufferedFetchState => {
-  let fs = switch eventStore {
-  | Some(eventStore) => fs->TestFetchState.pair(~eventStore)
-  | None => fs
-  }
-  {
-    fetchState: {
-      ...fs,
-      optimizedPartitions: partitions(fs.optimizedPartitions),
-    },
-    bufferedBlockNumbers: fs->TestFetchState.bufferedBlockNumbers,
-  }
-}
-
-let queries = (qs: array<FetchState.query>) => qs->Array.map(query)
-
-let nextQuery = (result: FetchState.nextQuery) =>
-  switch result {
-  | Ready(qs) => FetchState.Ready(queries(qs))
-  | other => other
-  }
