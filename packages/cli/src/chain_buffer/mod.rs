@@ -246,18 +246,22 @@ impl ChainBuffer {
 
     /// Whether the stored transaction holds every field of `mask`.
     pub(crate) fn has_transaction_fields(&self, block_number: u64, index: u32, mask: u64) -> bool {
-        self.tables()
-            .transactions
-            .find(make_key(block_number, index as u64), 0)
-            .is_some_and(|row| row.fetched() & mask == mask)
+        mask == 0
+            || self
+                .tables()
+                .transactions
+                .find(make_key(block_number, index as u64), 0)
+                .is_some_and(|row| row.fetched() & mask == mask)
     }
 
     /// Whether the stored block holds every field of `mask`.
     pub(crate) fn has_block_fields(&self, block_number: u64, mask: u64) -> bool {
-        self.tables()
-            .blocks
-            .find(make_key(block_number, 0), 0)
-            .is_some_and(|row| row.fetched() & mask == mask)
+        mask == 0
+            || self
+                .tables()
+                .blocks
+                .find(make_key(block_number, 0), 0)
+                .is_some_and(|row| row.fetched() & mask == mask)
     }
 }
 

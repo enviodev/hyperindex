@@ -14,23 +14,6 @@ use crate::hex::to_hex;
 use crate::js_value::JsTape;
 use crate::storage::rows::ReadKind;
 
-/// Evm log object
-///
-/// See ethereum rpc spec for the meaning of fields
-#[napi(object)]
-#[derive(Default, Clone)]
-pub struct Log {
-    pub removed: Option<bool>,
-    pub log_index: Option<i64>,
-    pub transaction_index: Option<i64>,
-    pub transaction_hash: Option<String>,
-    pub block_hash: Option<String>,
-    pub block_number: Option<i64>,
-    pub address: Option<String>,
-    pub data: Option<String>,
-    pub topics: Vec<Option<String>>,
-}
-
 /// Evm withdrawal object
 ///
 /// See ethereum rpc spec for the meaning of fields

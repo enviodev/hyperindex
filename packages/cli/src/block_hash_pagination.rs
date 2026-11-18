@@ -3,20 +3,40 @@ use std::time::Instant;
 
 use anyhow::Context;
 
-use crate::block_store::BlockStore;
+use crate::chain_buffer::page::{Page, PageData};
 use crate::evm_hypersync_source::map_err;
 use crate::request_stats::{
     error_with_request_stats, source_behind_head_err, RequestStat, QUERY_BLOCK_HASHES_METHOD,
 };
 
+/// Where a block-hash query's pages are gathered.
+pub(crate) trait HashPages {
+    type Page;
+    fn append(&self, page: Self::Page);
+}
+
+impl HashPages for Page {
+    type Page = PageData;
+    fn append(&self, page: PageData) {
+        self.data.lock().unwrap().append(page);
+    }
+}
+
+impl HashPages for crate::block_store::BlockStore {
+    type Page = crate::block_store::BlockStore;
+    fn append(&self, page: crate::block_store::BlockStore) {
+        self.append_page(&page);
+    }
+}
+
 /// One page of a block-hash query.
-pub(crate) struct HashPage {
+pub(crate) struct HashPage<P> {
     /// Where the backend stopped: the first block it has not processed.
     pub next: i64,
     /// The last block the page actually returned, if any. Not always
     /// `next - 1`: SVM slots can be skipped, and a page can return nothing.
     pub last_returned: Option<i64>,
-    pub store: BlockStore,
+    pub page: P,
 }
 
 /// Drive a block-hash query across pages into one response store.
@@ -31,15 +51,16 @@ pub(crate) struct HashPage {
 ///
 /// `fetch_page` receives the block to request from and the exclusive upper
 /// bound, and appends whatever bookkeeping its ecosystem needs to the page.
-pub(crate) async fn paginate_block_hashes<Fetch, Fut>(
+pub(crate) async fn paginate_block_hashes<Pages, Fetch, Fut>(
     block_numbers: &[i64],
-    aggregate: &BlockStore,
+    aggregate: &Pages,
     unit: &str,
     mut fetch_page: Fetch,
 ) -> napi::Result<Vec<RequestStat>>
 where
+    Pages: HashPages,
     Fetch: FnMut(i64, i64) -> Fut,
-    Fut: Future<Output = napi::Result<HashPage>>,
+    Fut: Future<Output = napi::Result<HashPage<Pages::Page>>>,
 {
     let Some(from) = block_numbers.iter().copied().min() else {
         return Ok(Vec::new());
@@ -68,7 +89,7 @@ where
             seconds: started.elapsed().as_secs_f64(),
         });
         let page = page.map_err(|error| error_with_request_stats(error, &request_stats))?;
-        aggregate.append_page(&page.store);
+        aggregate.append(page.page);
         if page.next >= to_exclusive {
             return Ok(request_stats);
         }
@@ -125,7 +146,7 @@ mod tests {
         block_numbers: &[i64],
         responses: Vec<(i64, Canned)>,
     ) -> (napi::Result<()>, Vec<i64>, Vec<i64>) {
-        let aggregate = BlockStore::new_evm();
+        let aggregate = Page::from_data(PageData::new(crate::chain_buffer::Ecosystem::Evm));
         let requested = RefCell::new(Vec::new());
         let result = paginate_block_hashes(
             block_numbers,
@@ -140,12 +161,16 @@ mod tests {
                     .unwrap_or_else(|| {
                         panic!("no canned response for request_from={request_from}")
                     });
-                let store = BlockStore::new_evm();
-                store.insert_evm_blocks(canned.blocks.iter().copied().map(block).collect());
+                let mut data = PageData::new(crate::chain_buffer::Ecosystem::Evm);
+                let mut rows = data.blocks.builder();
+                for number in &canned.blocks {
+                    crate::chain_buffer::evm::push_block(&mut rows, &block(*number), 0);
+                }
+                data.add_blocks(rows.finish());
                 let page = HashPage {
                     next: canned.next,
                     last_returned: canned.blocks.last().map(|b| *b as i64),
-                    store,
+                    page: data,
                 };
                 async move { Ok(page) }
             },
@@ -153,7 +178,14 @@ mod tests {
         .await
         .map(|_| ());
         let requested = requested.into_inner();
-        let collected = aggregate.get_hashed_block_numbers(0, i64::MAX);
+        let collected = aggregate
+            .data
+            .lock()
+            .unwrap()
+            .blocks
+            .rows_in_block_range(0, 1 << 30)
+            .map(|row| row.block_number() as i64)
+            .collect();
         (result, requested, collected)
     }
 

@@ -332,11 +332,9 @@ fn compile(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::address_store::test_support::{evm_store, full_set};
-    use crate::address_store::Emitter;
+    use crate::address_store::test_support::evm_store;
     use crate::chain_buffer::decode::evm::EvmDecoder;
-    use crate::evm_hypersync_source::decode::Decoder;
-    use crate::evm_hypersync_source::types::{Log, ParamMeta};
+    use crate::evm_hypersync_source::types::ParamMeta;
     use crate::js_value::test_value::JsValue;
     use alloy_dyn_abi::DynSolValue;
     use alloy_primitives::{hex, U256};
@@ -411,16 +409,22 @@ mod tests {
         ]
     }
 
-    fn log(address: &str, from: &str, block_number: i64, data: Option<Vec<u8>>) -> Log {
+    struct TestLog {
+        address: &'static str,
+        topics: Vec<Vec<u8>>,
+        block_number: u64,
+        data: Vec<u8>,
+    }
+
+    fn log(address: &'static str, from: &str, block_number: u64, data: Option<Vec<u8>>) -> TestLog {
         let data = data.unwrap_or_else(|| {
             DynSolValue::Tuple(vec![DynSolValue::Uint(U256::from(7u64), 256)]).abi_encode()
         });
-        Log {
-            block_number: Some(block_number),
-            address: Some(address.into()),
-            topics: vec![Some(TRANSFER.into()), Some(word(from)), Some(word(OTHER))],
-            data: Some(format!("0x{}", hex::encode(data))),
-            ..Default::default()
+        TestLog {
+            address,
+            topics: vec![bytes(TRANSFER), bytes(&word(from)), bytes(&word(OTHER))],
+            block_number,
+            data,
         }
     }
 
@@ -428,15 +432,12 @@ mod tests {
         hex::decode(&text[2..]).unwrap()
     }
 
+    /// Which registrations each log matches and decodes under, and what one
+    /// of them decodes to.
     #[test]
-    fn matches_and_decodes_what_the_routing_it_replaces_did() {
+    fn matches_on_topics_start_block_and_the_store_alone() {
         let store = evm_store(&[("Token", &[TOKEN]), ("Wild", &[])]);
         let inputs = registrations();
-        let old = Decoder::from_registrations(&inputs, false, &store).unwrap();
-        let set = full_set(&store.handle());
-        let old = old
-            .selection(&[0, 1, 2, 3, 4], &Default::default(), set.cache().clone())
-            .unwrap();
         let matcher = EvmMatcher::new(&inputs, &[], &store).unwrap();
         let decoder = EvmDecoder::new(&inputs, false).unwrap();
 
@@ -448,62 +449,48 @@ mod tests {
             log(OTHER, TOKEN, 5, None),
             log(TOKEN, SENDER, 5, Some(vec![1, 2, 3])),
         ];
-        let compared: Vec<(Vec<(i64, JsValue)>, Vec<(i64, JsValue)>)> = logs
+        let matched: Vec<Vec<(i64, JsValue)>> = logs
             .iter()
             .map(|log| {
-                let address = bytes(log.address.as_ref().unwrap());
-                let block = log.block_number.unwrap();
-                let routed = {
-                    let guard = old.lock_store();
-                    old.route_and_decode_napi(
-                        log,
-                        &Emitter {
-                            key: &address,
-                            owners: set.cache().owners_of(&address),
-                            block,
-                        },
-                        &guard,
-                    )
-                    .unwrap()
-                    .into_iter()
-                    .map(|routed| (routed.index, JsValue::of(&routed.params.to_tape())))
-                    .collect()
-                };
-                let topics: Vec<Vec<u8>> = log
-                    .topics
-                    .iter()
-                    .map(|topic| bytes(topic.as_ref().unwrap()))
-                    .collect();
+                let address = bytes(log.address);
                 let view = LogView {
-                    block_number: block as u64,
+                    block_number: log.block_number,
                     address: &address,
                     topics: [
-                        Some(topics[0].as_slice()),
-                        Some(topics[1].as_slice()),
-                        Some(topics[2].as_slice()),
+                        Some(log.topics[0].as_slice()),
+                        Some(log.topics[1].as_slice()),
+                        Some(log.topics[2].as_slice()),
                         None,
                     ],
                 };
-                let data = bytes(log.data.as_ref().unwrap());
                 let mut matched = Vec::new();
                 let guard = matcher.read_store();
                 matcher.for_each_match(&view, &guard, |registration| {
-                    if let Some(params) = decoder.decode(registration.index, &view.topics, &data) {
+                    if let Some(params) =
+                        decoder.decode(registration.index, &view.topics, &log.data)
+                    {
                         matched.push((registration.index as i64, JsValue::of(&params.to_tape())));
                     }
                 });
-                (routed, matched)
+                matched
             })
             .collect();
-        for (routed, matched) in &compared {
-            assert_eq!(routed, matched);
-        }
         assert_eq!(
-            compared
-                .iter()
-                .map(|(_, matched)| matched.iter().map(|(index, _)| *index).collect::<Vec<_>>())
-                .collect::<Vec<_>>(),
-            vec![vec![0, 1], vec![0, 2], vec![0, 3], vec![1], vec![2], vec![]]
+            (
+                matched
+                    .iter()
+                    .map(|matched| matched.iter().map(|(index, _)| *index).collect::<Vec<_>>())
+                    .collect::<Vec<_>>(),
+                matched[0][0].1.clone(),
+            ),
+            (
+                vec![vec![0, 1], vec![0, 2], vec![0, 3], vec![1], vec![2], vec![]],
+                JsValue::obj([
+                    ("from", JsValue::str(SENDER)),
+                    ("to", JsValue::str(OTHER)),
+                    ("value", JsValue::uint(7u64)),
+                ]),
+            )
         );
     }
 }

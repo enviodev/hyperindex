@@ -9,29 +9,25 @@ use tokio::sync::Semaphore;
 mod classify;
 mod client;
 mod enrich;
-mod fields;
+pub(crate) mod fields;
 mod head_checks;
 mod inflight;
 mod interval;
 mod logs;
 mod responses;
 
-use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
-use crate::block_selection::{
-    BlockItem, BlockRegistrations, BlockSelection, OnBlockRegistrationInput,
-};
-use crate::block_store::BlockStore;
-use crate::event_store::EventStore;
-use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
+use crate::address_store::{AddressSet, AddressStore};
+use crate::block_selection::{BlockRegistrations, BlockSelection, OnBlockRegistrationInput};
+use crate::chain_buffer::evm::{log_column, LogView};
+use crate::chain_buffer::matching::EvmMatcher;
+use crate::chain_buffer::page::{Page, PageData};
+use crate::chain_buffer::table::make_key;
+use crate::chain_buffer::{ChainBuffer, Ecosystem};
 use crate::evm_hypersync_source::query::BlockField;
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
-use crate::evm_hypersync_source::types::{
-    encode_address, EvmParams, Log as DecoderLog, OnEventRegistrationInput,
-};
-use crate::evm_hypersync_source::{evm_items_page, EventItem};
+use crate::evm_hypersync_source::types::OnEventRegistrationInput;
 use crate::logger::{BoundLogger, Level, Logger};
 use crate::request_stats::RequestStat;
-use crate::transaction_store::TransactionStore;
 use classify::{
     is_rate_limited_message, is_response_too_large_message, is_unsupported_request,
     suggested_block_interval_from_message,
@@ -75,56 +71,65 @@ struct RawLog {
     log_index: String,
 }
 
-/// A routed log, alongside the two hashes the page needs from it: the block
-/// hash is a reorg observation, and the transaction hash is what the enrichment
-/// requests are keyed by. Neither crosses the napi boundary — the item the JS
-/// side receives is the same shape the HyperSync path returns.
-struct DecodedItem {
-    item: EventItem,
+/// A log some registration matches, with the two hashes the page needs from
+/// it: the block hash is a reorg observation, and the transaction hash is
+/// what enrichment requests are keyed by.
+struct MatchedLog {
+    block_number: u64,
+    log_index: u64,
+    transaction_index: u32,
+    address: [u8; 20],
+    topics: Vec<[u8; 32]>,
+    data: Vec<u8>,
+    /// The registrations it matches, by index.
+    registrations: Vec<u32>,
+    registers: bool,
     block_hash: format::Hash,
     transaction_hash: format::Hash,
 }
 
 impl RawLog {
-    /// `address` is normalized (lowercase or checksummed per the client config)
-    /// so it matches the JS-side address type.
-    fn borrowed_event_item(
-        &self,
-        src_address: String,
-        on_event_registration_index: i64,
-        params: EvmParams,
-    ) -> anyhow::Result<EventItem> {
-        let to_i64 = |hex: &str| -> anyhow::Result<i64> {
-            parse_hex_u64(hex)?
-                .try_into()
-                .context("hex quantity exceeds i64::MAX")
-        };
-        Ok(EventItem {
-            block_number: to_i64(&self.block_number).context("log.blockNumber")?,
-            transaction_index: to_i64(&self.transaction_index).context("log.transactionIndex")?,
-            log_index: to_i64(&self.log_index).context("log.logIndex")?,
-            src_address,
-            on_event_registration_index,
-            params,
+    fn to_matched(&self) -> anyhow::Result<MatchedLog> {
+        let address = format::Address::decode_hex(&self.address).context("log.address")?;
+        let topics = self
+            .topics
+            .iter()
+            .take(4)
+            .map(|topic| {
+                format::LogArgument::decode_hex(topic)
+                    .map(|topic| **topic)
+                    .context("log.topics")
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(MatchedLog {
+            block_number: parse_hex_u64(&self.block_number).context("log.blockNumber")?,
+            log_index: parse_hex_u64(&self.log_index).context("log.logIndex")?,
+            transaction_index: u32::try_from(
+                parse_hex_u64(&self.transaction_index).context("log.transactionIndex")?,
+            )
+            .context("log.transactionIndex exceeds what a block holds")?,
+            address: **address,
+            topics,
+            data: format::Data::decode_hex(&self.data)
+                .context("log.data")?
+                .to_vec(),
+            registrations: Vec::new(),
+            registers: false,
+            block_hash: format::Hash::decode_hex(&self.block_hash).context("log.blockHash")?,
+            transaction_hash: format::Hash::decode_hex(&self.transaction_hash)
+                .context("log.transactionHash")?,
         })
     }
+}
 
-    /// The emitter's 20 raw bytes — the address store's key — alongside the
-    /// normalized string the JS payload carries.
-    fn address_bytes_and_string(
-        &self,
-        should_checksum: bool,
-    ) -> anyhow::Result<([u8; 20], String)> {
-        let address = hypersync_client::format::Address::decode_hex(&self.address)
-            .context("decode log.address hex")?;
-        Ok((**address, encode_address(&address, should_checksum)))
-    }
-
-    fn to_decoder_log(&self) -> DecoderLog {
-        DecoderLog {
-            data: Some(self.data.clone()),
-            topics: self.topics.iter().map(|t| Some(t.clone())).collect(),
-            ..Default::default()
+impl MatchedLog {
+    fn view(&self) -> LogView<'_> {
+        LogView {
+            block_number: self.block_number,
+            address: &self.address,
+            topics: std::array::from_fn(|position| {
+                self.topics.get(position).map(|topic| topic.as_slice())
+            }),
         }
     }
 }
@@ -283,7 +288,7 @@ pub struct BlockHashResult {
 #[napi]
 pub struct EvmRpcClient {
     inner: Arc<JsonRpcClient>,
-    decoder: Decoder,
+    matcher: Arc<EvmMatcher>,
     selection_builder: SelectionBuilder,
     sync_config: SyncConfig,
     max_addresses_per_request: usize,
@@ -333,12 +338,9 @@ struct PageQuery<'a> {
     retry: i64,
     selections: &'a [BuiltLogSelection],
     address_set: &'a AddressSet,
-    set_cache: &'a Arc<SetCache>,
-    decoder: &'a Arc<SelectionDecoder>,
     block_selection: &'a BlockSelection,
     block_read: &'a BlockRead,
-    known_blocks: &'a BlockStore,
-    known_transactions: &'a TransactionStore,
+    known: &'a ChainBuffer,
 }
 
 #[napi]
@@ -348,7 +350,7 @@ impl EvmRpcClient {
         cfg: EvmRpcClientConfig,
         event_registrations: Vec<OnEventRegistrationInput>,
         block_registrations: Vec<OnBlockRegistrationInput>,
-        checksum_addresses: bool,
+        contract_register_indexes: Vec<i64>,
         address_store: &AddressStore,
         logger: &Logger,
         bound_fields_json: Vec<String>,
@@ -381,10 +383,13 @@ impl EvmRpcClient {
             cfg.headers,
         )
         .map_err(map_err)?;
-        let decoder =
-            Decoder::from_registrations(&event_registrations, checksum_addresses, address_store)
-                .context("build decoder")
-                .map_err(map_err)?;
+        let matcher = EvmMatcher::new(
+            &event_registrations,
+            &contract_register_indexes,
+            address_store,
+        )
+        .context("build matcher")
+        .map_err(map_err)?;
         let selection_builder = SelectionBuilder::from_registrations(&event_registrations)
             .context("build selection builder")
             .map_err(map_err)?;
@@ -433,7 +438,7 @@ impl EvmRpcClient {
                 });
         Ok(EvmRpcClient {
             inner: Arc::new(inner),
-            decoder,
+            matcher: Arc::new(matcher),
             selection_builder,
             sync_config,
             max_addresses_per_request,
@@ -467,7 +472,7 @@ impl EvmRpcClient {
     pub async fn get_block_hashes(
         &self,
         block_numbers: Vec<i64>,
-    ) -> napi::Result<(BlockHashResult, BlockStore)> {
+    ) -> napi::Result<(BlockHashResult, Page)> {
         let numbers: Vec<u64> = block_numbers
             .into_iter()
             .map(u64::try_from)
@@ -481,7 +486,7 @@ impl EvmRpcClient {
                     behind_head_block: None,
                     request_stats: self.inner.take_stats(),
                 },
-                blocks,
+                Page::from_data(blocks),
             )),
             // The page is empty on failure and the caller reads `message`
             // instead; a store is cheap enough not to be worth an optional.
@@ -494,7 +499,7 @@ impl EvmRpcClient {
                     },
                     request_stats: self.inner.take_stats(),
                 },
-                self.empty_stores().0,
+                empty_page(),
             )),
         }
     }
@@ -532,9 +537,8 @@ impl EvmRpcClient {
         &self,
         params: NextPageParams,
         address_set: &AddressSet,
-        known_blocks: &BlockStore,
-        known_transactions: &TransactionStore,
-    ) -> napi::Result<(NextPageResult, BlockStore, TransactionStore, EventStore)> {
+        known: &ChainBuffer,
+    ) -> napi::Result<(NextPageResult, Page)> {
         if params.from_block < 0 || params.to_block_ceiling < 0 {
             return Err(map_err(anyhow::anyhow!(
                 "block bounds must be non-negative, got from_block={}, to_block_ceiling={}",
@@ -580,12 +584,9 @@ impl EvmRpcClient {
                 .reorgable_from
                 .is_none_or(|reorgable_from| (claimed_to as i64) < reorgable_from)
             {
-                let (blocks, transactions) = self.empty_stores();
                 return Ok((
                     NextPageResult::new(PageOutcome::Ok, claimed_to, self.inner.take_stats()),
-                    blocks,
-                    transactions,
-                    EventStore::empty(),
+                    empty_page(),
                 ));
             }
         }
@@ -607,16 +608,6 @@ impl EvmRpcClient {
                 &client_filtered,
             )
             .map_err(map_err)?;
-        let set_cache = address_set.cache().clone();
-        let selection_decoder = Arc::new(
-            self.decoder
-                .selection(
-                    &params.on_event_registration_indexes,
-                    &client_filtered,
-                    set_cache.clone(),
-                )
-                .map_err(map_err)?,
-        );
 
         let query = PageQuery {
             partition_id: &params.partition_id,
@@ -629,20 +620,17 @@ impl EvmRpcClient {
             retry: params.retry,
             selections: &built.log_selections,
             address_set,
-            set_cache: &set_cache,
-            decoder: &selection_decoder,
             block_selection: &block_selection,
             block_read: block_read.as_ref().unwrap_or(&self.block_read),
-            known_blocks,
-            known_transactions,
+            known,
         };
         let outcome = self.read_page(&query).await;
         let request_stats = self.inner.take_stats();
 
         // Only a page that was read has stores; every other outcome returns
         // empty ones, so the match decides the result and the stores follow.
-        let (result, page, items) = match outcome {
-            Ok((event_items, block_items, page)) => {
+        let (result, page) = match outcome {
+            Ok(page) => {
                 let executed_interval = to_block - from_block + 1;
                 // Grow this partition's interval only when the full suggested range
                 // was actually applied (not clamped by a hard toBlock ceiling). The
@@ -659,7 +647,6 @@ impl EvmRpcClient {
                 (
                     NextPageResult::new(PageOutcome::Ok, to_block, request_stats),
                     Some(page),
-                    evm_items_page(event_items, block_items),
                 )
             }
             Err(PageError::Logs(err)) => {
@@ -671,7 +658,6 @@ impl EvmRpcClient {
                 (
                     self.retry_result(&query, provider_message.as_deref(), message, request_stats),
                     None,
-                    EventStore::empty(),
                 )
             }
             Err(PageError::Enrich(EnrichError::FieldSelection {
@@ -684,7 +670,6 @@ impl EvmRpcClient {
                     ..NextPageResult::new(PageOutcome::FieldSelection, to_block, request_stats)
                 },
                 None,
-                EventStore::empty(),
             ),
             Err(PageError::Enrich(EnrichError::BehindHead { block_number, .. })) => (
                 NextPageResult {
@@ -692,7 +677,6 @@ impl EvmRpcClient {
                     ..NextPageResult::new(PageOutcome::BehindHead, to_block, request_stats)
                 },
                 None,
-                EventStore::empty(),
             ),
             // The answer was unusable but the next one may not be. The symptom
             // is its own explanation, so it is the whole of what the retry logs.
@@ -704,7 +688,6 @@ impl EvmRpcClient {
                     request_stats,
                 ),
                 None,
-                EventStore::empty(),
             ),
             // A block or transaction read failed. The range is fine — the logs
             // came back — so the interval is left alone and the page waits out
@@ -722,27 +705,15 @@ impl EvmRpcClient {
                     )
                 },
                 None,
-                EventStore::empty(),
             ),
         };
 
-        let (blocks, transactions) = match page {
-            Some(page) => (page.blocks, page.transactions),
-            None => self.empty_stores(),
-        };
-        Ok((result, blocks, transactions, items))
-    }
-
-    fn empty_stores(&self) -> (BlockStore, TransactionStore) {
-        (BlockStore::new_evm(), TransactionStore::new_evm())
+        Ok((result, page.map_or_else(empty_page, Page::from_data)))
     }
 
     /// Reads the logs, with the headers of the head blocks they are checked
     /// against, then everything the routed items need to be materialised.
-    async fn read_page(
-        &self,
-        query: &PageQuery<'_>,
-    ) -> Result<(Vec<EventItem>, Vec<BlockItem>, enrich::EnrichedPage), PageError> {
+    async fn read_page(&self, query: &PageQuery<'_>) -> Result<PageData, PageError> {
         let checked_blocks = head_checks::blocks_to_check(
             query.from_block,
             query.to_block,
@@ -760,85 +731,91 @@ impl EvmRpcClient {
         let headers = headers?;
         self.recheck_head_blocks(query, &checked_blocks, &headers, &mut logs)
             .await?;
-        let decoded = Self::route_logs(
-            logs.into_iter().flatten().collect(),
-            query.set_cache.clone(),
-            query.decoder.clone(),
-        )
-        .await
-        .map_err(PageError::Logs)?;
+        let matched = Self::match_logs(logs.into_iter().flatten().collect(), self.matcher.clone())
+            .await
+            .map_err(PageError::Logs)?;
 
+        let mut page = PageData::new(Ecosystem::Evm);
         let mut refs = PageRefs::default();
-        let mut items = Vec::with_capacity(decoded.len());
-        // A log can satisfy more than one selection — an event's `where`
-        // OR-groups, or several registrations sharing a signature — and routing
-        // fans one log out to several registrations, so only exact repeats are
-        // dropped. The repeat's hashes are still recorded: the two `eth_getLogs`
-        // calls ran concurrently and can straddle a fork, and it is the
-        // disagreement between their block hashes that catches it.
-        let mut seen: HashSet<(i64, i64, i64)> = HashSet::new();
-        for entry in decoded {
-            // A registration the client was not constructed with cannot be
-            // routed to, so this is a missing entry rather than an empty
-            // selection; treating it as "wants nothing" would silently drop the
-            // event's fields.
-            let fields = *self
-                .registration_fields
-                .get(&entry.item.on_event_registration_index)
-                .ok_or_else(|| EnrichError::FieldSelection {
-                    block_number: entry.item.block_number as u64,
-                    error: anyhow::anyhow!(
-                        "no field selection for registration {}",
-                        entry.item.on_event_registration_index
-                    ),
-                })?;
-            let transaction_index = u32::try_from(entry.item.transaction_index).map_err(|_| {
-                EnrichError::Transient(format!(
-                    "the RPC reported transaction index {} in block {}, which no block can \
-                         hold",
-                    entry.item.transaction_index, entry.item.block_number,
-                ))
-            })?;
+        let mut rows = page.events.builder();
+        let mut registering_blocks = Vec::new();
+        // A log can satisfy more than one selection, so the same log can come
+        // back twice; it is stored once. Each copy's hashes are still recorded:
+        // the two `eth_getLogs` calls ran concurrently and can straddle a fork,
+        // and the disagreement between their block hashes is what catches it.
+        let mut seen: HashSet<(u64, u64)> = HashSet::new();
+        for log in matched {
+            let mut fields = SelectedFields::default();
+            for registration in &log.registrations {
+                // A registration the client was not constructed with cannot
+                // be matched, so this is a missing entry rather than an empty
+                // selection.
+                let selected = self
+                    .registration_fields
+                    .get(&(*registration as i64))
+                    .ok_or_else(|| EnrichError::FieldSelection {
+                        block_number: log.block_number,
+                        error: anyhow::anyhow!(
+                            "no field selection for registration {registration}"
+                        ),
+                    })?;
+                fields.block_mask |= selected.block_mask;
+                fields.tx_mask |= selected.tx_mask;
+            }
             refs.add(
-                entry.item.block_number as u64,
-                transaction_index,
-                &entry.block_hash,
-                &entry.transaction_hash,
+                log.block_number,
+                log.transaction_index,
+                &log.block_hash,
+                &log.transaction_hash,
                 fields,
             );
-            if seen.insert((
-                entry.item.block_number,
-                entry.item.log_index,
-                entry.item.on_event_registration_index,
-            )) {
-                items.push(entry.item);
+            if !seen.insert((log.block_number, log.log_index)) {
+                continue;
             }
+            if log.registers {
+                registering_blocks.push(log.block_number);
+            }
+            if log.log_index > crate::chain_buffer::table::MAX_POSITION {
+                return Err(PageError::Enrich(EnrichError::Transient(format!(
+                    "the RPC reported log index {} in block {}, past what the buffer keys hold",
+                    log.log_index, log.block_number
+                ))));
+            }
+            rows.push_row(make_key(log.block_number, log.log_index), 0, 0);
+            rows.set_u64(log_column::TRANSACTION_INDEX, log.transaction_index as u64);
+            rows.set_bytes(log_column::ADDRESS, &log.address);
+            for (position, topic) in log.topics.iter().enumerate() {
+                rows.set_bytes(log_column::TOPIC0 + position, topic);
+            }
+            rows.set_bytes(log_column::DATA, &log.data);
         }
+        page.add_events(rows.finish());
+        page.add_registering_blocks(registering_blocks);
 
         // The page reads every block a handler runs on, so none can be missing.
-        let block_items = query
-            .block_selection
-            .route(query.from_block..query.to_block + 1);
         let mask = query.block_selection.mask();
-        for item in &block_items {
-            refs.add_block(item.block_number as u64, mask);
+        for block in query
+            .block_selection
+            .blocks_run_on(query.from_block..query.to_block + 1)
+        {
+            refs.add_block(block, mask);
         }
 
-        let page = enrich::page(
+        enrich::page(
             &self.inner,
             &self.fetches,
             EnrichRequest {
                 checked_blocks: &checked_blocks,
                 prefetched_blocks: &headers,
                 refs,
-                known_blocks: query.known_blocks,
-                known_transactions: query.known_transactions,
+                known: query.known,
                 block_read: query.block_read,
                 chain_tx_mask: self.chain_tx_mask,
             },
+            &mut page,
         )
         .await?;
-        Ok((items, block_items, page))
+        Ok(page)
     }
 
     /// Builds the retry decision for a page that could not be read, updating
@@ -1093,64 +1070,41 @@ impl EvmRpcClient {
         .map_err(|error| EnrichError::Rpc(Arc::new(error)))
     }
 
-    async fn route_logs(
+    async fn match_logs(
         raw_logs: Vec<RawLog>,
-        set_cache: Arc<SetCache>,
-        decoder: Arc<SelectionDecoder>,
-    ) -> Result<Vec<DecodedItem>, RpcError> {
-        // Decoding is CPU-bound ABI work; keep it off the libuv async thread.
+        matcher: Arc<EvmMatcher>,
+    ) -> Result<Vec<MatchedLog>, RpcError> {
+        // Many logs, each a few compares; keep them off the libuv thread.
         tokio::task::spawn_blocking(move || {
-            let should_checksum = decoder.checksummed_addresses();
-            let address_store = decoder.lock_store();
-            let mut items = Vec::new();
+            let store = matcher.read_store();
+            let mut matched = Vec::new();
             for raw in raw_logs {
-                let (address_key, address) = raw.address_bytes_and_string(should_checksum)?;
-                let block_number = parse_hex_u64(&raw.block_number)
-                    .context("log.blockNumber")?
-                    .try_into()
-                    .context("log.blockNumber exceeds i64::MAX")?;
-                let log_address = Emitter {
-                    key: &address_key,
-                    owners: set_cache.owners_of(&address_key),
-                    block: block_number,
-                };
-                // Per-registration decode failures are dropped inside
-                // `route_and_decode`; only structurally malformed logs error,
-                // and those propagate like on the HyperSync path.
-                let routed = decoder.route_and_decode_napi(
-                    &raw.to_decoder_log(),
-                    &log_address,
-                    &address_store,
-                )?;
-                if routed.is_empty() {
-                    continue;
-                }
-                let block_hash = format::Hash::decode_hex(&raw.block_hash)
-                    .map_err(|e| anyhow::anyhow!("log.blockHash: {e}"))?;
-                let transaction_hash = format::Hash::decode_hex(&raw.transaction_hash)
-                    .map_err(|e| anyhow::anyhow!("log.transactionHash: {e}"))?;
-                for routed in routed {
-                    items.push(DecodedItem {
-                        item: raw.borrowed_event_item(
-                            address.clone(),
-                            routed.index,
-                            routed.params,
-                        )?,
-                        block_hash: block_hash.clone(),
-                        transaction_hash: transaction_hash.clone(),
-                    });
+                let mut log = raw.to_matched()?;
+                let (mut registrations, mut registers) = (Vec::new(), false);
+                matcher.for_each_match(&log.view(), &store, |registration| {
+                    registrations.push(registration.index);
+                    registers |= registration.has_contract_register;
+                });
+                log.registrations = registrations;
+                log.registers = registers;
+                if !log.registrations.is_empty() {
+                    matched.push(log);
                 }
             }
-            Ok(items)
+            Ok(matched)
         })
         .await
         .map_err(|e| {
             RpcError::Other(anyhow::anyhow!(
-                "eth_getLogs decode worker join failure: {e}"
+                "eth_getLogs match worker join failure: {e}"
             ))
         })?
         .map_err(RpcError::Other)
     }
+}
+
+fn empty_page() -> Page {
+    Page::from_data(PageData::new(Ecosystem::Evm))
 }
 
 fn map_err(e: anyhow::Error) -> napi::Error {

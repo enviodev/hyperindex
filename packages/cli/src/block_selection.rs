@@ -277,6 +277,14 @@ impl BlockSelection {
             .collect()
     }
 
+    /// The blocks of `covered` some handler runs on, ascending.
+    pub(crate) fn blocks_run_on(&self, covered: Range<u64>) -> Vec<u64> {
+        if self.is_empty() {
+            return Vec::new();
+        }
+        covered.filter(|block| self.runs_any(*block)).collect()
+    }
+
     /// The blocks a query for blocks alone reads of `[from_block, to_block]`,
     /// and how far it answers for: `None` when no handler runs in the range.
     fn read(&self, from_block: u64, to_block: u64) -> Option<(u64, u64, u64)> {

@@ -229,7 +229,7 @@ impl SvmHyperSyncClient {
                     Ok(HashPage {
                         next,
                         last_returned,
-                        store,
+                        page: store,
                     })
                 }
             },

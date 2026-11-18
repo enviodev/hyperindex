@@ -1447,16 +1447,6 @@ pub(crate) mod test_support {
         store_of(Ecosystem::Svm, entries)
     }
 
-    /// Every live address the store holds, as one set — reachable from a store
-    /// handle alone, for routing tests that keep only the handle their client
-    /// cloned.
-    pub(crate) fn full_set(handle: &Arc<RwLock<StoreInner>>) -> AddressSet {
-        let ids = handle.read().unwrap().sorted_live_ids(0, |_| true);
-        let set = AddressSet::new(handle.clone(), ids);
-        let _ = set.cache();
-        set
-    }
-
     /// One set spanning every named contract's addresses, with its cache
     /// materialised — routing helpers read the cache while holding the store
     /// guard, and initialising it there would take the same lock twice.
