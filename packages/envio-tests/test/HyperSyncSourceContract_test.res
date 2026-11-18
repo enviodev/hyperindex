@@ -104,7 +104,6 @@ let joinedItems = async (response: Source.blockRangeFetchResponse, ~shouldChecks
     ~shouldChecksum,
   )
 
-
 // A buffer holding only the page, for reading back the blocks it carried.
 let bufferOf = (page: BufferPage.t) => {
   let buffer = TestChainBuffer.decodedBuffer(~onEventRegistrations=[])
@@ -401,7 +400,9 @@ describe("HyperSync source contract", () => {
         let buffer = page.page->bufferOf
         [10, 12]->Array.map(
           blockNumber =>
-            buffer->ChainBuffer.getBlockTimestamp(blockNumber, ~allowSkippedSlot=false)->Null.toOption,
+            buffer
+            ->ChainBuffer.getBlockTimestamp(blockNumber, ~allowSkippedSlot=false)
+            ->Null.toOption,
         )
       },
     )

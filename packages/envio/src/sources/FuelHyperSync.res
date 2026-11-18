@@ -51,10 +51,7 @@ module GetLogs = {
       clientFilteredContracts,
     }
 
-    let (res, page) = switch await client->FuelHyperSyncClient.getEventItems(
-      query,
-      addressSet,
-    ) {
+    let (res, page) = switch await client->FuelHyperSyncClient.getEventItems(query, addressSet) {
     | res => res
     | exception exn =>
       switch exn->extractMissingParams {

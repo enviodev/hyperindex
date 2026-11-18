@@ -414,6 +414,7 @@ let completeRollback = async (fuzz, ~seed) => {
   let rounds = ref(0)
   while !ready.contents && rounds.contents < 2000 {
     rounds := rounds.contents + 1
+
     // No query goes out while the rollback is under way, so any pending now
     // was asked of the orphaned chain.
     if fuzz.indexer.isResolvingReorg() {

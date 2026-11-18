@@ -332,9 +332,9 @@ let run = async (
           ~waitUntilIdle=indexer.waitUntilIdle,
           ~isRegisteringContracts=indexer.isRegisteringContracts,
           ~progressBlock=async () =>
-          (await indexer.metric("envio_progress_block"))
-          ->Array.find(({labels}) => labels->Dict.get("chainId") === Some(chain->Int.toString))
-          ->Option.flatMap(({value}) => value->Int.fromString)
+            (await indexer.metric("envio_progress_block"))
+            ->Array.find(({labels}) => labels->Dict.get("chainId") === Some(chain->Int.toString))
+            ->Option.flatMap(({value}) => value->Int.fromString),
         )
       )
       switch {

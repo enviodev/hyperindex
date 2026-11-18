@@ -210,17 +210,16 @@ let makeForChain = (
       | Svm =>
         Some(
           onEventRegistrations
-          ->(
-            Utils.magic: array<Internal.onEventRegistration> => array<
-              Internal.svmOnEventRegistration,
-            >
-          )
+          ->(Utils.magic: array<Internal.onEventRegistration> => array<
+            Internal.svmOnEventRegistration,
+          >)
           ->SvmHyperSyncClient.Registration.fromOnEventRegistrations,
         )
       | Evm | Fuel => None
       },
       fuelRegistrations: ?switch ecosystem {
-      | Fuel => Some(onEventRegistrations->FuelHyperSyncClient.Registration.fromOnEventRegistrations)
+      | Fuel =>
+        Some(onEventRegistrations->FuelHyperSyncClient.Registration.fromOnEventRegistrations)
       | Evm | Svm => None
       },
       contractRegisterIndexes: onEventRegistrations->contractRegisterIndexesOf,

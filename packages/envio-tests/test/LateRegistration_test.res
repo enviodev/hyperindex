@@ -100,8 +100,9 @@ describe("A log stored before its address registers", () => {
           ->ServedEvmChain.takeHyperSyncQueries
           ->Array.map(({fromBlock, filters}) => (fromBlock, filters->Array.flatMap(f => f.address)))
           // The two first queries go out together, in either order.
-          ->Array.toSorted(((a, x), (b, y)) =>
-            a === b ? String.compare(x->Array.join(","), y->Array.join(",")) : Int.compare(a, b)
+          ->Array.toSorted(
+            ((a, x), (b, y)) =>
+              a === b ? String.compare(x->Array.join(","), y->Array.join(",")) : Int.compare(a, b),
           ),
           runs->Array.toSorted((a, b) => String.compare(a.id, b.id)),
         )).toEqual((
