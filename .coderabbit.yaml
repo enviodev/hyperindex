@@ -3,7 +3,7 @@
 inheritance: true
 reviews:
   auto_review:
-    # Review only PRs labeled `coderabbit`. The gate-coderabbit workflow adds
-    # it for maintainers; a maintainer adds it by hand to approve anyone else.
+    # Review only PRs labeled `coderabbit`. build_and_verify adds it once a PR
+    # passes `authorize`, so fork PRs wait for the fork-ci approval.
     enabled: false
     labels: ["coderabbit"]

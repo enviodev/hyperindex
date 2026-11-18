@@ -53,6 +53,25 @@ jobs:
     steps:
       - run: echo "Authorized"
 
+  # .coderabbit.yaml reviews only PRs labeled `coderabbit`, so approving a
+  # fork PR's CI is also what lets CodeRabbit review it.
+  enable-coderabbit:
+    if: github.event_name == 'pull_request_target'
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: context.payload.pull_request.number,
+              labels: ["coderabbit"],
+            });
+
   # ── Build ───────────────────────────────────────────────────────────
 
   # Build envio NAPI addon + wrap it as envio-linux-x64, and build the base
