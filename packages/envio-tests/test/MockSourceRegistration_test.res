@@ -57,6 +57,43 @@ describe("MockSource's own registration", () => {
   )
 
   scenario->Scenario.it(
+    "runs an item without an event of its own through the named contract's addresses",
+    ~sources=[{chain: 1, mockEventContract: "Token"}],
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      await Scenario.resolveInitialHeight(~source=mock, ~head=100_000)
+      let ran = []
+      let recordRun = (block, _) => {
+        ran->Array.push(block)->ignore
+        Promise.resolve()
+      }
+      await mock.expectItemsQueries([
+        {
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                srcAddress: "0x0000000000000000000000000000000000000001",
+                handler: recordRun(5, ...),
+              },
+              {
+                blockNumber: 6,
+                logIndex: 0,
+                srcAddress: "0x00000000000000000000000000000000000000a1",
+                handler: recordRun(6, ...),
+              },
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+      t.expect(ran).toEqual([5])
+    },
+  )
+
+  scenario->Scenario.it(
     "delivers an item only from an address the query fetches",
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {

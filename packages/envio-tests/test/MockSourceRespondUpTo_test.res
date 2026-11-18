@@ -105,12 +105,35 @@ describe("MockSource.respondUpTo", () => {
           }),
         },
       ])
+      await indexer.waitUntilIdle()
+      let backfill =
+        mock.pendingItemsQueries->Array.map(
+          query => (
+            query->MockSource.addresses->Array.map(Address.toString),
+            query.fromBlock,
+            query.toBlock,
+          ),
+        )
       await mock.respondEmptyUpTo(300)
-      t.expect(
+      t.expect((
+        backfill,
         (await indexer.metric("envio_progress_block"))->Array.map(
           ({value}: IndexerRunner.metric) => value,
         ),
-      ).toEqual(["300"])
+      )).toEqual((
+        [
+          (["0x0000000000000000000000000000000000000002"], 50, Bounded(100)),
+          (
+            [
+              "0x0000000000000000000000000000000000000001",
+              "0x0000000000000000000000000000000000000002",
+            ],
+            101,
+            Bounded(99800),
+          ),
+        ],
+        ["300"],
+      ))
     },
   )
 

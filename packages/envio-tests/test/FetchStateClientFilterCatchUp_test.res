@@ -223,7 +223,6 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       ])
       let whileOpen = sourceMock->pendingQueries
 
-      // Partition 2's query comes back at 120, past the head it went out with.
       await sourceMock.expectItemsQueries([
         {partitionId: "2", fromBlock: 51, reply: upTo(120)},
         {partitionId: "3", fromBlock: 20, reply: upTo(40)},
@@ -240,6 +239,41 @@ describe("FetchState client-side filtering catch-up partitions", () => {
         [addressFree(51, Unbounded), catchUp(20, Unbounded)],
         [addressFree(121, Unbounded), catchUp(41, Bounded(120))],
       ))
+    },
+  )
+
+  scenario->Scenario.it(
+    "bounds a catch-up at a reply that comes back past the head its query went out with",
+    ~sources=[{chain: 1337}],
+    ~clientFilterAddressThreshold=1,
+    ~maxAddrInPartition=10,
+    async (~t, ~indexer as _, ~source) => {
+      let sourceMock = source(1337)
+      await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=20)
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "2",
+          fromBlock: 51,
+          reply: Respond({items: [], latestFetchedBlockNumber: 1100, knownHeight: 1500}),
+        },
+        {partitionId: "3", fromBlock: 20, reply: upTo(40)},
+      ])
+      await sourceMock.expectItemsQueries([
+        {partitionId: "2", fromBlock: 1101, reply: LeavePending},
+        {partitionId: "3", fromBlock: 41, reply: LeavePending},
+        {partitionId: "0", fromBlock: 1001, reply: LeavePending},
+      ])
+      t.expect(sourceMock->pendingQueries).toEqual([
+        {
+          partitionId: "0",
+          fromBlock: 1001,
+          toBlock: Unbounded,
+          addresses: ["0x00000000000000000000000000000000000000ff"],
+          clientFilteredContracts: None,
+        },
+        addressFree(1101, Unbounded),
+        catchUp(41, Bounded(1100)),
+      ])
     },
   )
 

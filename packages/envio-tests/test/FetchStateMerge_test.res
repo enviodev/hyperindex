@@ -70,7 +70,7 @@ let upTo = latestFetchedBlockNumber => MockSource.Respond({items: [], latestFetc
 
 describe("FetchState partition merging over the indexer loop", () => {
   scenario->Scenario.it(
-    "Merges registrations below an idle partition into it and splits off the ones that overflow it",
+    "Merges registrations below an idle partition into it, and gives one that would overflow it a partition of its own",
     ~sources=[{chain: 1337}],
     ~maxAddrInPartition=3,
     async (~t, ~indexer, ~source) => {

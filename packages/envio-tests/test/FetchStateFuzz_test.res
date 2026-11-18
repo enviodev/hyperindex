@@ -190,14 +190,21 @@ let expectedHandled = world =>
   ->Array.map(log => {id: log->logId, address: log.address, times: 1})
   ->Array.toSorted((a, b) => String.compare(a.id, b.id))
 
-// A failed query is retried within the same request, which a rollback doesn't
-// cancel: a retry of a query asked before the rollback is stale too.
+// A failed query is retried within the same request until a rollback makes it
+// stale; a retry already sent by then is stale too, and none is sent after.
 type awaitedRetry = {
   partitionId: string,
   fromBlock: int,
   suggestedToBlock: option<int>,
-  mutable stale: bool,
 }
+
+let isRetryOf = (query: MockSource.pendingItemsQuery, retry) =>
+  retry.partitionId === query.partitionId &&
+  retry.fromBlock === query.fromBlock &&
+  switch retry.suggestedToBlock {
+  | Some(toBlock) => query.toBlock === Bounded(toBlock) && query.retryCount === 0
+  | None => query.retryCount > 0
+  }
 
 type fuzz = {
   rng: unit => float,
@@ -244,18 +251,8 @@ let inspectNewQueries = fuzz =>
     if !(fuzz.seen->Set.has(query)) {
       fuzz.seen->Set.add(query)
       let described = query->describeQuery
-      let retryOf = fuzz.awaitedRetries->Array.findIndex(retry =>
-        retry.partitionId === query.partitionId &&
-        retry.fromBlock === query.fromBlock &&
-        switch retry.suggestedToBlock {
-        | Some(toBlock) => query.toBlock === Bounded(toBlock) && query.retryCount === 0
-        | None => query.retryCount > 0
-        }
-      )
+      let retryOf = fuzz.awaitedRetries->Array.findIndex(retry => query->isRetryOf(retry))
       if retryOf !== -1 {
-        if (fuzz.awaitedRetries->Array.getUnsafe(retryOf)).stale {
-          fuzz.stale->Set.add(query)
-        }
         fuzz.awaitedRetries->Array.splice(~start=retryOf, ~remove=1, ~insert=[])
       }
       if query.fromBlock < 1 || query.fromBlock > fuzz.height {
@@ -265,6 +262,19 @@ let inspectNewQueries = fuzz =>
       | Bounded(toBlock) if toBlock < query.fromBlock || toBlock > fuzz.height =>
         fuzz->violate(`${described} ends outside its start..${fuzz.height->Int.toString}`)
       | _ => ()
+      }
+
+      // Gravatar is fetched by address, so a query naming none must tell the
+      // source to gate it on the address store; else it reads as wildcard.
+      if (
+        query->MockSource.addresses->Array.length === 0 &&
+          !(
+            (query->MockSource.selection).clientFilteredContracts
+            ->Option.getOr([])
+            ->Array.includes("Gravatar")
+          )
+      ) {
+        fuzz->violate(`${described} names no address and doesn't client-filter Gravatar`)
       }
 
       // A stale query was planned on the orphaned chain, so it answers only
@@ -418,7 +428,12 @@ let completeRollback = async (fuzz, ~seed) => {
       fuzz.stale->Set.add(query)
     }
   )
-  fuzz.awaitedRetries->Array.forEach(retry => retry.stale = true)
+  fuzz.source.pendingItemsQueries->Array.forEach(query =>
+    if fuzz.awaitedRetries->Array.some(retry => query->isRetryOf(retry)) {
+      fuzz.stale->Set.add(query)
+    }
+  )
+  fuzz.awaitedRetries->Utils.Array.clearInPlace
   let target = fuzz->lastRollbackTarget->Option.getOr(0)
   switch fuzz.injectedValidUpTo {
   | Some(validUpTo) =>
@@ -494,12 +509,13 @@ let failRandomly = fuzz =>
     | Some(toBlock) => WithSuggestedToBlock({toBlock: toBlock})
     | None => WithBackoff({message: "fuzz", backoffMillis: randomInt(fuzz.rng, ~min=0, ~max=300)})
     }
-    fuzz.awaitedRetries->Array.push({
-      partitionId: query.partitionId,
-      fromBlock: query.fromBlock,
-      suggestedToBlock,
-      stale: fuzz.stale->Set.has(query),
-    })
+    if !(fuzz.stale->Set.has(query)) {
+      fuzz.awaitedRetries->Array.push({
+        partitionId: query.partitionId,
+        fromBlock: query.fromBlock,
+        suggestedToBlock,
+      })
+    }
     fuzz->note(`fail ${query->describeQuery}`)
     (query->MockSource.control).fail(
       Source.GetItemsError(FailedGettingItems({requestStats: [], attemptedToBlock: upper, retry})),

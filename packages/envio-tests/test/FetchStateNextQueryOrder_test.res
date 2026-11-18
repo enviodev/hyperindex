@@ -178,12 +178,27 @@ describe("FetchState next query order", () => {
         {partitionId: "3", reply: LeavePending},
       ])
       let toEndBlock = sync->pendingShapes
-      sync.drainPendingItemsQueries()
+      await sync.expectItemsQueries([
+        {partitionId: "0", reply: upTo(11)},
+        {partitionId: "1", reply: upTo(11)},
+        {partitionId: "2", reply: upTo(11)},
+        {partitionId: "3", reply: LeavePending},
+      ])
+      await indexer.waitUntilIdle()
+      let exitedBeforeLastPartition = exited.contents
+      await sync.expectItemsQueries([{partitionId: "3", reply: upTo(11)}])
       await indexer.getBatchWritePromise()
       await indexer.advanceTime(100_000)
       await sync.expectNewHeightCalls(0)
 
-      t.expect((behindHead, atHead, toEndBlock, sync->pendingShapes, exited.contents)).toEqual((
+      t.expect((
+        behindHead,
+        atHead,
+        toEndBlock,
+        sync->pendingShapes,
+        exitedBeforeLastPartition,
+        exited.contents,
+      )).toEqual((
         [
           {
             partitionId: "2",
@@ -232,6 +247,7 @@ describe("FetchState next query order", () => {
           },
         ],
         [],
+        false,
         true,
       ))
     },

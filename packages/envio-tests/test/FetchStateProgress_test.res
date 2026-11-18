@@ -124,7 +124,12 @@ describe("FetchState progress", () => {
       ])
       await indexer.getBatchWritePromise()
 
-      t.expect(await progressBlock(indexer)).toEqual([{value: "90", labels: chainLabels}])
+      t.expect((
+        await progressBlock(indexer),
+        (await indexer.metric("envio_indexing_buffer_size"))->Array.map(
+          ({value}: IndexerRunner.metric) => value,
+        ),
+      )).toEqual(([{value: "90", labels: chainLabels}], ["3"]))
     },
   )
 })

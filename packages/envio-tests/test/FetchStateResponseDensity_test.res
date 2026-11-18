@@ -101,7 +101,7 @@ let itemsTargetOf = query => query->MockSource.itemsTarget->Option.getOrThrow
 // blended density decides how many of them go out.
 let chunksAfterTwoResponses = async (mock: MockSource.t, ~firstCount, ~secondCount) => {
   await mock->startHoldingPartitionOne
-  await mock->respond(~fromBlock=1, ~count=_ => firstCount, ~latestFetchedBlockNumber=10)
+  await mock->respond(~fromBlock=1, ~count=firstCount, ~latestFetchedBlockNumber=10)
   await mock->respond(~fromBlock=11, ~count=_ => secondCount, ~latestFetchedBlockNumber=20)
   await mock.expectItemsQueries([
     {partitionId: "0", fromBlock: 21, reply: LeavePending},
@@ -214,7 +214,9 @@ describe("FetchState response density and source range capacity over the indexer
     ~targetBufferSize=1_000,
     async (~t, ~indexer as _, ~source) => {
       // (0 + 2) / 2 = 1 item/block prices a chunk at 18 items: six cover 100.
-      t.expect(await source(1)->chunksAfterTwoResponses(~firstCount=0, ~secondCount=20)).toEqual(
+      t.expect(
+        await source(1)->chunksAfterTwoResponses(~firstCount=_ => 0, ~secondCount=20),
+      ).toEqual(
         Array.fromInitializer(
           ~length=6,
           index => chunk(~fromBlock=21 + index * 18, ~toBlock=38 + index * 18),
@@ -229,12 +231,11 @@ describe("FetchState response density and source range capacity over the indexer
     ~maxAddrInPartition=1,
     ~targetBufferSize=1_000,
     async (~t, ~indexer as _, ~source) => {
-      // The first probe asks for at most 50 items and gets all 50. (5 + 1) / 2 =
+      // The first probe gets as many items as it asked for, 50. (5 + 1) / 2 =
       // 3 items/block prices a chunk at 54 items: two cover 100.
-      t.expect(await source(1)->chunksAfterTwoResponses(~firstCount=50, ~secondCount=10)).toEqual([
-        chunk(~fromBlock=21, ~toBlock=38),
-        chunk(~fromBlock=39, ~toBlock=56),
-      ])
+      t.expect(
+        await source(1)->chunksAfterTwoResponses(~firstCount=itemsTargetOf, ~secondCount=10),
+      ).toEqual([chunk(~fromBlock=21, ~toBlock=38), chunk(~fromBlock=39, ~toBlock=56)])
     },
   )
 })

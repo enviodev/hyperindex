@@ -123,14 +123,11 @@ describe("FetchState readiness for the reorg threshold", () => {
     ~reorgThresholdReadyTolerance=750,
     // The indexer exits once the chain reaches its end block.
     ~onExit=() => (),
-    async (~t, ~indexer, ~source) => {
-      let mock = source(1)
-      mock.resolveGetHeightOrThrow(1000)
-      await respondOnceAndWaitForBatch(~indexer, ~mock, ~fromBlock=1, ~to=59)
-      let beforeEndBlock = await inReorgThreshold(indexer)
-      await respondOnceAndWaitForBatch(~indexer, ~mock, ~fromBlock=60, ~to=100)
-      t.expect((beforeEndBlock, await inReorgThreshold(indexer))).toEqual((["0"], ["1"]))
-    },
+    async (~t, ~indexer, ~source) =>
+      t.expect(await thresholdShortOfAndAt(~indexer, ~source, ~readyAt=100)).toEqual((
+        ["0"],
+        ["1"],
+      )),
   )
 
   openEnded->Scenario.it(
