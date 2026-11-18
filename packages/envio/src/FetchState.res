@@ -864,6 +864,18 @@ module OptimizedPartitions = {
   }
 }
 
+// Subgraph mode: where a dynamically registered address was registered and in
+// which round of its block (1 for a data source created by the block's own
+// triggers, 2 for one created by those, and so on).
+type creationBlock = {block: int, round: int, contractName: string, address: string}
+
+type creationBlocks = {
+  // Keyed by contract and lowercase address, until fetching passes the block.
+  byAddress: dict<creationBlock>,
+  // Each contract's event registrations, which a page's rows are routed to.
+  registrationIndexesOf: dict<array<int>>,
+}
+
 // When a contract's addresses leave the server-side filter. A switched contract
 // is fetched by the single address-free partition and gated against the address
 // store on our side. The switch is sticky for the run.
@@ -901,6 +913,16 @@ type t = {
   knownHeight: int,
   firstEventBlock: option<int>,
   clientFilterPolicy: clientFilterPolicy,
+  // Subgraph mode only: the block each dynamically registered address was
+  // registered in, keyed by contract and lowercase address, until fetching
+  // passes it. Its events in that block run after the rest of the block, as
+  // graph-node runs a new data source's creation-block triggers.
+  creationBlocks?: creationBlocks,
+  // Set when an onBlock registration has a contractRegister: the last block
+  // whose block-handler register passes have run and whose registrations are
+  // applied. No block item past it is generated, so none is processed before
+  // the data sources its block created are fetched.
+  blockRegisterThrough?: int,
 }
 
 // The latest block whose items are all in the buffer: the lowest partition
@@ -935,6 +957,7 @@ let bufferReadyCount = (fetchState: t, ~eventStore: EventStore.t) =>
 let isSameLog = (a: Internal.item, b: Internal.item): bool =>
   a->Internal.getItemKind === 0 &&
   b->Internal.getItemKind === 0 &&
+  a->Internal.getItemCallRank === b->Internal.getItemCallRank &&
   a->Internal.getItemBlockNumber === b->Internal.getItemBlockNumber &&
   a->Internal.getItemLogIndex === b->Internal.getItemLogIndex &&
   switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
@@ -1018,6 +1041,10 @@ let updateInternal = (
       },
       knownHeight,
     )
+    let maxBlockNumber = switch fetchState.blockRegisterThrough {
+    | Some(through) => Pervasives.min(maxBlockNumber, through)
+    | None => maxBlockNumber
+    }
     appendOnBlockItems(
       ~eventStore,
       ~onBlockRegistrations,
@@ -1042,6 +1069,8 @@ let updateInternal = (
     knownHeight,
     firstEventBlock: fetchState.firstEventBlock,
     clientFilterPolicy: fetchState.clientFilterPolicy,
+    creationBlocks: ?fetchState.creationBlocks,
+    blockRegisterThrough: ?fetchState.blockRegisterThrough,
   }
 
   updatedFetchState
@@ -1578,6 +1607,54 @@ OptimizedPartitions.t => {
   )
 }
 
+let creationBlockKey = (~contractName, ~address: Address.t) =>
+  `${contractName}:${address->Address.toString->String.toLowerCase}`
+
+// Marks the page's events that were logged in the block their address was
+// registered in, once the registrations fetching has already passed are
+// dropped: those can't receive another item.
+let markCreationBlockEvents = (creationBlocks: creationBlocks, ~page, ~fetchedThrough) => {
+  creationBlocks.byAddress
+  ->Dict.toArray
+  ->Array.forEach(((key, {block})) =>
+    if block < fetchedThrough {
+      creationBlocks.byAddress->Utils.Dict.deleteInPlace(key)
+    }
+  )
+  switch creationBlocks.byAddress->Dict.valuesToArray {
+  | [] => ()
+  | entries =>
+    page->EventStore.markCreationRounds(
+      entries->Array.map(({block, round, contractName, address}): EventStore.creationBlock => {
+        blockNumber: block,
+        round,
+        address,
+        registrationIndexes: creationBlocks.registrationIndexesOf
+        ->Utils.Dict.dangerouslyGetNonOption(contractName)
+        ->Option.getOr([]),
+      }),
+    )
+  }
+}
+
+// The round a registration made by `item`'s handler belongs to: one past the
+// round `item` itself runs in, which is its address's registration round when
+// the event was logged in the block that address was registered in.
+let creationRoundOfRegistration = (fetchState: t, ~item: Internal.item) =>
+  switch fetchState.creationBlocks {
+  | None => 1
+  | Some(creationBlocks) =>
+    let eventItem = item->Internal.castUnsafeEventItem
+    let key = creationBlockKey(
+      ~contractName=eventItem.onEventRegistration.eventConfig.contractName,
+      ~address=eventItem.payload->Internal.getPayloadSrcAddress,
+    )
+    switch creationBlocks.byAddress->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some({block, round}) if block === eventItem.blockNumber => round + 1
+    | _ => 1
+    }
+  }
+
 let registerDynamicContracts = (
   fetchState: t,
   ~addressStore: AddressStore.t,
@@ -1617,6 +1694,19 @@ let registerDynamicContracts = (
     let verdict = verdicts->Array.getUnsafe(idx)
     switch verdict {
     | Added({fetchable: true}) =>
+      switch fetchState.creationBlocks {
+      | Some(creationBlocks) =>
+        creationBlocks.byAddress->Dict.set(
+          creationBlockKey(~contractName=registration.contractName, ~address=registration.address),
+          {
+            block: registration.registrationBlock,
+            round: registration.creationRound->Option.getOr(1),
+            contractName: registration.contractName,
+            address: registration.address->Address.toString->String.toLowerCase,
+          },
+        )
+      | None => ()
+      }
       if !(registeringContractNames->Array.includes(registration.contractName)) {
         registeringContractNames->Array.push(registration.contractName)->ignore
       }
@@ -1817,6 +1907,11 @@ let handleQueryResult = (
   ~page: EventStore.t,
 ): t => {
   let itemsCount = page->EventStore.length
+  switch fetchState.creationBlocks {
+  | Some(creationBlocks) =>
+    creationBlocks->markCreationBlockEvents(~page, ~fetchedThrough=fetchState->bufferBlockNumber)
+  | None => ()
+  }
   // Drops duplicates an overlapping query may re-deliver (e.g. an over-fetched
   // log matched by two partitions), keeping the copy already stored.
   eventStore->EventStore.merge(page)
@@ -1830,6 +1925,76 @@ let handleQueryResult = (
     ),
   )
 }
+
+// The items of the block handlers' register passes for the blocks after
+// `after`, through `through`, at most about `limit` of them in whole blocks;
+// and the last block they cover. `nextBlockRegisterItems` starts after the
+// last block passed.
+let capAtEndBlock = (fetchState: t, block) =>
+  switch fetchState.endBlock {
+  | Some(endBlock) => Pervasives.min(block, endBlock)
+  | None => block
+  }
+
+let canAdvanceBlockRegisters = (fetchState: t, ~through) =>
+  switch fetchState.blockRegisterThrough {
+  | Some(after) => fetchState->capAtEndBlock(through) > after
+  | None => false
+  }
+
+let blockRegisterItemsAfter = (fetchState: t, ~after, ~through, ~limit) =>
+  switch fetchState.blockRegisterThrough {
+  | Some(_) if fetchState->capAtEndBlock(through) > after =>
+    let through = fetchState->capAtEndBlock(through)
+    let registrations =
+      fetchState.onBlockRegistrations->Array.filter((r: Internal.onBlockRegistration) =>
+        r.contractRegister !== None
+      )
+    // Built here rather than in the store: the passes run before the blocks'
+    // items are generated there.
+    let items = []
+    let covered = ref(after)
+    while covered.contents < through && items->Array.length <= limit {
+      let blockNumber = covered.contents + 1
+      covered := blockNumber
+      registrations->Array.forEach(onBlockRegistration =>
+        if (
+          onBlockRegistration->BlockItem.runsOn(
+            ~blockNumber,
+            ~chainStartBlock=fetchState.startBlock,
+          )
+        ) {
+          items->Array.push(Internal.Block({onBlockRegistration, blockNumber}))
+        }
+      )
+    }
+    Some((items, covered.contents))
+  | _ => None
+  }
+
+let nextBlockRegisterItems = (fetchState: t, ~through, ~limit) =>
+  switch fetchState.blockRegisterThrough {
+  | Some(after) => fetchState->blockRegisterItemsAfter(~after, ~through, ~limit)
+  | None => None
+  }
+
+let setBlockRegisterThrough = (fetchState: t, ~eventStore, ~through) =>
+  switch fetchState.blockRegisterThrough {
+  | Some(current) if through > current =>
+    {...fetchState, blockRegisterThrough: through}->updateInternal(~eventStore)
+  | _ => fetchState
+  }
+
+// How far block-handler register passes can run with no response to run them
+// with: through the block every partition has fetched, or the head when there
+// is no partition, and never past the chain's end block.
+let blockRegisterFrontier = (fetchState: t) =>
+  fetchState->capAtEndBlock(
+    switch fetchState.optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
+    | Some(block) => Pervasives.min(block, fetchState.knownHeight)
+    | None => fetchState.knownHeight
+    },
+  )
 
 type nextQuery =
   | WaitingForNewBlock
@@ -2533,6 +2698,7 @@ let make = (
   ~firstEventBlock=None,
   ~clientFilterAddressThreshold=None,
   ~isResumed=false,
+  ~deferCreationBlockEvents=false,
 ): t => {
   let latestFetchedBlock = progressBlockNumber
 
@@ -2684,6 +2850,14 @@ let make = (
   // For onBlock-only indexers (e.g. SVM onSlot) there are no partitions to drive
   // fetching, so without seeding the buffer here getNextQuery would return
   // NothingToQuery and the indexer would get stuck.
+  // Every block up to the progress block was processed, so its register passes
+  // ran and what they registered is in the seeded rows.
+  let blockRegisterThrough =
+    onBlockRegistrations->Array.some((r: Internal.onBlockRegistration) =>
+      r.contractRegister !== None
+    )
+      ? Some(progressBlockNumber)
+      : None
   let latestOnBlockBlockNumber = switch onBlockRegistrations {
   // As updateInternal keeps it: with nothing to generate per block the pointer
   // is the head cap on the buffer frontier, and left at the progress block it
@@ -2695,6 +2869,10 @@ let make = (
     let maxBlockNumber = switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
     | None => knownHeight
     | Some(latestFullyFetchedBlock) => Pervasives.min(latestFullyFetchedBlock, knownHeight)
+    }
+    let maxBlockNumber = switch blockRegisterThrough {
+    | Some(through) => Pervasives.min(maxBlockNumber, through)
+    | None => maxBlockNumber
     }
     appendOnBlockItems(
       ~eventStore,
@@ -2721,6 +2899,27 @@ let make = (
     knownHeight,
     firstEventBlock,
     clientFilterPolicy,
+    creationBlocks: ?(
+      deferCreationBlockEvents
+        ? Some({
+            byAddress: Dict.make(),
+            registrationIndexesOf: {
+              let indexesOf = Dict.make()
+              onEventRegistrations->Array.forEach((registration: Internal.onEventRegistration) =>
+                switch indexesOf->Utils.Dict.dangerouslyGetNonOption(
+                  registration.eventConfig.contractName,
+                ) {
+                | Some(indexes) => indexes->Array.push(registration.index)
+                | None =>
+                  indexesOf->Dict.set(registration.eventConfig.contractName, [registration.index])
+                }
+              )
+              indexesOf
+            },
+          })
+        : None
+    ),
+    ?blockRegisterThrough,
   }
 
   fetchState
@@ -2871,6 +3070,13 @@ let rollback = (
     latestOnBlockBlockNumber: Pervasives.min(
       fetchState.latestOnBlockBlockNumber,
       targetBlockNumber,
+    ),
+    // The passes past the target run again on the refetched blocks: what they
+    // registered was pruned from the store above.
+    blockRegisterThrough: ?(
+      fetchState.blockRegisterThrough->Option.map(through =>
+        Pervasives.min(through, targetBlockNumber)
+      )
     ),
   }->updateInternal(~eventStore, ~optimizedPartitions)
   {fetchState: rolledBack, rolledBackAddresses}

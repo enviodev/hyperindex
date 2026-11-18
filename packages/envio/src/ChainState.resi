@@ -64,6 +64,8 @@ let itemContext: t => StoredItems.context
 // Where a batch's items read their transactions and blocks from.
 let itemFields: t => StoredItems.fields
 let shouldChecksum: t => bool
+// The chain's fetch state, read-only: for the round a registration belongs to.
+let fetchState: t => FetchState.t
 let entities: t => EntityTables.t
 let resetEntities: (t, ~perChainEntities: array<Internal.entityConfig>) => unit
 let sourceManager: t => SourceManager.t
@@ -81,6 +83,30 @@ let committedProgressBlockNumber: t => int
 let committedProgressBlockTime: t => option<int>
 let numEventsProcessed: t => float
 let pendingBudget: t => float
+type heldBudget
+let holdExtraBudget: (t, ~items: int) => heldBudget
+let releaseExtraBudget: (t, heldBudget) => unit
+// Subgraph mode: the register passes of block handlers that create data
+// sources. See `FetchState.blockRegisterThrough`.
+let hasBlockRegisters: t => bool
+let isBlockRegisterIdle: t => bool
+let queueBlockRegisterRun: t => (promise<unit>, unit => unit)
+let canAdvanceBlockRegisters: (t, ~through: int) => bool
+let nextBlockRegisterItems: (t, ~through: int, ~limit: int) => option<(array<Internal.item>, int)>
+let blockRegisterItemsAfter: (
+  t,
+  ~after: int,
+  ~through: int,
+  ~limit: int,
+) => option<(array<Internal.item>, int)>
+let blockRegisterThrough: t => option<int>
+let blockRegisterFrontier: t => int
+let applyBlockRegisters: (
+  t,
+  ~registrations: array<AddressStore.registration>,
+  ~through: int,
+) => unit
+let markBlockRegistered: (t, ~through: int) => unit
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 

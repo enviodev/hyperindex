@@ -1,0 +1,128 @@
+# Subgraph mode's own checks. `pull_request`, not `pull_request_target`, so a
+# PR runs its own copy of this file: Build & Verify runs the base branch's.
+# A fork's PR gets no secrets, so the steps that need HyperSync are skipped.
+name: Subgraph compat
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# ENVIO_API_TOKEN goes to the steps that index alone: installs and builds run
+# scripts that must not read it.
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  subgraph:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [differential, corpus, checks]
+
+    # For the replay-stress run of envio-tests, on the port its tests expect.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: testing
+          POSTGRES_DB: envio-dev
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres -d envio-dev"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The corpus suite runs third-party subgraph code; no step pushes.
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - uses: ./.github/actions/cargo-cache
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 11
+          run_install: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      # The workspace's envio, with this checkout's addon staged where
+      # `Core.loadAddon` resolves it.
+      - name: Build envio
+        run: |
+          SVM_TARGET_PLATFORM=linux-amd64 cargo build --lib
+          mkdir -p node_modules/envio-linux-x64
+          cp target/debug/libenvio.so node_modules/envio-linux-x64/envio.node
+          printf '{"name":"envio-linux-x64","version":"0.0.1-dev","main":"envio.node"}\n' > node_modules/envio-linux-x64/package.json
+          pnpm --filter envio build
+
+      - name: Check for a HyperSync token
+        id: token
+        run: echo "present=${{ secrets.ENVIO_API_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
+      # The scenario indexed by graph-node and by envio over one anvil chain,
+      # every entity diffed field for field.
+      - name: graph-node differential
+        if: matrix.suite == 'differential'
+        run: scenarios/subgraph_test/differential/run.sh
+
+      # Real subgraphs, installed and indexed the way their authors would.
+      # Contract calls are answered by a local RPC, from a recorded fixture
+      # where an entry has one and with synthetic values where it hasn't.
+      - name: Subgraph corpus
+        if: matrix.suite == 'corpus' && steps.token.outputs.present == 'true'
+        run: node scenarios/subgraph_corpus/run.mjs
+        env:
+          ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
+
+      # The shim has to stay assignable to the types a subgraph's mappings are
+      # compiled against; every known gap is recorded in conformance.ts.
+      - name: graph-ts conformance
+        if: matrix.suite == 'checks'
+        working-directory: packages/envio
+        run: pnpm check-graph-ts
+
+      - name: graph-cli codegen goldens
+        if: matrix.suite == 'checks'
+        working-directory: packages/envio-tests
+        run: pnpm check-subgraph-codegen
+
+      # A subgraph project has no codegen step: subgraph.yaml is the config.
+      - name: subgraph_test
+        if: matrix.suite == 'checks'
+        working-directory: scenarios/subgraph_test
+        run: pnpm test
+
+      # The subgraph suite with preload off, so every mapping replays as often
+      # as it can and must still produce the same store.
+      - name: subgraph replay stress
+        if: matrix.suite == 'checks' && steps.token.outputs.present == 'true'
+        working-directory: packages/envio-tests
+        run: pnpm rescript && pnpm test:replay-stress
+        env:
+          ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
+
+      # The Graph's networks registry vs the snapshot `network:` resolves
+      # through; an external dependency, so it doesn't fail the job.
+      - name: graph-networks drift
+        if: matrix.suite == 'checks'
+        continue-on-error: true
+        run: node packages/cli/scripts/sync-graph-networks.mjs --check

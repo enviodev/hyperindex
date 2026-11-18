@@ -85,6 +85,12 @@ let loggerForItem = (item: Internal.item, ~ecosystem: t, ~logger: Logger.t): Log
     )
   }
 
+let makeKeyOnlyBlock = (~blockNumber: int, ~ecosystem: t): Internal.eventBlock => {
+  let keyOnly = Dict.make()
+  keyOnly->Dict.set(ecosystem.blockNumberName, blockNumber->(Utils.magic: int => unknown))
+  keyOnly->(Utils.magic: dict<unknown> => Internal.eventBlock)
+}
+
 // `block` is the item's materialised selection, which already carries the key;
 // without one the handler selected nothing but the key.
 let makeOnBlockArgs = (
@@ -98,10 +104,7 @@ let makeOnBlockArgs = (
   | Evm | Fuel =>
     let block = switch block {
     | Some(block) => block
-    | None =>
-      let keyOnly = Dict.make()
-      keyOnly->Dict.set(ecosystem.blockNumberName, blockNumber->(Utils.magic: int => unknown))
-      keyOnly->(Utils.magic: dict<unknown> => Internal.eventBlock)
+    | None => makeKeyOnlyBlock(~blockNumber, ~ecosystem)
     }
     {block, context}
   }

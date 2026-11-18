@@ -143,6 +143,11 @@ pub mod codegen {
     use anyhow::{self, Context};
 
     pub async fn run_codegen(config: &SystemConfig) -> anyhow::Result<()> {
+        // `codegen`, `start` and `dev` all pass through here, so a subgraph
+        // whose generated code nothing can build is refused by each alike.
+        if let Some(runtime) = &config.subgraph {
+            crate::subgraph::check_generated_code(runtime)?;
+        }
         let template = hbs_templating::codegen_templates::ProjectTemplate::from_config(config)
             .context("Failed creating project template")?;
 

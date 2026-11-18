@@ -47,6 +47,30 @@ fn fill_in_defaults(item: &mut Value) {
         "constructor" | "error" => default("inputs", Value::Array(Vec::new())),
         _ => {}
     }
+    normalize_state_mutability(object);
+}
+
+const STATE_MUTABILITIES: [&str; 4] = ["pure", "view", "nonpayable", "payable"];
+
+/// A `stateMutability` outside the spec's four — `""`, `"constant"`,
+/// `"nonPayable"` — is read the way the legacy `constant`/`payable` flags it
+/// replaced say, rather than failing the whole ABI over an entry nobody calls.
+fn normalize_state_mutability(object: &mut Map<String, Value>) {
+    let Some(given) = object.get("stateMutability").and_then(Value::as_str) else {
+        return;
+    };
+    let lowered = given.to_lowercase();
+    let normalized = if STATE_MUTABILITIES.contains(&lowered.as_str()) {
+        lowered
+    } else if object.get("payable").and_then(Value::as_bool) == Some(true) {
+        "payable".to_string()
+    } else if object.get("constant").and_then(Value::as_bool) == Some(true) || lowered == "constant"
+    {
+        "view".to_string()
+    } else {
+        "nonpayable".to_string()
+    };
+    object.insert("stateMutability".to_string(), Value::from(normalized));
 }
 
 fn entries(parsed: &mut Value) -> Option<&mut Vec<Value>> {
@@ -203,6 +227,16 @@ fn explain(source: Option<&str>, text: &str, err: &serde_json::Error) -> anyhow:
     )
 }
 
+/// The name an event parameter is decoded under: its own, or `_{index}` when the
+/// ABI leaves it unnamed.
+pub fn event_param_key(name: &str, index: usize) -> String {
+    if name.is_empty() {
+        format!("_{index}")
+    } else {
+        name.to_string()
+    }
+}
+
 /// Reads an ABI, filling in what its writer left out. `source` names the file
 /// it came from, and is what an unreadable entry is reported against; an ABI
 /// with no file behind it passes `None`.
@@ -290,6 +324,40 @@ mod tests {
         );
 
         assert_eq!(events(abi), vec!["Failure", "Transfer"]);
+    }
+
+    // Hand-edited and pre-0.4.16 ABIs spell `stateMutability` outside the four
+    // values the spec allows; the legacy `constant`/`payable` flags still say
+    // which it is.
+    #[test]
+    fn reads_an_abi_whose_state_mutability_is_out_of_spec() {
+        let abi = read(
+            r#"[
+              {"type": "constructor", "inputs": [], "stateMutability": ""},
+              {"type": "function", "name": "admin", "constant": true, "stateMutability": "constant"},
+              {"type": "function", "name": "deposit", "payable": true, "stateMutability": "Payable"},
+              {"type": "function", "name": "set", "stateMutability": "nonPayable"},
+              {"type": "event", "name": "Failure"}
+            ]"#,
+        );
+        let (AbiOrNestedAbi::Abi(abi) | AbiOrNestedAbi::NestedAbi { abi }) = abi;
+        let mutability =
+            |name: &str| format!("{:?}", abi.function(name).unwrap()[0].state_mutability);
+
+        assert_eq!(
+            (
+                format!("{:?}", abi.constructor.as_ref().unwrap().state_mutability),
+                mutability("admin"),
+                mutability("deposit"),
+                mutability("set"),
+            ),
+            (
+                "NonPayable".to_string(),
+                "View".to_string(),
+                "Payable".to_string(),
+                "NonPayable".to_string()
+            )
+        );
     }
 
     // Compound V2's ABIs, generated when the proxy and the implementation were

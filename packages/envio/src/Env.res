@@ -4,6 +4,21 @@
 %%private(let envSafe = EnvSafe.make())
 
 let targetBufferSize = envSafe->EnvSafe.get("ENVIO_INDEXING_MAX_BUFFER_SIZE", S.option(S.int))
+
+// Set once a subgraph-mode config is loaded. A subgraph's mappings run per
+// event, and every fetched event that can create a data source also holds a
+// live register pass and its contract calls until the response is merged, so
+// the pool of events ready to process is sized for that (CrossChainState).
+let subgraphMode = ref(false)
+
+// Set with subgraphMode when the manifest declares templates: without one no
+// event can create a data source, so none holds a register pass.
+let subgraphHasTemplates = ref(false)
+
+// How many items ahead of the one executing a subgraph handler is preloaded
+// again once an entity it read as absent is created (PreloadLookahead). 0 = off.
+let subgraphPreloadLookahead =
+  envSafe->EnvSafe.get("ENVIO_SUBGRAPH_PRELOAD_LOOKAHEAD", S.int, ~fallback=256)
 let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fallback=5_000)
 
 // Most parallel in-flight queries a single chain may have at once, across all

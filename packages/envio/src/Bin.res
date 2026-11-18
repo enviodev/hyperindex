@@ -25,11 +25,16 @@ type startCmd = {
 }
 type migrateCmd = {reset: bool, config: JSON.t}
 type dropSchemaCmd = {config: JSON.t}
+type exitCmd = {code: int}
 
 type command =
   | Start(startCmd)
   | Migrate(migrateCmd)
   | DropSchema(dropSchemaCmd)
+  | Exit(exitCmd)
+
+// `NodeJs.exitCode` only spells 0 and 1; `envio subgraph diff` also exits 2.
+@send external exitWithStatus: (NodeJs.t, int) => unit = "exit"
 
 let decodeCommand = (json: JSON.t): command => {
   let obj = switch json->JSON.Decode.object {
@@ -44,6 +49,7 @@ let decodeCommand = (json: JSON.t): command => {
   | "start" => Start(json->(Utils.magic: JSON.t => startCmd))
   | "migrate" => Migrate(json->(Utils.magic: JSON.t => migrateCmd))
   | "drop-schema" => DropSchema(json->(Utils.magic: JSON.t => dropSchemaCmd))
+  | "exit" => Exit(json->(Utils.magic: JSON.t => exitCmd))
   | other => JsError.throwWithMessage(`Unknown command kind: ${other}`)
   }
 }
@@ -81,6 +87,7 @@ let run = async args => {
         | DropSchema({config}) =>
           Config.prime(config)
           await Main.dropSchema(~logger)
+        | Exit({code}) => NodeJs.process->exitWithStatus(code)
         }
       }
     }

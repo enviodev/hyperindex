@@ -31,6 +31,9 @@ type t = {
   // scheduler doesn't re-sum pending queries on every tick. Incremented when
   // queries are dispatched, decremented as their responses land.
   mutable pendingBudget: float,
+  // Counts resets of pendingBudget: a hold taken before one has nothing left
+  // to release.
+  mutable pendingBudgetResets: int,
   // Chain-wide events/block, used to turn a chain's item budget into a target
   // block for query sizing. Seeded from cumulative progress on construction,
   // then smoothed with an EMA on every batch (see applyBatchProgress). None
@@ -78,6 +81,12 @@ type t = {
   // Timestamp of the committed progress block itself. See
   // `Batch.chainAfterBatch.progressBlockTime`.
   mutable committedProgressBlockTime: option<int>,
+  // Subgraph mode, with a block handler that has a register pass: the chain's
+  // register work runs one unit at a time, a response's passes or a run of
+  // block passes alone, so a pass never runs ahead of a block pass of an
+  // earlier block. Settles when the latest unit is applied.
+  mutable blockRegisterTail: promise<unit>,
+  mutable blockRegisterRuns: int,
 }
 
 // The chain's config-declared addresses as storage rows: what a clean run
@@ -175,6 +184,7 @@ let make = (
     processingBlockNumber: committedProgressBlockNumber,
     numEventsProcessed,
     pendingBudget: 0.,
+    pendingBudgetResets: 0,
     chainDensity,
     safeCheckpointTracking,
     shouldRollbackOnReorg,
@@ -195,6 +205,8 @@ let make = (
     rollbackTargetBlock: None,
     progressLatencyMs: None,
     committedProgressBlockTime,
+    blockRegisterTail: Promise.resolve(),
+    blockRegisterRuns: 0,
   }
 }
 
@@ -301,6 +313,17 @@ let makeInternal = (
     ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractMapping),
   )
 
+  // Before the store and the sources, whose pages it keys. A subgraph indexes
+  // one chain, so its block registrations are this chain's.
+  Core.getAddon().setSubgraphItemOrder(
+    Env.subgraphMode.contents
+      ? Null.Value(
+          onBlockRegistrations->Array.filterMap((registration: Internal.onBlockRegistration) =>
+            registration.runsFirst === Some(true) ? Some(registration.index) : None
+          ),
+        )
+      : Null.null,
+  )
   let eventStore = EventStore.make()
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
@@ -330,6 +353,7 @@ let makeInternal = (
     ~blockThrottle=chainConfig.blockThrottle,
     ~onBlockRegistrations,
     ~firstEventBlock,
+    ~deferCreationBlockEvents=config.subgraph->Option.isSome,
     // Fuel and SVM route through the address store like EVM does, so the
     // client-side path works for them - but their address counts are nowhere
     // near the threshold, so switching would only trade a server-side filter
@@ -483,6 +507,7 @@ let itemFields = (cs: t): StoredItems.fields => {
   shouldChecksum: cs.shouldChecksum,
 }
 let shouldChecksum = (cs: t) => cs.shouldChecksum
+let fetchState = (cs: t) => cs.fetchState
 let entities = (cs: t) => cs.entities
 
 // Rollback discards every uncommitted change, so this chain's partition is
@@ -567,7 +592,71 @@ let startFetchingQueries = (cs: t, ~queries: array<FetchState.query>) => {
 let resetPendingQueries = (cs: t) => {
   cs.fetchState = cs.fetchState->FetchState.resetPendingQueries
   cs.pendingBudget = 0.
+  cs.pendingBudgetResets = cs.pendingBudgetResets + 1
 }
+
+// A response that landed with more items than its query was priced at keeps the
+// excess reserved while it waits for its register passes: until then its items
+// are neither in the buffer nor in the query's estimate, and the pool would
+// admit the next queries on top of them. Released when the response is applied.
+type heldBudget = {items: int, resets: int}
+
+let holdExtraBudget = (cs: t, ~items) => {
+  cs.pendingBudget = cs.pendingBudget +. items->Int.toFloat
+  {items, resets: cs.pendingBudgetResets}
+}
+
+let releaseExtraBudget = (cs: t, held: heldBudget) =>
+  if held.resets === cs.pendingBudgetResets {
+    cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. held.items->Int.toFloat)
+  }
+
+let hasBlockRegisters = (cs: t) => cs.fetchState.blockRegisterThrough !== None
+let isBlockRegisterIdle = (cs: t) => cs.blockRegisterRuns === 0
+
+// Queues a unit of register work behind the chain's latest one. Returns the
+// promise to wait on before running it, and the callback that settles it,
+// which must be called however the unit ends.
+let queueBlockRegisterRun = (cs: t) => {
+  let previous = cs.blockRegisterTail
+  let settle = ref(() => ())
+  cs.blockRegisterTail = Promise.make((resolve, _) => settle := resolve)
+  cs.blockRegisterRuns = cs.blockRegisterRuns + 1
+  let finish = () => {
+    cs.blockRegisterRuns = cs.blockRegisterRuns - 1
+    settle.contents()
+  }
+  (previous, finish)
+}
+
+let canAdvanceBlockRegisters = (cs: t, ~through) =>
+  cs.fetchState->FetchState.canAdvanceBlockRegisters(~through)
+let nextBlockRegisterItems = (cs: t, ~through, ~limit) =>
+  cs.fetchState->FetchState.nextBlockRegisterItems(~through, ~limit)
+let blockRegisterItemsAfter = (cs: t, ~after, ~through, ~limit) =>
+  cs.fetchState->FetchState.blockRegisterItemsAfter(~after, ~through, ~limit)
+let blockRegisterThrough = (cs: t) => cs.fetchState.blockRegisterThrough
+let blockRegisterFrontier = (cs: t) => cs.fetchState->FetchState.blockRegisterFrontier
+
+// Applies what a run of block passes alone registered, then lets block items
+// through its last block be generated.
+let applyBlockRegisters = (cs: t, ~registrations, ~through) => {
+  let fs = switch registrations {
+  | [] => cs.fetchState
+  | _ =>
+    cs.fetchState->FetchState.registerDynamicContracts(
+      ~addressStore=cs.addressStore,
+      ~eventStore=cs.eventStore,
+      ~onNotice=notice => cs.logger->logFetchStateNotice(notice),
+      registrations,
+    )
+  }
+  cs.fetchState = fs->FetchState.setBlockRegisterThrough(~eventStore=cs.eventStore, ~through)
+}
+
+let markBlockRegistered = (cs: t, ~through) =>
+  cs.fetchState =
+    cs.fetchState->FetchState.setBlockRegisterThrough(~eventStore=cs.eventStore, ~through)
 
 let isReady = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock !== None
 

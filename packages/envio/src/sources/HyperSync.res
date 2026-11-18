@@ -15,7 +15,8 @@ let requireApiToken = apiToken =>
   | None =>
     JsError.throwWithMessage(`An Envio API token is required for using HyperSync as a data-source.
 Set the ENVIO_API_TOKEN environment variable in your .env file.
-Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
+Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens
+Or, signed in to Envio Cloud, get one with: envio-cloud token hypersync -o json`)
   }
 
 let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")

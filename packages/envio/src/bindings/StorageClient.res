@@ -113,6 +113,7 @@ type initialize = {
   envioInfo: string,
   contractNames: array<string>,
   addresses: addresses,
+  keptEffectCaches?: array<string>,
 }
 
 type addChain = {

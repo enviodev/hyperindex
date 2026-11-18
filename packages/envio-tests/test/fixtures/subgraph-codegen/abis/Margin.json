@@ -1,0 +1,31 @@
+[
+  {
+    "type": "event",
+    "name": "LogSetMarginRatio",
+    "anonymous": false,
+    "inputs": [
+      { "name": "marginRatio", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "getMarginRatio",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "tuple",
+        "internalType": "struct Decimal.D256",
+        "components": [{ "name": "value", "type": "uint256" }]
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "name",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "string" }]
+  }
+]

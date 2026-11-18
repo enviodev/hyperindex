@@ -50,7 +50,7 @@ fn encode_indexed_topic_inner(abi_type: &str, value: Value) -> Result<String> {
     Ok(format!("0x{}", faster_hex::hex_string(&topic)))
 }
 
-fn coerce_json_value(ty: &DynSolType, value: Value) -> Result<DynSolValue> {
+pub(crate) fn coerce_json_value(ty: &DynSolType, value: Value) -> Result<DynSolValue> {
     match (ty, value) {
         (DynSolType::Bool, Value::Bool(value)) => Ok(DynSolValue::Bool(value)),
         (DynSolType::String, Value::String(value)) => Ok(DynSolValue::String(value)),

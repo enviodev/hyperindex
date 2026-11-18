@@ -1481,6 +1481,7 @@ async fn every_list_type_is_written_as_the_handler_set_it() {
                 envio_info: "{}".to_string(),
                 contract_names: Vec::new(),
                 addresses: Default::default(),
+                kept_effect_caches: Vec::new(),
             },
             "instance",
             false,

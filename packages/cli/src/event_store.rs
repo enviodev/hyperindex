@@ -11,7 +11,7 @@
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::ops::Range;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 use anyhow::Result;
 use napi::bindgen_prelude::{ArrayBuffer, Float64Array, Uint32Array};
@@ -76,6 +76,12 @@ pub(crate) enum RowData {
         /// The key of its transaction in the chain's store, when the item
         /// doesn't carry the transaction itself.
         transaction_index: Option<i64>,
+        /// Its transaction's index in the block, which the subgraph order
+        /// sorts by whether or not the item carries the transaction.
+        order_transaction_index: i64,
+        /// Subgraph mode: the address it was emitted or called at, which a
+        /// data source created in its block is matched by.
+        src_address: Option<String>,
         /// Whether its block comes from the chain's store rather than the item.
         block_from_store: bool,
     },
@@ -83,6 +89,9 @@ pub(crate) enum RowData {
 
 const READS_TRANSACTION: u8 = 1;
 const READS_BLOCK: u8 = 2;
+/// Kept beside the read flags, since the subgraph order doesn't keep the
+/// item's kind in its key.
+const IS_BLOCK: u8 = 4;
 
 impl RowData {
     /// Which of the chain's stores the item's transaction and block come from.
@@ -115,6 +124,21 @@ impl RowData {
         }
     }
 
+    fn order_transaction_index(&self) -> i64 {
+        match self {
+            RowData::EvmLog {
+                transaction_index, ..
+            } => *transaction_index,
+            RowData::JsItem {
+                order_transaction_index,
+                ..
+            } => *order_transaction_index,
+            RowData::FuelReceipt { .. }
+            | RowData::SvmInstruction { .. }
+            | RowData::Block { .. } => 0,
+        }
+    }
+
     fn format(&self) -> RowFormat {
         match self {
             RowData::EvmLog { .. } => RowFormat::EvmLog,
@@ -136,10 +160,127 @@ pub(crate) struct Row {
     /// SVM's position in the transaction's CPI tree, parent before child.
     order_path: Option<Vec<i64>>,
     registration_index: i64,
+    /// Subgraph mode: set on a call trigger's item, `CALL_RANK_HANDLER` for a
+    /// call handler's and `CALL_RANK_BLOCK` for a `filter: call` block
+    /// handler's.
+    call_rank: Option<u8>,
     data: RowData,
 }
 
+const CALL_RANK_HANDLER: u8 = 1;
+const CALL_RANK_BLOCK: u8 = 2;
+
+/// Subgraph mode: graph-node's order of a block's triggers
+/// (chain/ethereum/src/trigger.rs, `impl Ord for EthereumTrigger`) in place
+/// of envio's. Set for the process, since a source lays its page out before
+/// the chain's store sees it, and both have to key rows alike.
+pub(crate) struct SubgraphOrder {
+    /// The block registrations of `once` handlers, which run ahead of their
+    /// block's events.
+    runs_first: Vec<i64>,
+}
+
+static SUBGRAPH_ORDER: RwLock<Option<Arc<SubgraphOrder>>> = RwLock::new(None);
+
+fn subgraph_order() -> Option<Arc<SubgraphOrder>> {
+    SUBGRAPH_ORDER.read().unwrap().clone()
+}
+
+/// Puts the process in subgraph order, or back in envio's with `None`, for
+/// the stores made after.
+#[cfg_attr(test, allow(dead_code))]
+#[napi]
+pub fn set_subgraph_item_order(runs_first_block_registrations: Option<Vec<i64>>) {
+    *SUBGRAPH_ORDER.write().unwrap() =
+        runs_first_block_registrations.map(|runs_first| Arc::new(SubgraphOrder { runs_first }));
+}
+
+/// A block's triggers in subgraph order: a `once` handler, then logs and calls
+/// by transaction (a transaction's logs before its calls), then the block
+/// triggers of `filter: call` handlers, then the block handlers, then the
+/// events of data sources the block created, by round.
+mod subgraph_rank {
+    pub(super) const RUNS_FIRST: u8 = 0;
+    pub(super) const EVENT: u8 = 1;
+    pub(super) const CALL_BLOCK: u8 = 2;
+    pub(super) const BLOCK: u8 = 3;
+    pub(super) const MAX: u8 = 15;
+
+    /// The rank of an event of a data source created in its block, by the
+    /// round it was created in: graph-node sorts each round's triggers anew, so
+    /// a round's call-filtered block triggers follow its logs and calls, and
+    /// all of them precede the next round's. Rounds past what the rank holds
+    /// share the last one.
+    pub(super) fn creation(round: i64, rank: u8) -> u8 {
+        let base = BLOCK as i64 + 2 * round.max(1) - 1;
+        let rank = base + i64::from(rank == CALL_BLOCK);
+        rank.min(MAX as i64) as u8
+    }
+}
+
+const SUBGRAPH_RANK_SHIFT: u32 = 60;
+const SUBGRAPH_RANK_MASK: u128 = 0xF << SUBGRAPH_RANK_SHIFT;
+const SUBGRAPH_TRANSACTION_SHIFT: u32 = 34;
+const SUBGRAPH_TRANSACTION_BITS: u32 = 26;
+const SUBGRAPH_CALL_SHIFT: u32 = 33;
+const SUBGRAPH_LOG_BITS: u32 = 33;
+
+/// `block << 64 | rank << 60 | transaction << 34 | is call << 33 | log index`.
+fn subgraph_key(
+    block_number: i64,
+    rank: u8,
+    transaction_index: i64,
+    is_call: bool,
+    log_index: i64,
+) -> u128 {
+    ((block_number as u128) << 64)
+        | ((rank as u128) << SUBGRAPH_RANK_SHIFT)
+        | (((transaction_index as u128) & ((1 << SUBGRAPH_TRANSACTION_BITS) - 1))
+            << SUBGRAPH_TRANSACTION_SHIFT)
+        | ((is_call as u128) << SUBGRAPH_CALL_SHIFT)
+        | ((log_index as u128) & ((1 << SUBGRAPH_LOG_BITS) - 1))
+}
+
+fn with_subgraph_rank(key: u128, rank: u8) -> u128 {
+    (key & !SUBGRAPH_RANK_MASK) | ((rank as u128) << SUBGRAPH_RANK_SHIFT)
+}
+
+fn subgraph_rank_of(key: u128) -> u8 {
+    ((key & SUBGRAPH_RANK_MASK) >> SUBGRAPH_RANK_SHIFT) as u8
+}
+
 impl Row {
+    fn key(&self, order: Option<&SubgraphOrder>) -> u128 {
+        let Some(order) = order else {
+            return sort_key(self.block_number, self.kind, self.log_index);
+        };
+        let (rank, transaction_index) = match self.kind {
+            ItemKind::Block => (
+                if order.runs_first.contains(&self.registration_index) {
+                    subgraph_rank::RUNS_FIRST
+                } else {
+                    subgraph_rank::BLOCK
+                },
+                0,
+            ),
+            ItemKind::Event => (
+                if self.call_rank == Some(CALL_RANK_BLOCK) {
+                    subgraph_rank::CALL_BLOCK
+                } else {
+                    subgraph_rank::EVENT
+                },
+                self.data.order_transaction_index(),
+            ),
+        };
+        subgraph_key(
+            self.block_number,
+            rank,
+            transaction_index,
+            self.call_rank.is_some(),
+            self.log_index,
+        )
+    }
+
     pub(crate) fn event(
         block_number: i64,
         log_index: i64,
@@ -153,6 +294,7 @@ impl Row {
             log_index,
             order_path,
             registration_index,
+            call_rank: None,
             data,
         }
     }
@@ -164,17 +306,16 @@ impl Row {
             log_index: 0,
             order_path: None,
             registration_index,
+            call_rank: None,
             data: RowData::Block { skipped },
         }
     }
 
     /// Total order on rows. `Equal` means a true duplicate: the same log routed
     /// to the same registration, which an overlapping re-fetch delivers again.
-    fn compare(&self, other: &Row) -> Ordering {
-        self.block_number
-            .cmp(&other.block_number)
-            .then(self.kind.cmp(&other.kind))
-            .then(self.log_index.cmp(&other.log_index))
+    fn compare(&self, other: &Row, order: Option<&SubgraphOrder>) -> Ordering {
+        self.key(order)
+            .cmp(&other.key(order))
             // Lexicographic, so a parent instruction `[1]` precedes its child
             // `[1, 0]`. No path is an empty one, as in a chunk.
             .then_with(|| {
@@ -210,11 +351,13 @@ impl Rows {
     /// Sorts and deduplicates `rows` into one chunk. Of two equal rows the
     /// first is kept.
     fn from_unsorted(mut rows: Vec<Row>) -> Self {
+        let order = subgraph_order();
+        let order = order.as_deref();
         // Stable, so of two equal rows the first stays first.
-        rows.sort_by(Row::compare);
-        rows.dedup_by(|later, kept| kept.compare(later) == Ordering::Equal);
+        rows.sort_by(|a, b| a.compare(b, order));
+        rows.dedup_by(|later, kept| kept.compare(later, order) == Ordering::Equal);
         let mut sorted = Rows::default();
-        let mut chunk = Chunk::from_sorted_rows(&rows);
+        let mut chunk = Chunk::from_sorted_rows(&rows, order);
         chunk.shrink_to_fit();
         sorted.append(chunk);
         sorted
@@ -416,6 +559,58 @@ impl Rows {
         }
     }
 
+    /// Each event's creation rank: the round of the data source created for
+    /// its address in its block, past the block's own triggers. Rows keyed in
+    /// subgraph order only.
+    fn with_creation_rounds(self, creations: &[CreationBlock]) -> Rows {
+        let rank_of = |chunk: &Chunk, row: usize| -> Option<u8> {
+            if !chunk.is_event(row) {
+                return None;
+            }
+            let block_number = chunk.block_number_at(row);
+            let registration = chunk.registrations[row];
+            let address = chunk.items.columns()[item_column::SRC_ADDRESS].bytes_at(row);
+            creations
+                .iter()
+                .find(|creation| {
+                    creation.block_number == block_number
+                        && creation.registration_indexes.contains(&registration)
+                        && creation.address.as_bytes().eq_ignore_ascii_case(address)
+                })
+                .map(|creation| {
+                    subgraph_rank::creation(creation.round, subgraph_rank_of(chunk.keys[row]))
+                })
+        };
+        // Rows that keep their rank and those moved to the same one from the
+        // same one stay in order; each group merges back in.
+        let mut groups: Vec<(u8, u8)> = Vec::new();
+        for chunk in &self.chunks {
+            for row in chunk.start..chunk.keys.len() {
+                if let Some(rank) = rank_of(chunk, row) {
+                    let group = (subgraph_rank_of(chunk.keys[row]), rank);
+                    if !groups.contains(&group) {
+                        groups.push(group);
+                    }
+                }
+            }
+        }
+        if groups.is_empty() {
+            return self;
+        }
+        let mut marked = Rows::default();
+        marked.append(self.select(|chunk, row| rank_of(chunk, row).is_none()));
+        for (from, to) in groups {
+            let mut moved = self.select(|chunk, row| {
+                rank_of(chunk, row) == Some(to) && subgraph_rank_of(chunk.keys[row]) == from
+            });
+            for key in moved.keys.iter_mut() {
+                *key = with_subgraph_rank(*key, to);
+            }
+            marked.merge_chunk(moved);
+        }
+        marked
+    }
+
     /// The rows `keep` accepts, in order, copied out.
     fn select(&self, keep: impl Fn(&Chunk, usize) -> bool) -> Chunk {
         let mut selected = Chunk::empty();
@@ -483,8 +678,6 @@ fn merge_sorted(stored: &[(&Chunk, Range<usize>)], incoming: &Chunk) -> Chunk {
 fn sort_key(block_number: i64, kind: ItemKind, log_index: i64) -> u128 {
     ((block_number as u128) << 64) | ((kind as u128) << 63) | log_index as u128
 }
-
-const KIND_BIT: u128 = 1 << 63;
 
 /// One params column per param of a registration's events.
 struct Params {
@@ -717,6 +910,10 @@ impl Chunk {
         (self.keys[row] >> 64) as i64
     }
 
+    fn is_event(&self, row: usize) -> bool {
+        self.reads[row] & IS_BLOCK == 0
+    }
+
     /// Rows from `start` on at or below `block_number`.
     fn count_at_or_below(&self, block_number: i64) -> usize {
         let bound = sort_key(block_number + 1, ItemKind::Event, 0);
@@ -795,7 +992,7 @@ impl Chunk {
     }
 
     /// Lays sorted rows out.
-    fn from_sorted_rows(rows: &[Row]) -> Self {
+    fn from_sorted_rows(rows: &[Row], order: Option<&SubgraphOrder>) -> Self {
         // Every arena is sized before it is written, so one pass counts each
         // format's rows and the SVM lists' elements first.
         let (mut fuel_rows, mut svm_rows, mut svm_steps, mut svm_accounts) = (0, 0, 0, 0);
@@ -851,9 +1048,16 @@ impl Chunk {
         let mut path_steps = Vec::new();
 
         for row in rows {
-            keys.push(sort_key(row.block_number, row.kind, row.log_index));
+            keys.push(row.key(order));
             registrations.push(row.registration_index);
-            reads.push(row.data.reads());
+            reads.push(
+                row.data.reads()
+                    | if row.kind == ItemKind::Block {
+                        IS_BLOCK
+                    } else {
+                        0
+                    },
+            );
             path_steps.extend_from_slice(row.order_path.as_deref().unwrap_or_default());
             path_ends.push(path_steps.len() as u32);
 
@@ -943,20 +1147,21 @@ impl Chunk {
                 RowData::JsItem {
                     item,
                     transaction_index,
+                    src_address,
                     ..
                 } => {
                     items.tape(item_column::TAPE, &mut tapes, item);
                     items.num(item_column::DETAIL, pack_detail(format, 0));
+                    match src_address {
+                        Some(address) => items.bytes(item_column::SRC_ADDRESS, address.as_bytes()),
+                        None => items.null(item_column::SRC_ADDRESS),
+                    }
                     match transaction_index {
                         Some(index) => {
                             items.num(item_column::TRANSACTION_INDEX, *index as f64);
-                            &[item_column::SRC_ADDRESS, item_column::SKIPPED]
+                            &[item_column::SKIPPED]
                         }
-                        None => &[
-                            item_column::TRANSACTION_INDEX,
-                            item_column::SRC_ADDRESS,
-                            item_column::SKIPPED,
-                        ],
+                        None => &[item_column::TRANSACTION_INDEX, item_column::SKIPPED],
                     }
                 }
             };
@@ -1110,7 +1315,7 @@ impl Chunk {
         };
         let mut any_transaction_field = false;
         for (out, row) in rows.enumerate() {
-            let event = self.keys[row] & KIND_BIT == 0;
+            let event = self.is_event(row);
             let registration = self.registrations[row];
             let block_number = self.block_number_at(row);
             if self.reads[row] & READS_TRANSACTION != 0 {
@@ -1580,8 +1785,27 @@ pub struct JsItemInput {
     /// The key of the item's transaction in the chain's store, when the item
     /// doesn't carry the transaction itself.
     pub transaction_index: Option<i64>,
+    /// Its transaction's index in the block, for the subgraph order.
+    pub order_transaction_index: Option<i64>,
+    /// Subgraph mode: a call trigger's rank, 1 for a call handler's, 2 for a
+    /// `filter: call` block handler's.
+    pub call_rank: Option<i64>,
+    /// Subgraph mode: the address the item was emitted or called at.
+    pub src_address: Option<String>,
     /// Whether the item's block comes from the chain's store.
     pub block_from_store: bool,
+}
+
+/// Subgraph mode: an address a data source was created for, and the block and
+/// round it was created in.
+#[napi(object)]
+pub struct CreationBlock {
+    pub block_number: i64,
+    pub round: i64,
+    /// Lowercase.
+    pub address: String,
+    /// The event registrations of the data source's contract.
+    pub registration_indexes: Vec<i64>,
 }
 
 #[napi]
@@ -1632,15 +1856,31 @@ impl EventStore {
                         item.block_number, item.log_index
                     )));
                 }
+                let call_rank = match item.call_rank {
+                    None => None,
+                    Some(rank) if rank == CALL_RANK_HANDLER as i64 => Some(CALL_RANK_HANDLER),
+                    Some(rank) if rank == CALL_RANK_BLOCK as i64 => Some(CALL_RANK_BLOCK),
+                    Some(other) => {
+                        return Err(napi::Error::from_reason(format!(
+                            "unknown call rank {other}"
+                        )))
+                    }
+                };
                 Ok(Row {
                     block_number: item.block_number,
                     kind,
                     log_index: item.log_index,
                     order_path: item.order_path,
                     registration_index: item.registration_index,
+                    call_rank,
                     data: RowData::JsItem {
                         item: item.item,
                         transaction_index: item.transaction_index,
+                        order_transaction_index: item
+                            .order_transaction_index
+                            .or(item.transaction_index)
+                            .unwrap_or(0),
+                        src_address: item.src_address,
                         block_from_store: item.block_from_store,
                     },
                 })
@@ -1656,6 +1896,17 @@ impl EventStore {
         // its own lock.
         let incoming = std::mem::take(&mut *page.rows());
         self.rows().merge(incoming);
+    }
+
+    /// Subgraph mode: moves the page's events of a data source in the block it
+    /// was created in after the rest of that block, by the round it was
+    /// created in, as graph-node runs a new data source's creation-block
+    /// triggers.
+    #[napi]
+    pub fn mark_creation_rounds(&self, creations: Vec<CreationBlock>) {
+        let mut rows = self.rows();
+        let marked = std::mem::take(&mut *rows).with_creation_rounds(&creations);
+        *rows = marked;
     }
 
     /// Block handler items generated locally, one per `(blockNumber,
@@ -1684,10 +1935,12 @@ impl EventStore {
 
     #[napi]
     pub fn first_event_block_number(&self) -> Option<i64> {
-        self.rows()
-            .keys()
-            .find(|key| key & KIND_BIT == 0)
-            .map(|key| (key >> 64) as i64)
+        let rows = self.rows();
+        rows.chunks.iter().find_map(|chunk| {
+            (chunk.start..chunk.keys.len())
+                .find(|row| chunk.is_event(*row))
+                .map(|row| chunk.block_number_at(row))
+        })
     }
 
     /// How many rows are at or below `block_number`.
@@ -1736,8 +1989,7 @@ impl EventStore {
         fields: JoinedFields,
     ) -> napi::Result<StoredRows> {
         let selected = self.rows().select(|chunk, row| {
-            chunk.keys[row] & KIND_BIT == 0
-                && registration_indexes.contains(&chunk.registrations[row])
+            chunk.is_event(row) && registration_indexes.contains(&chunk.registrations[row])
         });
         let joined = selected.join(&fields);
         selected.lay_out(joined).map_err(to_napi)
@@ -1822,6 +2074,8 @@ mod tests {
             RowData::JsItem {
                 item: data,
                 transaction_index: None,
+                order_transaction_index: 0,
+                src_address: None,
                 block_from_store: false,
             },
         )
@@ -1838,6 +2092,8 @@ mod tests {
             RowData::JsItem {
                 item: data,
                 transaction_index: None,
+                order_transaction_index: 0,
+                src_address: None,
                 block_from_store: false,
             },
         )
@@ -2381,10 +2637,14 @@ mod tests {
     /// Each stored row's block, in order, runs of one block collapsed into one
     /// entry per kind.
     fn blocks_of_rows(store: &EventStore) -> Vec<i64> {
-        let mut blocks: Vec<(i64, bool)> = store
-            .rows()
-            .keys()
-            .map(|key| ((key >> 64) as i64, key & KIND_BIT != 0))
+        let rows = store.rows();
+        let mut blocks: Vec<(i64, bool)> = rows
+            .chunks
+            .iter()
+            .flat_map(|chunk| {
+                (chunk.start..chunk.keys.len())
+                    .map(move |row| (chunk.block_number_at(row), chunk.is_event(row)))
+            })
             .collect();
         blocks.dedup();
         blocks.into_iter().map(|(block, _)| block).collect()
@@ -2568,6 +2828,9 @@ mod tests {
             registration_index: 0,
             item: JsTape::new(),
             transaction_index: None,
+            order_transaction_index: None,
+            call_rank: None,
+            src_address: None,
             block_from_store: false,
         };
         assert_eq!(

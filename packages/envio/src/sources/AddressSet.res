@@ -10,6 +10,8 @@ type startBlockGroup = {startBlock: int, count: int}
 
 @send external contractNames: t => array<string> = "contractNames"
 
+@send external addressesOf: (t, string) => array<Address.t> = "addressesOf"
+
 @send external startBlockGroups: t => array<startBlockGroup> = "startBlockGroups"
 
 @send external slice: (t, ~offset: int, ~limit: option<int>) => t = "slice"

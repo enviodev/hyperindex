@@ -16,18 +16,38 @@ let contractRegisterIndexes = (context: StoredItems.context) =>
     }
   )
 
-let invokeContractRegister = (runtime: HandlerRuntime.t, item: Internal.item) => {
-  let contractRegister = switch (item->Internal.castUnsafeEventItem).onEventRegistration {
-  | {contractRegister: Some(contractRegister)} => contractRegister
-  | {contractRegister: None, eventConfig: {name: eventName}} =>
-    // Unexpected case, since we should pass only events with contract register to this function
-    JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
+let invokeContractRegister = (runtime: HandlerRuntime.t, item: Internal.item) =>
+  switch item {
+  | Event({onEventRegistration}) =>
+    let contractRegister = switch onEventRegistration {
+    | {contractRegister: Some(contractRegister)} => contractRegister
+    | {contractRegister: None, eventConfig: {name: eventName}} =>
+      // Unexpected case, since we should pass only events with contract register to this function
+      JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
+    }
+    contractRegister({
+      event: item->Ecosystem.getItemEvent(~ecosystem=runtime->HandlerRuntime.ecosystem),
+      context: runtime.contractRegisterContext,
+    })
+  | Block({blockNumber, onBlockRegistration, ?block}) =>
+    let contractRegister = switch onBlockRegistration {
+    | {contractRegister: ?Some(contractRegister)} => contractRegister
+    | {name} => JsError.throwWithMessage("Contract register is not set for block handler " ++ name)
+    }
+    let ecosystem = runtime->HandlerRuntime.ecosystem
+    let context = runtime.contractRegisterContext
+    // A block handler's register pass gets what its handler gets, the block (or
+    // slot), with the register context in place of the handler's.
+    contractRegister(
+      switch ecosystem.name {
+      | Svm => {slot: blockNumber, ?block, context}
+      | Evm | Fuel => {
+          block: block->Option.getOr(Ecosystem.makeKeyOnlyBlock(~blockNumber, ~ecosystem)),
+          context,
+        }
+      },
+    )
   }
-  contractRegister({
-    event: item->Ecosystem.getItemEvent(~ecosystem=runtime->HandlerRuntime.ecosystem),
-    context: runtime.contractRegisterContext,
-  })
-}
 
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
@@ -44,6 +64,7 @@ let runContractRegistersOrThrow = async (
   let registrations: array<AddressStore.registration> = []
   let chainLogger = chainState->ChainState.logger
   let ecosystem = runtime->HandlerRuntime.ecosystem
+  let isSubgraph = Env.subgraphMode.contents
 
   let _ = await itemsWithContractRegister
   ->Array.map(async item => {
@@ -53,13 +74,32 @@ let runContractRegistersOrThrow = async (
       chainLogger,
       ecosystem,
       registrations,
+      creationRound: ?(
+        isSubgraph
+          ? Some(
+              switch item {
+              // A block handler is one of its block's own triggers.
+              | Block(_) => 1
+              | Event(_) =>
+                chainState->ChainState.fetchState->FetchState.creationRoundOfRegistration(~item)
+              },
+            )
+          : None
+      ),
     }
     let scope = RunScope.ContractRegister(run)
     switch await RunScope.enter(scope, invokeContractRegister, runtime, item) {
     | exception exn =>
       scope->RunScope.resolve
       exn->ErrorHandling.mkLogAndRaise(
-        ~msg="Event contractRegister failed, please fix the error to keep the indexer running smoothly",
+        ~msg=switch item {
+        | Event(
+            _,
+          ) => "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
+        | Block(
+            _,
+          ) => "Block handler contractRegister failed, please fix the error to keep the indexer running smoothly"
+        },
         ~logger=run->RunScope.contractRegisterLogger,
       )
     | () => scope->RunScope.resolve
@@ -69,6 +109,160 @@ let runContractRegistersOrThrow = async (
 
   registrations
 }
+
+// A response's events and the block passes of the same blocks, in the order
+// graph-node runs their triggers: a `once` handler first in its block, the
+// other block handlers after the block's logs and calls
+// (chain/ethereum/src/trigger.rs, `impl Ord for EthereumTrigger`).
+let mergeRegisterItems = (~eventItems: array<Internal.item>, ~blockItems: array<Internal.item>) => {
+  let merged = []
+  let i = ref(0)
+  let j = ref(0)
+  while i.contents < eventItems->Array.length || j.contents < blockItems->Array.length {
+    let takeBlock = switch (eventItems->Array.get(i.contents), blockItems->Array.get(j.contents)) {
+    | (None, _) => true
+    | (_, None) => false
+    | (Some(event), Some(block)) =>
+      let eventBlock = event->Internal.getItemBlockNumber
+      let blockBlock = block->Internal.getItemBlockNumber
+      blockBlock < eventBlock || (blockBlock === eventBlock && block->Internal.itemRunsFirst)
+    }
+    if takeBlock {
+      merged->Array.push(blockItems->Array.getUnsafe(j.contents))
+      j := j.contents + 1
+    } else {
+      merged->Array.push(eventItems->Array.getUnsafe(i.contents))
+      i := i.contents + 1
+    }
+  }
+  merged
+}
+
+// An unfiltered handler has a pass for every block, so a run with block passes
+// starts them a chunk at a time, in chain order: each chunk reads what the ones
+// before it saved, and a pass is started before any later one of its chunk,
+// which is the order the runtime hands out its slots in.
+let blockRegisterChunk = 2048
+// Block passes built at once: a response can span millions of blocks.
+let blockRegisterWindow = 10_000
+let maxResponseBlockPasses = 50_000
+
+let runRegisterPassesOrThrow = async (
+  ~eventItems: array<Internal.item>,
+  ~blockItems: array<Internal.item>,
+  ~runtime: HandlerRuntime.t,
+  ~chainState: ChainState.t,
+) => {
+  let items = mergeRegisterItems(~eventItems, ~blockItems)
+  let registrations = []
+  let start = ref(0)
+  while start.contents < items->Array.length {
+    let chunk = items->Array.slice(~start=start.contents, ~end=start.contents + blockRegisterChunk)
+    registrations
+    ->Array.pushMany(
+      await runContractRegistersOrThrow(
+        ~itemsWithContractRegister=chunk,
+        ~readFields=() => Promise.resolve(),
+        ~runtime,
+        ~chainState,
+      ),
+    )
+    ->ignore
+    start := start.contents + blockRegisterChunk
+  }
+  registrations
+}
+
+// Passes of a chunk finish in any order, and of two registrations of one
+// address the store keeps the first: it has to be the earlier block's.
+let sortRegistrations = (registrations: array<AddressStore.registration>) =>
+  registrations->Array.toSorted((a, b) =>
+    switch Int.compare(a.registrationBlock, b.registrationBlock) {
+    | 0. => Int.compare(a.creationRound->Option.getOr(1), b.creationRound->Option.getOr(1))
+    | order => order
+    }
+  )
+
+// A response's event passes with the block passes of the blocks after the last
+// one passed, through `through`, a window of block passes at a time. Returns
+// the registrations and the last block passed, if the block passes advanced.
+let runResponsePassesOrThrow = async (
+  ~eventItems: array<Internal.item>,
+  ~readFields: unit => promise<unit>,
+  ~through,
+  ~runtime: HandlerRuntime.t,
+  ~chainState: ChainState.t,
+) => {
+  // The events' transactions and blocks, for every window's passes. A block
+  // pass reads only its block's number.
+  await readFields()
+  let registrations = []
+  let eventIdx = ref(0)
+  let passedThrough = ref(None)
+  let after = ref(chainState->ChainState.blockRegisterThrough->Option.getOr(through))
+  let isDone = ref(false)
+  while !isDone.contents {
+    let (blockItems, covered) = switch chainState->ChainState.blockRegisterItemsAfter(
+      ~after=after.contents,
+      ~through,
+      ~limit=blockRegisterWindow,
+    ) {
+    | Some((blockItems, covered)) => (blockItems, Some(covered))
+    | None => ([], None)
+    }
+    // The events up to the window's last block go with it, and the last
+    // window takes the rest.
+    let eventEnd = switch covered {
+    | Some(covered) if covered < through =>
+      let idx = ref(eventIdx.contents)
+      while (
+        idx.contents < eventItems->Array.length &&
+          eventItems->Array.getUnsafe(idx.contents)->Internal.getItemBlockNumber <= covered
+      ) {
+        idx := idx.contents + 1
+      }
+      idx.contents
+    | _ => eventItems->Array.length
+    }
+    let startedAt = Date.now()
+    let windowRegistrations = await runRegisterPassesOrThrow(
+      ~eventItems=eventItems->Array.slice(~start=eventIdx.contents, ~end=eventEnd),
+      ~blockItems,
+      ~runtime,
+      ~chainState,
+    )
+    chainState
+    ->ChainState.logger
+    ->Logger.trace(
+      "Ran register passes with block passes",
+      ~params={
+        "after": after.contents,
+        "through": covered,
+        "blockPasses": blockItems->Array.length,
+        "eventPasses": eventEnd - eventIdx.contents,
+        "registrations": windowRegistrations->Array.length,
+        "ms": Date.now() -. startedAt,
+      },
+    )
+    registrations->Array.pushMany(windowRegistrations)->ignore
+    eventIdx := eventEnd
+    switch covered {
+    | Some(covered) =>
+      passedThrough := Some(covered)
+      after := covered
+      isDone := covered >= through && eventIdx.contents >= eventItems->Array.length
+    | None => isDone := true
+    }
+  }
+  (registrations->sortRegistrations, passedThrough.contents)
+}
+
+// A subgraph's register store keeps an entity's past versions for the passes
+// still to read them, and none starts below the lowest partition frontier.
+let reportRegisterFrontier: (int, int) => unit = %raw(`(chainId, block) => {
+  const report = globalThis.__envioSubgraphRegisterFrontier
+  if (report) report(chainId, block)
+}`)
 
 let rec onQueryResponse = async (
   state: IndexerState.t,
@@ -215,7 +409,11 @@ let rec onQueryResponse = async (
 
       // Re-check staleness: contract registration is async, so the chain state
       // may have rolled back by the time we apply the fetched items.
-      let proceed = (~newRegistrations) =>
+      let proceed = (
+        ~newRegistrations,
+        ~blockRegisterThrough=?,
+        ~latestFetchedBlock=latestFetchedBlockNumber,
+      ) =>
         if !(state->IndexerState.isStale(~stateId)) {
           applyQueryResponse(
             state,
@@ -223,17 +421,100 @@ let rec onQueryResponse = async (
             ~page,
             ~newRegistrations,
             ~knownHeight,
-            ~latestFetchedBlock=latestFetchedBlockNumber,
+            ~latestFetchedBlock,
             ~query,
           )
+          switch blockRegisterThrough {
+          | Some(through) => chainState->ChainState.markBlockRegistered(~through)
+          | None => ()
+          }
           ChainMetadata.stage(state)
           scheduleFetch()
           scheduleProcessing()
         }
 
+      // The block passes run with the response that first fetches their
+      // blocks, among its events in chain order, and after every earlier unit
+      // of the chain's register work.
+      let blockRegisterCeiling = Pervasives.min(
+        latestFetchedBlockNumber,
+        Pervasives.max(knownHeight, chainState->ChainState.knownHeight),
+      )
+      let withBlockPasses =
+        chainState->ChainState.hasBlockRegisters &&
+          (itemsWithContractRegister->Utils.Array.notEmpty ||
+            chainState->ChainState.canAdvanceBlockRegisters(~through=blockRegisterCeiling))
+
       switch itemsWithContractRegister {
+      | _ if withBlockPasses =>
+        let (previous, finish) = chainState->ChainState.queueBlockRegisterRun
+        let held =
+          chainState->ChainState.holdExtraBudget(
+            ~items=Pervasives.max(0, numEvents - query.itemsEst),
+          )
+        await previous
+        if state->IndexerState.isStale(~stateId) {
+          chainState->ChainState.releaseExtraBudget(held)
+          finish()
+          scheduleFetch()
+        } else {
+          // A response spanning millions of blocks of an unfiltered handler is
+          // applied only once all their passes ran, so it carries at most
+          // `maxResponseBlockPasses` past its first block and is cut after
+          // them; the partition fetches the rest again.
+          let cutAt = switch chainState->ChainState.blockRegisterItemsAfter(
+            ~after=Pervasives.max(
+              chainState->ChainState.blockRegisterThrough->Option.getOr(blockRegisterCeiling),
+              query.fromBlock - 1,
+            ),
+            ~through=blockRegisterCeiling,
+            ~limit=maxResponseBlockPasses,
+          ) {
+          | Some((_, covered)) if covered < blockRegisterCeiling => Some(covered)
+          | _ => None
+          }
+          let through = cutAt->Option.getOr(blockRegisterCeiling)
+          let (eventItems, latestFetchedBlock) = if cutAt !== None {
+            page->EventStore.rollback(through)
+            (
+              itemsWithContractRegister->Array.filter(item =>
+                item->Internal.getItemBlockNumber <= through
+              ),
+              through,
+            )
+          } else {
+            (itemsWithContractRegister, latestFetchedBlockNumber)
+          }
+          switch await runResponsePassesOrThrow(
+            ~eventItems,
+            ~readFields,
+            ~through,
+            ~runtime,
+            ~chainState,
+          ) {
+          | exception exn =>
+            finish()
+            IndexerState.errorExit(
+              state,
+              exn->ErrorHandling.make(~logger=chainState->ChainState.logger),
+            )
+          | (newRegistrations, blockRegisterThrough) =>
+            chainState->ChainState.releaseExtraBudget(held)
+            proceed(~newRegistrations, ~blockRegisterThrough?, ~latestFetchedBlock)
+            finish()
+          }
+        }
       | [] => proceed(~newRegistrations=[])
       | _ =>
+        // A subgraph's register passes take long enough for the pool to admit
+        // queries on top of a response it doesn't count yet.
+        let held = Env.subgraphMode.contents
+          ? Some(
+              chainState->ChainState.holdExtraBudget(
+                ~items=Pervasives.max(0, numEvents - query.itemsEst),
+              ),
+            )
+          : None
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
           ~readFields,
@@ -245,7 +526,9 @@ let rec onQueryResponse = async (
             state,
             exn->ErrorHandling.make(~logger=chainState->ChainState.logger),
           )
-        | newRegistrations => proceed(~newRegistrations)
+        | newRegistrations =>
+          held->Option.forEach(held => chainState->ChainState.releaseExtraBudget(held))
+          proceed(~newRegistrations)
         }
       }
     }
@@ -274,6 +557,21 @@ and applyQueryResponse = (
     ~newRegistrations,
     ~knownHeight,
   )
+
+  if Env.subgraphMode.contents {
+    let fetchState = chainState->ChainState.fetchState
+    switch fetchState.optimizedPartitions->FetchState.OptimizedPartitions.getLatestFullyFetchedBlock {
+    | Some(frontier) =>
+      // A block pass still to run reads at its own block, which can be below
+      // every partition.
+      let frontier = switch fetchState.blockRegisterThrough {
+      | Some(through) => Pervasives.min(frontier, through)
+      | None => frontier
+      }
+      reportRegisterFrontier(chainId->ChainId.toInt, frontier)
+    | None => ()
+    }
+  }
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
   if state->IndexerState.exitAfterFirstEventBlock {
@@ -304,6 +602,68 @@ let finishWaitingForNewBlock = (
     scheduleProcessing()
   }
 
+// Block passes no response will run: the blocks every partition has already
+// fetched (or, with no partition, the blocks up to the head), up to a limit per
+// run. Owns its error boundary, as it isn't awaited.
+let catchUpBlockRegisters = async (
+  state: IndexerState.t,
+  ~chainId,
+  ~runtime,
+  ~stateId,
+  ~scheduleFetch,
+  ~scheduleProcessing,
+) => {
+  let chainState = state->IndexerState.getChainState(~chainId)
+  if chainState->ChainState.isBlockRegisterIdle {
+    switch chainState->ChainState.nextBlockRegisterItems(
+      ~through=chainState->ChainState.blockRegisterFrontier,
+      ~limit=blockRegisterWindow,
+    ) {
+    | None => ()
+    | Some((blockItems, through)) =>
+      let (_, finish) = chainState->ChainState.queueBlockRegisterRun
+      let startedAt = Date.now()
+      switch await runRegisterPassesOrThrow(~eventItems=[], ~blockItems, ~runtime, ~chainState) {
+      | exception exn =>
+        finish()
+        IndexerState.errorExit(
+          state,
+          exn->ErrorHandling.make(~logger=chainState->ChainState.logger),
+        )
+      | registrations =>
+        let isStale = state->IndexerState.isStale(~stateId)
+        chainState
+        ->ChainState.logger
+        ->Logger.trace(
+          "Ran block passes",
+          ~params={
+            "through": through,
+            "blockPasses": blockItems->Array.length,
+            "registrations": registrations->Array.length,
+            "stale": isStale,
+            "ms": Date.now() -. startedAt,
+          },
+        )
+        if !isStale {
+          chainState->ChainState.applyBlockRegisters(
+            ~registrations=registrations->sortRegistrations,
+            ~through,
+          )
+        }
+        finish()
+
+        // A run dropped as stale is run again: the fetch tick that would have
+        // started it found this one in flight and passed.
+        if !isStale {
+          ChainMetadata.stage(state)
+          scheduleProcessing()
+        }
+        scheduleFetch()
+      }
+    }
+  }
+}
+
 let fetchChain = async (
   state: IndexerState.t,
   chainId,
@@ -316,6 +676,16 @@ let fetchChain = async (
 ) => {
   let chainState = state->IndexerState.getChainState(~chainId)
   if !(state->IndexerState.isResolvingReorg) && !(state->IndexerState.isStopped) {
+    if chainState->ChainState.hasBlockRegisters {
+      catchUpBlockRegisters(
+        state,
+        ~chainId,
+        ~runtime,
+        ~stateId,
+        ~scheduleFetch,
+        ~scheduleProcessing,
+      )->Promise.ignore
+    }
     let isRealtime = state->IndexerState.isRealtime
     let sourceManager = chainState->ChainState.sourceManager
 

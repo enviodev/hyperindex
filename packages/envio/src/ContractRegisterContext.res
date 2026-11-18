@@ -20,11 +20,7 @@ let make = (~config: Config.t): Internal.contractRegisterContext => {
     {
       enumerable: true,
       get: () =>
-        (
-          RunScope.currentContractRegisterRunOrThrow(
-            ~prop="chain",
-          ).item->Internal.castUnsafeEventItem
-        ).chainId,
+        RunScope.currentContractRegisterRunOrThrow(~prop="chain").item->Internal.getItemChainId,
     },
   )
   ->ignore
@@ -49,7 +45,8 @@ let make = (~config: Config.t): Internal.contractRegisterContext => {
               // The value is passed from user-land, so validate and checksum/lowercase it.
               address: config->Config.normalizeUserAddress(contractAddress),
               contractName,
-              registrationBlock: (run.item->Internal.castUnsafeEventItem).blockNumber,
+              registrationBlock: run.item->Internal.getItemBlockNumber,
+              creationRound: ?run.creationRound,
             })
             ->ignore
           },

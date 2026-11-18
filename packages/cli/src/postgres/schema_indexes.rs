@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use super::index_definition::{IndexColumn, IndexDefinition, BTREE};
+use super::index_definition::{IndexColumn, IndexDefinition, BTREE, GIN};
 use crate::storage::schema::{Direction, Entity, Schema};
 
 fn single(table_name: &str, column: &str) -> IndexDefinition {
@@ -89,13 +89,22 @@ pub fn schema_indexes(schema: &Schema, partitions: Option<&[i64]>) -> Vec<IndexD
     }
     for entity in &entities {
         for derived in &entity.derived_from {
-            if let Some(column) = entities
+            let Some(target) = entities.iter().find(|target| target.name == derived.entity) else {
+                continue;
+            };
+            let Some(column) = target.pg_column(&derived.field) else {
+                continue;
+            };
+            // A stored list holds every id in one value, and a btree entry over
+            // it outgrows a page; graph-node indexes a list attribute with GIN.
+            let is_list = target
+                .fields
                 .iter()
-                .find(|target| target.name == derived.entity)
-                .and_then(|target| target.pg_column(&derived.field))
-            {
-                all.push(single(&derived.entity, column));
-            }
+                .any(|field| field.schema_name == derived.field && field.is_array);
+            all.push(IndexDefinition {
+                method: if is_list { GIN } else { BTREE }.to_string(),
+                ..single(&derived.entity, column)
+            });
         }
     }
 
@@ -296,6 +305,37 @@ type Child {{
                 vec!["TestEntity(tokenId) using btree".to_string()],
                 vec!["TestEntity(id, tokenId) using btree".to_string()],
             )
+        );
+    }
+
+    /// A subgraph's `Hat.wearers: [Wearer!]!` is stored as one array of ids,
+    /// and `Wearer.currentHats` derives from it. A btree entry over that column
+    /// outgrows a page once a hat has a few hundred wearers ("index row size
+    /// 6944 exceeds btree version 4 maximum 2704"); graph-node indexes a list
+    /// attribute with GIN.
+    #[test]
+    fn a_derived_lookup_over_a_stored_list_is_indexed_with_gin() {
+        let mut wearers = Field::new("wearers", FieldType::String);
+        wearers.is_array = true;
+        let hat = entity("Hat", vec![id(), wearers], None);
+        let mut wearer = entity("Wearer", vec![id()], None);
+        wearer.index = 1;
+        wearer.derived_from = vec![DerivedFrom {
+            entity: "Hat".to_string(),
+            field: "wearers".to_string(),
+        }];
+        let schema = Schema {
+            entities: vec![Arc::new(hat), Arc::new(wearer)],
+            enums: Vec::new(),
+            sequence: Sequence::SharedAcrossChains,
+            chain_id_mode: ChainIdMode::Int32,
+        };
+        assert_eq!(
+            schema_indexes(&schema, None)
+                .iter()
+                .map(IndexDefinition::describe)
+                .collect::<Vec<_>>(),
+            vec!["Hat(wearers) using gin".to_string()]
         );
     }
 

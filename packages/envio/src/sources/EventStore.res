@@ -107,10 +107,16 @@ type jsItemInput = {
   // Its transaction's key in the chain's store, when the item doesn't carry
   // the transaction itself.
   transactionIndex?: int,
+  orderTransactionIndex?: int,
+  callRank?: int,
+  srcAddress?: Address.t,
   blockFromStore: bool,
 }
 
 @send external fromJsItemsRaw: (Core.eventStoreCtor, array<jsItemInput>) => t = "fromJsItems"
+
+// A simulated payload may leave it out.
+@get external srcAddressOf: Internal.eventPayload => Nullable.t<Address.t> = "srcAddress"
 
 // A page of items built in JS (simulate input). Each item is stored as plain
 // data without its registration, which `toItems` puts back by index.
@@ -139,6 +145,9 @@ let fromJsItems = (items: array<Internal.item>): t =>
           | Some(_) => None
           | None => Some(transactionIndex)
           },
+          orderTransactionIndex: transactionIndex,
+          callRank: ?(item->Internal.getItemCallRank),
+          srcAddress: ?(payload->srcAddressOf->Nullable.toOption),
           blockFromStore: payload->Internal.getPayloadBlock->Nullable.toOption->Option.isNone,
         }
       | Block({onBlockRegistration, blockNumber, ?block, ?skipped}) =>
@@ -158,6 +167,19 @@ let fromJsItems = (items: array<Internal.item>): t =>
 // Moves the page's rows in, leaving the page empty. Of two rows for the same
 // log and registration, the one already stored stays.
 @send external merge: (t, t) => unit = "merge"
+
+// Subgraph mode: an address a data source was created for, with the block and
+// round it was created in and its contract's event registrations.
+type creationBlock = {
+  blockNumber: int,
+  round: int,
+  address: string,
+  registrationIndexes: array<int>,
+}
+
+// Subgraph mode: moves the page's events of a data source in the block it was
+// created in after the rest of that block, by round.
+@send external markCreationRounds: (t, array<creationBlock>) => unit = "markCreationRounds"
 
 // Block handler items generated locally, one per (blockNumber,
 // registrationIndex) pair.

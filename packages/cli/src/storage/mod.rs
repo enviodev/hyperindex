@@ -66,6 +66,9 @@ pub struct Initialize {
     pub envio_info: String,
     pub contract_names: Vec<String>,
     pub addresses: Addresses,
+    /// Effects whose caches outlive a reset: their tables are put back into
+    /// the schema initialize builds over the one it drops.
+    pub kept_effect_caches: Vec<String>,
 }
 
 pub struct AddChain {
