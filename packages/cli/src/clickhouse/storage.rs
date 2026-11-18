@@ -48,6 +48,20 @@ pub struct Settings {
 /// dropped, with nothing to read, still starts past every earlier run.
 const VERSION_FENCE: u64 = 1 << 20;
 
+pub(crate) const KILL_REFUSED_WARNING: &str =
+    "This ClickHouse user may not read system.processes, so the indexer can't stop the inserts \
+     a previous run may have left running. One that lands after this start leaves rows above the \
+     resumed checkpoint. Grant SELECT ON system.processes to close this.";
+
+pub(crate) const SYNC_REPLICA_REFUSED_WARNING: &str =
+    "This ClickHouse user may not run SYSTEM SYNC REPLICA, so the indexer resumes without \
+     waiting for this replica to fetch what the others took. Keep ENVIO_CLICKHOUSE_HOST on the \
+     node that took the writes, or grant SYSTEM SYNC REPLICA on the database.";
+
+fn is_access_denied(error: &anyhow::Error) -> bool {
+    error_code(&format!("{error:#}")) == Some(497)
+}
+
 fn unix_micros() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -519,17 +533,28 @@ impl Storage {
                 prefix.len() + 1
             ));
         }
-        self.client
+        // Not ON CLUSTER: that takes the CLUSTER grant on *.*, which a user
+        // scoped to its own database never has, and the indexer talks to a
+        // single node, the one its previous run sent its inserts to.
+        let killed = self
+            .client
             .statement(format!(
-                "KILL QUERY{} WHERE {filter} SYNC FORMAT TabSeparated",
-                ddl::on_cluster_clause(self.topology().replicated),
+                "KILL QUERY WHERE {filter} SYNC FORMAT TabSeparated"
             ))
-            .await
-            .context(
+            .await;
+        match killed {
+            Ok(_) => Ok(()),
+            // KILL QUERY reads system.processes, which a user granted only its
+            // own database can't — Envio Cloud's indexer user among them.
+            Err(error) if is_access_denied(&error) => {
+                (self.client.warn)(KILL_REFUSED_WARNING);
+                Ok(())
+            }
+            Err(error) => Err(error.context(
                 "Couldn't stop the ClickHouse inserts a previous run may have left running. Start \
                  again once ClickHouse answers.",
-            )?;
-        Ok(())
+            )),
+        }
     }
 
     /// Emptied rather than dropped, so a database the operator provisioned
@@ -747,19 +772,25 @@ impl Storage {
             .iter()
             .map(|table| table.entity.history_table.as_str())
             .chain([CHECKPOINTS_TABLE, CHAINS_TABLE]);
-        try_join_all(names.map(|name| {
+        let synced = try_join_all(names.map(|name| {
             self.client.statement(format!(
                 "SYSTEM SYNC REPLICA {} LIGHTWEIGHT",
                 table_ref(self.database(), name)
             ))
         }))
-        .await
-        .context(
-            "Couldn't wait for this ClickHouse replica to fetch what the other replicas took. \
-             Start again once they are reachable, or point ENVIO_CLICKHOUSE_HOST at the node that \
-             took the writes.",
-        )?;
-        Ok(())
+        .await;
+        match synced {
+            Ok(_) => Ok(()),
+            Err(error) if is_access_denied(&error) => {
+                (self.client.warn)(SYNC_REPLICA_REFUSED_WARNING);
+                Ok(())
+            }
+            Err(error) => Err(error.context(
+                "Couldn't wait for this ClickHouse replica to fetch what the other replicas \
+                 took. Start again once they are reachable, or point ENVIO_CLICKHOUSE_HOST at the \
+                 node that took the writes.",
+            )),
+        }
     }
 
     async fn missing_checkpoints(&self, committed: &[(i64, i64)]) -> Result<Vec<(i64, i64)>> {
@@ -1277,7 +1308,8 @@ mod tests {
             if statement.starts_with("KILL QUERY") {
                 (
                     500,
-                    "Code: 497. DB::Exception: Not enough privileges. (ACCESS_DENIED)".to_string(),
+                    "Code: 164. DB::Exception: Cannot execute query in readonly mode. (READONLY)"
+                        .to_string(),
                 )
             } else {
                 after_a_clean_stop(statement)
@@ -1288,8 +1320,50 @@ mod tests {
         let resumed = storage.resume(&resume_at_checkpoint_7()).await;
 
         assert_eq!(
-            resumed.map_err(|error| format!("{error:#}").contains("ACCESS_DENIED")),
+            resumed.map_err(|error| format!("{error:#}").contains("READONLY")),
             Err(true)
+        );
+    }
+
+    /// A user granted only its own database, as Envio Cloud's indexer user
+    /// is, may not read system.processes. Refusing would leave it unable to
+    /// ever start, so it resumes and says what it couldn't guard against.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_without_the_grant_to_stop_a_previous_runs_inserts_warns_and_goes_on() {
+        let server = MockClickHouse::answering_statements(Arc::new(|statement: &str| {
+            if statement.starts_with("KILL QUERY") {
+                (
+                    500,
+                    "Code: 497. DB::Exception: Not enough privileges. (ACCESS_DENIED)".to_string(),
+                )
+            } else {
+                after_a_clean_stop(statement)
+            }
+        }))
+        .await;
+        let warnings = Arc::new(Mutex::new(Vec::new()));
+        let storage = Storage::new(
+            crate::clickhouse::client::test_support::connection(server.url.clone()),
+            Tuning::default(),
+            {
+                let warnings = warnings.clone();
+                Arc::new(move |warning: &str| warnings.lock().unwrap().push(warning.to_string()))
+            },
+            Settings {
+                replicated: false,
+                database_engine: None,
+            },
+            schema(),
+        )
+        .unwrap();
+        let resumed = storage.resume(&resume_at_checkpoint_7()).await;
+
+        assert_eq!(
+            (
+                resumed.map_err(|error| format!("{error:#}")),
+                warnings.lock().unwrap().clone()
+            ),
+            (Ok(()), vec![KILL_REFUSED_WARNING.to_string()])
         );
     }
 

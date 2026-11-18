@@ -12,7 +12,7 @@ use std::sync::Arc;
 use pretty_assertions::assert_eq;
 
 use super::client::{Client, Connection, Tuning};
-use super::storage::{Settings, Storage};
+use super::storage::{Settings, Storage, KILL_REFUSED_WARNING, SYNC_REPLICA_REFUSED_WARNING};
 use super::table::test_support::{column, entity_input};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::{Condition, Operator, ValueKind};
@@ -1374,5 +1374,154 @@ async fn a_resume_on_a_lagging_replica_waits_for_what_the_others_took() {
     assert_eq!(
         (matches!(uncommitted, Err(WriteError::Gated)), loaded, above),
         (true, vec![row(&["a", "alice", "2"])], "0".to_string())
+    );
+}
+
+/// What Envio Cloud grants the indexer's own ClickHouse user, on the
+/// deployment's database alone: `deploymentUserRwGrants` in
+/// enviodev/hosted-service-controller. The schema is built before the indexer
+/// starts, by a migration Job running as an admin with every grant; every
+/// statement the indexer sends after that has to fit in these. A grant on
+/// anything wider, such as CLUSTER for an `ON CLUSTER` statement, is one the
+/// deployment never has.
+const ENVIO_CLOUD_INDEXER_GRANTS: &str = "SELECT, INSERT, ALTER, CREATE TABLE, CREATE VIEW, \
+     DROP TABLE, DROP VIEW, TRUNCATE, OPTIMIZE, SHOW";
+
+fn with_cloud_settings(
+    connection: Connection,
+    schema: &Arc<Schema>,
+    warnings: Arc<std::sync::Mutex<Vec<String>>>,
+) -> Storage {
+    let engine = format!(
+        "Replicated('/clickhouse/databases/{}', '{{shard}}', '{{replica}}')",
+        connection.database
+    );
+    Storage::new(
+        connection,
+        Tuning::default(),
+        Arc::new(move |warning: &str| warnings.lock().unwrap().push(warning.to_string())),
+        Settings {
+            replicated: true,
+            database_engine: Some(engine),
+        },
+        schema.clone(),
+    )
+    .unwrap()
+}
+
+async fn write_or_fail(storage: &Storage, batch: Batch) -> anyhow::Result<()> {
+    match storage.write_batch(&batch, Handoff::default()).await {
+        Ok(_) => Ok(()),
+        Err(
+            WriteError::Failed(failure)
+            | WriteError::Unwritten(failure)
+            | WriteError::Uncertain(failure),
+        ) => Err(failure.error.context(failure.context)),
+        Err(WriteError::Gated) => Err(anyhow::anyhow!("gated")),
+    }
+}
+
+/// A Replicated deployment as Envio Cloud runs it: the migration Job builds
+/// the schema as the admin, then the indexer resumes, writes, restarts and
+/// reads as the deployment's own user.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn the_indexer_runs_within_the_grants_envio_cloud_gives_it() {
+    let [writer_node, _] = test_servers::clickhouse().replicas.clone();
+    let Live {
+        database, schema, ..
+    } = Live::new();
+    let user = format!("{database}_rw");
+    let account = schema.entities[0].clone();
+
+    let warnings = Arc::new(std::sync::Mutex::new(Vec::new()));
+    with_cloud_settings(connection(&database), &schema, Arc::default())
+        .initialize(&initialize_input())
+        .await
+        .unwrap();
+    execute_on(
+        &writer_node,
+        format!(
+            "CREATE USER `{user}` ON CLUSTER '{{cluster}}' IDENTIFIED BY '{}'",
+            test_servers::PASSWORD
+        ),
+    )
+    .await;
+    execute_on(
+        &writer_node,
+        format!(
+            "GRANT ON CLUSTER '{{cluster}}' {ENVIO_CLOUD_INDEXER_GRANTS} ON `{database}`.* TO \
+             `{user}`"
+        ),
+    )
+    .await;
+
+    let as_indexer = || {
+        with_cloud_settings(
+            Connection {
+                username: user.clone(),
+                ..connection(&database)
+            },
+            &schema,
+            warnings.clone(),
+        )
+    };
+    let outcome = async {
+        let first_run = as_indexer();
+        first_run
+            .resume(&Resume {
+                committed: vec![committed(0, 0)],
+            })
+            .await?;
+        write_or_fail(
+            &first_run,
+            batch(
+                &account,
+                &[("a", Some(("alice", "1")), 1)],
+                &[(1, 1, 10)],
+                (1, 1),
+            ),
+        )
+        .await?;
+        let restarted = as_indexer();
+        restarted
+            .resume(&Resume {
+                committed: vec![committed(1, 10)],
+            })
+            .await?;
+        restarted
+            .rollback_data(
+                &account,
+                &Bounds {
+                    sequence: Sequence::SharedAcrossChains,
+                    frontier: Frontier::from([(1, 0)]),
+                },
+            )
+            .await?;
+        anyhow::Ok(rows(
+            &restarted.load_where(&account, vec![eq("id", "a")]).await?,
+        ))
+    }
+    .await
+    .map_err(|error| format!("{error:#}"));
+
+    execute_on(
+        &writer_node,
+        format!("DROP DATABASE IF EXISTS `{database}` ON CLUSTER '{{cluster}}' SYNC"),
+    )
+    .await;
+    execute_on(
+        &writer_node,
+        format!("DROP USER IF EXISTS `{user}` ON CLUSTER '{{cluster}}'"),
+    )
+    .await;
+    let both_resumes_warned = [KILL_REFUSED_WARNING, SYNC_REPLICA_REFUSED_WARNING]
+        .repeat(2)
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        (outcome, warnings.lock().unwrap().clone()),
+        (Ok(vec![row(&["a", "alice", "1"])]), both_resumes_warned)
     );
 }
