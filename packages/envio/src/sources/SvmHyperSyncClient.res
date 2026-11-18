@@ -147,10 +147,9 @@ module Items = {
     message: Nullable.t<string>,
   }
 
-  // One routed instruction; `block` and `transaction` are materialised from
-  // the per-chain stores at batch prep.
+  // One routed instruction; its `block` and `transaction` are read from the
+  // per-chain stores when a batch takes it.
   type item = {
-    onEventRegistrationIndex: int,
     slot: int,
     transactionIndex: int,
     path: array<int>,
@@ -166,11 +165,7 @@ module Items = {
     logs: Nullable.t<array<log>>,
   }
 
-  type response = {
-    nextSlot: int,
-    eventItems: array<item>,
-    blockItems: array<BlockItem.t>,
-  }
+  type response = {nextSlot: int}
 }
 
 type t = {
@@ -178,13 +173,13 @@ type t = {
   // Block-hash query construction, pagination, and cursor-backed skipped-slot
   // coverage live in Rust.
   getBlockHashes: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<RequestStat.t>)>,
-  // Returns the routed items plus pages of raw transactions and blocks (kept
-  // in Rust), keyed by (slot, transactionIndex) / slot, materialised at batch
-  // prep.
+  // Returns pages of raw transactions and blocks (kept in Rust), keyed by
+  // (slot, transactionIndex) / slot, and of routed items, all materialised at
+  // batch prep.
   getItems: (
     ~query: Items.query,
     ~addressSet: AddressSet.t,
-  ) => promise<(Items.response, TransactionStore.t, BlockStore.t)>,
+  ) => promise<(Items.response, TransactionStore.t, BlockStore.t, EventStore.t)>,
 }
 
 @send

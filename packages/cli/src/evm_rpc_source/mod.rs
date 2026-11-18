@@ -21,14 +21,14 @@ use crate::block_selection::{
     BlockItem, BlockRegistrations, BlockSelection, OnBlockRegistrationInput,
 };
 use crate::block_store::BlockStore;
+use crate::event_store::EventStore;
 use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
 use crate::evm_hypersync_source::query::BlockField;
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
-    encode_address, Log as DecoderLog, OnEventRegistrationInput,
+    encode_address, EvmParams, Log as DecoderLog, OnEventRegistrationInput,
 };
-use crate::evm_hypersync_source::EventItem;
-use crate::js_value::JsTape;
+use crate::evm_hypersync_source::{evm_items_page, EventItem};
 use crate::logger::{BoundLogger, Level, Logger};
 use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
@@ -92,7 +92,7 @@ impl RawLog {
         &self,
         src_address: String,
         on_event_registration_index: i64,
-        params: JsTape,
+        params: EvmParams,
     ) -> anyhow::Result<EventItem> {
         let to_i64 = |hex: &str| -> anyhow::Result<i64> {
             parse_hex_u64(hex)?
@@ -187,8 +187,6 @@ pub struct NextPageResult {
     /// The block this attempt targeted: the page's own `toBlock` when it
     /// succeeded, the block it got as far as otherwise.
     pub to_block: i64,
-    pub event_items: Vec<EventItem>,
-    pub block_items: Vec<BlockItem>,
     /// What to say about a failure: on `Backoff` the line the retry logs, on
     /// `FieldSelection` why the selection cannot be served.
     pub message: Option<String>,
@@ -238,8 +236,6 @@ impl NextPageResult {
             kind,
             request_stats,
             to_block: to_block as i64,
-            event_items: Vec::new(),
-            block_items: Vec::new(),
             message: None,
             provider_message: None,
             block_number: None,
@@ -538,7 +534,7 @@ impl EvmRpcClient {
         address_set: &AddressSet,
         known_blocks: &BlockStore,
         known_transactions: &TransactionStore,
-    ) -> napi::Result<(NextPageResult, BlockStore, TransactionStore)> {
+    ) -> napi::Result<(NextPageResult, BlockStore, TransactionStore, EventStore)> {
         if params.from_block < 0 || params.to_block_ceiling < 0 {
             return Err(map_err(anyhow::anyhow!(
                 "block bounds must be non-negative, got from_block={}, to_block_ceiling={}",
@@ -589,6 +585,7 @@ impl EvmRpcClient {
                     NextPageResult::new(PageOutcome::Ok, claimed_to, self.inner.take_stats()),
                     blocks,
                     transactions,
+                    EventStore::empty(),
                 ));
             }
         }
@@ -644,7 +641,7 @@ impl EvmRpcClient {
 
         // Only a page that was read has stores; every other outcome returns
         // empty ones, so the match decides the result and the stores follow.
-        let (result, page) = match outcome {
+        let (result, page, items) = match outcome {
             Ok((event_items, block_items, page)) => {
                 let executed_interval = to_block - from_block + 1;
                 // Grow this partition's interval only when the full suggested range
@@ -660,12 +657,9 @@ impl EvmRpcClient {
                     );
                 }
                 (
-                    NextPageResult {
-                        event_items,
-                        block_items,
-                        ..NextPageResult::new(PageOutcome::Ok, to_block, request_stats)
-                    },
+                    NextPageResult::new(PageOutcome::Ok, to_block, request_stats),
                     Some(page),
+                    evm_items_page(event_items, block_items),
                 )
             }
             Err(PageError::Logs(err)) => {
@@ -677,6 +671,7 @@ impl EvmRpcClient {
                 (
                     self.retry_result(&query, provider_message.as_deref(), message, request_stats),
                     None,
+                    EventStore::empty(),
                 )
             }
             Err(PageError::Enrich(EnrichError::FieldSelection {
@@ -689,6 +684,7 @@ impl EvmRpcClient {
                     ..NextPageResult::new(PageOutcome::FieldSelection, to_block, request_stats)
                 },
                 None,
+                EventStore::empty(),
             ),
             Err(PageError::Enrich(EnrichError::BehindHead { block_number, .. })) => (
                 NextPageResult {
@@ -696,6 +692,7 @@ impl EvmRpcClient {
                     ..NextPageResult::new(PageOutcome::BehindHead, to_block, request_stats)
                 },
                 None,
+                EventStore::empty(),
             ),
             // The answer was unusable but the next one may not be. The symptom
             // is its own explanation, so it is the whole of what the retry logs.
@@ -707,6 +704,7 @@ impl EvmRpcClient {
                     request_stats,
                 ),
                 None,
+                EventStore::empty(),
             ),
             // A block or transaction read failed. The range is fine — the logs
             // came back — so the interval is left alone and the page waits out
@@ -724,6 +722,7 @@ impl EvmRpcClient {
                     )
                 },
                 None,
+                EventStore::empty(),
             ),
         };
 
@@ -731,7 +730,7 @@ impl EvmRpcClient {
             Some(page) => (page.blocks, page.transactions),
             None => self.empty_stores(),
         };
-        Ok((result, blocks, transactions))
+        Ok((result, blocks, transactions, items))
     }
 
     fn empty_stores(&self) -> (BlockStore, TransactionStore) {

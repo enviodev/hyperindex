@@ -91,13 +91,15 @@ let makeStores = () => (
 )
 
 // Resolve a page's items the way the indexer does: both of its stores merge
-// into the chain's, and materialisation reads those. Production splits the two
-// merges across `registerReorgGuard` and `ChainFetching`, so keeping them in one
-// place here is what stops a test drifting from that order.
+// into the chain's, and the take reads its items' transactions and blocks from
+// those. Production splits the two merges across `registerReorgGuard` and
+// `ChainFetching`, so keeping them in one place here is what stops a test
+// drifting from that order.
 let applyPage = async (
   response: Source.blockRangeFetchResponse,
   ~blockStore: BlockStore.t,
   ~transactionStore: TransactionStore.t,
+  ~onEventRegistrations: array<Internal.onEventRegistration>,
   ~shouldChecksum=false,
 ) => {
   blockStore->BlockStore.merge(response.blockStore, ~fromBlock=0, ~reportOnly=false)->ignore
@@ -105,12 +107,14 @@ let applyPage = async (
   | Some(page) => transactionStore->TransactionStore.merge(page)
   | None => ()
   }
-  await ChainState.materializePageItems(
-    ~items=response.parsedQueueItems,
-    ~transactionStore,
-    ~blockStore,
-    ~shouldChecksum,
-  )
+  let (items, readFields) =
+    response.items->StoredItems.takeWithFields(
+      response.items->EventStore.length,
+      ~context={chainId: 1->ChainId.fromInt, onEventRegistrations, onBlockRegistrations: []},
+      ~fields={transactionStore, blockStore, shouldChecksum},
+    )
+  await readFields()
+  items
 }
 
 // The page's own stores back `block` and `transaction`, so the pin resolves
@@ -119,12 +123,13 @@ let normalizePage = async (
   response: Source.blockRangeFetchResponse,
   ~blockStore: BlockStore.t,
   ~transactionStore: TransactionStore.t,
+  ~onEventRegistrations,
 ): pinnedPage => {
-  await response->applyPage(~blockStore, ~transactionStore)
+  let items = await response->applyPage(~blockStore, ~transactionStore, ~onEventRegistrations)
   {
     knownHeight: response.knownHeight,
     latestFetchedBlockNumber: response.latestFetchedBlockNumber,
-    events: response.parsedQueueItems->Array.map(normalizeEvent),
+    events: items->Array.map(normalizeEvent),
     // Read from the merged store: merging moves the page's rows into it, so
     // the page is empty by now.
     blockHashes: blockStore->storedBlockHashes,
@@ -166,9 +171,11 @@ let normalizeError = error =>
 
 // Each pin drives a single fetch, so the chain's stores start empty and the
 // page's own rows are all there is to materialise from.
-let capture = async getPage => {
+let capture = async (getPage, ~onEventRegistrations) => {
   let (blockStore, transactionStore) = makeStores()
-  try Ok(await (await getPage())->normalizePage(~blockStore, ~transactionStore)) catch {
+  try Ok(
+    await (await getPage())->normalizePage(~blockStore, ~transactionStore, ~onEventRegistrations),
+  ) catch {
   | Source.GetItemsError(error) => Error(error->normalizeError)
   | Source.SourceBehindHead({blockNumber}) => Error(BehindHead({blockNumber: blockNumber}))
   }

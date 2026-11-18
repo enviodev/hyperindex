@@ -1,7 +1,7 @@
 //! Per-chain transaction store: a merge-on-insert `Table` keyed by
 //! (blockNumber, transactionIndex), holding only the selected fields'
 //! columns — a large field (e.g. EVM `input`) never crosses the napi boundary
-//! until an event that selected it is materialised, and never duplicates
+//! until a batch that selected it reads it, and never duplicates
 //! across overlapping partition re-fetches since a key's cell overwrites in
 //! place. SVM account activity lives in a companion table keyed by (slot,
 //! transactionIndex, account) and gathered by (slot, transactionIndex) range.
@@ -10,20 +10,21 @@
 
 use std::sync::Mutex;
 
+use alloy_primitives::U256;
 use anyhow::Result;
 use hypersync_client::simple_types;
 use hypersync_client_solana::simple_types as solana_simple;
-use napi::bindgen_prelude::BigInt;
+use napi::bindgen_prelude::{BigInt, Float64Array, Uint32Array};
 use napi_derive::napi;
 use strum::VariantArray;
 
 use crate::evm_hypersync_source::map_err;
 use crate::evm_hypersync_source::types::{
-    encode_address, map_bigint, AccessList as AccessListItem, Authorization as AuthorizationItem,
+    encode_address, AccessList as AccessListItem, Authorization as AuthorizationItem,
 };
 use crate::field_columns::{
-    build_columns, bytes, field_names, Column, Columns, Ecosystem, SvmAccountActivityOut,
-    SvmAccountTokenOut, SvmLamportsOut,
+    build_columns, bytes, field_names, Column, Columns, Ecosystem, FieldRead,
+    SvmAccountActivityOut, SvmAccountTokenOut, SvmLamportsOut,
 };
 use crate::field_table::{
     access_lists_cells, access_lists_from, auth_lists_cells, auth_lists_from, bool_cells,
@@ -238,7 +239,7 @@ fn decode_evm_field(
         Gas | GasPrice | MaxPriorityFeePerGas | MaxFeePerGas | CumulativeGasUsed
         | EffectiveGasPrice | GasUsed | Nonce | Value | MaxFeePerBlobGas | L1Fee | L1GasPrice
         | L1GasUsed | GasUsedForL1 => {
-            Column::Big(bytes_cells(col, len, |b| Ok(map_bigint(&Some(b))))?)
+            Column::Big(bytes_cells(col, len, |b| Ok(Some(U256::from_be_slice(b))))?)
         }
         V | R | S | YParity => Column::Str(bytes_cells(col, len, |b| Ok(Some(hex_quantity(b))))?),
         Status | Type => Column::I64(u64_cells(col, len, |v| Ok(Some(v as i64)))?),
@@ -349,7 +350,7 @@ fn decode_svm_field(
         }
         Success => Column::Bool(bool_cells(col, len)),
         Fee | ComputeUnitsConsumed => {
-            Column::Big(u64_cells(col, len, |v| Ok(Some(bigint_u64(v))))?)
+            Column::Big(u64_cells(col, len, |v| Ok(Some(U256::from(v))))?)
         }
         AccountActivities => Column::AccountActivities(account_activities.to_vec()),
     })
@@ -573,7 +574,7 @@ impl TransactionStore {
     }
 
     /// Fuel store. Fuel keeps transactions inline, so this store is never merged
-    /// into or materialised through — it exists only because every chain holds one.
+    /// into or read from — it exists only because every chain holds one.
     #[napi(factory)]
     pub fn new_fuel() -> Self {
         Self::with_ecosystem(Ecosystem::Fuel)
@@ -604,71 +605,87 @@ impl TransactionStore {
         Ok(())
     }
 
-    /// Bulk-materialise transactions in columnar form, one row per
-    /// `(block_numbers[i], transaction_indices[i])` key, decoding only the fields
-    /// whose bit is set in that row's own `masks[i]`. Per-row masks let each event
-    /// pull just the transaction fields it selected, so a large field (e.g.
-    /// `input`) is materialised only on the rows that asked for it. Each mask is a
-    /// JS number (`f64`) carrying a selection bitmask over field codes 0..31 (so
-    /// it fits in 32 bits). The lock is held only to gather the requested cells;
-    /// decoding runs after it is released, off the JS thread via
-    /// `block_in_place`. Missing keys yield an empty object. Result is aligned
-    /// with input. `should_checksum` is the caller's: rows are stored as raw
-    /// bytes, so the only place an address spelling is decided is here.
-    #[napi(ts_return_type = "Promise<object[]>")]
-    pub async fn materialize(
+    /// The selected fields of the transactions at `(block_numbers[i],
+    /// transaction_indices[i])`, a row per key, each decoding only the fields
+    /// set in its own `masks[i]`, so a large field (e.g. `input`) is decoded
+    /// only for the rows that asked for it. A missing key gives a row with no
+    /// values. `should_checksum` is the caller's: rows are stored as raw bytes,
+    /// so the only place an address spelling is decided is here.
+    pub(crate) fn columns(
+        &self,
+        block_numbers: &[i64],
+        transaction_indices: &[u32],
+        masks: &[u64],
+        should_checksum: bool,
+    ) -> Result<Columns> {
+        let keys: Vec<Option<(u64, u32)>> = block_numbers
+            .iter()
+            .zip(transaction_indices)
+            .map(|(&bn, &ti)| u64::try_from(bn).ok().map(|bn| (bn, ti)))
+            .collect();
+        match self.ecosystem {
+            Ecosystem::Evm => {
+                let scratch = self.inner.lock().unwrap().txs.gather_scratch(&keys, masks);
+                decode_evm_columns(&scratch, transaction_indices, masks, should_checksum)
+            }
+            Ecosystem::Svm => {
+                let (scratch, account_activities) = {
+                    let stores = self.inner.lock().unwrap();
+                    (
+                        stores.txs.gather_scratch(&keys, masks),
+                        gather_account_activities(&stores.account_activity, &keys, masks),
+                    )
+                };
+                decode_svm_columns(&scratch, &account_activities, transaction_indices, masks)
+            }
+            // Fuel keeps transactions inline, so nothing reads its store.
+            Ecosystem::Fuel => Ok(Columns {
+                len: block_numbers.len(),
+                columns: Vec::new(),
+            }),
+        }
+    }
+
+    /// The selected fields of the transactions a batch's take keyed, read off
+    /// the JS thread.
+    #[napi]
+    pub async fn read_fields(
+        &self,
+        block_numbers: Float64Array,
+        transaction_indexes: Uint32Array,
+        masks: Float64Array,
+        should_checksum: bool,
+    ) -> napi::Result<FieldRead> {
+        let block_numbers: Vec<i64> = block_numbers.iter().map(|block| *block as i64).collect();
+        let masks: Vec<u64> = masks.iter().map(|mask| *mask as u64).collect();
+        tokio::task::block_in_place(|| {
+            self.columns(
+                &block_numbers,
+                &transaction_indexes,
+                &masks,
+                should_checksum,
+            )?
+            .hold()
+        })
+        .map_err(map_err)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn materialize_columns(
         &self,
         block_numbers: Vec<i64>,
         transaction_indices: Vec<u32>,
         masks: Vec<f64>,
         should_checksum: bool,
     ) -> napi::Result<Columns> {
-        // The three columns are zipped row-wise into the output; a length mismatch
-        // would silently truncate and misalign the result with the caller's items.
-        if block_numbers.len() != transaction_indices.len() || block_numbers.len() != masks.len() {
-            return Err(napi::Error::from_reason(format!(
-                "materialize column length mismatch: block_numbers={}, transaction_indices={}, \
-                 masks={}",
-                block_numbers.len(),
-                transaction_indices.len(),
-                masks.len()
-            )));
-        }
         let masks: Vec<u64> = masks.iter().map(|&m| m as u64).collect();
-        let keys: Vec<Option<(u64, u32)>> = block_numbers
-            .iter()
-            .zip(&transaction_indices)
-            .map(|(&bn, &ti)| u64::try_from(bn).ok().map(|bn| (bn, ti)))
-            .collect();
-
-        match self.ecosystem {
-            Ecosystem::Evm => {
-                let scratch = self.inner.lock().unwrap().txs.gather_scratch(&keys, &masks);
-                tokio::task::block_in_place(|| {
-                    decode_evm_columns(&scratch, &transaction_indices, &masks, should_checksum)
-                })
-                .map_err(map_err)
-            }
-            Ecosystem::Svm => {
-                let (scratch, account_activities) = {
-                    let stores = self.inner.lock().unwrap();
-                    (
-                        stores.txs.gather_scratch(&keys, &masks),
-                        gather_account_activities(&stores.account_activity, &keys, &masks),
-                    )
-                };
-                tokio::task::block_in_place(|| {
-                    decode_svm_columns(&scratch, &account_activities, &transaction_indices, &masks)
-                })
-                .map_err(map_err)
-            }
-            // Fuel keeps transactions inline, so its store is never materialised
-            // through; should it be, every key is a miss → `len` empty objects.
-            Ecosystem::Fuel => Ok(Columns {
-                len: block_numbers.len(),
-                columns: Vec::new(),
-            }),
-        }
+        self.columns(
+            &block_numbers,
+            &transaction_indices,
+            &masks,
+            should_checksum,
+        )
+        .map_err(map_err)
     }
 
     /// Drop transactions for blocks at or below `up_to_block` (already processed).
@@ -1034,7 +1051,6 @@ mod tests {
         }
     }
 
-    // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
     #[tokio::test(flavor = "multi_thread")]
     async fn decode_selected_only_materialises_masked_fields() {
         let store = TransactionStore::new_evm();
@@ -1047,7 +1063,7 @@ mod tests {
         // Select only `input` via the bitmask.
         let mask = bit(EvmTxField::Input) as f64;
         let cols = store
-            .materialize(vec![1], vec![0], vec![mask], false)
+            .materialize_columns(vec![1], vec![0], vec![mask], false)
             .await
             .expect("materialize");
 
@@ -1078,7 +1094,7 @@ mod tests {
         store.insert_evm_txs(vec![tx0, tx1]);
 
         let cols = store
-            .materialize(
+            .materialize_columns(
                 vec![1, 1],
                 vec![0, 1],
                 vec![
@@ -1115,7 +1131,7 @@ mod tests {
 
         let mask = bit(EvmTxField::TransactionIndex) as f64;
         let cols = store
-            .materialize(vec![9, 1], vec![7, 3], vec![mask, mask], false)
+            .materialize_columns(vec![9, 1], vec![7, 3], vec![mask, mask], false)
             .await
             .expect("materialize");
         match column(&cols, "transactionIndex") {
@@ -1139,7 +1155,7 @@ mod tests {
         // Select only accountKeys.
         let mask = (1u64 << (SvmTxField::AccountKeys as u32)) as f64;
         let cols = store
-            .materialize(vec![5], vec![0], vec![mask], false)
+            .materialize_columns(vec![5], vec![0], vec![mask], false)
             .await
             .expect("materialize");
 
@@ -1176,7 +1192,7 @@ mod tests {
 
         let mask = (1u64 << (SvmTxField::AccountKeys as u32)) as f64;
         let cols = store
-            .materialize(vec![5, 5], vec![0, 1], vec![mask, mask], false)
+            .materialize_columns(vec![5, 5], vec![0, 1], vec![mask, mask], false)
             .await
             .expect("materialize");
 
@@ -1220,7 +1236,7 @@ mod tests {
 
         let mask = svm_mask(SvmTxField::AccountActivities);
         let cols = store
-            .materialize(vec![5, 5, 5], vec![0, 1, 2], vec![mask, mask, mask], false)
+            .materialize_columns(vec![5, 5, 5], vec![0, 1, 2], vec![mask, mask, mask], false)
             .await
             .expect("materialize");
 
@@ -1295,7 +1311,7 @@ mod tests {
         ]);
 
         let cols = store
-            .materialize(
+            .materialize_columns(
                 vec![5],
                 vec![0],
                 vec![svm_mask(SvmTxField::AccountActivities)],
@@ -1351,7 +1367,7 @@ mod tests {
     async fn account_activities_of_a_missing_transaction_is_empty() {
         let store = TransactionStore::new_svm();
         let cols = store
-            .materialize(
+            .materialize_columns(
                 vec![5],
                 vec![0],
                 vec![svm_mask(SvmTxField::AccountActivities)],
@@ -1378,7 +1394,7 @@ mod tests {
         let mask = bit(EvmTxField::Nonce) as f64;
         store.prune(10);
         let after_prune = store
-            .materialize(
+            .materialize_columns(
                 vec![10, 20, 30],
                 vec![0, 0, 0],
                 vec![mask, mask, mask],
@@ -1388,7 +1404,7 @@ mod tests {
             .expect("materialize");
         store.rollback(20);
         let after_rollback = store
-            .materialize(
+            .materialize_columns(
                 vec![10, 20, 30],
                 vec![0, 0, 0],
                 vec![mask, mask, mask],
@@ -1420,7 +1436,7 @@ mod tests {
 
     async fn materialized_from(store: &TransactionStore, should_checksum: bool) -> Option<String> {
         let cols = store
-            .materialize(
+            .materialize_columns(
                 vec![1],
                 vec![0],
                 vec![bit(EvmTxField::From) as f64],
@@ -1482,7 +1498,7 @@ mod tests {
 
         let mask = bit(EvmTxField::Input) as f64;
         let cols = persistent
-            .materialize(vec![1], vec![0], vec![mask], false)
+            .materialize_columns(vec![1], vec![0], vec![mask], false)
             .await
             .expect("materialize");
         match column(&cols, "input") {

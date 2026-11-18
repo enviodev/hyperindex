@@ -9,6 +9,7 @@ mod types;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_store::{BlockStore, FuelBlockRow};
+use crate::event_store::{EventStore, Row, RowData};
 use crate::hex::decode_prefixed;
 use crate::js_value::JsTape;
 use config::ClientConfig;
@@ -69,7 +70,7 @@ impl FuelHyperSyncClient {
         &self,
         params: EventItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<(EventItemsResponse, BlockStore)> {
+    ) -> napi::Result<(EventItemsResponse, BlockStore, EventStore)> {
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.clone().unwrap_or_default(),
         );
@@ -125,10 +126,10 @@ impl FuelHyperSyncClient {
         let response = EventItemsResponse {
             archive_height: raw.archive_height,
             next_block: raw.next_block,
-            items,
             rejected_log_data,
         };
-        Ok((response, block_store))
+        let page = EventStore::from_rows(items.into_iter().map(EventItem::into_row).collect());
+        Ok((response, block_store, page))
     }
 }
 
@@ -150,10 +151,9 @@ pub struct EventItemsQuery {
 }
 
 /// One routed receipt with the params its handler receives.
-#[napi(object, object_from_js = false)]
 pub struct EventItem {
     /// The registration this receipt routed to, as passed to the client
-    /// constructor. Receipts that route nowhere never cross the boundary.
+    /// constructor.
     pub on_event_registration_index: i64,
     pub receipt_index: i64,
     pub tx_id: String,
@@ -190,11 +190,29 @@ fn transfer_params(to: &str, asset_id: &str, amount: u64) -> JsTape {
     tape
 }
 
+impl EventItem {
+    /// The store row of this receipt, read back as the record
+    /// `FuelHyperSyncClient.EventItems.item` describes.
+    fn into_row(self) -> Row {
+        Row::event(
+            self.block_height,
+            self.receipt_index,
+            None,
+            self.on_event_registration_index,
+            RowData::FuelReceipt {
+                tx_id: self.tx_id,
+                src_address: self.src_address,
+                params: self.params,
+            },
+        )
+    }
+}
+
+/// What a page covered. Its items are in the `EventStore` returned beside it.
 #[napi(object, object_from_js = false)]
 pub struct EventItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
-    pub items: Vec<EventItem>,
     pub rejected_log_data: Vec<RejectedLogData>,
 }
 

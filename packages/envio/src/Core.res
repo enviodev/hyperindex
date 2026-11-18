@@ -10,6 +10,7 @@ type svmHyperSyncClientCtor
 type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
+type eventStoreCtor
 type storageCtor
 type addressStoreCtor
 type tuiCtor
@@ -55,6 +56,8 @@ type addon = {
   transactionStore: transactionStoreCtor,
   @as("BlockStore")
   blockStore: blockStoreCtor,
+  @as("EventStore")
+  eventStore: eventStoreCtor,
   @as("AddressStore")
   addressStore: addressStoreCtor,
   @as("Storage")

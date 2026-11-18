@@ -3,7 +3,6 @@ A set of stats for logging about the block range fetch
 */
 type blockRangeFetchStats = {
   @as("total time elapsed (s)") totalTimeElapsed: float,
-  @as("parsing time (s)") parsingTimeElapsed?: float,
   @as("page fetch time (s)") pageFetchTime?: float,
 }
 
@@ -75,7 +74,8 @@ Thes response returned from a block range fetch
 */
 type blockRangeFetchResponse = {
   knownHeight: int,
-  parsedQueueItems: array<Internal.item>,
+  // The response's items, kept in Rust; merged into the chain's store on apply.
+  items: EventStore.t,
   // Page of transactions for this response's items, keyed by (blockNumber,
   // transactionIndex); merged into the chain's store on apply. `None` for
   // sources that keep the transaction inline on the payload (Fuel/Simulate).

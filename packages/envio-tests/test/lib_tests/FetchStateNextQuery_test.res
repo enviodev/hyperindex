@@ -54,7 +54,6 @@ let mockFetchState = (
     optimizedPartitions,
     startBlock: 0,
     endBlock,
-    buffer: [],
     normalSelection,
     latestOnBlockBlockNumber: latestFullyFetchedBlock.contents,
     maxOnBlockBufferSize: targetBufferSize,
@@ -65,7 +64,7 @@ let mockFetchState = (
     knownHeight,
     firstEventBlock: None,
     clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-  }
+  }->TestFetchState.pair(~eventStore=EventStore.make())
 }
 
 let nextQuery = (fetchState: FetchState.t) =>

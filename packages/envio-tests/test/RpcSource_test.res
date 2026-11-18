@@ -190,12 +190,13 @@ describe("RpcSource - field selection end to end", () => {
     )
     // The spelling is the chain's, read where the stores are materialised —
     // which is `ChainState.shouldChecksum` in production.
-    await response->RpcSourcePins.applyPage(
+    let items = await response->RpcSourcePins.applyPage(
       ~blockStore,
       ~transactionStore,
+      ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
       ~shouldChecksum=!lowercaseAddresses,
     )
-    response.parsedQueueItems->Array.map(item =>
+    items->Array.map(item =>
       switch item {
       | Internal.Event({payload}) => payload->Evm.toPayload
       | Internal.Block(_) => JsError.throwWithMessage("unexpected onBlock item")
@@ -1006,11 +1007,11 @@ describe("RpcSource - builds partition log selections end to end", () => {
         `address=null;topics=[["${sighash4}"],["${addressTopic}"]]`,
       ]->Array.toSorted(String.compare)
 
-    t.expect((
-      filters,
-      page.parsedQueueItems->Array.length,
-      page.latestFetchedBlockNumber,
-    )).toEqual((expectedFilters, 0, 100))
+    t.expect((filters, page.items->EventStore.length, page.latestFetchedBlockNumber)).toEqual((
+      expectedFilters,
+      0,
+      100,
+    ))
   })
 })
 

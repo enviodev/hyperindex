@@ -1,6 +1,5 @@
 type itemsPage = {
-  eventItems: array<EvmEventItem.t>,
-  blockItems: array<BlockItem.t>,
+  items: EventStore.t,
   nextBlock: int,
   archiveHeight: int,
   responseBlocks: int,

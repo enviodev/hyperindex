@@ -118,18 +118,11 @@ external appendPage: (t, t) => unit = "appendPage"
 @send
 external latestValidBlockFromStore: (t, t, array<int>) => Null.t<int> = "latestValidBlockFromStore"
 
-// Bulk-materialise blocks off the JS thread, one row per `blockNumbers[i]` key,
-// decoding only the fields set in that row's own `masks[i]`. Result is aligned
-// with the input. `shouldChecksum` is the caller's spelling for the addresses
-// decoded out of the store: the rows themselves are raw bytes, so a page merged
-// from a differently configured store can't fix it in.
+// The selected fields of the blocks a batch's take keyed, read off the JS
+// thread.
 @send
-external materialize: (
-  t,
-  ~blockNumbers: array<int>,
-  ~masks: array<float>,
-  ~shouldChecksum: bool,
-) => promise<array<Internal.eventBlock>> = "materialize"
+external readFields: (t, Float64Array.t, Float64Array.t, bool) => promise<EventStore.fieldRead> =
+  "readFields"
 
 // Drop blocks at or below the given block (already processed), keeping the
 // hashes of blocks at or above `keepHashesFrom` for reorg detection.
