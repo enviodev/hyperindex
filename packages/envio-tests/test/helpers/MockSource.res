@@ -136,6 +136,7 @@ type mockSourceState = {
   // The chain's own registrations, for items that name the event they are.
   chainRegistrationsRef: ref<array<Internal.onEventRegistration>>,
   isWildcard: bool,
+  mockEventContract: option<string>,
 }
 
 @get external getMockSourceState: Source.t => option<mockSourceState> = "__mockSourceState"
@@ -158,11 +159,18 @@ let installMockSourceRegistrations = (
       sources->Array.filterMap(source => source->getMockSourceState)
     | _ => []
     }
-    // A chain without contracts has no address index for the synthetic
-    // registration to live in, and nothing for a mock item to be delivered to.
-    switch chainConfig.contracts->Array.get(0) {
-    | Some(contract) if !(sourceStates->Utils.Array.isEmpty) =>
-      let key = chainConfig.id->ChainId.toString
+    let key = chainConfig.id->ChainId.toString
+    // Mock items without an event of their own reach their callbacks through
+    // the synthetic registration, so its contract's addresses are fetched like
+    // any other's. It joins the contract a source names, or else the config's
+    // first one. A chain without contracts has no address index for it to live
+    // in, and nothing for a mock item to be delivered to.
+    let contractName = switch sourceStates->Array.findMap(state => state.mockEventContract) {
+    | Some(contractName) => Some(contractName)
+    | None => chainConfig.contracts->Array.get(0)->Option.map(contract => contract.name)
+    }
+    switch contractName {
+    | Some(contractName) if !(sourceStates->Utils.Array.isEmpty) =>
       let registrations = switch registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
       | Some(registrations) => registrations
       | None =>
@@ -176,9 +184,7 @@ let installMockSourceRegistrations = (
       let mockRegistration = makeMockSourceRegistration(
         ~isWildcard=sourceStates->Array.some(state => state.isWildcard),
         ~index=registrations.onEventRegistrations->Array.length,
-        // Any contract from the chain keeps the synthetic registration in the
-        // address-dependent partition of a real contract.
-        ~contractName=contract.name,
+        ~contractName,
       )
       let chainRegistrations = registrations.onEventRegistrations->Array.copy
       registrations.onEventRegistrations->Array.push(mockRegistration)->ignore
@@ -506,6 +512,9 @@ let make = (
   ~sourceFor=Source.Sync,
   ~pollingInterval=1000,
   ~isWildcard=false,
+  // The contract whose address partition the source's own registration joins.
+  // A contract without handlers that gets it has its addresses fetched.
+  ~mockEventContract=?,
   // Pre-configures the standing height answer at construction time, before
   // the mock is handed to the indexer - needed for a call that happens during
   // startup itself (e.g. resolving a `latest` start block), which completes
@@ -586,6 +595,7 @@ let make = (
     onEventRegistrationRef: ref(None),
     chainRegistrationsRef: ref([]),
     isWildcard,
+    mockEventContract,
   }
 
   // The ledger's pending queries as the objects a test holds, in the same
@@ -725,12 +735,40 @@ let make = (
     })
   }
 
+  // Like a real source, an item that names its emitter reaches an
+  // address-bound registration only through a query fetching that address,
+  // from the block it was registered at. A client-filtered contract is fetched
+  // address-free and gated on the chain's address store, which the mock can't
+  // see, so its items arrive as given, as does an item that names no emitter.
+  let isFetchedFor = (
+    item: itemMock,
+    registration: Internal.onEventRegistration,
+    ~selection: FetchState.selection,
+    ~addressSet,
+  ) => {
+    let contractName = registration.eventConfig.contractName
+    let isClientFiltered =
+      selection.clientFilteredContracts->Option.mapOr(false, names =>
+        names->Array.includes(contractName)
+      )
+    switch item.srcAddress {
+    | Some(srcAddress) if registration.dependsOnAddresses && !isClientFiltered =>
+      addressSet->AddressSet.containsAt(
+        srcAddress->Address.unsafeFromString,
+        contractName,
+        item.blockNumber,
+      )
+    | _ => true
+    }
+  }
+
   let makeItemsResponse = (
     response: itemsResponse,
     ~fromBlock,
     ~toBlock,
     ~knownHeight,
     ~selection: FetchState.selection,
+    ~addressSet: AddressSet.t,
   ): Source.blockRangeFetchResponse => {
     let items = response.items
     let blocks = response.blocks->Option.getOr([])
@@ -830,7 +868,9 @@ let make = (
             | registrations => registrations
             }
           }
-          registrations->Array.map(onEventRegistration => makeEventItem(item, onEventRegistration))
+          registrations
+          ->Array.filter(registration => item->isFetchedFor(registration, ~selection, ~addressSet))
+          ->Array.map(onEventRegistration => makeEventItem(item, onEventRegistration))
         })
         ->Array.concat(
           blocks->Array.flatMap(({blockNumber, ?blockFields}) =>
@@ -1200,6 +1240,7 @@ let make = (
                   ~toBlock,
                   ~knownHeight,
                   ~selection,
+                  ~addressSet,
                 )
                 settle()
                 resolve(built)

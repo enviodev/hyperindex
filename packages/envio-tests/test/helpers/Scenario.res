@@ -38,6 +38,10 @@ type sourceMock = {
   // Feed this chain's items through a wildcard registration rather than an
   // address-dependent one, so its partition takes the wildcard path.
   isWildcard?: bool,
+  // The contract whose address partition the source's own registration joins,
+  // the config's first one by default. Name a contract with handlers when the
+  // first one has none, or its addresses get fetched too.
+  mockEventContract?: string,
   // Pre-configures the standing height answer before the indexer starts -
   // needed to answer a height call made during startup itself (e.g.
   // resolving a `latest` start block), which a test body can't reach in time
@@ -223,7 +227,16 @@ let run = async (
   let virtualTime = virtualTime->Option.getOr(scenario.virtualTime)
   let clock = virtualTime ? Some(VirtualClock.make()) : None
   let mocks = sources->Array.mapWithIndex((
-    {chain, ?methods, ?sourceFor, ?pollingInterval, ?isWildcard, ?autoHeight, ?startupHeights},
+    {
+      chain,
+      ?methods,
+      ?sourceFor,
+      ?pollingInterval,
+      ?isWildcard,
+      ?mockEventContract,
+      ?autoHeight,
+      ?startupHeights,
+    },
     position,
   ) => {
     // Named the way the body reaches it, so a timeline line points at the
@@ -246,6 +259,7 @@ let run = async (
         ~sourceFor?,
         ~pollingInterval?,
         ~isWildcard?,
+        ~mockEventContract?,
         ~autoHeight?,
         ~startupHeights?,
         ~label=?sharesChain ? Some(name) : None,
