@@ -7,8 +7,9 @@ use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-/// Position bits of a key: the block number sits above them.
-pub(crate) const POSITION_BITS: u32 = 24;
+/// Position bits of a key: the block number sits above them. An EVM log index
+/// is a u32, and a block number fits the 32 bits left above it.
+pub(crate) const POSITION_BITS: u32 = 32;
 pub(crate) const MAX_POSITION: u64 = (1 << POSITION_BITS) - 1;
 
 pub(crate) fn make_key(block_number: u64, position: u64) -> u64 {

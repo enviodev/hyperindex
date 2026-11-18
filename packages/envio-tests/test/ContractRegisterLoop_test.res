@@ -120,4 +120,74 @@ describe("contractRegister loop", () => {
       t.expect(await dynamicAddresses(indexer)).toEqual([])
     },
   )
+
+  scenario->Scenario.it(
+    "runs the backlog a rollback kept after dropping the run that overlapped it",
+    ~sources=[{chain: 1337, methods}],
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      let gate = MockSource.Gate.make()
+      sourceMock.resolveGetHeightOrThrow(2000)
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 1,
+          reply: Respond({items: [], latestFetchedBlockNumber: 499}),
+        },
+      ])
+      // One run reads both blocks; the rollback keeps 550 and drops 620.
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 500,
+          reply: Respond({
+            items: [
+              heldRegister(~blockNumber=550, ~gate, [address(1)]),
+              heldRegister(~blockNumber=620, ~gate, [address(2)]),
+            ],
+            latestFetchedBlockNumber: 650,
+          }),
+        },
+      ])
+      // Real time: the held contractRegister runs off the clock.
+      await Scenario.waitUntil(() => gate.entered.contents > 1, ~message="the contractRegister")
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 651,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 700,
+            prevRangeLastBlock: {blockNumber: 650, blockHash: "0x650a"},
+          }),
+        },
+      ])
+      // The run ends while the rollback is still finding its depth, so it is
+      // dropped, and the rollback keeps 550 in the backlog.
+      gate.release()
+      // Real time: the held contractRegister runs off the clock.
+      await Scenario.waitUntil(
+        () => !indexer.isRegisteringContracts(),
+        ~message="the contractRegister run to end",
+      )
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [550, 620],
+        reply: [
+          {blockNumber: 550, blockHash: "0x550", blockTimestamp: 550},
+          {blockNumber: 620, blockHash: "0x620a", blockTimestamp: 620},
+        ],
+      })
+      await indexer.getRollbackReadyPromise()
+      sourceMock.drainPendingItemsQueries()
+      await sourceMock.expectItemsQueries([
+        {partitionId: "0", reply: LeavePending},
+        {partitionId: "1", reply: LeavePending},
+      ])
+      t.expect(
+        sourceMock.pendingItemsQueries
+        ->Array.filter(query => query.partitionId === "1")
+        ->Array.map(query => query->MockSource.addresses->Array.map(Address.toString)),
+      ).toEqual([[address(1)->Address.toString]])
+    },
+  )
 })

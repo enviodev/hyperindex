@@ -51,7 +51,13 @@ let start = (state: IndexerState.t) => {
     )
   and scheduleRollback = () =>
     launch(state, () =>
-      Rollback.rollback(state, ~scheduleFetch, ~scheduleProcessing, ~scheduleRollback)
+      Rollback.rollback(
+        state,
+        ~scheduleFetch,
+        ~scheduleProcessing,
+        ~scheduleRollback,
+        ~scheduleContractRegister,
+      )
     )
 
   // Resuming already ready means the FinalizingIndexes phase is behind us and

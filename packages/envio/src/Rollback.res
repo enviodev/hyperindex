@@ -45,6 +45,7 @@ let rec rollback = async (
   ~scheduleFetch,
   ~scheduleProcessing,
   ~scheduleRollback,
+  ~scheduleContractRegister,
 ) =>
   // Owns its error boundary: launch doesn't catch, so a failure mid-rollback
   // must stop the indexer.
@@ -81,6 +82,7 @@ let rec rollback = async (
         ~rollbackTargetBlockNumber,
         ~scheduleFetch,
         ~scheduleProcessing,
+        ~scheduleContractRegister,
       )
     }
   } catch {
@@ -100,6 +102,7 @@ and executeRollback = async (
   ~rollbackTargetBlockNumber,
   ~scheduleFetch,
   ~scheduleProcessing,
+  ~scheduleContractRegister,
 ) => {
   let startTime = Performance.now()
 
@@ -248,4 +251,13 @@ and executeRollback = async (
   )
   scheduleFetch()
   scheduleProcessing()
+  // A contractRegister run that ended during the rollback was dropped, and
+  // its drain with it; the backlog the rollback kept still has to run.
+  state
+  ->IndexerState.chainStates
+  ->Utils.Dict.forEach(chainState =>
+    if chainState->ChainState.hasContractRegisterBacklog {
+      scheduleContractRegister((chainState->ChainState.chainConfig).id)
+    }
+  )
 }
