@@ -46,9 +46,9 @@ let toIssuedQuery = (query: MockSource.pendingItemsQuery): issuedQuery => {
 
 // The queries issued since the last call, in arrival order.
 let takeNewQueries = (mock: MockSource.t, ~seen: array<MockSource.pendingItemsQuery>) => {
-  let fresh = mock.pendingItemsQueries->Array.filter(query => !(seen->Array.includes(query)))
-  fresh->Array.forEach(query => seen->Array.push(query)->ignore)
-  fresh->Array.map(toIssuedQuery)
+  mock
+  ->MockSource.takeNewItemsQueries(~seen)
+  ->Array.map(toIssuedQuery)
 }
 
 let itemsAt = (~blockNumber, ~count) =>

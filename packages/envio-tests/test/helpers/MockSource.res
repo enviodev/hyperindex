@@ -388,6 +388,14 @@ type t = {
   unsubscribeHeightSubscription: unit => unit,
 }
 
+// The item queries the source took that aren't in `seen`, in arrival order,
+// added to `seen` so the next call returns only later ones.
+let takeNewItemsQueries = (mock: t, ~seen: array<pendingItemsQuery>) => {
+  let fresh = mock.pendingItemsQueries->Array.filter(query => !(seen->Array.includes(query)))
+  fresh->Array.forEach(query => seen->Array.push(query)->ignore)
+  fresh
+}
+
 // The Rust ledger (`mock_source.rs`) that records every call the source takes
 // and decides what a test's expectations match. It answers nothing: each call
 // comes back with an id, each answer with the ids to settle, and the promises
