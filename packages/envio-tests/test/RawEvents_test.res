@@ -117,6 +117,78 @@ describe("Raw events", () => {
     },
   )
 
+  // `event_id` keeps 16 bits for the log index, so a log above 65535 can't have
+  // a row of its own: some providers number synthetic logs as high as
+  // 0xffffffe2. Its handler still runs; the row is skipped with a warning.
+  scenario->Scenario.it(
+    "skip a log whose index event_id can't hold, with a warning",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      let handledLogIndexes = []
+      let counted = (~block, ~logIndex): MockSource.itemMock => {
+        blockNumber: block,
+        logIndex,
+        handler: async ({event}) =>
+          handledLogIndexes
+          ->Array.push(
+            (
+              event->(
+                Utils.magic: Internal.event => Internal.genericEvent<unknown, unknown, unknown>
+              )
+            ).logIndex,
+          )
+          ->ignore,
+      }
+      let source = source(1)
+      source.resolveGetHeightOrThrow(300)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              counted(~block=4, ~logIndex=65535),
+              counted(~block=4, ~logIndex=65536),
+              counted(~block=5, ~logIndex=0),
+              counted(~block=5, ~logIndex=4294967266.->(Utils.magic: float => int)),
+            ],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+
+      await indexer.usePostgresSql(
+        async sql =>
+          t.expect((
+            await sql->read(~pgSchema=indexer.pgSchema),
+            indexer.allLogsAsJson()->Array.filter(
+              line =>
+                switch line->Dict.get("msg") {
+                | Some(String(msg)) => msg->String.startsWith("Not storing a raw event")
+                | _ => false
+                },
+            ),
+            handledLogIndexes,
+          )).toEqual((
+            [row(~block=4, ~logIndex=65535), row(~block=5, ~logIndex=0)],
+            [(4, 65536.), (5, 4294967266.)]->Array.map(((block, logIndex)) => dict{
+              "level": JSON.String("warn"),
+              "msg": JSON.String(
+                "Not storing a raw event for a log whose index is above 65535, the most raw_events' event_id holds",
+              ),
+              "chainId": JSON.Number(1.),
+              "contract": JSON.String("Gravatar"),
+              "event": JSON.String("MockEvent"),
+              "block": JSON.Number(block->Int.toFloat),
+              "logIndex": JSON.Number(logIndex),
+              "address": JSON.String("0x0000000000000000000000000000000000000000"),
+            }),
+            [65535, 65536, 0, 4294967266.->(Utils.magic: float => int)],
+          )),
+      )
+    },
+  )
+
   // A row carries what identifies the event and the block it came from, and
   // every other block and transaction field as JSON — a bigint as its digits.
   scenario->Scenario.it(
