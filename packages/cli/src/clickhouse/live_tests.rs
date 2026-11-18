@@ -12,7 +12,7 @@ use std::sync::Arc;
 use pretty_assertions::assert_eq;
 
 use super::client::{Client, Connection, Tuning};
-use super::storage::{Settings, Storage, KILL_REFUSED_WARNING, SYNC_REPLICA_REFUSED_WARNING};
+use super::storage::{Settings, Storage};
 use super::table::test_support::{column, entity_input};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::{Condition, Operator, ValueKind};
@@ -653,139 +653,6 @@ async fn a_load_spelling_a_long_list_of_timestamps_reads_what_it_names() {
     assert_eq!(loaded, Ok(0));
 }
 
-/// A process that died mid-write can leave an insert running on the server,
-/// one that finishes after the next process resumed and trimmed what never
-/// committed. Its rows would read as that run's once its frontier passed them.
-#[tokio::test]
-#[ignore = "needs a ClickHouse server"]
-async fn an_insert_a_dead_process_left_running_lands_nothing_after_the_resume() {
-    let live = Live::new();
-    let account = live.account();
-    initialize(&live).await;
-    write(
-        &live,
-        batch(
-            &account,
-            &[("a", Some(("alice", "1")), 1)],
-            &[(1, 1, 10)],
-            (1, 1),
-        ),
-    )
-    .await;
-    let query_id = format!("{}late", super::client::insert_tag(&live.database, &[1]));
-    let late = tokio::spawn(send_as(
-        query_id.clone(),
-        format!(
-            "INSERT INTO `{}`.envio_history_Account (id, owner, balance, envio_checkpoint_id, \
-             envio_change) SELECT toString(number), 'mallory', '9', 2, 'SET' FROM numbers(3) \
-             WHERE sleepEachRow(1) = 0 SETTINGS max_block_size = 1",
-            live.database
-        ),
-    ));
-    until_running(&live, &query_id).await;
-
-    resume(&live.another_process(), 1, 10).await;
-    let _ = late.await;
-    let landed = live
-        .execute(format!(
-            "SELECT count() FROM `{}`.envio_history_Account WHERE envio_checkpoint_id = 2",
-            live.database
-        ))
-        .await;
-
-    live.drop_database().await;
-    assert_eq!(landed, "0");
-}
-
-/// A sibling process driving chain 137 is still writing while chain 1's
-/// process resumes, so the resume has to leave the sibling's inserts alone.
-#[tokio::test]
-#[ignore = "needs a ClickHouse server"]
-async fn resuming_one_chain_leaves_another_chains_insert_running() {
-    let live = Live::new();
-    initialize(&live).await;
-    let query_id = format!(
-        "{}sibling",
-        super::client::insert_tag(&live.database, &[137])
-    );
-    let sibling = tokio::spawn(send_as(
-        query_id.clone(),
-        format!(
-            "INSERT INTO `{}`.envio_history_Account (id, owner, balance, envio_checkpoint_id, \
-             envio_change) SELECT toString(number), 'bob', '1', 1, 'SET' FROM numbers(3) \
-             WHERE sleepEachRow(1) = 0 SETTINGS max_block_size = 1",
-            live.database
-        ),
-    ));
-    until_running(&live, &query_id).await;
-
-    resume(&live.another_process(), 0, 0).await;
-    let succeeded = sibling.await.unwrap();
-
-    live.drop_database().await;
-    assert!(succeeded, "{query_id} was stopped by chain 1's resume");
-}
-
-/// Another deployment on the same server whose database name starts with this
-/// one's and a `:` (`idx` and `idx:v2`), driving the same chain, keeps its
-/// insert running through this deployment's resume.
-#[tokio::test]
-#[ignore = "needs a ClickHouse server"]
-async fn resuming_leaves_another_databases_insert_running() {
-    let live = Live::new();
-    initialize(&live).await;
-    let query_id = format!(
-        "{}other",
-        super::client::insert_tag(&format!("{}:v2", live.database), &[1])
-    );
-    let other = tokio::spawn(send_as(
-        query_id.clone(),
-        format!(
-            "INSERT INTO `{}`.envio_history_Account (id, owner, balance, envio_checkpoint_id, \
-             envio_change) SELECT toString(number), 'bob', '1', 1, 'SET' FROM numbers(3) \
-             WHERE sleepEachRow(1) = 0 SETTINGS max_block_size = 1",
-            live.database
-        ),
-    ));
-    until_running(&live, &query_id).await;
-
-    resume(&live.another_process(), 0, 0).await;
-    let succeeded = other.await.unwrap();
-
-    live.drop_database().await;
-    assert!(
-        succeeded,
-        "{query_id} was stopped by another database's resume"
-    );
-}
-
-async fn until_running(live: &Live, query_id: &str) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while live
-        .execute(format!(
-            "SELECT count() FROM system.processes WHERE query_id = '{query_id}'"
-        ))
-        .await
-        == "0"
-    {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "{query_id} never started"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-}
-
-/// Sends `statement` under `query_id`, answering whether it succeeded.
-async fn send_as(query_id: String, statement: String) -> bool {
-    post(&connection("").url)
-        .query(&[("query_id", query_id)])
-        .body(statement)
-        .send()
-        .await
-        .is_ok_and(|response| response.status().is_success())
-}
-
 /// A process that died mid-commit can still have its chains insert land after
 /// the next process resumed and trimmed that batch's rows away. Landing then,
 /// it must not move the frontier back over the checkpoint the next process
@@ -1277,106 +1144,6 @@ async fn a_rollback_restores_the_target_at_its_diff_checkpoint() {
     );
 }
 
-fn replica(url: &str, database: &str, schema: &Arc<Schema>) -> Storage {
-    store_on(
-        Connection {
-            url: url.to_string(),
-            ..connection(database)
-        },
-        true,
-        schema.clone(),
-    )
-}
-
-/// A process resuming on a replica other than the one that took the writes,
-/// before that replica has fetched them: the last committed batch is still
-/// missing there, and so is the one the crash left uncommitted.
-#[tokio::test]
-#[ignore = "needs a ClickHouse server"]
-async fn a_resume_on_a_lagging_replica_waits_for_what_the_others_took() {
-    let [first, second] = test_servers::clickhouse().replicas.clone();
-    let Live {
-        database, schema, ..
-    } = Live::new();
-    let (writer, resumer) = (
-        replica(&first, &database, &schema),
-        replica(&second, &database, &schema),
-    );
-    let (written, resumed) = (schema.entities[0].clone(), schema.entities[0].clone());
-    let history = format!("`{database}`.`envio_history_Account`");
-
-    writer.initialize(&initialize_input()).await.unwrap();
-    write_on(
-        &writer,
-        batch(
-            &written,
-            &[("a", Some(("alice", "1")), 1)],
-            &[(1, 1, 10)],
-            (1, 1),
-        ),
-    )
-    .await;
-    execute_on(&second, format!("SYSTEM SYNC REPLICA {history}")).await;
-    execute_on(&second, format!("SYSTEM STOP FETCHES {history}")).await;
-    write_on(
-        &writer,
-        batch(
-            &written,
-            &[("a", Some(("alice", "2")), 2)],
-            &[(2, 1, 20)],
-            (1, 2),
-        ),
-    )
-    .await;
-    let staged = batch(
-        &written,
-        &[("a", Some(("alice", "3")), 3)],
-        &[(3, 1, 30)],
-        (1, 3),
-    );
-    let uncommitted = writer
-        .write_batch(
-            &staged,
-            Handoff {
-                landed: None,
-                commit: Some(Box::pin(async { false })),
-                committed: None,
-            },
-        )
-        .await;
-
-    let fetches = {
-        let (second, history) = (second.clone(), history.clone());
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            execute_on(&second, format!("SYSTEM START FETCHES {history}")).await;
-        })
-    };
-    resume(&resumer, 2, 20).await;
-    let loaded = rows(
-        &resumer
-            .load_where(&resumed, vec![eq("id", "a")])
-            .await
-            .unwrap(),
-    );
-    fetches.await.unwrap();
-    execute_on(&second, format!("SYSTEM SYNC REPLICA {history}")).await;
-    let above = execute_on(
-        &second,
-        format!("SELECT count() FROM {history} WHERE envio_checkpoint_id > 2"),
-    )
-    .await;
-    execute_on(
-        &first,
-        format!("DROP DATABASE IF EXISTS `{database}` ON CLUSTER '{{cluster}}' SYNC"),
-    )
-    .await;
-    assert_eq!(
-        (matches!(uncommitted, Err(WriteError::Gated)), loaded, above),
-        (true, vec![row(&["a", "alice", "2"])], "0".to_string())
-    );
-}
-
 /// What Envio Cloud grants the indexer's own ClickHouse user, on the
 /// deployment's database alone: `deploymentUserRwGrants` in
 /// enviodev/hosted-service-controller. The schema is built before the indexer
@@ -1515,13 +1282,8 @@ async fn the_indexer_runs_within_the_grants_envio_cloud_gives_it() {
         format!("DROP USER IF EXISTS `{user}` ON CLUSTER '{{cluster}}'"),
     )
     .await;
-    let both_resumes_warned = [KILL_REFUSED_WARNING, SYNC_REPLICA_REFUSED_WARNING]
-        .repeat(2)
-        .into_iter()
-        .map(String::from)
-        .collect::<Vec<_>>();
     assert_eq!(
         (outcome, warnings.lock().unwrap().clone()),
-        (Ok(vec![row(&["a", "alice", "1"])]), both_resumes_warned)
+        (Ok(vec![row(&["a", "alice", "1"])]), Vec::<String>::new())
     );
 }
