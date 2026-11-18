@@ -72,7 +72,7 @@ graph-node's own ceiling (`GRAPH_MAX_API_VERSION`), is a §7 error.
 | `callHandlers` | an envio event named `__envio_call_<selector>_<function>` on the data source's contract; the source reads **calls** instead of logs for it (§4a). The first handler for a selector wins, as in graph-node | ✅ needs traces (§4a) |
 | Block handler `filter: {kind: call}` | an envio event `__envio_call_any`: one item per call to the address, ordered after the block's logs and calls and before its block handlers | ✅ needs traces (§4a) |
 | Block handlers on a template (unfiltered, `once`, `polling`) | each instance's creation block is its start block, as in graph-node: unfiltered runs every block from it, `once` at it, `polling` where `(block - creation) % every == 0`. The handler visits every block from the chain's first static start and checks each instance. An instance's own events in its creation block run after that block's block handlers here (graph-node runs them first) | ✅ |
-| `call`-filtered block handlers on a template | — | ❌ §7 error |
+| `call`-filtered block handlers on a template | the template's `__envio_call_any` event: one item per call to each instance's address, from its creation block. In that block an instance's call triggers run after its own logs and calls, as graph-node sorts each round's triggers anew | ✅ needs traces (§4a) |
 | Subgraph composition (`kind: subgraph`, 1.3.0) | **refused, by design.** graph-node triggers such a data source on the immutable entities its source deployment writes, read from that deployment's store (`graph/src/data_source/subgraph.rs`). The deployment hash names compiled WASM on IPFS, which the shim can't run, and envio doesn't read another indexer's store; indexing the source in-process would need its AssemblyScript source, which a deployment hash doesn't lead to. The error names the source deployment and suggests indexing its contracts directly | ❌ §7 error |
 | Amp data sources (`kind: amp`, 1.5.0) | **refused, by design**: their tables are SQL over an Amp dataset, answered by an Amp server. The error names the dataset | ❌ §7 error |
 | Substreams-powered subgraphs (`kind: substreams`) | **refused, by design**: the entities come out of a Substreams module (`.spkg`) graph-node streams from a Substreams provider; there is no mapping over chain data to run. The error names the package and module | ❌ §7 error |
@@ -358,10 +358,11 @@ doesn't decode is skipped with a warning, as graph-node skips it.
 
 *Order.* graph-node orders a block's triggers by transaction: a transaction's
 logs, then its calls in trace order; then the `filter: call` block triggers,
-one per call; then the block handlers. The buffer's comparator does the same
-once a call item exists (a run without call handlers compares exactly as
-before): `transactionIndex`, logs before calls, then the call's trace address
-(a depth-first position, so a parent precedes its children). The register
+one per call; then the block handlers. A subgraph's event store keys a block's
+items the same way: `transactionIndex`, logs before calls, then the call's
+trace address (a depth-first position, so a parent precedes its children).
+The triggers of a data source created in the block follow, a round at a time,
+each round ordered by the same rule. The register
 pass's store sees calls after every log of their block (it is an approximation
 in what a register pass may read; the handler pass is exact).
 

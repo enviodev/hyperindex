@@ -920,14 +920,8 @@ fn parse_data_source(
                     // graph-node runs a handler on a template for each instance,
                     // its creation block standing in for the start block; the
                     // runtime keeps each instance's block for `once` and
-                    // `polling`. A `call` filter would need the trace source
-                    // to follow every instance's address.
-                    if is_template && handler.filter == BlockFilter::Call {
-                        report.unsupported(
-                            "call-filtered block handlers on templates",
-                            where_(&format!("blockHandlers → \"{}\"", handler.handler)),
-                        );
-                    }
+                    // `polling`, and the trace source follows every instance's
+                    // address for `call`.
                     block_handlers.push(handler);
                 }
             }

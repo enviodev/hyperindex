@@ -204,9 +204,18 @@ mod subgraph_rank {
     pub(super) const EVENT: u8 = 1;
     pub(super) const CALL_BLOCK: u8 = 2;
     pub(super) const BLOCK: u8 = 3;
-    /// Plus the round, from 1.
-    pub(super) const CREATION: u8 = 3;
     pub(super) const MAX: u8 = 15;
+
+    /// The rank of an event of a data source created in its block, by the
+    /// round it was created in: graph-node sorts each round's triggers anew, so
+    /// a round's call-filtered block triggers follow its logs and calls, and
+    /// all of them precede the next round's. Rounds past what the rank holds
+    /// share the last one.
+    pub(super) fn creation(round: i64, rank: u8) -> u8 {
+        let base = BLOCK as i64 + 2 * round.max(1) - 1;
+        let rank = base + i64::from(rank == CALL_BLOCK);
+        rank.min(MAX as i64) as u8
+    }
 }
 
 const SUBGRAPH_RANK_SHIFT: u32 = 60;
@@ -569,8 +578,7 @@ impl Rows {
                         && creation.address.as_bytes().eq_ignore_ascii_case(address)
                 })
                 .map(|creation| {
-                    (subgraph_rank::CREATION as i64 + creation.round)
-                        .clamp(0, subgraph_rank::MAX as i64) as u8
+                    subgraph_rank::creation(creation.round, subgraph_rank_of(chunk.keys[row]))
                 })
         };
         // Rows that keep their rank and those moved to the same one from the

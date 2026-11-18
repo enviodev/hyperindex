@@ -111,34 +111,6 @@ describe("subgraph translation: unsupported features", () => {
     )
   })
 
-  // The trace source follows static addresses, not every instance's.
-  it("refuses a call-filtered block handler on a template", t => {
-    let manifest =
-      manifestWith(plainEventHandler) ++ `templates:
-  - kind: ethereum/contract
-    name: Pool
-    network: mainnet
-    source:
-      abi: Token
-    mapping:
-      kind: ethereum/events
-      apiVersion: 0.0.7
-      language: wasm/assemblyscript
-      entities: []
-      abis: []
-      blockHandlers:
-        - handler: handlePoolBlock
-          filter:
-            kind: call
-      file: ./src/pool.ts
-`
-    translate(~schema=baseSchema, ~manifest)->expectFindingHelper(
-      t,
-      ~headline="Envio Subgraph doesn't support call-filtered block handlers on templates yet.",
-      ~location=`data source "Pool" → blockHandlers → "handlePoolBlock"`,
-    )
-  })
-
   it("refuses an unknown field in a graft block", t => {
     let manifest =
       manifestWith(plainEventHandler)->String.replace(
