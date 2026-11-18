@@ -200,15 +200,13 @@ let processEventBatch = async (~batch: Batch.t, ~runtime: HandlerRuntime.t) => {
 
     if (indexerState->IndexerState.config).enableRawEvents {
       batch.items
-      ->RawEvent.eventItemsOnePerLog
+      ->RawEvent.eventItemsOnePerLog(~keep=eventItem => !RawEvent.logIndexFitsEventId(eventItem))
       ->Array.forEach(item =>
-        if !(item->Internal.castUnsafeEventItem->RawEvent.logIndexFitsEventId) {
-          indexerState
-          ->IndexerState.loggerForItem(item)
-          ->Logger.warn(
-            `Not storing a raw event for a log whose index is above ${RawEvent.maxLogIndex->Int.toString}, the most raw_events' event_id holds`,
-          )
-        }
+        indexerState
+        ->IndexerState.loggerForItem(item)
+        ->Logger.warn(
+          `Not storing a raw event for a log whose index is above ${RawEvent.maxLogIndex->Int.toString}, the most raw_events' event_id holds`,
+        )
       )
     }
 

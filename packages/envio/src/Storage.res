@@ -604,13 +604,8 @@ let make = (
     // A log `event_id` can't hold is warned about when its batch is processed.
     let rawEvents = if config.enableRawEvents {
       batch.items
-      ->RawEvent.eventItemsOnePerLog
-      ->Array.filterMap(item => {
-        let eventItem = item->Internal.castUnsafeEventItem
-        eventItem->RawEvent.logIndexFitsEventId
-          ? Some(config.ecosystem.toRawEvent(eventItem))
-          : None
-      })
+      ->RawEvent.eventItemsOnePerLog(~keep=RawEvent.logIndexFitsEventId)
+      ->Array.map(item => config.ecosystem.toRawEvent(item->Internal.castUnsafeEventItem))
     } else {
       []
     }

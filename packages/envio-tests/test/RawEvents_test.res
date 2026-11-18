@@ -124,11 +124,20 @@ describe("Raw events", () => {
     "skip a log whose index event_id can't hold, with a warning",
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
-      let handled = ref(0)
+      let handledLogIndexes = []
       let counted = (~block, ~logIndex): MockSource.itemMock => {
         blockNumber: block,
         logIndex,
-        handler: async _ => handled := handled.contents + 1,
+        handler: async ({event}) =>
+          handledLogIndexes
+          ->Array.push(
+            (
+              event->(
+                Utils.magic: Internal.event => Internal.genericEvent<unknown, unknown, unknown>
+              )
+            ).logIndex,
+          )
+          ->ignore,
       }
       let source = source(1)
       source.resolveGetHeightOrThrow(300)
@@ -152,24 +161,29 @@ describe("Raw events", () => {
         async sql =>
           t.expect((
             await sql->read(~pgSchema=indexer.pgSchema),
-            indexer.infoAndAboveLogs()->Array.filter(
-              ({msg}) => msg->String.startsWith("Not storing a raw event"),
+            indexer.allLogsAsJson()->Array.filter(
+              line =>
+                switch line->Dict.get("msg") {
+                | Some(String(msg)) => msg->String.startsWith("Not storing a raw event")
+                | _ => false
+                },
             ),
-            handled.contents,
+            handledLogIndexes,
           )).toEqual((
             [row(~block=4, ~logIndex=65535), row(~block=5, ~logIndex=0)],
-            [(4, 65536.), (5, 4294967266.)]->Array.map(((block, logIndex)): IndexerRunner.logEntry => {
-              msg: "Not storing a raw event for a log whose index is above 65535, the most raw_events' event_id holds",
-              params: dict{
-                "chainId": JSON.Number(1.),
-                "contract": JSON.String("Gravatar"),
-                "event": JSON.String("MockEvent"),
-                "block": JSON.Number(block->Int.toFloat),
-                "logIndex": JSON.Number(logIndex),
-                "address": JSON.String("0x0000000000000000000000000000000000000000"),
-              },
+            [(4, 65536.), (5, 4294967266.)]->Array.map(((block, logIndex)) => dict{
+              "level": JSON.String("warn"),
+              "msg": JSON.String(
+                "Not storing a raw event for a log whose index is above 65535, the most raw_events' event_id holds",
+              ),
+              "chainId": JSON.Number(1.),
+              "contract": JSON.String("Gravatar"),
+              "event": JSON.String("MockEvent"),
+              "block": JSON.Number(block->Int.toFloat),
+              "logIndex": JSON.Number(logIndex),
+              "address": JSON.String("0x0000000000000000000000000000000000000000"),
             }),
-            4,
+            [65535, 65536, 0, 4294967266.->(Utils.magic: float => int)],
           )),
       )
     },
