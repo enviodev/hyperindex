@@ -12,6 +12,8 @@ let table = Table.mkTable(
     Table.mkField("createdAt", Date, ~isIndex=true, ~fieldSchema=S.string),
     Table.mkField("tag", Bytea, ~isIndex=true, ~fieldSchema=S.string),
     Table.mkField("metadata", Json, ~isIndex=true, ~fieldSchema=S.json(~validate=false)),
+    Table.mkField("prices", BigDecimal({}), ~isArray=true, ~isIndex=true, ~fieldSchema=S.string),
+    Table.mkField("tags", String, ~isArray=true, ~isIndex=true, ~fieldSchema=S.string),
   ],
 )
 
@@ -33,14 +35,100 @@ let query = (memory, field, operators) => {
   ->Array.toSorted(String.compare)
 }
 
-let countedEntity: (string, string, unit => unit) => Internal.entity = %raw(`
-  (id, owner, onRead) => Object.defineProperty({id}, "owner", {
-    enumerable: true,
-    get() { onRead(); return owner; }
-  })
-`)
+// Instrument the stored snapshot, not the caller's record: set deliberately
+// copies top-level values, so an input getter no longer measures query reads.
+let countOwnerReads = (memory: InMemoryTable.Entity.t, id, onRead) => {
+  let countedChange: (Change.t<Internal.entity>, unit => unit) => Change.t<Internal.entity> = %raw(`
+    (change, onRead) => ({...change, entity: new Proxy(change.entity, {
+      get(target, key, receiver) {
+        if (key === "owner") onRead()
+        return Reflect.get(target, key, receiver)
+      }
+    })})
+  `)
+  let change = memory.latestEntityChangeById->Dict.getUnsafe(id)
+  memory.latestEntityChangeById->Dict.set(id, countedChange(change, onRead))
+}
 
 describe("In-memory equality index construction", () => {
+  it("preserves BigDecimal RANGE equality for scalar and array filters", t => {
+    let memory = make()
+    let zero = BigDecimal.fromInt(0)
+    let narrowZero: BigDecimal.t => BigDecimal.t = %raw(`value => {
+      const Decimal = value.constructor.clone({RANGE: [-1, 100]})
+      return new Decimal(0)
+    }`)
+    let price = narrowZero(zero)
+    let candidate = BigDecimal.fromStringUnsafe("0.01")
+    t.expect(BigDecimal.equals(price, candidate)).toBe(true)
+    set(memory, "a", {"id": "a", "owner": "alice", "price": price, "prices": [price]})
+    t.expect(query(memory, "price", dict{"_eq": candidate->value})).toEqual(["a"])
+    t.expect(query(memory, "price", dict{"_in": [candidate]->value})).toEqual(["a"])
+    t.expect(query(memory, "prices", dict{"_in": [[candidate]]->value})).toEqual(["a"])
+    let filter = dict{
+      "price": dict{"_in": [candidate]->value},
+      "owner": dict{"_eq": "alice"->value},
+    }->EntityFilter.parseOrThrow(~entityName="Item", ~table)
+    t.expect(
+      (filter->EntityFilter.makeMatcher(~table))(
+        {"id": "a", "owner": "alice", "price": price}->asEntity,
+      ),
+    ).toBe(true)
+  })
+
+  it("does not inspect a document for an empty _in predicate", t => {
+    let reads = ref(0)
+    let entity: (unit => unit) => Internal.entity = %raw(`count => ({
+      id: "a", owner: "alice", get metadata() { count(); return {a: 1} }
+    })`)
+    let filter = dict{
+      "metadata": dict{"_in": []->value},
+      "owner": dict{"_eq": "alice"->value},
+    }->EntityFilter.parseOrThrow(~entityName="Item", ~table)
+    t.expect(
+      (filter->EntityFilter.makeMatcher(~table))(entity(() => reads := reads.contents + 1)),
+    ).toBe(false)
+    t.expect(reads.contents).toBe(0)
+  })
+
+  it("keeps new filters consistent with mutable object fields", t => {
+    let memory = make()
+    let entity = %raw(`({id: "a", createdAt: new Date(10), tag: new Uint8Array([1]),
+      metadata: {x: 1}, tags: ["old"]})`)
+    set(memory, "a", entity)
+    let stored = (memory->InMemoryTable.Entity.getUnsafe)("a")->Option.getOrThrow
+    let isFrozen: 'a => bool = %raw(`value => Object.isFrozen(value)`)
+    t.expect(isFrozen(stored)).toBe(true)
+    t.expect(isFrozen(entity)).toBe(false)
+    t.expect(query(memory, "createdAt", dict{"_eq": Date.fromTime(10.)->value})).toEqual(["a"])
+    t.expect(query(memory, "tag", dict{"_eq": %raw(`new Uint8Array([1])`)})).toEqual(["a"])
+    t.expect(query(memory, "metadata", dict{"_eq": %raw(`({x: 1})`)})).toEqual(["a"])
+    t.expect(query(memory, "tags", dict{"_eq": ["old"]->value})).toEqual(["a"])
+    let mutate: 'a => unit = %raw(`entity => {
+      entity.createdAt.setTime(20); entity.tag[0] = 2;
+      entity.metadata.x = 2; entity.tags[0] = "new";
+    }`)
+    mutate(entity)
+    t.expect(query(memory, "createdAt", dict{"_in": [Date.fromTime(20.)]->value})).toEqual(["a"])
+    t.expect(query(memory, "tag", dict{"_eq": %raw(`new Uint8Array([2])`)})).toEqual(["a"])
+    t.expect(query(memory, "metadata", dict{"_eq": %raw(`({x: 2})`)})).toEqual(["a"])
+    t.expect(query(memory, "tags", dict{"_in": [["new"]]->value})).toEqual(["a"])
+  })
+
+  it("snapshots top-level fields without freezing the caller's entity", t => {
+    let memory = make()
+    let entity = %raw(`({id: "a", owner: "alice"})`)
+    set(memory, "a", entity)
+    t.expect(query(memory, "owner", dict{"_eq": "alice"->value})).toEqual(["a"])
+    let mutate: 'a => unit = %raw(`entity => { entity.owner = "bob" }`)
+    mutate(entity)
+    t.expect(query(memory, "owner", dict{"_in": ["alice", "nobody"]->value})).toEqual(["a"])
+    t.expect(query(memory, "owner", dict{"_eq": "bob"->value})).toEqual([])
+    set(memory, "a", entity)
+    t.expect(query(memory, "owner", dict{"_eq": "alice"->value})).toEqual([])
+    t.expect(query(memory, "owner", dict{"_eq": "bob"->value})).toEqual(["a"])
+  })
+
   it("keys equal decimals independently of constructor formatting", t => {
     let memory = make()
     let price = BigDecimal.fromStringUnsafe("1e21")
@@ -62,7 +150,8 @@ describe("In-memory equality index construction", () => {
         ~entityName="Item",
         ~table,
       )
-    t.expect(memory->InMemoryTable.Entity.isFullyLoaded(~filter=equivalent)).toBe(true)
+    // Constructor-dependent equality cannot safely reuse a value-key bucket.
+    t.expect(memory->InMemoryTable.Entity.isFullyLoaded(~filter=equivalent)).toBe(false)
   })
 
   it("visits each candidate bucket once for repeated _in values", t => {
@@ -70,7 +159,8 @@ describe("In-memory equality index construction", () => {
     let reads = ref(0)
     for i in 0 to 199 {
       let id = i->Int.toString
-      set(memory, id, countedEntity(id, "alice", () => reads := reads.contents + 1))
+      set(memory, id, {"id": id, "owner": "alice"})
+      countOwnerReads(memory, id, () => reads := reads.contents + 1)
     }
     let matches = query(memory, "owner", dict{"_in": Array.make(~length=200, "alice")->value})
     t.expect(matches->Array.length).toBe(200)
@@ -100,7 +190,8 @@ describe("In-memory equality index construction", () => {
     let reads = ref(0)
     for i in 0 to 599 {
       let id = i->Int.toString
-      set(memory, id, countedEntity(id, `owner-${id}`, () => reads := reads.contents + 1))
+      set(memory, id, {"id": id, "owner": `owner-${id}`})
+      countOwnerReads(memory, id, () => reads := reads.contents + 1)
     }
     for i in 0 to 299 {
       let id = i->Int.toString
