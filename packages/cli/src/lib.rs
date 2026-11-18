@@ -5,6 +5,8 @@ mod address_store;
 mod block_hash_pagination;
 mod block_selection;
 mod block_store;
+#[allow(dead_code)]
+mod chain_buffer;
 mod cli_args;
 mod clickhouse;
 mod client_filtered_contracts;

@@ -1,0 +1,86 @@
+//! A page joins the buffer: its block hashes are checked against the stored
+//! ones first, and on a mismatch nothing of it is merged.
+
+use napi_derive::napi;
+
+use super::page::PageData;
+use super::table::{make_key, Table, POSITION_BITS};
+use super::{Ecosystem, Shared, Tables};
+
+/// The lowest block whose received hash differs from the stored one.
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HashMismatch {
+    pub block_number: i64,
+    pub stored_hash: String,
+    pub received_hash: String,
+}
+
+/// The lowest block at or above `from_block` both tables hold a hash for,
+/// where they differ.
+pub(crate) fn first_hash_mismatch(
+    stored: &Table,
+    incoming: &Table,
+    from_block: u64,
+    ecosystem: Ecosystem,
+) -> Option<HashMismatch> {
+    let column = ecosystem.hash_column();
+    incoming
+        .rows_in_block_range(from_block, u64::MAX >> POSITION_BITS)
+        .find_map(|row| {
+            let received = row.bytes_at(column)?;
+            let stored = stored.find(make_key(row.block_number(), 0), 0)?;
+            let stored = stored.bytes_at(column)?;
+            (stored != received).then(|| HashMismatch {
+                block_number: row.block_number() as i64,
+                stored_hash: ecosystem.hash_text(stored),
+                received_hash: ecosystem.hash_text(received),
+            })
+        })
+}
+
+pub(crate) struct Merged {
+    pub(crate) mismatch: Option<HashMismatch>,
+    pub(crate) rows_kept: usize,
+    pub(crate) registering_blocks: Vec<u64>,
+}
+
+/// Merges `page` into `tables` unless its hashes at or above
+/// `reorg_threshold` disagree with the stored ones; `report_only` merges it
+/// even then.
+pub(crate) fn merge_page(
+    shared: &Shared,
+    tables: &mut Tables,
+    mut page: PageData,
+    reorg_threshold: u64,
+    report_only: bool,
+) -> Merged {
+    let mismatch = first_hash_mismatch(
+        &tables.blocks,
+        &page.blocks,
+        reorg_threshold,
+        page.ecosystem,
+    );
+    if mismatch.is_some() && !report_only {
+        return Merged {
+            mismatch,
+            rows_kept: 0,
+            registering_blocks: Vec::new(),
+        };
+    }
+    let rows_kept = tables.events.merge_table(&page.events) + tables.decoded.merge(&page.decoded);
+    tables.transactions.merge_table(&page.transactions);
+    tables.blocks.merge_table(&page.blocks);
+    let mut registering_blocks = std::mem::take(&mut page.registering_blocks);
+    registering_blocks.extend(
+        page.decoded
+            .registering_blocks(|registration| shared.has_contract_register(registration)),
+    );
+    registering_blocks.sort_unstable();
+    registering_blocks.dedup();
+    Merged {
+        mismatch,
+        rows_kept,
+        registering_blocks,
+    }
+}
