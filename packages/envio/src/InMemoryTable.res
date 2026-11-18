@@ -342,25 +342,29 @@ module Entity = {
       switch filter->singleFieldValues {
       | Some((fieldName, fieldValues)) =>
         let bucket = inMemTable->getOrCreateEqBucket(~table, ~fieldName)
+        let visitedKeys = Utils.Set.make()
         fieldValues->Array.forEach(fieldValue => {
           let valueKey = bucket.keyOf(fieldValue)
-          switch bucket.byValue->Utils.Map.get(valueKey) {
-          | Some(indexes) => indexes->Array.push(index)->ignore
-          | None => bucket.byValue->Utils.Map.set(valueKey, [index])->ignore
-          }
-          switch bucket.entityIdsByValue->Utils.Map.get(valueKey) {
-          | None => ()
-          | Some(ids) =>
-            ids->Utils.Set.forEach(entityId => {
-              let change = inMemTable.latestEntityChangeById->Dict.getUnsafe(entityId)
-              switch change->mapChangeToEntity {
-              | Some(entity) =>
-                if index.matcher(entity) {
-                  inMemTable->addToIndex(~index, ~entityId)
+          if !(visitedKeys->Utils.Set.has(valueKey)) {
+            visitedKeys->Utils.Set.add(valueKey)->ignore
+            switch bucket.byValue->Utils.Map.get(valueKey) {
+            | Some(indexes) => indexes->Array.push(index)->ignore
+            | None => bucket.byValue->Utils.Map.set(valueKey, [index])->ignore
+            }
+            switch bucket.entityIdsByValue->Utils.Map.get(valueKey) {
+            | None => ()
+            | Some(ids) =>
+              ids->Utils.Set.forEach(entityId => {
+                let change = inMemTable.latestEntityChangeById->Dict.getUnsafe(entityId)
+                switch change->mapChangeToEntity {
+                | Some(entity) =>
+                  if index.matcher(entity) {
+                    inMemTable->addToIndex(~index, ~entityId)
+                  }
+                | None => ()
                 }
-              | None => ()
-              }
-            })
+              })
+            }
           }
         })
       | None =>

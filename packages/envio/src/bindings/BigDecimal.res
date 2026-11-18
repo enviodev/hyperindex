@@ -22,6 +22,7 @@ type rec t = {
 // Methods
 @send external toString: t => string = "toString"
 @send external toFixed: t => string = "toFixed"
+@send external toExponential: t => string = "toExponential"
 let toInt = (b: t): option<int> => b->toString->Int.fromString
 @send external toNumber: t => float = "toNumber"
 

@@ -386,7 +386,7 @@ let bigDecimal = nullSafe({
   eq: (a, b) => BigDecimal.equals(a->asBigDecimal, b->asBigDecimal),
   gt: (a, b) => BigDecimal.gt(a->asBigDecimal, b->asBigDecimal),
   lt: (a, b) => BigDecimal.lt(a->asBigDecimal, b->asBigDecimal),
-  key: v => v->asBigDecimal->BigDecimal.toString->(Utils.magic: string => unknown),
+  key: v => v->asBigDecimal->BigDecimal.toExponential->(Utils.magic: string => unknown),
 })
 
 let getTime = (v: unknown) => v->(Utils.magic: unknown => Date.t)->Date.getTime
@@ -616,9 +616,27 @@ let makeMatcher = (filter: t, ~table: Table.table): matcher => {
           let set = fieldValues->Utils.Set.fromArray
           entity => set->Utils.Set.has(entity->getField(fieldName))
         } else {
+          let valuesByKey = Utils.Map.make()
+          fieldValues->Array.forEach(
+            candidate => {
+              let key = compare.key(candidate)
+              switch valuesByKey->Utils.Map.get(key) {
+              | Some(values) => values->Array.push(candidate)->ignore
+              | None => valuesByKey->Utils.Map.set(key, [candidate])->ignore
+              }
+            },
+          )
           entity => {
             let entityFieldValue = entity->getField(fieldName)
-            fieldValues->Array.some(candidate => compare.eq(entityFieldValue, candidate))
+            if entityFieldValue->nullish {
+              false
+            } else {
+              switch valuesByKey->Utils.Map.get(compare.key(entityFieldValue)) {
+              | None => false
+              | Some(values) =>
+                values->Array.some(candidate => compare.eq(entityFieldValue, candidate))
+              }
+            }
           }
         }
       | _ =>

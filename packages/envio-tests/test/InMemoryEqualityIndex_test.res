@@ -8,6 +8,7 @@ let table = Table.mkTable(
   ~fields=[
     Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
     Table.mkField("owner", String, ~isIndex=true, ~fieldSchema=S.string),
+    Table.mkField("price", BigDecimal({}), ~isIndex=true, ~fieldSchema=S.string),
     Table.mkField("createdAt", Date, ~isIndex=true, ~fieldSchema=S.string),
     Table.mkField("tag", Bytea, ~isIndex=true, ~fieldSchema=S.string),
     Table.mkField("metadata", Json, ~isIndex=true, ~fieldSchema=S.json(~validate=false)),
@@ -40,6 +41,60 @@ let countedEntity: (string, string, unit => unit) => Internal.entity = %raw(`
 `)
 
 describe("In-memory equality index construction", () => {
+  it("keys equal decimals independently of constructor formatting", t => {
+    let memory = make()
+    let price = BigDecimal.fromStringUnsafe("1e21")
+    let decimalWithPlainFormat: BigDecimal.t => BigDecimal.t = %raw(`value => {
+      const Decimal = value.constructor.clone({EXPONENTIAL_AT: 100})
+      return new Decimal("1000000000000000000000")
+    }`)
+    let plainPrice = decimalWithPlainFormat(price)
+    set(memory, "a", {"id": "a", "price": price})
+    t.expect(query(memory, "price", dict{"_eq": plainPrice->value})).toEqual(["a"])
+    let filter =
+      dict{"price": dict{"_eq": plainPrice->value}}->EntityFilter.parseOrThrow(
+        ~entityName="Item",
+        ~table,
+      )
+    memory->InMemoryTable.Entity.recordLoadedValues(~filter, ~table)
+    let equivalent =
+      dict{"price": dict{"_eq": price->value}}->EntityFilter.parseOrThrow(
+        ~entityName="Item",
+        ~table,
+      )
+    t.expect(memory->InMemoryTable.Entity.isFullyLoaded(~filter=equivalent)).toBe(true)
+  })
+
+  it("visits each candidate bucket once for repeated _in values", t => {
+    let memory = make()
+    let reads = ref(0)
+    for i in 0 to 199 {
+      let id = i->Int.toString
+      set(memory, id, countedEntity(id, "alice", () => reads := reads.contents + 1))
+    }
+    let matches = query(memory, "owner", dict{"_in": Array.make(~length=200, "alice")->value})
+    t.expect(matches->Array.length).toBe(200)
+    t.expect(reads.contents < 1000).toBe(true)
+  })
+
+  it("matches distinct Date values without rescanning the whole _in list", t => {
+    let memory = make()
+    let comparisons = ref(0)
+    let countedDate: (int, unit => unit) => unknown = %raw(`(time, count) => {
+      const date = new Date(time)
+      date.getTime = () => { count(); return time }
+      return date
+    }`)
+    let dates = []
+    for i in 0 to 199 {
+      let date = countedDate(i, () => comparisons := comparisons.contents + 1)
+      set(memory, i->Int.toString, {"id": i->Int.toString, "createdAt": date})
+      dates->Array.push(date)->ignore
+    }
+    t.expect(query(memory, "createdAt", dict{"_in": dates->value})->Array.length).toBe(200)
+    t.expect(comparisons.contents < 3000).toBe(true)
+  })
+
   it("scans a field once across many distinct equality queries", t => {
     let memory = make()
     let reads = ref(0)
