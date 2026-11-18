@@ -8,7 +8,7 @@ describe("ChainState reorg threshold", () => {
 
   let makeChainState = (~knownHeight, ~maxReorgDepth, ~scannedHashes) => {
     let addressStore = AddressStore.make(~ecosystem=Evm, ~contracts=[])
-    let base = FetchState.make(
+    let base = TestFetchState.make(
       ~onNotice=ignore,
       ~onEventRegistrations=[],
       ~addressStore,
@@ -51,6 +51,7 @@ describe("ChainState reorg threshold", () => {
     let cs = ChainState.make(
       ~chainConfig=baseChainConfig,
       ~fetchState,
+      ~eventStore=base->TestFetchState.eventStoreOf,
       ~addressStore,
       ~sourceManager=SourceManager.make(
         ~logger=Logger.makeInMemory(),
@@ -146,6 +147,7 @@ describe("ChainState reorg threshold", () => {
       checkpointItemsCount: [],
       checkpointEventsProcessed: [],
       registeredAddresses: [],
+      fieldReads: [],
     }
 
     cs->ChainState.applyBatchProgress(~batch, ~blockTimestampName="timestamp")

@@ -13,7 +13,7 @@ let decodeLogs = async (
   // Contract that owns `mockAddress`, if any. Without one the emitter is
   // unregistered and only wildcard registrations route.
   ~ownedBy: option<string>=?,
-): array<EvmEventItem.t> => {
+): array<TestEventStore.evmLog> => {
   // logIndex must be unique per log within the block — the client dedups a
   // page's items by (blockNumber, logIndex).
   let logJsons =
@@ -78,7 +78,7 @@ let decodeLogs = async (
         ~maxAddressesPerRequest=Env.maxAddrInPartition,
         ~logger=Logger.makeInMemory(),
       )
-      let (result, _, _) = await client.getNextPage(
+      let (_, _, _, items) = await client.getNextPage(
         {
           fromBlock: 0,
           toBlockCeiling: 0,
@@ -94,7 +94,9 @@ let decodeLogs = async (
         BlockStore.make(~ecosystem=Ecosystem.Evm),
         TransactionStore.make(~ecosystem=Ecosystem.Evm),
       )
-      result.eventItems
+      items->TestEventStore.evmLogsOf(
+        ~registrationIndexes=eventRegistrations->Array.map(reg => reg.index),
+      )
     },
   )
 }

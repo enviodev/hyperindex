@@ -73,23 +73,14 @@ module EventItems = {
     clientFilteredContracts: option<array<string>>,
   }
 
-  // One routed receipt with its kind-specific columns flattened: LogData
-  // carries `params` decoded against the ABI (a receipt its logged type
-  // rejects is dropped in Rust), Mint/Burn carry `val`/`subId`,
-  // Transfer/TransferOut/Call carry `amount`/`assetId`/`to` (TransferOut's
-  // wallet recipient normalised into `to`).
+  // One routed receipt with the params its handler receives, built in Rust
+  // for every receipt kind.
   type item = {
-    onEventRegistrationIndex: int,
     receiptIndex: int,
     txId: string,
     blockHeight: int,
     srcAddress: Address.t,
-    params?: Internal.eventParams,
-    subId?: string,
-    val?: bigint,
-    amount?: bigint,
-    assetId?: string,
-    to?: string,
+    params: Internal.eventParams,
   }
 
   // The page's first LogData receipt a contract-bound registration's ABI
@@ -106,7 +97,6 @@ module EventItems = {
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    items: array<item>,
     rejectedLogData: array<rejectedLogData>,
   }
 }
@@ -130,14 +120,14 @@ let make = (cfg: cfg, ~eventRegistrations, ~addressStore) => {
   )
 }
 
-// Returns the routed items/blocks plus the page's block store (Fuel blocks
-// keyed by height); the store's ids drive reorg detection on merge.
+// Returns what the page covered, its block store (Fuel blocks keyed by
+// height, whose ids drive reorg detection on merge) and its routed items.
 @send
 external getEventItems: (
   t,
   EventItems.query,
   AddressSet.t,
-) => promise<(EventItems.response, BlockStore.t)> = "getEventItems"
+) => promise<(EventItems.response, BlockStore.t, EventStore.t)> = "getEventItems"
 
 @send
 external getHeight: t => promise<int> = "getHeight"

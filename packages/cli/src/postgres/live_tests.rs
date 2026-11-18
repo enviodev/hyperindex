@@ -40,6 +40,7 @@ fn client_with(max_connections: usize) -> PgClient {
         application_name: Some("envio-live-test".to_string()),
         extra_ca_file: None,
         connect_timeout: std::time::Duration::from_secs(30),
+        keepalive: super::client::Keepalive::default(),
     })
     .expect("the pool is built from a static configuration")
 }
@@ -1067,6 +1068,33 @@ fn says_the_connection_went(message: &Option<String>) -> bool {
         message.as_deref(),
         Some("connection closed") | Some("terminating connection due to administrator command")
     )
+}
+
+/// A COMMIT asked of a connection the driver already knows is gone never
+/// reaches the server, which rolls the transaction back as the session ends.
+/// That one is known not to have committed, so the batch can be written again;
+/// a COMMIT that went out before the connection did cannot be told apart.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_commit_on_a_connection_known_gone_was_never_sent() {
+    let client = pinned_client();
+    let transaction = client.begin().await.unwrap();
+    let (rows, _) = transaction
+        .query("SELECT pg_backend_pid()", &[])
+        .await
+        .unwrap();
+    let pid = rows.first().expect("one row").get::<_, i32>(0);
+    terminate(pid).await;
+    // Real time: the driver reads the end of the socket a moment after the
+    // server closes it.
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+
+    let committed = transaction.commit().await;
+
+    assert_eq!(
+        committed.map_err(|error| super::error::was_never_sent(&error)),
+        Err(true)
+    );
 }
 
 /// A transaction holds its connection until it ends, so one that ends by having

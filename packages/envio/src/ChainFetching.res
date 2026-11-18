@@ -8,12 +8,13 @@ type partitionQueryResponse = {
   query: FetchState.query,
 }
 
-let hasContractRegister = (item: Internal.item) =>
-  switch item {
-  | Event({onEventRegistration: {contractRegister: Some(_)}}) => true
-  | Block({onBlockRegistration: {contractRegister: ?Some(_)}}) => true
-  | Event(_) | Block(_) => false
-  }
+let contractRegisterIndexes = (context: StoredItems.context) =>
+  context.onEventRegistrations->Array.filterMap(registration =>
+    switch registration {
+    | {contractRegister: Some(_), index} => Some(index)
+    | _ => None
+    }
+  )
 
 let invokeContractRegister = (runtime: HandlerRuntime.t, item: Internal.item) =>
   switch item {
@@ -50,22 +51,14 @@ let invokeContractRegister = (runtime: HandlerRuntime.t, item: Internal.item) =>
 
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
+  ~readFields: unit => promise<unit>,
   ~runtime: HandlerRuntime.t,
   ~chainState: ChainState.t,
 ) => {
-  // contractRegister handlers can read event.transaction and event.block, so
-  // materialise the selected fields onto the payloads before running them. All
-  // items belong to the chain being fetched, and both stores are the chain's
-  // own, which this response's pages have already been merged into.
-  // A subgraph's block register passes ride along; their blocks have no page.
-  await ChainState.materializePageItems(
-    ~items=Env.subgraphMode.contents
-      ? itemsWithContractRegister->Array.filter(item => item->Internal.getItemKind === 0)
-      : itemsWithContractRegister,
-    ~transactionStore=chainState->ChainState.transactionStore,
-    ~blockStore=chainState->ChainState.blockStore,
-    ~shouldChecksum=chainState->ChainState.shouldChecksum,
-  )
+  // contractRegister handlers can read event.transaction and event.block. The
+  // read is from the chain's stores, which this response's pages have been
+  // merged into by now.
+  await readFields()
 
   // Every run of the response adds into the same registrations, in call order.
   let registrations: array<AddressStore.registration> = []
@@ -167,7 +160,12 @@ let runRegisterPassesOrThrow = async (
     let chunk = items->Array.slice(~start=start.contents, ~end=start.contents + blockRegisterChunk)
     registrations
     ->Array.pushMany(
-      await runContractRegistersOrThrow(~itemsWithContractRegister=chunk, ~runtime, ~chainState),
+      await runContractRegistersOrThrow(
+        ~itemsWithContractRegister=chunk,
+        ~readFields=() => Promise.resolve(),
+        ~runtime,
+        ~chainState,
+      ),
     )
     ->ignore
     start := start.contents + blockRegisterChunk
@@ -190,10 +188,14 @@ let sortRegistrations = (registrations: array<AddressStore.registration>) =>
 // the registrations and the last block passed, if the block passes advanced.
 let runResponsePassesOrThrow = async (
   ~eventItems: array<Internal.item>,
+  ~readFields: unit => promise<unit>,
   ~through,
   ~runtime: HandlerRuntime.t,
   ~chainState: ChainState.t,
 ) => {
+  // The events' transactions and blocks, for every window's passes. A block
+  // pass reads only its block's number.
+  await readFields()
   let registrations = []
   let eventIdx = ref(0)
   let passedThrough = ref(None)
@@ -276,25 +278,35 @@ let rec onQueryResponse = async (
   } else {
     let chainState = state->IndexerState.getChainState(~chainId)
     let {
-      parsedQueueItems,
+      items: page,
       transactionStore,
       blockStore,
       latestFetchedBlockNumber,
       stats,
       knownHeight,
     } = response
+    let numEvents = page->EventStore.length
 
     chainState->ChainState.recordBlockRangeFetch(
       ~totalTimeElapsed=stats.totalTimeElapsed,
-      ~parsingTimeElapsed=stats.parsingTimeElapsed->Option.getOr(0.),
-      ~numEvents=parsedQueueItems->Array.length,
+      ~numEvents,
       ~blockRangeSize=latestFetchedBlockNumber - query.fromBlock + 1,
     )
 
-    let numContractRegisterEvents =
-      parsedQueueItems->Array.reduce(0, (count, item) =>
-        item->hasContractRegister ? count + 1 : count
+    let itemContext = chainState->ChainState.itemContext
+    // Taken from the page now, since the handlers run before the page merges
+    // into the chain's store. Their transactions and blocks are read from the
+    // chain's stores once this response's pages have merged into them.
+    let (itemsWithContractRegister, readFields) = switch itemContext->contractRegisterIndexes {
+    | [] => ([], () => Promise.resolve())
+    | registrationIndexes =>
+      page->StoredItems.eventsOfRegistrations(
+        registrationIndexes,
+        ~context=itemContext,
+        ~fields=chainState->ChainState.itemFields,
       )
+    }
+    let numContractRegisterEvents = itemsWithContractRegister->Array.length
     if numContractRegisterEvents === 0 {
       chainState
       ->ChainState.logger
@@ -304,7 +316,7 @@ let rec onQueryResponse = async (
           "partitionId": query.partitionId,
           "fromBlock": query.fromBlock,
           "toBlock": latestFetchedBlockNumber,
-          "numEvents": parsedQueueItems->Array.length,
+          "numEvents": numEvents,
         },
       )
     } else {
@@ -316,7 +328,7 @@ let rec onQueryResponse = async (
           "partitionId": query.partitionId,
           "fromBlock": query.fromBlock,
           "toBlock": latestFetchedBlockNumber,
-          "numEvents": parsedQueueItems->Array.length,
+          "numEvents": numEvents,
           "numContractRegisterEvents": numContractRegisterEvents,
         },
       )
@@ -393,29 +405,20 @@ let rec onQueryResponse = async (
       // effectiveStartBlock, a wildcard param referencing an address registered
       // after the log's block, or a registration whose own start block is later
       // than its contract's) are already dropped by the source's native gates,
-      // so everything here is indexable.
-      let newItems = parsedQueueItems
-      let itemsWithContractRegister = []
-      for idx in 0 to newItems->Array.length - 1 {
-        let item = newItems->Array.getUnsafe(idx)
-        if item->hasContractRegister {
-          itemsWithContractRegister->Array.push(item)
-        }
-      }
+      // so everything in the page is indexable.
 
       // Re-check staleness: contract registration is async, so the chain state
       // may have rolled back by the time we apply the fetched items.
       let proceed = (
         ~newRegistrations,
         ~blockRegisterThrough=?,
-        ~newItems=newItems,
         ~latestFetchedBlock=latestFetchedBlockNumber,
       ) =>
         if !(state->IndexerState.isStale(~stateId)) {
           applyQueryResponse(
             state,
             ~chainId,
-            ~newItems,
+            ~page,
             ~newRegistrations,
             ~knownHeight,
             ~latestFetchedBlock,
@@ -447,7 +450,7 @@ let rec onQueryResponse = async (
         let (previous, finish) = chainState->ChainState.queueBlockRegisterRun
         let held =
           chainState->ChainState.holdExtraBudget(
-            ~items=Pervasives.max(0, newItems->Array.length - query.itemsEst),
+            ~items=Pervasives.max(0, numEvents - query.itemsEst),
           )
         await previous
         if state->IndexerState.isStale(~stateId) {
@@ -471,17 +474,24 @@ let rec onQueryResponse = async (
           | _ => None
           }
           let through = cutAt->Option.getOr(blockRegisterCeiling)
-          let (newItems, eventItems, latestFetchedBlock) = if cutAt !== None {
-            let isKept = item => item->Internal.getItemBlockNumber <= through
+          let (eventItems, latestFetchedBlock) = if cutAt !== None {
+            page->EventStore.rollback(through)
             (
-              newItems->Array.filter(isKept),
-              itemsWithContractRegister->Array.filter(isKept),
+              itemsWithContractRegister->Array.filter(item =>
+                item->Internal.getItemBlockNumber <= through
+              ),
               through,
             )
           } else {
-            (newItems, itemsWithContractRegister, latestFetchedBlockNumber)
+            (itemsWithContractRegister, latestFetchedBlockNumber)
           }
-          switch await runResponsePassesOrThrow(~eventItems, ~through, ~runtime, ~chainState) {
+          switch await runResponsePassesOrThrow(
+            ~eventItems,
+            ~readFields,
+            ~through,
+            ~runtime,
+            ~chainState,
+          ) {
           | exception exn =>
             finish()
             IndexerState.errorExit(
@@ -490,7 +500,7 @@ let rec onQueryResponse = async (
             )
           | (newRegistrations, blockRegisterThrough) =>
             chainState->ChainState.releaseExtraBudget(held)
-            proceed(~newRegistrations, ~blockRegisterThrough?, ~newItems, ~latestFetchedBlock)
+            proceed(~newRegistrations, ~blockRegisterThrough?, ~latestFetchedBlock)
             finish()
           }
         }
@@ -501,12 +511,13 @@ let rec onQueryResponse = async (
         let held = Env.subgraphMode.contents
           ? Some(
               chainState->ChainState.holdExtraBudget(
-                ~items=Pervasives.max(0, newItems->Array.length - query.itemsEst),
+                ~items=Pervasives.max(0, numEvents - query.itemsEst),
               ),
             )
           : None
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
+          ~readFields,
           ~runtime,
           ~chainState,
         ) {
@@ -526,18 +537,23 @@ let rec onQueryResponse = async (
 and applyQueryResponse = (
   state: IndexerState.t,
   ~chainId,
-  ~newItems,
+  ~page,
   ~newRegistrations,
   ~knownHeight,
   ~latestFetchedBlock,
   ~query,
 ) => {
   let chainState = state->IndexerState.getChainState(~chainId)
+  // Read before the page merges into the chain's store, which empties it.
+  let firstEventBlockNumber =
+    state->IndexerState.exitAfterFirstEventBlock
+      ? page->EventStore.firstEventBlockNumber->Null.toOption
+      : None
 
   chainState->ChainState.handleQueryResult(
     ~query,
     ~latestFetchedBlock,
-    ~newItems,
+    ~page,
     ~newRegistrations,
     ~knownHeight,
   )
@@ -559,14 +575,8 @@ and applyQueryResponse = (
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
   if state->IndexerState.exitAfterFirstEventBlock {
-    switch newItems->Array.find(item =>
-      switch item {
-      | Internal.Event(_) => true
-      | Block(_) => false
-      }
-    ) {
-    | Some(item) =>
-      chainState->ChainState.setEndBlockToFirstEvent(~blockNumber=item->Internal.getItemBlockNumber)
+    switch firstEventBlockNumber {
+    | Some(blockNumber) => chainState->ChainState.setEndBlockToFirstEvent(~blockNumber)
     | None => ()
     }
   }

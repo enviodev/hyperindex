@@ -192,7 +192,7 @@ fn start_clickhouse() -> ClickHouse {
     <path>{dir}/data/</path>
     <tmp_path>{dir}/tmp/</tmp_path>
     <user_files_path>{dir}/user_files/</user_files_path>
-    <user_directories><users_xml><path>{root}/users.xml</path></users_xml></user_directories>
+    <user_directories><users_xml><path>{root}/users.xml</path></users_xml><local_directory><path>{dir}/access/</path></local_directory></user_directories>
     <mark_cache_size>134217728</mark_cache_size>
     <max_server_memory_usage_to_ram_ratio>0.2</max_server_memory_usage_to_ram_ratio>
     <macros><cluster>envio</cluster><shard>01</shard><replica>{name}</replica></macros>

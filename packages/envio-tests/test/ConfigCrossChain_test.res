@@ -118,7 +118,7 @@ type Counter @crossChain {
       ),
     )).toEqual((
       Some(
-        "`Counter.chainId` is not allowed, since envio sets `chainId` on every per-chain entity for you. Either rename the field, or add `@crossChain` to `Counter` — its rows are then shared across chains and the field is yours to set.",
+        "`Counter.chainId` is not allowed, since envio sets `chainId` on every per-chain entity for you. Either rename the field, or add `@crossChain` to `Counter`, so its rows are shared across chains and the field is yours to set.",
       ),
       // Cross-chain entities have nothing appended, so the name is free.
       None,

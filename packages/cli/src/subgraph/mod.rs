@@ -3613,7 +3613,7 @@ dataSources:
             let project_paths =
                 ParsedProjectPaths::new(project.path().to_str().unwrap(), "config.yaml").unwrap();
             let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
-            let chains: Vec<u64> = config.get_chains().iter().map(|chain| chain.id).collect();
+            let chains: Vec<u64> = config.chains.values().map(|chain| chain.id).collect();
             let notices = config
                 .subgraph
                 .map(|subgraph| subgraph.notices)
@@ -4038,7 +4038,7 @@ type Renewal implements Event @entity {
 
         fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=arbitrum-one\n").unwrap();
         let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
-        let chain = config.get_chains().into_iter().next().unwrap();
+        let chain = config.chains.values().next().unwrap();
         let contract = &chain.contracts[0];
 
         assert_eq!(
@@ -4163,7 +4163,7 @@ type Renewal implements Event @entity {
 
         assert_eq!(
             (
-                config.get_chains().into_iter().next().unwrap().id,
+                config.chains.values().next().unwrap().id,
                 ambiguous.ends_with(
                     "Pick one, as `graph build --network` does:\n  ENVIO_SUBGRAPH_NETWORK=mainnet"
                 ),
@@ -4621,7 +4621,7 @@ type Renewal implements Event @entity {
     }
 
     fn chain_of(config: &SystemConfig) -> (u64, Vec<String>) {
-        let chain = config.get_chains().into_iter().next().unwrap();
+        let chain = config.chains.values().next().unwrap();
         (chain.id, chain.contracts[0].addresses.clone())
     }
 

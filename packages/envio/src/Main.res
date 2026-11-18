@@ -434,6 +434,7 @@ let migrateStorage = (persistence, ~config: Config.t, ~logger, ~reset) =>
     ~envioInfo=config.envioInfo,
     ~resetCommand="envio local db-migrate setup"->Config.withProjectFlags(~config),
     ~runCommand=None,
+    ~addChainCommand=?config->Config.addChainCommand,
     ~lowercaseAddresses=config.lowercaseAddresses,
     // A migration command runs once and exits, with nobody watching it recover:
     // an unreachable chain should say so now rather than hold the command open.

@@ -454,7 +454,7 @@ let getEntityFromState = (
         )
         ->Array.join(", ")
       JsError.throwWithMessage(
-        `Entity \`${entityConfig.name}\` with id \`${entityId}\` exists on multiple chains (${chains}) — use getWhere({${field.fieldName}: {_eq: ...}}) to pick one.`,
+        `Entity \`${entityConfig.name}\` with id \`${entityId}\` exists on multiple chains (${chains}). Use getWhere({${field.fieldName}: {_eq: ...}}) to pick one.`,
       )
     }
   }
@@ -463,17 +463,17 @@ let getEntityFromState = (
 let makeEntityGet = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
   string => promise<option<Internal.entity>>
 ) => {
-  entityId => {
-    Promise.resolve(getEntityFromState(~state, ~entityConfig, ~entityId, ~methodName="get"))
+  async entityId => {
+    getEntityFromState(~state, ~entityConfig, ~entityId, ~methodName="get")
   }
 }
 
 let makeEntityGetOrThrow = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
   (string, ~message: string=?) => promise<Internal.entity>
 ) => {
-  (entityId, ~message=?) => {
+  async (entityId, ~message=?) => {
     switch getEntityFromState(~state, ~entityConfig, ~entityId, ~methodName="getOrThrow") {
-    | Some(entity) => Promise.resolve(entity)
+    | Some(entity) => entity
     | None =>
       let msg = switch message {
       | Some(m) => m
@@ -523,14 +523,14 @@ let makeEntitySet = (~state: testIndexerState, ~entityConfig: Internal.entityCon
 let makeEntityGetAll = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
   unit => promise<array<Internal.entity>>
 ) => {
-  () => {
+  async () => {
     if state.processInProgress {
       JsError.throwWithMessage(
         `Cannot call ${entityConfig.name}.getAll() while indexer.process() is running. ` ++ "Wait for process() to complete before accessing entities directly.",
       )
     }
     let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
-    Promise.resolve(entityDict->Dict.valuesToArray->Array.map(copyEntity))
+    entityDict->Dict.valuesToArray->Array.map(copyEntity)
   }
 }
 
@@ -541,7 +541,7 @@ let makeEntityGetAll = (~state: testIndexerState, ~entityConfig: Internal.entity
 let makeEntityGetWhere = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
   dict<dict<unknown>> => promise<array<Internal.entity>>
 ) => {
-  filter => {
+  async filter => {
     if state.processInProgress {
       JsError.throwWithMessage(
         `Cannot call ${entityConfig.name}.getWhere() while indexer.process() is running. ` ++ "Wait for process() to complete before accessing entities directly.",
@@ -552,7 +552,7 @@ let makeEntityGetWhere = (~state: testIndexerState, ~entityConfig: Internal.enti
       ->EntityFilter.parseOrThrow(~entityName=entityConfig.name, ~table=entityConfig.table)
       ->EntityFilter.makeMatcher(~table=entityConfig.table)
     let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
-    Promise.resolve(entityDict->Dict.valuesToArray->Array.filter(matcher)->Array.map(copyEntity))
+    entityDict->Dict.valuesToArray->Array.filter(matcher)->Array.map(copyEntity)
   }
 }
 
@@ -620,6 +620,8 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   dumpEffectCache: async () => (),
   reset: async () => (),
   setChainMeta: async _ => Obj.magic(),
+  readFrontier: async () =>
+    JsError.throwWithMessage("The test indexer's writes never leave a COMMIT in doubt"),
   pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
   pruneStaleEntityHistory: async (~entityConfig as _, ~safeCheckpoints as _) => (),
   getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
@@ -821,8 +823,10 @@ let createTestIndexer = (): t<'processConfig> => {
   result->Dict.set(
     "process",
     (
-      processConfig => {
-        // Check if already processing
+      async processConfig => {
+        // Keep every await below `state.processInProgress = true`: the body
+        // runs synchronously up to its first await, which is what makes a
+        // second concurrent call see the flag and reject.
         if state.processInProgress {
           JsError.throwWithMessage(
             "createTestIndexer process is already running. Only one process call is allowed at a time",
@@ -980,25 +984,18 @@ let createTestIndexer = (): t<'processConfig> => {
           }
         }
 
-        // Set flag before starting the run
         state.processInProgress = true
-
-        // Run chains sequentially, one at a time
-        let rec runChains = idx => {
-          if idx >= chainEntries->Array.length {
-            state.processInProgress = false
-            Promise.resolve({changes: state.processChanges})
-          } else {
-            runChainInProcess(chainEntries->Array.getUnsafe(idx))->Promise.then(_ =>
-              runChains(idx + 1)
-            )
+        try {
+          for idx in 0 to chainEntries->Array.length - 1 {
+            await runChainInProcess(chainEntries->Array.getUnsafe(idx))
           }
-        }
-
-        runChains(0)->Promise.catch(err => {
           state.processInProgress = false
-          Promise.reject(err->Utils.prettifyExn)
-        })
+          {changes: state.processChanges}
+        } catch {
+        | exn =>
+          state.processInProgress = false
+          throw(exn->Utils.prettifyExn)
+        }
       }
     )->(Utils.magic: ('a => promise<processResult>) => unknown),
   )

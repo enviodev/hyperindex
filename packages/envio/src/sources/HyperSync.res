@@ -95,8 +95,7 @@ let reraiseIfRecoverable = exn =>
   }
 
 type itemsPage = {
-  eventItems: array<EvmEventItem.t>,
-  blockItems: array<BlockItem.t>,
+  items: EventStore.t,
   nextBlock: int,
   archiveHeight: int,
   responseBlocks: int,
@@ -143,7 +142,10 @@ module GetItems = {
     ~query: HyperSyncClient.Items.query,
     ~addressSet,
   ): itemsPage => {
-    let (res, transactionStore, blockStore) = switch await client.getItems(~query, ~addressSet) {
+    let (res, transactionStore, blockStore, items) = switch await client.getItems(
+      ~query,
+      ~addressSet,
+    ) {
     | res => res
     | exception exn =>
       reraiseIfRecoverable(exn)
@@ -158,8 +160,7 @@ module GetItems = {
     }
 
     {
-      eventItems: res.eventItems,
-      blockItems: res.blockItems,
+      items,
       nextBlock: res.nextBlock,
       responseBlocks: res.responseBlocks,
       // None when the height is 0, or when the page was answered without a

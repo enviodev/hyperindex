@@ -14,9 +14,11 @@ describe("fetch buffer back-pressure for subgraph runs", () => {
 
   let makeChainState = () => {
     let addressStore = AddressStore.make(~ecosystem=Evm, ~contracts=[])
+    let eventStore = EventStore.make()
     let base = FetchState.make(
       ~onEventRegistrations=[],
       ~addressStore,
+      ~eventStore,
       ~addressRows=AddressRows.emptySeedRows(),
       ~onBlockRegistrations=[
         {
@@ -46,6 +48,7 @@ describe("fetch buffer back-pressure for subgraph runs", () => {
     let cs = ChainState.make(
       ~chainConfig=baseChainConfig,
       ~fetchState,
+      ~eventStore,
       ~addressStore,
       ~sourceManager=SourceManager.make(
         ~sources=[mockSource.source],
@@ -71,7 +74,7 @@ describe("fetch buffer back-pressure for subgraph runs", () => {
     let (mode, templates) = before
     Env.subgraphMode := mode
     Env.subgraphHasTemplates := templates
-    t.expect((handlerRun, withoutTemplates, withTemplates)).toEqual((100_000, 100_000, 10_000))
+    t.expect((handlerRun, withoutTemplates, withTemplates)).toEqual((200_000, 200_000, 10_000))
   })
 
   it("keeps a response's size beyond its estimate reserved while its passes run", t => {

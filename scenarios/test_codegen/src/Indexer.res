@@ -2853,13 +2853,13 @@ type indexerChain = {
 
 /** Strongly-typed record of chain configurations keyed by chain ID. */
 type indexerChains = {
+  \"1337": indexerChain,
   \"1": indexerChain,
   ethereumMainnet: indexerChain,
   \"100": indexerChain,
   gnosis: indexerChain,
   \"137": indexerChain,
   polygon: indexerChain,
-  \"1337": indexerChain,
 }
 
 @tag("contract")
@@ -2922,18 +2922,18 @@ type indexer = {
 /** Get chain configuration by chain ID with exhaustive pattern matching. */
 let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
   switch chainId {
+  | #1337 => indexer.chains.\"1337"
   | #1 => indexer.chains.\"1"
   | #100 => indexer.chains.\"100"
   | #137 => indexer.chains.\"137"
-  | #1337 => indexer.chains.\"1337"
   }
 }
 
 type testIndexerProcessConfigChains = {
+  \"1337"?: TestIndexer.evmChainConfig,
   \"1"?: TestIndexer.evmChainConfig,
   \"100"?: TestIndexer.evmChainConfig,
   \"137"?: TestIndexer.evmChainConfig,
-  \"1337"?: TestIndexer.evmChainConfig,
 }
 
 type testIndexerProcessConfig = {

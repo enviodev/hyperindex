@@ -275,8 +275,6 @@ module Items = {
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    eventItems: array<EvmEventItem.t>,
-    blockItems: array<BlockItem.t>,
     // Blocks the server returned for the query, counted before routing drops
     // the ones no item joins to.
     responseBlocks: int,
@@ -287,12 +285,12 @@ type t = {
   // Block-hash query construction and pagination live in Rust; only the
   // aggregate response store crosses the boundary.
   getBlockHashes: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<RequestStat.t>)>,
-  // Returns the response plus page stores owning this page's raw transactions
-  // and blocks.
+  // Returns the response plus page stores owning this page's raw transactions,
+  // blocks and items.
   getItems: (
     ~query: Items.query,
     ~addressSet: AddressSet.t,
-  ) => promise<(Items.response, TransactionStore.t, BlockStore.t)>,
+  ) => promise<(Items.response, TransactionStore.t, BlockStore.t, EventStore.t)>,
   getHeight: unit => promise<int>,
 }
 

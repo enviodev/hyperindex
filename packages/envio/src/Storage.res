@@ -11,10 +11,11 @@ let postgresOptions = (
   ~isHasuraEnabled=false,
   ~maxConnections=Env.Db.maxConnections,
   ~isolated=false,
+  ~port=Env.Db.port,
 ): StorageClient.postgresOptions => {
   {
     host: Env.Db.host,
-    port: Env.Db.port,
+    port,
     user: Env.Db.user,
     password: Env.Db.password,
     database: Env.Db.database,
@@ -74,21 +75,37 @@ let toChainConfig = (chainConfig: Config.chain): StorageClient.chainConfig => {
 }
 
 // A failed operation crosses as what it was doing, with the store's error as
-// its `cause`.
-let storageErrorOf = exn =>
+// its `cause`; a failure the server raised, or one standing in for it, carries
+// its SQLSTATE as the message of the cause.
+let causeOf = exn =>
   switch exn->JsExn.anyToExnInternal {
   | JsExn(error) =>
-    switch (
-      error->(Utils.magic: JsExn.t => {"cause": Nullable.t<unknown>})
-    )["cause"]->Nullable.toOption {
-    | Some(cause) =>
-      Persistence.StorageError({
-        message: error->JsExn.message->Option.getOr(""),
-        reason: cause->JsExn.anyToExnInternal,
-      })
-    | None => exn
-    }
-  | _ => exn
+    (error->(Utils.magic: JsExn.t => {"cause": Nullable.t<unknown>}))["cause"]->Nullable.toOption
+  | _ => None
+  }
+
+// What the addon reports a lost connection as, whatever the server or the
+// socket said.
+let connectionLostCode = "08006"
+
+let isConnectionLost = exn =>
+  exn->causeOf->Option.flatMap(cause => cause->JsExn.anyToExnInternal->Utils.exnMessage) ===
+    Some(connectionLostCode)
+
+// Only for an operation that lands the same however often it runs.
+let throwConnectionLostOr = (exn, ~otherwise) =>
+  exn->isConnectionLost
+    ? throw(Persistence.ConnectionLost(exn->Utils.exnMessage->Option.getOr("")))
+    : otherwise(exn)
+
+let storageErrorOf = exn =>
+  switch exn->causeOf {
+  | Some(cause) =>
+    Persistence.StorageError({
+      message: exn->Utils.exnMessage->Option.getOr(""),
+      reason: cause->JsExn.anyToExnInternal,
+    })
+  | None => exn
   }
 
 // The chain a rollback row belongs to, read from the chain-id column both
@@ -325,11 +342,13 @@ let make = (
     }
     switch await loading {
     | exception exn =>
-      throw(
-        Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage by ${conditions->LoadFilter.describe}.`,
-          reason: exn,
-        }),
+      exn->throwConnectionLostOr(~otherwise=exn =>
+        throw(
+          Persistence.StorageError({
+            message: `Failed loading "${table.tableName}" from storage by ${conditions->LoadFilter.describe}.`,
+            reason: exn,
+          }),
+        )
       )
     | rows =>
       try rows->S.parseOrThrow(table->Table.pgEntityRowsSchema) catch {
@@ -501,10 +520,20 @@ let make = (
       isHyperSync: meta.isHyperSync,
     })
 
-  let setChainMeta = chainsData =>
-    client
-    ->StorageClient.setChainMeta(chainsData->chainMeta)
-    ->Promise.thenResolve(_ => %raw(`undefined`))
+  let readFrontier = async () =>
+    switch await client->StorageClient.readFrontier {
+    | {chainIds, checkpointIds} =>
+      chainIds
+      ->Array.mapWithIndex((chainId, index) => (chainId, checkpointIds->Array.getUnsafe(index)))
+      ->Frontier.fromEntries
+    | exception exn => exn->throwConnectionLostOr(~otherwise=throw)
+    }
+
+  let setChainMeta = async chainsData =>
+    switch await client->StorageClient.setChainMeta(chainsData->chainMeta) {
+    | () => %raw(`undefined`)
+    | exception exn => exn->throwConnectionLostOr(~otherwise=throw)
+    }
 
   let pruneStaleCheckpoints = (~safeCheckpoints) =>
     client->StorageClient.pruneCheckpoints(safeCheckpoints->bounds)
@@ -765,11 +794,16 @@ let make = (
     let postgresStagingSeconds =
       stagingStarted->Performance.secondsSince -. clickHouseOnlyStagingSeconds.contents
 
-    let timings = try await client->StorageClient.writeBatch(input) catch {
+    let {timings, unwritten, uncertain} = try await client->StorageClient.writeBatch(input) catch {
     | exn =>
       // Batches the addon never took, because it refused the call itself.
       client->StorageClient.discardStaged(handles)
       throw(exn->storageErrorOf)
+    }
+    switch (unwritten->Nullable.toOption, uncertain->Nullable.toOption) {
+    | (Some(message), _) => throw(Persistence.ConnectionLost(message))
+    | (_, Some(message)) => throw(Persistence.CommitUncertain(message))
+    | (None, None) => ()
     }
     timings->Array.forEach(({store, seconds}) =>
       onWrite(
@@ -804,6 +838,7 @@ let make = (
     dumpEffectCache,
     reset,
     setChainMeta,
+    readFrontier,
     pruneStaleCheckpoints,
     pruneStaleEntityHistory,
     getRollbackTargetCheckpoint,
@@ -820,6 +855,7 @@ let clientFromEnv = (
   ~pgSchema=Env.Db.publicSchema,
   ~isHasuraEnabled,
   ~maxConnections=?,
+  ~port=?,
 ) =>
   makeClient(
     ~logger,
@@ -829,6 +865,7 @@ let clientFromEnv = (
       ~isHasuraEnabled,
       ~maxConnections?,
       ~isolated=config.isolated,
+      ~port?,
     ),
     ~clickhouse=?config.storage.clickhouse ? Some(ClickHouse.optionsFromEnvOrThrow()) : None,
   )

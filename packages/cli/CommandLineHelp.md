@@ -73,7 +73,7 @@ This document contains the help content for the `envio` command-line program.
 
 Create a new indexer
 
-Quick start — run with no arguments:
+Quick start, run with no arguments:
 
   pnpx envio init
 

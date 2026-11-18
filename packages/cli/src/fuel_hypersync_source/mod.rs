@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
 use anyhow::Context;
-use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 
 mod config;
@@ -10,6 +9,7 @@ mod types;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_store::{BlockStore, FuelBlockRow};
+use crate::event_store::{EventStore, Row, RowData};
 use crate::hex::decode_prefixed;
 use crate::js_value::JsTape;
 use config::ClientConfig;
@@ -70,7 +70,7 @@ impl FuelHyperSyncClient {
         &self,
         params: EventItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<(EventItemsResponse, BlockStore)> {
+    ) -> napi::Result<(EventItemsResponse, BlockStore, EventStore)> {
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.clone().unwrap_or_default(),
         );
@@ -126,10 +126,10 @@ impl FuelHyperSyncClient {
         let response = EventItemsResponse {
             archive_height: raw.archive_height,
             next_block: raw.next_block,
-            items,
             rejected_log_data,
         };
-        Ok((response, block_store))
+        let page = EventStore::from_rows(items.into_iter().map(EventItem::into_row).collect());
+        Ok((response, block_store, page))
     }
 }
 
@@ -150,15 +150,10 @@ pub struct EventItemsQuery {
     pub client_filtered_contracts: Option<Vec<String>>,
 }
 
-/// One routed receipt. The receipt's kind-specific columns are flattened so
-/// JS builds params without a tagged receipt union: LogData carries `params`,
-/// Mint/Burn carry `val`/`subId`,
-/// Transfer/TransferOut/Call carry `amount`/`assetId`/`to` — with
-/// TransferOut's wallet recipient normalised into `to`.
-#[napi(object, object_from_js = false)]
+/// One routed receipt with the params its handler receives.
 pub struct EventItem {
     /// The registration this receipt routed to, as passed to the client
-    /// constructor. Receipts that route nowhere never cross the boundary.
+    /// constructor.
     pub on_event_registration_index: i64,
     pub receipt_index: i64,
     pub tx_id: String,
@@ -166,21 +161,58 @@ pub struct EventItem {
     /// the `BlockStore` returned alongside this response.
     pub block_height: i64,
     pub src_address: String,
-    /// The LogData receipt's data decoded with the registration's ABI. A
-    /// receipt its logged type rejects never becomes an item at all.
-    pub params: Option<JsTape>,
-    pub sub_id: Option<String>,
-    pub val: Option<BigInt>,
-    pub amount: Option<BigInt>,
-    pub asset_id: Option<String>,
-    pub to: Option<String>,
+    /// LogData: the data decoded with the registration's ABI; a receipt its
+    /// logged type rejects never becomes an item at all. Mint/Burn:
+    /// `{subId, amount}`. Transfer/TransferOut/Call: `{to, assetId, amount}`,
+    /// with TransferOut's wallet recipient as `to`.
+    pub params: JsTape,
 }
 
+fn supply_params(sub_id: &str, amount: u64) -> JsTape {
+    let mut tape = JsTape::new();
+    tape.obj(2);
+    tape.key("subId");
+    tape.str(sub_id);
+    tape.key("amount");
+    tape.bigint(false, &[amount]);
+    tape
+}
+
+fn transfer_params(to: &str, asset_id: &str, amount: u64) -> JsTape {
+    let mut tape = JsTape::new();
+    tape.obj(3);
+    tape.key("to");
+    tape.str(to);
+    tape.key("assetId");
+    tape.str(asset_id);
+    tape.key("amount");
+    tape.bigint(false, &[amount]);
+    tape
+}
+
+impl EventItem {
+    /// The store row of this receipt, read back as the record
+    /// `FuelHyperSyncClient.EventItems.item` describes.
+    fn into_row(self) -> Row {
+        Row::event(
+            self.block_height,
+            self.receipt_index,
+            None,
+            self.on_event_registration_index,
+            RowData::FuelReceipt {
+                tx_id: self.tx_id,
+                src_address: self.src_address,
+                params: self.params,
+            },
+        )
+    }
+}
+
+/// What a page covered. Its items are in the `EventStore` returned beside it.
 #[napi(object, object_from_js = false)]
 pub struct EventItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
-    pub items: Vec<EventItem>,
     pub rejected_log_data: Vec<RejectedLogData>,
 }
 
@@ -253,6 +285,13 @@ fn push_unique(missing: &mut Vec<String>, name: &str) {
     }
 }
 
+fn required<T>(value: Option<T>, name: &str, missing: &mut Vec<String>) -> Option<T> {
+    if value.is_none() {
+        push_unique(missing, name);
+    }
+    value
+}
+
 /// Fans each receipt out to every registration of the selection it matches
 /// and flattens the kind-specific columns onto the items. A receipt without a
 /// `root_contract_id` (no contract context for `srcAddress`) is dropped, as is
@@ -303,22 +342,12 @@ fn route_receipts(
             if !present_block_heights.contains(&receipt.block_height) {
                 push_unique(&mut missing, "block");
             }
-            let require_hex = |value: &Option<String>, name: &str, missing: &mut Vec<String>| {
-                if value.is_none() {
-                    push_unique(missing, name);
-                }
-                value.clone()
-            };
-            let require_u64 = |value: Option<u64>, name: &str, missing: &mut Vec<String>| {
-                if value.is_none() {
-                    push_unique(missing, name);
-                }
-                value.map(BigInt::from)
-            };
-            let item = match &reg.kind {
+            // Each kind's fields are all checked before giving up on the
+            // item, so one error names every column the source left out.
+            let params = match &reg.kind {
                 RegistrationKind::LogData { decoder, .. } => {
-                    let Some(data) = &receipt.data else {
-                        push_unique(&mut missing, "receipt.data");
+                    let Some(data) = required(receipt.data.as_ref(), "receipt.data", &mut missing)
+                    else {
                         continue;
                     };
                     // Dropped for this registration only; others on the same
@@ -345,33 +374,17 @@ fn route_receipts(
                         }
                         continue;
                     };
-                    EventItem {
-                        on_event_registration_index: reg.index,
-                        receipt_index: receipt.receipt_index,
-                        tx_id: receipt.tx_id.clone(),
-                        block_height: receipt.block_height,
-                        src_address: src_address.clone(),
-                        params: Some(params),
-                        sub_id: None,
-                        val: None,
-                        amount: None,
-                        asset_id: None,
-                        to: None,
-                    }
+                    params
                 }
-                RegistrationKind::Mint | RegistrationKind::Burn => EventItem {
-                    on_event_registration_index: reg.index,
-                    receipt_index: receipt.receipt_index,
-                    tx_id: receipt.tx_id.clone(),
-                    block_height: receipt.block_height,
-                    src_address: src_address.clone(),
-                    params: None,
-                    sub_id: require_hex(&receipt.sub_id, "receipt.subId", &mut missing),
-                    val: require_u64(receipt.val, "receipt.val", &mut missing),
-                    amount: None,
-                    asset_id: None,
-                    to: None,
-                },
+                RegistrationKind::Mint | RegistrationKind::Burn => {
+                    let (Some(sub_id), Some(val)) = (
+                        required(receipt.sub_id.as_deref(), "receipt.subId", &mut missing),
+                        required(receipt.val, "receipt.val", &mut missing),
+                    ) else {
+                        continue;
+                    };
+                    supply_params(sub_id, val)
+                }
                 RegistrationKind::Transfer | RegistrationKind::Call => {
                     // TransferOut receipts carry the wallet recipient in
                     // `to_address`; everything else uses `to`.
@@ -381,22 +394,24 @@ fn route_receipts(
                         } else {
                             (&receipt.to, "receipt.to")
                         };
-                    EventItem {
-                        on_event_registration_index: reg.index,
-                        receipt_index: receipt.receipt_index,
-                        tx_id: receipt.tx_id.clone(),
-                        block_height: receipt.block_height,
-                        src_address: src_address.clone(),
-                        params: None,
-                        sub_id: None,
-                        val: None,
-                        amount: require_u64(receipt.amount, "receipt.amount", &mut missing),
-                        asset_id: require_hex(&receipt.asset_id, "receipt.assetId", &mut missing),
-                        to: require_hex(recipient, recipient_name, &mut missing),
-                    }
+                    let (Some(amount), Some(asset_id), Some(to)) = (
+                        required(receipt.amount, "receipt.amount", &mut missing),
+                        required(receipt.asset_id.as_deref(), "receipt.assetId", &mut missing),
+                        required(recipient.as_deref(), recipient_name, &mut missing),
+                    ) else {
+                        continue;
+                    };
+                    transfer_params(to, asset_id, amount)
                 }
             };
-            items.push(item);
+            items.push(EventItem {
+                on_event_registration_index: reg.index,
+                receipt_index: receipt.receipt_index,
+                tx_id: receipt.tx_id.clone(),
+                block_height: receipt.block_height,
+                src_address: src_address.clone(),
+                params,
+            });
         }
     }
 
@@ -549,9 +564,39 @@ mod tests {
         assert_eq!(
             items
                 .iter()
-                .map(|i| (i.on_event_registration_index, i.to.as_deref()))
+                .map(|i| (i.on_event_registration_index, JsValue::of(&i.params)))
                 .collect::<Vec<_>>(),
-            vec![(0, Some("0xwallet"))]
+            vec![(
+                0,
+                JsValue::obj([
+                    ("to", JsValue::str("0xwallet")),
+                    ("assetId", JsValue::str("0xasset")),
+                    ("amount", JsValue::uint(5u64)),
+                ])
+            )]
+        );
+    }
+
+    #[test]
+    fn builds_supply_params_from_mint_receipt() {
+        let (store, set, built) = build(
+            &[reg_input(0, "C", FuelEventKind::Mint, true, None)],
+            &[0],
+            &[("C", &[])],
+        );
+        let items = route(&store, &set, &built, vec![raw_receipt(11)]).unwrap();
+        assert_eq!(
+            items
+                .iter()
+                .map(|i| (i.on_event_registration_index, JsValue::of(&i.params)))
+                .collect::<Vec<_>>(),
+            vec![(
+                0,
+                JsValue::obj([
+                    ("subId", JsValue::str("0xsub")),
+                    ("amount", JsValue::uint(100u64)),
+                ])
+            )]
         );
     }
 
@@ -594,12 +639,9 @@ mod tests {
         assert_eq!(
             items
                 .into_iter()
-                .map(|i| (
-                    i.on_event_registration_index,
-                    i.params.map(|p| JsValue::of(&p))
-                ))
+                .map(|i| (i.on_event_registration_index, JsValue::of(&i.params)))
                 .collect::<Vec<_>>(),
-            vec![(0, Some(JsValue::Num(1.0)))]
+            vec![(0, JsValue::Num(1.0))]
         );
     }
 
@@ -675,6 +717,31 @@ mod tests {
             Err(ConvertError::MissingFields(fields)) => {
                 assert_eq!(fields, vec!["receipt.val".to_string()])
             }
+            Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
+            Ok(_) => panic!("expected MissingFields, got Ok"),
+        }
+    }
+
+    #[test]
+    fn missing_transfer_columns_are_all_named_in_one_error() {
+        let (store, set, built) = build(
+            &[reg_input(0, "C", FuelEventKind::Transfer, true, None)],
+            &[0],
+            &[("C", &[])],
+        );
+        let mut receipt = raw_receipt(7);
+        receipt.amount = None;
+        receipt.asset_id = None;
+        receipt.to = None;
+        match route(&store, &set, &built, vec![receipt]) {
+            Err(ConvertError::MissingFields(fields)) => assert_eq!(
+                fields,
+                vec![
+                    "receipt.amount".to_string(),
+                    "receipt.assetId".to_string(),
+                    "receipt.to".to_string(),
+                ]
+            ),
             Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
             Ok(_) => panic!("expected MissingFields, got Ok"),
         }

@@ -51,6 +51,7 @@ type historyPruneStat = {
 type t = {
   config: Config.t,
   logger: Logger.t,
+  clock: Clock.t,
   persistence: Persistence.t,
   // --- In-memory store: entity/effect tables and the pending-write queue. ---
   allEntities: array<Internal.entityConfig>,
@@ -76,6 +77,9 @@ type t = {
   mutable finalizeFiber: option<promise<unit>>,
   // Set once a write throws, to stop the loop. The error itself goes to onError.
   mutable hasFailedWrite: bool,
+  // Storage calls parked on their retry timer after losing the connection.
+  // Until the clock fires it, such a call does nothing.
+  mutable waitingOnDatabase: int,
   // Resolved after every commit so capacity/flush waiters can re-evaluate.
   mutable commitWaiters: array<unit => unit>,
   // Latest metadata staged per chain; used to skip unchanged restages.
@@ -181,6 +185,7 @@ let make = (
   {
     config,
     logger,
+    clock,
     persistence,
     allEntities: persistence.allEntities,
     entities: EntityTables.make(persistence.allEntities->EntityTables.crossChain),
@@ -193,6 +198,7 @@ let make = (
     writeFiber: None,
     finalizeFiber: None,
     hasFailedWrite: false,
+    waitingOnDatabase: 0,
     commitWaiters: [],
     chainMeta: Dict.make(),
     chainMetaDirty: false,
@@ -491,6 +497,7 @@ let recordProcessedBatch = (state: t) =>
 
 let config = (state: t) => state.config
 let logger = (state: t) => state.logger
+let clock = (state: t) => state.clock
 let persistence = (state: t) => state.persistence
 let allEntities = (state: t) => state.allEntities
 let entities = (state: t) => state.entities
@@ -910,6 +917,8 @@ let drainBatchRun = (state: t): Batch.t => {
     checkpointItemsCount,
     checkpointEventsProcessed,
     registeredAddresses,
+    // Read already: a run is drained from batches that were processed.
+    fieldReads: [],
   }
 }
 
@@ -998,6 +1007,21 @@ let recordWriteFailure = (state: t, exn) => {
   state.onError(
     exn->ErrorHandling.make(~logger=state.logger, ~msg="Failed writing batch to the database"),
   )
+}
+
+// Ends the write loop as a failure does, with nothing to report: whatever
+// stopped the indexer has said why.
+let abandonWrites = (state: t) => state.hasFailedWrite = true
+
+let waitingOnDatabase = (state: t) => state.waitingOnDatabase
+let waitForDatabase = async (state: t, wait) => {
+  state.waitingOnDatabase = state.waitingOnDatabase + 1
+  switch await wait {
+  | () => state.waitingOnDatabase = state.waitingOnDatabase - 1
+  | exception exn =>
+    state.waitingOnDatabase = state.waitingOnDatabase - 1
+    throw(exn)
+  }
 }
 
 let beginWriteFiber = (state: t, fiber) => state.writeFiber = Some(fiber)

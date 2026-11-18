@@ -65,20 +65,19 @@ let storeOf = (
   ~ecosystem: Ecosystem.name=Evm,
 ) => {
   let store = AddressStore.make(~ecosystem, ~contracts)
-  let _ =
-    store->AddressStore.seedRows(
-      rowsOf(
-        ~addresses,
-        // A row's contract id is its contract's position in the store's own list.
-        ~contractId=name =>
-          switch contracts->Array.findIndex(c => c.name === name) {
-          | -1 =>
-            JsError.throwWithMessage(`Contract "${name}" isn't among the test store's contracts`)
-          | idx => idx
-          },
-        ~ecosystem,
-      ),
-    )
+  let _ = store->AddressStore.seedRows(
+    rowsOf(
+      ~addresses,
+      // A row's contract id is its contract's position in the store's own list.
+      ~contractId=name =>
+        switch contracts->Array.findIndex(c => c.name === name) {
+        | -1 =>
+          JsError.throwWithMessage(`Contract "${name}" isn't among the test store's contracts`)
+        | idx => idx
+        },
+      ~ecosystem,
+    ),
+  )
   store
 }
 
@@ -250,9 +249,26 @@ let query = (q: FetchState.query): FetchState.query => {
   addresses: q.addresses->comparable,
 }
 
-let fetchState = (fs: FetchState.t): FetchState.t => {
-  ...fs,
-  optimizedPartitions: partitions(fs.optimizedPartitions),
+// A fetch state with the block of each row its store holds: the store is a
+// handle, so it compares by its rows. An expected record built by hand passes
+// its store.
+type bufferedFetchState = {
+  fetchState: FetchState.t,
+  bufferedBlockNumbers: array<int>,
+}
+
+let fetchState = (fs: FetchState.t, ~eventStore=?): bufferedFetchState => {
+  let fs = switch eventStore {
+  | Some(eventStore) => fs->TestFetchState.pair(~eventStore)
+  | None => fs
+  }
+  {
+    fetchState: {
+      ...fs,
+      optimizedPartitions: partitions(fs.optimizedPartitions),
+    },
+    bufferedBlockNumbers: fs->TestFetchState.bufferedBlockNumbers,
+  }
 }
 
 let queries = (qs: array<FetchState.query>) => qs->Array.map(query)

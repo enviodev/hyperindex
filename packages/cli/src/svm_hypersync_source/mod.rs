@@ -10,6 +10,7 @@ mod config;
 mod fields;
 mod query;
 mod selection;
+mod transaction_counts;
 pub(crate) mod types;
 
 pub(crate) mod mod_helpers {
@@ -19,6 +20,7 @@ pub(crate) mod mod_helpers {
     }
 }
 
+use hypersync_client_solana::from_arrow::blocks_from_arrow;
 use hypersync_client_solana::simple_types as simple;
 use hypersync_client_solana::RateLimitInfo;
 use hypersync_solana_net_types::field_selection::SolanaFieldSelection;
@@ -27,7 +29,8 @@ use hypersync_solana_net_types::query::SolanaQuery;
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
-use crate::block_store::BlockStore;
+use crate::block_store::{BlockStore, SvmBlockField, SvmTransactionCounts};
+use crate::event_store::{EventStore, Row, RowData};
 use crate::js_value::JsTape;
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
 use crate::transaction_store::TransactionStore;
@@ -92,6 +95,37 @@ impl SvmHyperSyncClient {
             .await
             .context("solana get")
             .map_err(|e| map_query_error(e, self.inner.rate_limit_info()))
+    }
+
+    /// Run a `transaction_counts::query`, tallying its transaction rows
+    /// without decoding them.
+    async fn run_counting_query(&self, query: &SolanaQuery) -> napi::Result<CountedPage> {
+        let response = self
+            .inner
+            .get_arrow(query)
+            .await
+            .context("solana get")
+            .map_err(|e| map_query_error(e, self.inner.rate_limit_info()))?;
+        let tables = &response.data.tables;
+        let blocks = tables
+            .get("blocks")
+            .map(blocks_from_arrow)
+            .transpose()
+            .context("decode blocks")
+            .map_err(map_err)?
+            .unwrap_or_default();
+        let counts = tables
+            .get("transactions")
+            .map(transaction_counts::count_by_slot)
+            .transpose()
+            .context("count transactions")
+            .map_err(map_err)?
+            .unwrap_or_default();
+        Ok(CountedPage {
+            next_slot: response.next_slot,
+            blocks,
+            counts,
+        })
     }
 
     /// Execute one raw Solana HyperSync page. Event queries and block-hash
@@ -208,7 +242,7 @@ impl SvmHyperSyncClient {
         &self,
         params: ItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore)> {
+    ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore, EventStore)> {
         let built = self
             .selection_builder
             .build(&params.on_event_registration_indexes)
@@ -230,11 +264,10 @@ impl SvmHyperSyncClient {
             return Ok((
                 ItemsResponse {
                     next_slot: next_slot as i64,
-                    event_items: Vec::new(),
-                    block_items: Vec::new(),
                 },
                 TransactionStore::new_svm(),
                 BlockStore::new_svm(),
+                EventStore::empty(),
             ));
         }
         let from_slot = block_query.from_block;
@@ -285,12 +318,41 @@ impl SvmHyperSyncClient {
             ..Default::default()
         };
 
-        let mut resp = self.run_query(&query).await?;
+        let counts_transactions =
+            block_selection.mask() & SvmBlockField::TRANSACTION_COUNTS_MASK != 0;
+        let (mut resp, transaction_counts) = if counts_transactions {
+            // Selections of different tables intersect: beside instruction
+            // selections, one matching every transaction would return only the
+            // transactions those instructions are in and undercount the slot.
+            // The fetch state keeps slot handlers in a partition of their own,
+            // so no query selects both.
+            if selects_instructions {
+                return Err(map_err(anyhow::anyhow!(
+                    "A query counting the transactions of its slots can't also select instructions"
+                )));
+            }
+            let counted = self
+                .run_counting_query(&transaction_counts::query(
+                    from_slot,
+                    query.to_slot,
+                    query.field_selection.block,
+                    query.max_num_blocks,
+                ))
+                .await?;
+            let resp = simple::SolanaResponse {
+                next_slot: counted.next_slot,
+                blocks: counted.blocks,
+                ..Default::default()
+            };
+            (resp, Some(counted.counts))
+        } else {
+            (self.run_query(&query).await?, None)
+        };
 
         // The replica serving this request has not reached the queried range,
         // so it would report negative progress. Expected around the head of a
         // load-balanced backend; the source manager backs off and fails over.
-        if resp.next_slot <= query.from_slot {
+        if resp.next_slot <= from_slot {
             return Err(source_behind_head_err(params.from_slot));
         }
 
@@ -354,16 +416,44 @@ impl SvmHyperSyncClient {
             Some(&referenced_transactions),
         );
         let block_store = take_blocks(&mut resp, Some(&referenced_slots)).map_err(map_err)?;
+        if let Some(transaction_counts) = transaction_counts {
+            // A block the response holds no transaction of stored none.
+            let mut counts: Vec<(u64, SvmTransactionCounts)> = block_items
+                .iter()
+                .filter(|item| !item.skipped)
+                .map(|item| {
+                    let slot = item.block_number as u64;
+                    (
+                        slot,
+                        transaction_counts.get(&slot).copied().unwrap_or_default(),
+                    )
+                })
+                .collect();
+            counts.dedup_by_key(|(slot, _)| *slot);
+            block_store.insert_svm_transaction_counts(&counts);
+        }
 
         let response = ItemsResponse {
             next_slot: i64::try_from(block_query.fetched_until(resp.next_slot))
                 .context("next_slot overflow")
                 .map_err(map_err)?,
-            event_items: items,
-            block_items,
         };
-        Ok((response, store, block_store))
+        let page = EventStore::from_rows(
+            items
+                .into_iter()
+                .map(EventItem::into_row)
+                .chain(block_items.into_iter().map(BlockItem::into_row))
+                .collect(),
+        );
+        Ok((response, store, block_store, page))
     }
+}
+
+/// What a `transaction_counts::query` page answers with.
+struct CountedPage {
+    next_slot: u64,
+    blocks: Vec<simple::Block>,
+    counts: HashMap<u64, SvmTransactionCounts>,
 }
 
 /// Convert only the values needed by the block-hash paginator: the advancing
@@ -411,20 +501,17 @@ pub struct ItemsQuery {
     pub reorgable_from: Option<i64>,
 }
 
-#[napi(object)]
 #[derive(Clone)]
 pub struct LogItem {
     pub kind: Option<String>,
     pub message: Option<String>,
 }
 
-/// One routed instruction. Carries everything JS needs to build the handler
-/// payload; the parent transaction and block are materialised from the
-/// per-chain stores at batch prep.
-#[napi(object, object_from_js = false)]
+/// One routed instruction. Its parent transaction and block are read from the
+/// per-chain stores when a batch takes it.
 pub struct EventItem {
     /// The registration this instruction routed to, as passed to the client
-    /// constructor. Instructions that route nowhere never cross the boundary.
+    /// constructor.
     pub on_event_registration_index: i64,
     pub slot: i64,
     pub transaction_index: i64,
@@ -444,11 +531,49 @@ pub struct EventItem {
     pub logs: Option<Vec<LogItem>>,
 }
 
+impl EventItem {
+    /// The store row of this instruction, read back as the record
+    /// `SvmHyperSyncClient.Items.item` describes.
+    fn into_row(self) -> Row {
+        let logs = self.logs.map(|logs| {
+            let mut tape = JsTape::new();
+            tape.arr(logs.len());
+            for log in logs {
+                tape.obj(2);
+                tape.key("kind");
+                match &log.kind {
+                    Some(kind) => tape.str(kind),
+                    None => tape.undefined(),
+                }
+                tape.key("message");
+                match &log.message {
+                    Some(message) => tape.str(message),
+                    None => tape.undefined(),
+                }
+            }
+            tape
+        });
+        Row::event(
+            self.slot,
+            self.transaction_index,
+            Some(self.path),
+            self.on_event_registration_index,
+            RowData::SvmInstruction {
+                program_id: self.program_id,
+                accounts: self.accounts,
+                data: self.data.to_vec(),
+                is_inner: self.is_inner,
+                args: self.args,
+                logs,
+            },
+        )
+    }
+}
+
+/// What a page covered. Its items are in the `EventStore` returned beside it.
 #[napi(object, object_from_js = false)]
 pub struct ItemsResponse {
     pub next_slot: i64,
-    pub event_items: Vec<EventItem>,
-    pub block_items: Vec<BlockItem>,
 }
 
 fn project_logs(logs: &[LogItem], columns: &[&str]) -> Vec<LogItem> {
@@ -1366,7 +1491,6 @@ mod tests {
         simple::Hash(key(4, slot))
     }
 
-    // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
     #[tokio::test(flavor = "multi_thread")]
     async fn store_keeps_only_the_transactions_and_balances_items_reference() {
         let tx = |slot, index| simple::Transaction {
@@ -1394,7 +1518,7 @@ mod tests {
             | (1u64 << (crate::transaction_store::SvmTxField::AccountActivities as u32)))
             as f64;
         let cols = store
-            .materialize(vec![42, 43], vec![7, 7], vec![mask, mask], false)
+            .materialize_columns(vec![42, 43], vec![7, 7], vec![mask, mask], false)
             .await
             .expect("materialize");
 
@@ -1443,7 +1567,7 @@ mod tests {
         let mask =
             (1u64 << (crate::transaction_store::SvmTxField::AccountActivities as u32)) as f64;
         let cols = store
-            .materialize(vec![43], vec![7], vec![mask], false)
+            .materialize_columns(vec![43], vec![7], vec![mask], false)
             .await
             .expect("materialize");
         match column(&cols, "accountActivities") {
@@ -1491,7 +1615,7 @@ mod tests {
         let block_store = take_blocks(&mut resp, None).expect("take blocks");
 
         let txs = store
-            .materialize(
+            .materialize_columns(
                 vec![43],
                 vec![7],
                 vec![(1u64 << (crate::transaction_store::SvmTxField::FeePayer as u32)) as f64],
@@ -1500,7 +1624,7 @@ mod tests {
             .await
             .expect("materialize transactions");
         let blocks = block_store
-            .materialize(
+            .materialize_columns(
                 vec![43],
                 vec![(1u64 << (crate::block_store::SvmBlockField::Hash as u32)) as f64],
                 false,
@@ -1539,7 +1663,7 @@ mod tests {
 
         let mask = (1u64 << (crate::block_store::SvmBlockField::Hash as u32)) as f64;
         let cols = block_store
-            .materialize(vec![42, 43], vec![mask, mask], false)
+            .materialize_columns(vec![42, 43], vec![mask, mask], false)
             .await
             .expect("materialize");
 

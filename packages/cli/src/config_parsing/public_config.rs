@@ -260,7 +260,7 @@ struct CompositeIndexJson {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct EvmConfig<'a> {
-    chains: BTreeMap<String, ChainConfig>,
+    chains: Vec<ChainConfig>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     contracts: BTreeMap<&'a str, ContractConfig>,
     address_format: &'a str,
@@ -273,7 +273,7 @@ struct EvmConfig<'a> {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct FuelConfig<'a> {
-    chains: BTreeMap<String, ChainConfig>,
+    chains: Vec<ChainConfig>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     contracts: BTreeMap<&'a str, ContractConfig>,
 }
@@ -281,7 +281,7 @@ struct FuelConfig<'a> {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct SvmConfig<'a> {
-    chains: BTreeMap<String, ChainConfig>,
+    chains: Vec<ChainConfig>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     programs: BTreeMap<&'a str, ContractConfig>,
 }
@@ -317,6 +317,7 @@ struct RpcConfig {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct ChainConfig {
+    name: String,
     id: u64,
     start_block: human_config::StartBlock,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -496,7 +497,10 @@ impl SystemConfig {
     pub fn to_public_config_json(&self, is_dev: bool) -> Result<String> {
         let cfg = self;
 
-        let active_chains: Vec<_> = cfg.get_chains().into_iter().filter(|c| !c.skip).collect();
+        // An array rather than a map keyed by name: JS iterates numeric keys
+        // ascending, whatever order they were written in, and the run splits
+        // chains across workers in config.yaml order.
+        let active_chains: Vec<_> = cfg.chains.values().filter(|c| !c.skip).collect();
 
         if active_chains.is_empty() {
             return Err(anyhow!(
@@ -504,8 +508,7 @@ impl SystemConfig {
             ));
         }
 
-        // Build chains map
-        let chains: BTreeMap<String, ChainConfig> = active_chains
+        let chains: Vec<ChainConfig> = active_chains
             .into_iter()
             .map(|network| {
                 let chain_name = chain_id_to_name(network.id, &cfg.get_ecosystem());
@@ -566,20 +569,18 @@ impl SystemConfig {
                     })
                     .collect();
 
-                (
-                    chain_name,
-                    ChainConfig {
-                        id: network.id,
-                        start_block: network.start_block,
-                        end_block: network.end_block,
-                        max_reorg_depth: network.max_reorg_depth,
-                        block_lag: network.block_lag,
-                        block_throttle: network.block_throttle,
-                        hypersync,
-                        rpcs,
-                        contracts: chain_contracts,
-                    },
-                )
+                ChainConfig {
+                    name: chain_name,
+                    id: network.id,
+                    start_block: network.start_block,
+                    end_block: network.end_block,
+                    max_reorg_depth: network.max_reorg_depth,
+                    block_lag: network.block_lag,
+                    block_throttle: network.block_throttle,
+                    hypersync,
+                    rpcs,
+                    contracts: chain_contracts,
+                }
             })
             .collect();
 

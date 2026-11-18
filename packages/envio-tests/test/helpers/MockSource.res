@@ -41,11 +41,27 @@ let evmBlockHash = hex =>
 
 type mockSourceHandler = Internal.handlerArgs => promise<unit>
 type mockSourceContractRegister = Internal.contractRegisterArgs => promise<unit>
-type mockSourceEvent = {
-  __mockHandler?: mockSourceHandler,
-  __mockPreloadHandler?: mockSourceHandler,
-  __mockContractRegister?: mockSourceContractRegister,
+type mockCallbacks = {
+  handler?: mockSourceHandler,
+  preloadHandler?: mockSourceHandler,
+  contractRegister?: mockSourceContractRegister,
 }
+// Fetched items wait in the Rust event store as plain data, which can't hold a
+// function, so an item carries its callbacks' id and the callbacks stay here.
+let callbacksById: dict<mockCallbacks> = Dict.make()
+let nextCallbacksId = ref(0)
+let registerCallbacks = (callbacks: mockCallbacks) => {
+  let id = nextCallbacksId.contents
+  nextCallbacksId := id + 1
+  callbacksById->Utils.Dict.setByInt(id, callbacks)
+  id
+}
+type mockSourceEvent = {__mockCallbacksId?: int}
+let callbacksOf = (event: mockSourceEvent) =>
+  switch event.__mockCallbacksId {
+  | Some(id) => callbacksById->Utils.Dict.dangerouslyGetByIntNonOption(id)
+  | None => None
+  }
 
 // MockSource items choose their callback at response time, after ChainState has
 // already been created. Install one stable registration up front and dispatch
@@ -56,24 +72,23 @@ let makeMockSourceRegistration = (
   ~isWildcard,
 ): Internal.onEventRegistration => {
   let handler: Internal.handler = args => {
-    let event = args.event->(Utils.magic: Internal.event => mockSourceEvent)
+    let callbacks = args.event->(Utils.magic: Internal.event => mockSourceEvent)->callbacksOf
     if args.context.isPreload {
-      switch event.__mockPreloadHandler {
-      | Some(handler) => handler(args)
-      | None => Promise.resolve()
+      switch callbacks {
+      | Some({preloadHandler: handler}) => handler(args)
+      | _ => Promise.resolve()
       }
     } else {
-      switch event.__mockHandler {
-      | Some(handler) => handler(args)
-      | None => Promise.resolve()
+      switch callbacks {
+      | Some({handler}) => handler(args)
+      | _ => Promise.resolve()
       }
     }
   }
   let contractRegister: Internal.contractRegister = args => {
-    let event = args.event->(Utils.magic: Internal.event => mockSourceEvent)
-    switch event.__mockContractRegister {
-    | Some(contractRegister) => contractRegister(args)
-    | None => Promise.resolve()
+    switch args.event->(Utils.magic: Internal.event => mockSourceEvent)->callbacksOf {
+    | Some({contractRegister}) => contractRegister(args)
+    | _ => Promise.resolve()
     }
   }
   ({
@@ -678,11 +693,16 @@ let make = (
         )
       ),
     }
-    let _ = %raw(`Object.defineProperties(payload, {
-      __mockHandler: {value: item.handler},
-      __mockPreloadHandler: {value: item.preloadHandler},
-      __mockContractRegister: {value: item.contractRegister},
-    })`)
+    switch (item.handler, item.preloadHandler, item.contractRegister) {
+    | (None, None, None) => ()
+    | (handler, preloadHandler, contractRegister) =>
+      payload
+      ->(Utils.magic: Evm.payload => dict<int>)
+      ->Dict.set(
+        "__mockCallbacksId",
+        registerCallbacks({?handler, ?preloadHandler, ?contractRegister}),
+      )
+    }
     Internal.Event({
       onEventRegistration,
       chainId,
@@ -771,49 +791,51 @@ let make = (
     })
     {
       knownHeight: response.knownHeight->Option.getOr(knownHeight),
-      parsedQueueItems: items
-      ->Array.flatMap(item => {
-        let registrations = switch item.event {
-        | None => [
-            state.onEventRegistrationRef.contents->Option.getOrThrow(
-              ~message="MockSource on-event registration was not installed before resolving items",
-            ),
-          ]
-        | Some(event) =>
-          let name = (registration: Internal.onEventRegistration) =>
-            `${registration.eventConfig.contractName}.${registration.eventConfig.name}`
-          // Like a real source, one item per handler registered for the event.
-          switch state.chainRegistrationsRef.contents->Array.filter(registration =>
-            registration->name === event
-          ) {
-          | [] =>
-            JsError.throwWithMessage(
-              `An item names event "${event}", but chain ${chainId->ChainId.toString} has no handler registered for it. Registered: ${state.chainRegistrationsRef.contents
-                ->Array.map(registration => `"${registration->name}"`)
-                ->Utils.Set.fromArray
-                ->Utils.Set.toArray
-                ->Array.join(", ")}`,
-            )
-          | registrations => registrations
+      items: EventStore.fromJsItems(
+        items
+        ->Array.flatMap(item => {
+          let registrations = switch item.event {
+          | None => [
+              state.onEventRegistrationRef.contents->Option.getOrThrow(
+                ~message="MockSource on-event registration was not installed before resolving items",
+              ),
+            ]
+          | Some(event) =>
+            let name = (registration: Internal.onEventRegistration) =>
+              `${registration.eventConfig.contractName}.${registration.eventConfig.name}`
+            // Like a real source, one item per handler registered for the event.
+            switch state.chainRegistrationsRef.contents->Array.filter(registration =>
+              registration->name === event
+            ) {
+            | [] =>
+              JsError.throwWithMessage(
+                `An item names event "${event}", but chain ${chainId->ChainId.toString} has no handler registered for it. Registered: ${state.chainRegistrationsRef.contents
+                  ->Array.map(registration => `"${registration->name}"`)
+                  ->Utils.Set.fromArray
+                  ->Utils.Set.toArray
+                  ->Array.join(", ")}`,
+              )
+            | registrations => registrations
+            }
           }
-        }
-        registrations->Array.map(onEventRegistration => makeEventItem(item, onEventRegistration))
-      })
-      ->Array.concat(
-        blocks->Array.flatMap(({blockNumber, ?blockFields}) =>
-          selection.onBlockRegistrations
-          ->Array.filter(reg => reg->BlockItem.runsOn(~blockNumber, ~chainStartBlock=0))
-          ->Array.map(onBlockRegistration => Internal.Block({
-            onBlockRegistration,
-            blockNumber,
-            block: Dict.fromArray([
-              ("number", blockNumber->(Utils.magic: int => unknown)),
-              ("timestamp", blockNumber->(Utils.magic: int => unknown)),
-              ("hash", mockBlockHash(blockNumber)->(Utils.magic: string => unknown)),
-            ])
-            ->Dict.assign(blockFields->Option.getOr(Dict.make()))
-            ->(Utils.magic: dict<unknown> => Internal.eventBlock),
-          }))
+          registrations->Array.map(onEventRegistration => makeEventItem(item, onEventRegistration))
+        })
+        ->Array.concat(
+          blocks->Array.flatMap(({blockNumber, ?blockFields}) =>
+            selection.onBlockRegistrations
+            ->Array.filter(reg => reg->BlockItem.runsOn(~blockNumber, ~chainStartBlock=0))
+            ->Array.map(onBlockRegistration => Internal.Block({
+              onBlockRegistration,
+              blockNumber,
+              block: Dict.fromArray([
+                ("number", blockNumber->(Utils.magic: int => unknown)),
+                ("timestamp", blockNumber->(Utils.magic: int => unknown)),
+                ("hash", mockBlockHash(blockNumber)->(Utils.magic: string => unknown)),
+              ])
+              ->Dict.assign(blockFields->Option.getOr(Dict.make()))
+              ->(Utils.magic: dict<unknown> => Internal.eventBlock),
+            }))
+          ),
         ),
       ),
       transactionStore: None,

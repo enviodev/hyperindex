@@ -44,6 +44,8 @@
 
 pub mod js;
 
+use std::ops::Range;
+
 use anyhow::{bail, Context, Result};
 
 /// How a column's values are laid out. The ordinals are part of the interface:
@@ -204,6 +206,12 @@ impl Column {
             Storage::Variable { ends, .. } => ends.len(),
             Storage::List { row_ends, .. } => row_ends.len(),
         }
+    }
+
+    /// Whether the row was marked null, sealed or not.
+    #[inline]
+    pub fn is_marked_null(&self, row: usize) -> bool {
+        self.nulls[row] != 0
     }
 
     /// Only meaningful once the arena is sealed: `any_null` is what sealing
@@ -546,6 +554,94 @@ impl Column {
         }
     }
 
+    /// Appends `rows` of `other`, a column of the same shape, rebasing their
+    /// offsets onto where this column's own rows end.
+    fn extend_from(&mut self, other: &Column, rows: Range<usize>) {
+        self.nulls.extend_from_slice(&other.nulls[rows.clone()]);
+        let span = |ends: &[u32]| {
+            let start = if rows.start == 0 {
+                0
+            } else {
+                ends[rows.start - 1]
+            };
+            let end = if rows.is_empty() {
+                start
+            } else {
+                ends[rows.end - 1]
+            };
+            (start, end)
+        };
+        match (&mut self.storage, &other.storage) {
+            (Storage::Fixed(words), Storage::Fixed(from)) => words.extend_from_slice(&from[rows]),
+            (
+                Storage::Variable { data, ends },
+                Storage::Variable {
+                    data: from_data,
+                    ends: from_ends,
+                },
+            ) => {
+                let base = ends.last().copied().unwrap_or(0);
+                let (start, end) = span(from_ends);
+                let new_end = (base + end - start) as usize;
+                if new_end > data.len() {
+                    data.resize(new_end.next_power_of_two(), 0);
+                }
+                data[base as usize..new_end]
+                    .copy_from_slice(&from_data[start as usize..end as usize]);
+                ends.extend(from_ends[rows].iter().map(|&end| end - start + base));
+            }
+            (
+                Storage::List { elements, row_ends },
+                Storage::List {
+                    elements: from_elements,
+                    row_ends: from_ends,
+                },
+            ) => {
+                // Past the last row's end when the elements were sized ahead,
+                // which leaves elements no row points at, not a wrong offset.
+                let base = elements.len() as u32;
+                let (start, end) = span(from_ends);
+                elements.extend_from(from_elements, start as usize..end as usize);
+                row_ends.extend(from_ends[rows].iter().map(|&end| end - start + base));
+            }
+            _ => panic!("appending a column of another shape"),
+        }
+    }
+
+    /// Drops every row from `rows` on. The bytes they held stay allocated
+    /// until the column is shrunk.
+    fn truncate(&mut self, rows: usize) {
+        self.nulls.truncate(rows);
+        match &mut self.storage {
+            Storage::Fixed(words) => words.truncate(rows),
+            Storage::Variable { ends, .. } => ends.truncate(rows),
+            Storage::List { elements, row_ends } => {
+                row_ends.truncate(rows);
+                // Later rows' elements are appended from here.
+                elements.truncate(row_ends.last().copied().unwrap_or(0) as usize);
+            }
+        }
+    }
+
+    /// Gives back the room grown ahead of the rows: a text column's data
+    /// keeps only the bytes its rows use. Every vector keeps one slot at
+    /// least, as `sized` gives it, so there is still a buffer to lend.
+    fn shrink_to_fit(&mut self) {
+        self.nulls.shrink_to(1);
+        match &mut self.storage {
+            Storage::Fixed(words) => words.shrink_to(1),
+            Storage::Variable { data, ends } => {
+                data.truncate((ends.last().copied().unwrap_or(0) as usize).max(1));
+                data.shrink_to(1);
+                ends.shrink_to(1);
+            }
+            Storage::List { elements, row_ends } => {
+                elements.shrink_to_fit();
+                row_ends.shrink_to(1);
+            }
+        }
+    }
+
     fn elements_mut(&mut self) -> &mut Column {
         match &mut self.storage {
             Storage::List { elements, .. } => elements,
@@ -583,6 +679,42 @@ impl Arena {
 
     pub fn mark_element_null(&mut self, column: usize, element: usize) {
         self.columns[column].elements_mut().write_null(element);
+    }
+
+    /// Drops every row from `rows` on.
+    pub fn truncate(&mut self, rows: usize) {
+        for column in &mut self.columns {
+            column.truncate(rows);
+        }
+        self.rows = rows;
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.columns.iter_mut().for_each(Column::shrink_to_fit);
+    }
+
+    /// An arena of `other`'s shape holding no rows yet.
+    pub fn empty_like(other: &Arena) -> Self {
+        Self {
+            rows: 0,
+            columns: other
+                .columns
+                .iter()
+                .map(|column| match &column.storage {
+                    Storage::List { elements, .. } => Column::new_list(elements.kind, 0, 0),
+                    _ => Column::new(column.kind, 0),
+                })
+                .collect(),
+            phase: Phase::Detached,
+        }
+    }
+
+    /// Appends `rows` of `other`, an arena of the same shape.
+    pub fn extend_from(&mut self, other: &Arena, rows: Range<usize>) {
+        for (column, from) in self.columns.iter_mut().zip(&other.columns) {
+            column.extend_from(from, rows.clone());
+        }
+        self.rows += rows.len();
     }
 
     /// Closes a list row at `elements` written so far, which is where the next
@@ -702,6 +834,52 @@ mod tests {
         arena.set_bytes(0, 0, long.as_bytes());
         arena.seal_for_test().unwrap();
         assert_eq!(arena.columns()[0].str_at(0).unwrap(), long.as_str());
+    }
+
+    #[test]
+    fn shrinking_an_empty_arena_still_leaves_buffers_to_lend() {
+        let mut arena = Arena::new_filled(
+            0,
+            &[
+                ColumnSpec::Scalar(ColumnKind::F64),
+                ColumnSpec::Scalar(ColumnKind::Text),
+            ],
+        );
+        arena.shrink_to_fit();
+        let capacities: Vec<usize> = arena
+            .columns
+            .iter()
+            .flat_map(|column| match &column.storage {
+                Storage::Fixed(words) => vec![words.capacity(), column.nulls.capacity()],
+                Storage::Variable { data, ends } => {
+                    vec![data.capacity(), ends.capacity(), column.nulls.capacity()]
+                }
+                Storage::List { row_ends, .. } => {
+                    vec![row_ends.capacity(), column.nulls.capacity()]
+                }
+            })
+            .map(|capacity| capacity.min(1))
+            .collect();
+        assert_eq!(capacities, vec![1; 5]);
+    }
+
+    #[test]
+    fn shrinking_keeps_only_the_bytes_the_rows_use() {
+        let mut arena = Arena::new_filled(2, &[ColumnSpec::Scalar(ColumnKind::Text)]);
+        arena.set_bytes(0, 0, b"ab");
+        arena.set_bytes(0, 1, b"cde");
+        arena.shrink_to_fit();
+        let Storage::Variable { data, ends } = &arena.columns[0].storage else {
+            panic!("not a text column");
+        };
+        assert_eq!(
+            (
+                data.capacity(),
+                ends.capacity(),
+                arena.columns[0].bytes_at(1)
+            ),
+            (5, 2, &b"cde"[..])
+        );
     }
 
     #[test]

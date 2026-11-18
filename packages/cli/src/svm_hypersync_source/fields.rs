@@ -276,10 +276,14 @@ pub fn block_extra_columns(selected: &[String]) -> Result<Vec<&'static str>> {
     extra_columns(BLOCK, selected)
 }
 
-/// The columns filling the block store fields set in `mask`.
+/// The block columns filling the block store fields set in `mask`. The
+/// transaction counts are tallied from the transaction table, so they name no
+/// block column.
 pub fn block_mask_columns(mask: u64) -> Result<Vec<&'static str>> {
+    use crate::block_store::SvmBlockField;
     use strum::VariantArray;
-    let selected: Vec<String> = crate::block_store::SvmBlockField::VARIANTS
+    let mask = mask & !SvmBlockField::TRANSACTION_COUNTS_MASK;
+    let selected: Vec<String> = SvmBlockField::VARIANTS
         .iter()
         .filter(|field| mask & (1u64 << (**field as u32)) != 0)
         .map(|field| field.name().to_string())
@@ -374,12 +378,34 @@ mod tests {
     #[test]
     fn block_names_match_store_ordinals() {
         assert_eq!(
-            names(BLOCK),
+            dts_string_union(&dts(), "SvmBlockFieldName"),
             SvmBlockField::VARIANTS
                 .iter()
                 .map(|field| field.name())
                 .collect::<Vec<_>>()
         );
+    }
+
+    /// The transaction counts are tallied from the transaction table, so the
+    /// block table names every block field but them.
+    #[test]
+    fn block_table_names_every_field_but_the_transaction_counts() {
+        assert_eq!(
+            names(BLOCK),
+            SvmBlockField::VARIANTS
+                .iter()
+                .filter(|&&field| {
+                    SvmBlockField::TRANSACTION_COUNTS_MASK & (1 << field as u32) == 0
+                })
+                .map(|field| field.name())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_mask_of_transaction_counts_names_no_block_column() {
+        let mask = SvmBlockField::TRANSACTION_COUNTS_MASK | 1 << SvmBlockField::Height as u32;
+        assert_eq!(block_mask_columns(mask).unwrap(), vec!["block_height"]);
     }
 
     #[test]
@@ -401,7 +427,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             dts_string_union(&dts, "SvmTransactionFieldName")
         );
-        assert_eq!(names(BLOCK), dts_string_union(&dts, "SvmBlockFieldName"));
     }
 
     fn quoted_names_between(src: &str, start_marker: &str, end_marker: &str) -> Vec<String> {
@@ -464,16 +489,46 @@ mod tests {
             )
         );
         assert_eq!(
-            names(BLOCK),
-            quoted_names_between(&res, "let validSvmBlockFields", "let validSvmLogFields")
-        );
-        assert_eq!(
             names(LOG),
             quoted_names_between(
                 &res,
                 "let validSvmLogFields",
                 "let resolveSvmInlineFieldSelection"
             )
+        );
+    }
+
+    /// `EventConfigBuilder` validates block fields against `Svm.blockFields`,
+    /// whose positions are the block store's field codes, and rejects
+    /// `Svm.slotOnlyBlockFields` on instructions.
+    #[test]
+    fn svm_res_block_fields_match_store_ordinals() {
+        let svm_res = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../envio/src/sources/Svm.res"
+        ))
+        .expect("read Svm.res");
+        let store_names = |counts: Option<bool>| {
+            SvmBlockField::VARIANTS
+                .iter()
+                .filter(|&&field| {
+                    let is_count =
+                        SvmBlockField::TRANSACTION_COUNTS_MASK & (1 << field as u32) != 0;
+                    counts.is_none_or(|counts| counts == is_count)
+                })
+                .map(|field| field.name().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            (
+                quoted_names_between(&svm_res, "let blockFields", "let slotOnlyBlockFields"),
+                quoted_names_between(
+                    &svm_res,
+                    "let slotOnlyBlockFields",
+                    "let eventBlockFieldMask"
+                ),
+            ),
+            (store_names(None), store_names(Some(true)))
         );
     }
 

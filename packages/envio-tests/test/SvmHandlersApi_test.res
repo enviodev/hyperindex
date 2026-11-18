@@ -135,6 +135,23 @@ describe("SVM handler fields", () => {
     );
   });
 
+  // Linear GTM-5262
+  it("rejects a slot's transaction counts on an instruction", (t) => {
+    t.expect(() =>
+      indexer.onInstruction(
+        {
+          program: "Swapper",
+          instruction: "swap",
+          // @ts-expect-error - not supported on onInstruction yet
+          fields: { block: ["time", "failedTransactionCount"] },
+        },
+        async () => {},
+      ),
+    ).toThrowError(
+      \`The "failedTransactionCount" block field is not supported on \\\`indexer.onInstruction\\\` yet. Select it in an \\\`indexer.onSlot\\\` handler instead, or remove it from the fields.block option of the "swap" instruction on program "Swapper".\`,
+    );
+  });
+
   it("rejects a parent name in place of its subfields", (t) => {
     t.expect(() =>
       indexer.onInstruction(
@@ -214,6 +231,7 @@ import type {
   FieldNotSelected,
   SvmBlock,
   SvmChainId,
+  SvmFieldsSelection,
   SvmOnSlotContext,
   SvmOnSlotFieldsSelection,
   SvmOnSlotFilter,
@@ -221,6 +239,7 @@ import type {
   SvmOnSlotHandlerArgs,
   SvmOnSlotOptions,
   SvmOnSlotWhereArgs,
+  SvmOnInstructionOptions,
   SvmOnSlotWhereResult,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
@@ -267,10 +286,36 @@ if (0) {
 expectType<
   TypeEqual<SvmOnSlotHandlerArgs<typeof fields>["block"], SvmBlock<typeof fields> | undefined>
 >(true);
+expectType<TypeEqual<SvmOnSlotFieldsSelection, Pick<SvmFieldsSelection, "block">>>(true);
+
+// The transaction counts are block fields like any other, so the selection and
+// block types stay shared with onInstruction, which rejects them on its options.
+const countFields = { block: ["transactionCount"] } as const satisfies SvmFieldsSelection;
+expectType<TypeEqual<SvmBlock<typeof countFields>["transactionCount"], number>>(true);
+expectType<
+  TypeEqual<
+    SvmBlock<typeof countFields>["failedTransactionCount"],
+    FieldNotSelected<"Field 'failedTransactionCount' is not selected. Add it to the handler options: { ..., fields: { block: ['failedTransactionCount'] } }">
+  >
+>(true);
+expectType<
+  TypeEqual<
+    NonNullable<SvmOnInstructionOptions<"Swapper", "swap", typeof countFields>["fields"]>,
+    typeof countFields & {
+      readonly __slotOnlyField: "Field 'transactionCount' is not supported on indexer.onInstruction yet. Select it in an indexer.onSlot handler instead.";
+    }
+  >
+>(true);
+expectType<
+  TypeEqual<
+    NonNullable<SvmOnInstructionOptions<"Swapper", "swap", typeof fields>["fields"]>,
+    typeof fields
+  >
+>(true);
 expectType<
   TypeEqual<
     SvmOnSlotHandlerArgs<{}>["block"],
-    FieldNotSelected<"Field 'block' is not selected for this handler. Add fields.block in the registration options.">
+    FieldNotSelected<"Field 'block' is not selected. Add one of its fields to the handler options, e.g. { ..., fields: { block: ['time'] } }">
   >
 >(true);
 expectType<
@@ -342,7 +387,17 @@ expectType<
   >
 >(true);
 expectType<
-  TypeEqual<SvmBlockFieldName, "slot" | "time" | "hash" | "height" | "parentSlot" | "parentHash">
+  TypeEqual<
+    SvmBlockFieldName,
+    | "slot"
+    | "time"
+    | "hash"
+    | "height"
+    | "parentSlot"
+    | "parentHash"
+    | "transactionCount"
+    | "failedTransactionCount"
+  >
 >(true);
 
 expectType<
@@ -499,7 +554,7 @@ type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
   : false;
 
 type NotSelectedActivity<Name extends string> = FieldNotSelected<
-  \`Field '\${Name}' is not selected for this handler. Add it to fields.accountActivity in the registration options.\`
+  \`Field '\${Name}' is not selected. Add it to the handler options: { ..., fields: { accountActivity: ['\${Name}'] } }\`
 >;
 
 if (0) {
@@ -686,7 +741,7 @@ const fields = {
 } as const satisfies SvmFieldsSelection;
 
 type NotSelectedActivity<Name extends string> = FieldNotSelected<
-  \`Field '\${Name}' is not selected for this handler. Add it to fields.accountActivity in the registration options.\`
+  \`Field '\${Name}' is not selected. Add it to the handler options: { ..., fields: { accountActivity: ['\${Name}'] } }\`
 >;
 
 if (0) {
@@ -754,7 +809,7 @@ expectType<
       readonly accountName: "source";
       readonly instructionAccountIndex: number;
       readonly activity:
-        | FieldNotSelected<"Field 'activity' is not selected for this handler. Add fields.accountActivity in the registration options.">
+        | FieldNotSelected<"Field 'activity' is not selected. Add one of its fields to the handler options, e.g. { ..., fields: { accountActivity: ['isSigner'] } }">
         | undefined;
     }
   >

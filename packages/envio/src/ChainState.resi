@@ -19,7 +19,9 @@ let seedConfigAddresses: (
 let make: (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
+  ~eventStore: EventStore.t,
   ~onEventRegistrations: array<Internal.onEventRegistration>=?,
+  ~onBlockRegistrations: array<Internal.onBlockRegistration>=?,
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
@@ -57,6 +59,10 @@ let makeFromDbState: (
 let logger: t => Logger.t
 let blockStore: t => BlockStore.t
 let transactionStore: t => TransactionStore.t
+// The chain's registrations by the index stored rows carry.
+let itemContext: t => StoredItems.context
+// Where a batch's items read their transactions and blocks from.
+let itemFields: t => StoredItems.fields
 let shouldChecksum: t => bool
 // The chain's fetch state, read-only: for the round a registration belongs to.
 let fetchState: t => FetchState.t
@@ -108,7 +114,6 @@ let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 let recordBlockRangeFetch: (
   t,
   ~totalTimeElapsed: float,
-  ~parsingTimeElapsed: float,
   ~numEvents: int,
   ~blockRangeSize: int,
 ) => unit
@@ -167,18 +172,11 @@ let isAtHeadWithoutEndBlock: t => bool
 let handleQueryResult: (
   t,
   ~query: FetchState.query,
-  ~newItems: array<Internal.item>,
+  ~page: EventStore.t,
   ~newRegistrations: array<AddressStore.registration>,
   ~latestFetchedBlock: int,
   ~knownHeight: int,
 ) => unit
-let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
-let materializePageItems: (
-  ~items: array<Internal.item>,
-  ~transactionStore: TransactionStore.t,
-  ~blockStore: BlockStore.t,
-  ~shouldChecksum: bool,
-) => promise<unit>
 // Merges the page's blocks into the chain's store as it checks them: the check
 // is the merge's own conflict report, so a page that passes is already applied.
 // Its transactions are a separate page, merged by the caller once this returns

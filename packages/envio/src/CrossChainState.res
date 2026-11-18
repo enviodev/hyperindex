@@ -24,13 +24,12 @@ type t = {
   mutable holdRealtime: bool,
 }
 
-// The whole-indexer fetch buffer pool, independent of chain count. A subgraph
-// with templates keeps far more per fetched event than a handler run does: a
-// register pass with its pending contract calls, and (for a chain kept open by
-// a template) responses well past the block the handlers are at. Venus on BSC
-// held 100k of them and its heap passed 4 GB, so the default there is a tenth
-// of that. Without templates there is neither, and a pool that small leaves
-// one query in flight at a time: fetching stops overlapping processing.
+// The whole-indexer fetch buffer pool, independent of chain count. A buffered
+// item takes about 360 bytes of process memory. A subgraph with templates keeps
+// far more per fetched event: a register pass with its pending contract calls,
+// and (for a chain kept open by a template) responses well past the block the
+// handlers are at. Venus on BSC held 100k of them and its heap passed 4 GB, so
+// the default there is far smaller.
 let defaultSubgraphTargetBufferSize = 10_000
 let calculateTargetBufferSize = () =>
   switch Env.targetBufferSize {
@@ -38,7 +37,7 @@ let calculateTargetBufferSize = () =>
   | None =>
     Env.subgraphMode.contents && Env.subgraphHasTemplates.contents
       ? defaultSubgraphTargetBufferSize
-      : 100_000
+      : 200_000
   }
 
 let make = (

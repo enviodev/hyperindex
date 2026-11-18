@@ -198,11 +198,13 @@ let make = (
 
       Promise.resolve({
         Source.knownHeight: reportedHeight,
-        parsedQueueItems: parsedQueueItems->Array.concat(
-          selection.onBlockRegistrations->blockItems(
-            ~fromBlock,
-            ~toBlock=toBlockQueried,
-            ~getBlock,
+        items: EventStore.fromJsItems(
+          parsedQueueItems->Array.concat(
+            selection.onBlockRegistrations->blockItems(
+              ~fromBlock,
+              ~toBlock=toBlockQueried,
+              ~getBlock,
+            ),
           ),
         ),
         // EVM/Fuel keep transaction and block inline. SVM simulate returns a

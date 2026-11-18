@@ -229,24 +229,21 @@ let wrap = (
       })
 
       let callBlocks = BlockStore.fromJs(response.blocks, ~ecosystem)
+      let callPage = EventStore.fromJsItems(callItems)
       let callRequestStat = {Source.method: "getCalls", seconds: callSeconds}
       switch logs {
       | Some(logs) =>
         logs.blockStore->BlockStore.appendPage(callBlocks)
+        logs.items->EventStore.rollback(latest)
+        logs.items->EventStore.merge(callPage)
         {
           ...logs,
-          parsedQueueItems: Array.concat(
-            logs.parsedQueueItems->Array.filter(item =>
-              item->Internal.getItemBlockNumber <= latest
-            ),
-            callItems,
-          ),
           latestFetchedBlockNumber: Math.Int.min(logs.latestFetchedBlockNumber, latest),
           requestStats: Array.concat(logs.requestStats, [callRequestStat]),
         }
       | None => {
           Source.knownHeight: response.knownHeight->Nullable.getOr(knownHeight),
-          parsedQueueItems: callItems,
+          items: callPage,
           transactionStore: None,
           blockStore: callBlocks,
           latestFetchedBlockNumber: latest,

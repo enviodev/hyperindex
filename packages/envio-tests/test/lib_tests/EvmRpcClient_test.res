@@ -250,8 +250,15 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       `{"address":"${contractAddress}","topics":["${transferSighash}","0x0000000000000000000000000000000000000000000000000000000000000001","0x0000000000000000000000000000000000000000000000000000000000000002"],"data":"0x00000000000000000000000000000000000000000000000000000000000003e8","blockNumber":"0x${block}","transactionHash":"${hash}","transactionIndex":"0x1","blockHash":"0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0","logIndex":"0x2","removed":false}`
     })->Array.join(",")
 
-  let callNextPage = (client: EvmRpcClient.t, ~fromBlock, ~toBlockCeiling, ~indexes, ~addressSet) =>
-    client.getNextPage(
+  // The page's result, its logs as the client routed them, and its block store.
+  let callNextPage = async (
+    client: EvmRpcClient.t,
+    ~fromBlock,
+    ~toBlockCeiling,
+    ~indexes,
+    ~addressSet,
+  ) => {
+    let (result, blockStore, _, items) = await client.getNextPage(
       {
         fromBlock,
         toBlockCeiling,
@@ -267,6 +274,8 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       BlockStore.make(~ecosystem=Ecosystem.Evm),
       TransactionStore.make(~ecosystem=Ecosystem.Evm),
     )
+    (result, items->TestEventStore.evmLogsOf(~registrationIndexes=indexes), blockStore)
+  }
 
   // The chain's address index, holding the one ERC20 address these logs are
   // emitted from. Non-wildcard registrations only route emitters it holds.
@@ -306,13 +315,14 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~addressStore,
         )
 
-        let (result, _, _) = await client->callNextPage(
+        let (result, eventItems, _) = await client->callNextPage(
           ~fromBlock=100,
           ~toBlockCeiling=100,
           ~indexes=[3],
           ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
         )
-        let {EvmRpcClient.eventItems: items, toBlock} = result
+        let {EvmRpcClient.toBlock: toBlock} = result
+        let items = eventItems
         (
           toBlock,
           items->Array.map(
@@ -382,7 +392,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~addressStore,
         )
 
-        let ({EvmRpcClient.eventItems: items}, _, _) = await client->callNextPage(
+        let (_, items, _) = await client->callNextPage(
           ~fromBlock=1,
           ~toBlockCeiling=1,
           ~indexes=[3],
@@ -485,13 +495,13 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~queryTimeoutMillis,
         )
 
-        let (result, _, _) = await client->callNextPage(
+        let (result, eventItems, _) = await client->callNextPage(
           ~fromBlock=firstBlock,
           ~toBlockCeiling=firstBlock + blockCount - 1,
           ~indexes=[3],
           ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
         )
-        (result.kind, result.eventItems->Array.length)
+        (result.kind, eventItems->Array.length)
       },
     )
 
@@ -669,13 +679,13 @@ describe("EvmRpcClient - getNextPage via napi", () => {
             ~maxConcurrentRequests,
           )
 
-          let (result, _, _) = await client->callNextPage(
+          let (result, eventItems, _) = await client->callNextPage(
             ~fromBlock=firstBlock,
             ~toBlockCeiling=firstBlock + blockCount - 1,
             ~indexes=[3],
             ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
           )
-          (result.kind, result.eventItems->Array.length, peakInFlight.contents)
+          (result.kind, eventItems->Array.length, peakInFlight.contents)
         },
       )
 

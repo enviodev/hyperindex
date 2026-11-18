@@ -10,6 +10,7 @@ type svmHyperSyncClientCtor
 type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
+type eventStoreCtor
 type storageCtor
 type addressStoreCtor
 type tuiCtor
@@ -90,6 +91,8 @@ type addon = {
   transactionStore: transactionStoreCtor,
   @as("BlockStore")
   blockStore: blockStoreCtor,
+  @as("EventStore")
+  eventStore: eventStoreCtor,
   @as("AddressStore")
   addressStore: addressStoreCtor,
   @as("Storage")
@@ -106,6 +109,9 @@ type addon = {
   mockSource: mockSourceCtor,
   @as("VirtualClock")
   virtualClock: virtualClockCtor,
+  // Subgraph mode: keys every event store made after in graph-node's trigger
+  // order, with the `once` block registrations first; null puts back envio's.
+  setSubgraphItemOrder: Null.t<array<int>> => unit,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
   normalizeEvmAddress: (~address: string, ~shouldChecksum: bool) => Null.t<Address.t>,
   renderAddresses: (

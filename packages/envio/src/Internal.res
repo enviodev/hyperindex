@@ -799,16 +799,6 @@ external getItemOrderPath: item => Nullable.t<array<int>> = "orderPath"
 // block ahead of that block's handlers without a `switch`.
 @get
 external getItemKind: item => int = "kind"
-// Set only in subgraph mode, on an event of an address registered in the very
-// block it was logged in: graph-node runs a new data source's creation-block
-// events after everything else in that block. The value is the round, as
-// graph-node counts them: 1 for a data source a block's own triggers created,
-// 2 for one that round-1 handlers created, and so on.
-@get
-external getItemCreationRound: item => option<int> = "runsAfterBlock"
-@set
-external markItemCreationRound: (item, int) => unit = "runsAfterBlock"
-
 let itemRunsFirst = (item: item) =>
   switch item {
   | Block({onBlockRegistration: {runsFirst: true}}) => true
@@ -823,12 +813,6 @@ let itemRunsFirst = (item: item) =>
 external getItemCallRank: item => option<int> = "callRank"
 @set
 external setItemCallRank: (item, int) => unit = "callRank"
-@get
-external getItemTransactionIndex: item => int = "transactionIndex"
-
-// Flips on when the first call item is built, so a run without call triggers
-// compares items exactly as before.
-let callOrderingActive = ref(false)
 
 // The call trigger an event of this name is, if it is one: the subgraph
 // translator names them `__envio_call_<selector>_<function>`, and the block
@@ -842,10 +826,7 @@ let callRankOfEventName = (name: string): option<int> =>
     None
   }
 
-let markItemCall = (item, ~rank) => {
-  item->setItemCallRank(rank)
-  callOrderingActive := true
-}
+let markItemCall = (item, ~rank) => item->setItemCallRank(rank)
 
 let getItemChainId = item =>
   switch item {

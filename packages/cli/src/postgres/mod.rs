@@ -9,6 +9,8 @@ pub mod insert;
 pub mod internal;
 #[cfg(test)]
 pub(crate) mod live_tests;
+#[cfg(test)]
+mod network_tests;
 pub mod param;
 pub mod pg_type;
 pub mod rows;
