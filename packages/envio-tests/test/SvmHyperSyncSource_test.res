@@ -94,7 +94,7 @@ let makeMockClient = (): SvmHyperSyncClient.t => {
   getHeight: () => Promise.resolve(slot + 1000),
   getBlockHashes: (~blockNumbers as _) =>
     JsError.throwWithMessage("getBlockHashes should not be used in these tests"),
-  getItems: (~query, ~addressSet as _) => {
+  getItems: (~query) => {
     capturedQueries->Array.push(query)
     // The real Rust client builds the page from raw transactions/blocks; the
     // mock returns an empty one (materialisation is covered by the Rust unit
@@ -227,7 +227,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           itemsTarget: 5000,
           onEventRegistrationIndexes: [0],
           onBlockRegistrationIndexes: [],
-          clientFilteredContracts: None,
         }: SvmHyperSyncClient.Items.query
       ),
     })

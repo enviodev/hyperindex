@@ -142,6 +142,7 @@ describe("Wildcard and address-filtered partitions", () => {
               "Factory.Transfer",
               "SimpleNft.Transfer",
               "Factory.MockEvent",
+              "Factory.MockEvent",
             ],
           },
         ],
@@ -152,7 +153,7 @@ describe("Wildcard and address-filtered partitions", () => {
   scenario->Scenario.it(
     "groups registrations for an address-filtered contract like any other contract's",
     ~sources=[{chain: 1337, autoHeight: 1000}],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       await sourceMock.expectItemsQueries([
         {partitionId: "0", reply: LeavePending},
@@ -170,6 +171,9 @@ describe("Wildcard and address-filtered partitions", () => {
           }),
         },
       ])
+      // Partition 1's next query goes out with its response; the
+      // registrations land once the contractRegister run that follows ends.
+      await indexer.waitUntilIdle()
       await sourceMock.expectItemsQueries([
         {partitionId: "0", reply: LeavePending},
         {partitionId: "1", fromBlock: 101, reply: LeavePending},
@@ -184,7 +188,7 @@ describe("Wildcard and address-filtered partitions", () => {
           partitionId: "1",
           fromBlock: 101,
           toBlock: Bounded(800),
-          addresses: [factory0, factory1, factory5],
+          addresses: [factory0, factory1],
         },
         {
           partitionId: "2",
@@ -192,7 +196,7 @@ describe("Wildcard and address-filtered partitions", () => {
           toBlock: Bounded(800),
           addresses: [simpleNft1, simpleNft2, simpleNft3],
         },
-        {partitionId: "3", fromBlock: 6, toBlock: Bounded(100), addresses: [factory5]},
+        {partitionId: "3", fromBlock: 6, toBlock: Bounded(800), addresses: [factory5]},
       ])
     },
   )
@@ -259,7 +263,12 @@ indexer.onEvent(
           {
             partitionId: "0",
             dependsOnAddresses: true,
-            events: ["ContractA.Transfer", "ContractB.Transfer", "ContractA.MockEvent"],
+            events: [
+              "ContractA.Transfer",
+              "ContractB.Transfer",
+              "ContractA.MockEvent",
+              "ContractA.MockEvent",
+            ],
           },
         ],
       ))

@@ -106,8 +106,9 @@ let upTo = (~items=[], block) => MockSource.Respond({items, latestFetchedBlockNu
 
 // Partition 0 registers two dynamic Gravatar addresses at block 3, so with a
 // threshold of 1 Gravatar's three addresses switch it to client-side
-// filtering: partition 2 fetches it address-free from block 1, and partition 0
-// keeps NftFactory's address from block 6.
+// filtering: partition 2 fetches it address-free from the registration block,
+// 3. Partition 0 had covered blocks 1 to 5 already, and its query from block 6,
+// out before the registration, still carries Gravatar's config address.
 let collapseGravatar = async (sourceMock: MockSource.t) => {
   sourceMock.resolveGetHeightOrThrow(1000)
   await sourceMock.expectItemsQueries([
@@ -129,24 +130,24 @@ describe("FetchState client-side address filtering", () => {
       let sourceMock = source(1337)
       await sourceMock->collapseGravatar
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", reply: LeavePending},
         {partitionId: "0", reply: LeavePending},
+        {partitionId: "2", reply: LeavePending},
       ])
 
       t.expect(sourceMock->pendingQueries).toEqual([
         {
-          partitionId: "2",
-          fromBlock: 1,
-          toBlock: Unbounded,
-          addresses: [],
-          clientFilteredContracts: Some(["Gravatar"]),
-        },
-        {
           partitionId: "0",
           fromBlock: 6,
           toBlock: Unbounded,
-          addresses: [nftFactoryConfigAddress],
+          addresses: [nftFactoryConfigAddress, lowercaseGravatarConfigAddress],
           clientFilteredContracts: None,
+        },
+        {
+          partitionId: "2",
+          fromBlock: 3,
+          toBlock: Unbounded,
+          addresses: [],
+          clientFilteredContracts: Some(["Gravatar"]),
         },
       ])
     },
@@ -164,23 +165,23 @@ describe("FetchState client-side address filtering", () => {
         {partitionId: "0", fromBlock: 1, reply: upTo(~items=[registerAt(3, [address(1)])], 5)},
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", reply: LeavePending},
         {partitionId: "0", reply: LeavePending},
+        {partitionId: "2", reply: LeavePending},
       ])
 
       t.expect(sourceMock->pendingQueries).toEqual([
-        {
-          partitionId: "2",
-          fromBlock: 3,
-          toBlock: Unbounded,
-          addresses: [address(1)->Address.toString],
-          clientFilteredContracts: None,
-        },
         {
           partitionId: "0",
           fromBlock: 6,
           toBlock: Unbounded,
           addresses: [nftFactoryConfigAddress, lowercaseGravatarConfigAddress],
+          clientFilteredContracts: None,
+        },
+        {
+          partitionId: "2",
+          fromBlock: 3,
+          toBlock: Unbounded,
+          addresses: [address(1)->Address.toString],
           clientFilteredContracts: None,
         },
       ])
@@ -230,8 +231,8 @@ describe("FetchState client-side address filtering", () => {
         ~message="the block partition keeps its own query, with no contract client-filtered",
       ).toEqual([
         ("0", 1, ["headers"], [], None),
-        ("3", 1, [], ["Gravatar"], Some(["Gravatar"])),
-        ("1", 6, [], ["NftFactory", "SimpleNft", "Gravatar"], None),
+        ("1", 6, [], ["NftFactory", "SimpleNft", "Gravatar", "Gravatar"], None),
+        ("3", 3, [], ["Gravatar", "Gravatar"], Some(["Gravatar"])),
       ])
     },
   )
@@ -296,8 +297,8 @@ describe("FetchState client-side address filtering", () => {
         ),
         ~message="Gravatar's addresses leave the shared partition, and the address-free one fetches Gravatar",
       ).toEqual([
-        ("0", [nftFactoryConfigAddress], ["NftFactory", "SimpleNft", "Gravatar"], None),
-        ("1", [], ["Gravatar"], Some(["Gravatar"])),
+        ("0", [nftFactoryConfigAddress], ["NftFactory", "SimpleNft", "Gravatar", "Gravatar"], None),
+        ("1", [], ["Gravatar", "Gravatar"], Some(["Gravatar"])),
       ])
     },
   )
@@ -312,7 +313,7 @@ describe("FetchState client-side address filtering", () => {
       let sourceMock = source(1337)
       await sourceMock->collapseGravatar
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 1, reply: upTo(50)},
+        {partitionId: "2", fromBlock: 3, reply: upTo(50)},
         {partitionId: "0", fromBlock: 6, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
@@ -326,19 +327,23 @@ describe("FetchState client-side address filtering", () => {
       await sourceMock.expectItemsQueries([
         {partitionId: "2", fromBlock: 51, reply: upTo(100)},
         {partitionId: "3", fromBlock: 8, reply: LeavePending},
-        // Partition 0 now fetches NftFactory's config address in chunks.
+        // Partition 0 now fetches NftFactory's config address in chunks, and
+        // partition 4 goes on with it and the new address past the last one.
         {partitionId: "0", reply: LeavePending},
+        {partitionId: "4", reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([{partitionId: "2", fromBlock: 101, reply: LeavePending}])
 
       t.expect(
-        sourceMock->pendingQueries->Array.filter(query => query.partitionId !== "0"),
+        sourceMock
+        ->pendingQueries
+        ->Array.filter(query => query.partitionId === "2" || query.partitionId === "3"),
         ~message="partition 2 goes on from 101 under its own id; NftFactory's new address is fetched server-side",
       ).toEqual([
         {
           partitionId: "3",
           fromBlock: 8,
-          toBlock: Bounded(10),
+          toBlock: Bounded(118),
           addresses: [address(11)->Address.toString],
           clientFilteredContracts: None,
         },
@@ -366,7 +371,7 @@ describe("FetchState client-side address filtering", () => {
       // NftFactory crosses the threshold while partition 2's query is out, so
       // the address-free selection grows under a new partition, 3.
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 1, reply: LeavePending},
+        {partitionId: "2", fromBlock: 3, reply: LeavePending},
         {
           partitionId: "0",
           fromBlock: 6,
@@ -374,23 +379,28 @@ describe("FetchState client-side address filtering", () => {
         },
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 1, reply: LeavePending},
-        {partitionId: "3", fromBlock: 1, reply: LeavePending},
+        {partitionId: "2", fromBlock: 3, reply: LeavePending},
+        {partitionId: "3", fromBlock: 3, reply: LeavePending},
+        {partitionId: "0", reply: LeavePending},
       ])
-      let afterSwitch = sourceMock->pendingQueries
+      let afterSwitch = sourceMock->pendingQueries->Array.filter(query => query.partitionId !== "0")
 
       // The orphaned query lands, but partition 3 hasn't fetched that range
       // under the wider selection yet.
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 1, reply: upTo(~items=[handled->eventAt(200)], 500)},
-        {partitionId: "3", fromBlock: 1, reply: LeavePending},
+        {partitionId: "2", fromBlock: 3, reply: upTo(~items=[handled->eventAt(200)], 500)},
+        {partitionId: "3", fromBlock: 3, reply: LeavePending},
+        {partitionId: "0", reply: LeavePending},
       ])
       await indexer.waitUntilIdle()
       let handledAfterOrphan = handled->Array.copy
 
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 1, reply: upTo(~items=[handled->eventAt(200)], 500)},
+        {partitionId: "3", fromBlock: 3, reply: upTo(~items=[handled->eventAt(200)], 500)},
+        {partitionId: "0", reply: LeavePending},
       ])
+      // Partition 0's chunks hold the chain's progress back until they land.
+      await sourceMock.respondUpTo(500)
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -400,14 +410,14 @@ describe("FetchState client-side address filtering", () => {
         [
           {
             partitionId: "2",
-            fromBlock: 1,
+            fromBlock: 3,
             toBlock: Unbounded,
             addresses: [],
             clientFilteredContracts: Some(["Gravatar"]),
           },
           {
             partitionId: "3",
-            fromBlock: 1,
+            fromBlock: 3,
             toBlock: Unbounded,
             addresses: [],
             clientFilteredContracts: Some(["Gravatar", "NftFactory"]),
@@ -436,7 +446,7 @@ describe("FetchState client-side address filtering", () => {
           (i): MockSource.itemMock => {blockNumber: from + i, logIndex: 0},
         )
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 1, reply: upTo(~items=dense(10), 50)},
+        {partitionId: "2", fromBlock: 3, reply: upTo(~items=dense(10), 50)},
         {partitionId: "0", fromBlock: 6, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
@@ -444,7 +454,7 @@ describe("FetchState client-side address filtering", () => {
         {partitionId: "0", fromBlock: 6, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 911, toBlock: Bounded(1000), reply: LeavePending},
+        {partitionId: "2", fromBlock: 971, toBlock: Bounded(1000), reply: LeavePending},
         {partitionId: "2", reply: LeavePending},
         {partitionId: "0", fromBlock: 6, reply: LeavePending},
       ])
@@ -463,17 +473,19 @@ describe("FetchState client-side address filtering", () => {
       // The first chunk lands past the block the retired generation stopped
       // at; the others are still owed.
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 101, reply: upTo(190)},
+        {partitionId: "2", fromBlock: 101, reply: upTo(187)},
         {partitionId: "3", reply: LeavePending},
         {partitionId: "4", reply: LeavePending},
+        // Partition 0's dense reply set it fetching in chunks too.
+        {partitionId: "0", reply: LeavePending},
       ])
       await sourceMock.respondUpTo(1000, ~items=[handled->eventAt(950)])
       await indexer.getBatchWritePromise()
 
       t.expect(
         (chunks->Array.length, handled, sourceMock->pendingQueries),
-        ~message="ten chunks in flight; the last one's event is processed once and nothing else is asked",
-      ).toEqual((10, [950], []))
+        ~message="eleven chunks in flight; the last one's event is processed once and nothing else is asked",
+      ).toEqual((11, [950], []))
     },
   )
 
@@ -487,13 +499,14 @@ describe("FetchState client-side address filtering", () => {
       let handled = []
       await sourceMock->collapseGravatar
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 1, reply: upTo(50)},
+        {partitionId: "2", fromBlock: 3, reply: upTo(50)},
         {partitionId: "0", fromBlock: 6, reply: LeavePending},
       ])
 
-      // NftFactory crosses the threshold too. Its partition sits below the
+      // NftFactory crosses the threshold too, at block 8, below the
       // address-free frontier, so folding it in leaves backfill partition 4
-      // over [6, 50].
+      // over [8, 50]. Partition 0, fetching in chunks since its dense reply,
+      // covered NftFactory's config address up to there.
       await sourceMock.expectItemsQueries([
         {partitionId: "2", fromBlock: 51, reply: LeavePending},
         {
@@ -504,15 +517,18 @@ describe("FetchState client-side address filtering", () => {
       ])
       await sourceMock.expectItemsQueries([
         {partitionId: "2", fromBlock: 51, reply: LeavePending},
-        {partitionId: "4", fromBlock: 6, toBlock: Bounded(50), reply: LeavePending},
+        {partitionId: "4", fromBlock: 8, toBlock: Bounded(50), reply: LeavePending},
         {partitionId: "3", fromBlock: 51, reply: LeavePending},
+        {partitionId: "0", reply: LeavePending},
       ])
-      let withBackfill = sourceMock->pendingQueries
+      let withBackfill =
+        sourceMock->pendingQueries->Array.filter(query => query.partitionId !== "0")
 
       // SimpleNft crosses the threshold while the backfill is mid-query.
       await sourceMock.expectItemsQueries([
         {partitionId: "2", fromBlock: 51, reply: LeavePending},
-        {partitionId: "4", fromBlock: 6, reply: LeavePending},
+        {partitionId: "4", fromBlock: 8, reply: LeavePending},
+        {partitionId: "0", reply: LeavePending},
         {
           partitionId: "3",
           fromBlock: 51,
@@ -539,7 +555,7 @@ describe("FetchState client-side address filtering", () => {
           },
           {
             partitionId: "4",
-            fromBlock: 6,
+            fromBlock: 8,
             toBlock: Bounded(50),
             addresses: [],
             clientFilteredContracts: Some(["Gravatar", "NftFactory"]),

@@ -156,7 +156,7 @@ fn item_columns() -> Vec<ColumnRead> {
         .collect()
 }
 
-/// Named as `FuelHyperSyncClient.EventItems.item`'s fields.
+/// Named as `FuelEventItem.item`'s fields.
 pub(crate) fn fuel_columns() -> Vec<ColumnRead> {
     vec![
         ColumnRead::scalar("receiptIndex", ReadKind::Float),

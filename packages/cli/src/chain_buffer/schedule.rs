@@ -105,13 +105,20 @@ impl Schedule {
         self.handlers.iter().find(|handler| handler.index == index)
     }
 
-    /// How many handler runs land on blocks `[from_block, to_block]`.
-    pub(crate) fn count_runs(&self, from_block: u64, to_block: u64) -> u64 {
+    /// How many runs of the handlers `counts` accepts land on blocks
+    /// `[from_block, to_block]`.
+    pub(crate) fn count_runs(
+        &self,
+        from_block: u64,
+        to_block: u64,
+        counts: impl Fn(u32) -> bool,
+    ) -> u64 {
         if from_block > to_block {
             return 0;
         }
         self.handlers
             .iter()
+            .filter(|handler| counts(handler.index))
             .map(|handler| match handler.first_from(from_block) {
                 Some(first) if first <= to_block => {
                     let last = match handler.end_block {
@@ -187,10 +194,11 @@ mod tests {
                 schedule.first_from(15),
                 on(70),
                 on(20),
-                schedule.count_runs(0, 50),
-                schedule.count_runs(41, 41),
+                schedule.count_runs(0, 50, |_| true),
+                schedule.count_runs(41, 41, |_| true),
+                schedule.count_runs(0, 50, |index| index == 1),
             ),
-            (Some(20), vec![0], vec![1], 8 + 4, 0)
+            (Some(20), vec![0], vec![1], 8 + 4, 0, 4)
         );
     }
 }

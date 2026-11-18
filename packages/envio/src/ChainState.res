@@ -861,12 +861,26 @@ let handleQueryResult = (
   | None => ()
   }
   let previousKnownHeight = cs.fetchState.knownHeight
+  // A source returns the blocks of the handlers its query selects, not their
+  // runs, so the runs are counted here: the density the next queries are
+  // priced by includes them.
+  let blockHandlerRuns = switch query.selection.onBlockRegistrations {
+  | [] => 0
+  | onBlockRegistrations =>
+    cs.chainBuffer
+    ->ChainBuffer.countBlockHandlerRunsInBlockRange(
+      ~fromBlock=query.fromBlock,
+      ~toBlock=latestFetchedBlock,
+      ~registrationIndexes=onBlockRegistrations->Array.map(registration => registration.index),
+    )
+    ->Float.toInt
+  }
   cs.fetchState =
     cs.fetchState
     ->FetchState.handleQueryResult(
       ~query,
       ~latestFetchedBlock,
-      ~itemsCount,
+      ~itemsCount=itemsCount + blockHandlerRuns,
       ~registeringBlockNumbers,
     )
     ->FetchState.updateKnownHeight(~knownHeight)

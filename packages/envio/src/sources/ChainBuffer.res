@@ -20,7 +20,7 @@ type config = {
   shouldChecksum: bool,
   evmRegistrations?: array<HyperSyncClient.Registration.input>,
   svmRegistrations?: array<SvmHyperSyncClient.Registration.program>,
-  fuelRegistrations?: unknown,
+  fuelRegistrations?: array<FuelHyperSyncClient.Registration.input>,
   contractRegisterIndexes: array<int>,
   blockHandlers: array<BlockItem.blockHandlerInput>,
   // By event registration index.
@@ -115,9 +115,14 @@ external removeBlocksInBlockRange: (t, ~fromBlock: int, ~toBlock: int) => int =
 @send
 external countRowsInBlockRange: (t, ~fromBlock: int, ~toBlock: int) => int = "countRowsInBlockRange"
 
+// Of the handlers `registrationIndexes` names, or of every handler.
 @send
-external countBlockHandlerRunsInBlockRange: (t, ~fromBlock: int, ~toBlock: int) => float =
-  "countBlockHandlerRunsInBlockRange"
+external countBlockHandlerRunsInBlockRange: (
+  t,
+  ~fromBlock: int,
+  ~toBlock: int,
+  ~registrationIndexes: array<int>=?,
+) => float = "countBlockHandlerRunsInBlockRange"
 
 // Rows and block handler runs of blocks `[fromBlock, toBlock]`: what a build
 // of the range produces at most.
@@ -213,6 +218,10 @@ let makeForChain = (
           ->SvmHyperSyncClient.Registration.fromOnEventRegistrations,
         )
       | Evm | Fuel => None
+      },
+      fuelRegistrations: ?switch ecosystem {
+      | Fuel => Some(onEventRegistrations->FuelHyperSyncClient.Registration.fromOnEventRegistrations)
+      | Evm | Svm => None
       },
       contractRegisterIndexes: onEventRegistrations->contractRegisterIndexesOf,
       blockHandlers: onBlockRegistrations->BlockItem.toBlockHandlerInputs,

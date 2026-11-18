@@ -73,18 +73,7 @@ module EventItems = {
     clientFilteredContracts: option<array<string>>,
   }
 
-  // One routed receipt with the params its handler receives, built in Rust
-  // for every receipt kind.
-  type item = {
-    receiptIndex: int,
-    txId: string,
-    blockHeight: int,
-    srcAddress: Address.t,
-    params: Internal.eventParams,
-  }
-
-  // The page's first LogData receipt a contract-bound registration's ABI
-  // rejected, with how many it rejected. The receipts themselves are dropped.
+  // What the page covered; its rows come in the page beside it.
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,

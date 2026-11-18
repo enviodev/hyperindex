@@ -505,15 +505,27 @@ impl ChainBuffer {
         (tables.events.count_in_block_range(from, to) + tables.decoded.count_range(from, to)) as u32
     }
 
-    /// Block handler runs on blocks `[from_block, to_block]`.
+    /// Block handler runs on blocks `[from_block, to_block]`, of the handlers
+    /// `registration_indexes` names or, without it, of every handler.
     #[napi]
-    pub fn count_block_handler_runs_in_block_range(&self, from_block: i64, to_block: i64) -> f64 {
+    pub fn count_block_handler_runs_in_block_range(
+        &self,
+        from_block: i64,
+        to_block: i64,
+        registration_indexes: Option<Vec<u32>>,
+    ) -> f64 {
         if to_block < from_block {
             return 0.0;
         }
-        self.shared
-            .schedule
-            .count_runs(block(from_block), block(to_block).min(LAST_BLOCK)) as f64
+        self.shared.schedule.count_runs(
+            block(from_block),
+            block(to_block).min(LAST_BLOCK),
+            |index| {
+                registration_indexes
+                    .as_ref()
+                    .is_none_or(|indexes| indexes.contains(&index))
+            },
+        ) as f64
     }
 
     /// The block of the event row `row_offset` rows past the first one at or

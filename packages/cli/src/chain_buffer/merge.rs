@@ -39,6 +39,25 @@ pub(crate) fn first_hash_mismatch(
         })
 }
 
+/// The blocks `incoming` holds under a hash other than the stored one: a
+/// different block at the same number, whose row replaces the stored one.
+fn blocks_with_other_hash(stored: &Table, incoming: &Table, ecosystem: Ecosystem) -> Vec<u64> {
+    let column = ecosystem.hash_column();
+    incoming
+        .rows_in_block_range(0, u64::MAX >> POSITION_BITS)
+        .filter(|row| {
+            let Some(received) = row.bytes_at(column) else {
+                return false;
+            };
+            stored
+                .find(make_key(row.block_number(), 0), 0)
+                .and_then(|stored| stored.bytes_at(column))
+                .is_some_and(|stored| stored != received)
+        })
+        .map(|row| row.block_number())
+        .collect()
+}
+
 pub(crate) struct Merged {
     pub(crate) mismatch: Option<HashMismatch>,
     pub(crate) rows_kept: usize,
@@ -70,6 +89,9 @@ pub(crate) fn merge_page(
     }
     let rows_kept = tables.events.merge_table(&page.events) + tables.decoded.merge(&page.decoded);
     tables.transactions.merge_table(&page.transactions);
+    for block_number in blocks_with_other_hash(&tables.blocks, &page.blocks, page.ecosystem) {
+        tables.blocks.remove_block_range(block_number, block_number);
+    }
     tables.blocks.merge_table(&page.blocks);
     let mut registering_blocks = std::mem::take(&mut page.registering_blocks);
     registering_blocks.extend(

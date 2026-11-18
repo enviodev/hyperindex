@@ -77,6 +77,8 @@ type rec t = {
   // A contractRegister run is in flight: its handlers run off the clock, and
   // the registrations it makes reach fetching only once it ends.
   isRegisteringContracts: unit => bool,
+  // A reorg rollback is under way: no chain dispatches a query until it ends.
+  isResolvingReorg: unit => bool,
   // Moves a virtual-time run's clock forward, firing every source timer due
   // on the way. Only a run on virtual time has a clock to move.
   advanceTime: int => promise<unit>,
@@ -691,6 +693,7 @@ let run = async (
       },
       waitUntilIdle,
       isRegisteringContracts: () => state->IndexerState.isRegisteringContracts,
+      isResolvingReorg: () => state->IndexerState.isResolvingReorg,
       advanceTime: millis =>
         switch clock {
         | Some(clock) =>

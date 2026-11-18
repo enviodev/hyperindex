@@ -218,7 +218,7 @@ let read = (rows: ChainBuffer.builtItems, ~context: context): array<Internal.ite
         let item =
           fuel
           ->Array.getUnsafe(row->detailRow)
-          ->(Utils.magic: dict<unknown> => FuelHyperSyncClient.EventItems.item)
+          ->(Utils.magic: dict<unknown> => FuelEventItem.item)
         item->FuelEventItem.toInternalItem(
           ~onEventRegistration=context.onEventRegistrations->Array.getUnsafe(registrationIndex),
           ~chainId=context.chainId,

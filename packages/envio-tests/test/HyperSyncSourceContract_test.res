@@ -396,12 +396,11 @@ describe("HyperSync source contract", () => {
         })
         let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
         let page = await source->fetch(~addressSet, ~toBlock=Some(12), ~reorgableFrom=Some(10))
+        // Merging moves the page's rows, so it merges once.
+        let buffer = page.page->bufferOf
         [10, 12]->Array.map(
           blockNumber =>
-            page.page
-            ->bufferOf
-            ->ChainBuffer.getBlockTimestamp(blockNumber, ~allowSkippedSlot=false)
-            ->Null.toOption,
+            buffer->ChainBuffer.getBlockTimestamp(blockNumber, ~allowSkippedSlot=false)->Null.toOption,
         )
       },
     )
@@ -621,14 +620,16 @@ describe("HyperSync source responses", () => {
         {
           "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
           "knownHeight": response.knownHeight,
-          "items": response.page->BufferPage.rowCount,
+          "rows": response.page->BufferPage.rowCount,
         }
       },
     )
     t.expect(summary).toEqual({
       "latestFetchedBlockNumber": 10,
       "knownHeight": 60,
-      "items": 3,
+      // Two logs, one of them matching two registrations: a page keeps a log
+      // once, whatever number of handlers it reaches.
+      "rows": 2,
     })
   })
 
