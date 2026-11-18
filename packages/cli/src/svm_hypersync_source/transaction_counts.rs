@@ -13,7 +13,7 @@ use hypersync_solana_net_types::field_selection::{
 };
 use hypersync_solana_net_types::query::{SolanaQuery, TransactionSelection};
 
-use crate::block_store::SvmTransactionCounts;
+use crate::chain_buffer::svm::SvmTransactionCounts;
 
 /// Left unset, the server ends a page at about 10,000 transactions, some 25
 /// slots. A transaction costs this query two narrow columns, so the cap is

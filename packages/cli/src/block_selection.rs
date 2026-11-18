@@ -17,25 +17,6 @@ pub struct OnBlockRegistrationInput {
     pub block_field_mask: f64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BlockItem {
-    pub block_number: i64,
-    pub on_block_registration_index: i64,
-    /// The chain produced no block at this number: an SVM skipped slot. The
-    /// handler still runs on it, without a block.
-    pub skipped: bool,
-}
-
-impl BlockItem {
-    pub(crate) fn into_row(self) -> crate::event_store::Row {
-        crate::event_store::Row::block(
-            self.block_number,
-            self.on_block_registration_index,
-            self.skipped,
-        )
-    }
-}
-
 #[derive(Clone)]
 struct Registration {
     index: i64,
@@ -257,26 +238,6 @@ impl BlockSelection {
         to_block
     }
 
-    /// An item for every handler running on a block of `covered`, in block
-    /// then registration order.
-    pub(crate) fn route(&self, covered: Range<u64>) -> Vec<BlockItem> {
-        if self.is_empty() {
-            return Vec::new();
-        }
-        covered
-            .flat_map(|block_number| {
-                self.registrations
-                    .iter()
-                    .filter(move |r| r.runs_on(block_number))
-                    .map(move |r| BlockItem {
-                        block_number: block_number as i64,
-                        on_block_registration_index: r.index,
-                        skipped: false,
-                    })
-            })
-            .collect()
-    }
-
     /// The blocks of `covered` some handler runs on, ascending.
     pub(crate) fn blocks_run_on(&self, covered: Range<u64>) -> Vec<u64> {
         if self.is_empty() {
@@ -353,31 +314,14 @@ mod tests {
             .unwrap()
     }
 
-    fn item(block_number: i64, on_block_registration_index: i64) -> BlockItem {
-        BlockItem {
-            block_number,
-            on_block_registration_index,
-            skipped: false,
-        }
-    }
-
     #[test]
-    fn routes_each_block_to_the_handlers_running_on_it() {
+    fn lists_the_blocks_some_handler_runs_on() {
         let selection = select(
-            &[input(0, 10, None, 2), input(1, 0, Some(11), 1)],
+            &[input(0, 10, None, 2), input(1, 0, Some(10), 1)],
             9,
-            Some(12),
+            Some(13),
         );
-        assert_eq!(
-            selection.route(9..13),
-            vec![
-                item(9, 1),
-                item(10, 0),
-                item(10, 1),
-                item(11, 1),
-                item(12, 0)
-            ]
-        );
+        assert_eq!(selection.blocks_run_on(9..14), vec![9, 10, 12]);
     }
 
     #[test]

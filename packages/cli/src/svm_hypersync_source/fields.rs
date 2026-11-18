@@ -280,7 +280,7 @@ pub fn block_extra_columns(selected: &[String]) -> Result<Vec<&'static str>> {
 /// transaction counts are tallied from the transaction table, so they name no
 /// block column.
 pub fn block_mask_columns(mask: u64) -> Result<Vec<&'static str>> {
-    use crate::block_store::SvmBlockField;
+    use crate::chain_buffer::svm::SvmBlockField;
     use strum::VariantArray;
     let mask = mask & !SvmBlockField::TRANSACTION_COUNTS_MASK;
     let selected: Vec<String> = SvmBlockField::VARIANTS
@@ -321,8 +321,8 @@ mod tests {
     use strum::VariantArray;
 
     use super::*;
-    use crate::block_store::SvmBlockField;
-    use crate::transaction_store::SvmTxField;
+    use crate::chain_buffer::svm::SvmBlockField;
+    use crate::chain_buffer::svm::SvmTxField;
 
     fn names(table: &[HandlerField]) -> Vec<&'static str> {
         table.iter().map(|field| field.js_name).collect()
