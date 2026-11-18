@@ -1,4 +1,5 @@
 open Vitest
+open ItemsQueryView.ClientFiltered
 
 // Reorgs are tracked over the last 1500 blocks of a 2000-block chain, so these
 // rollbacks land far more than 200 blocks below the head, where only the
@@ -55,23 +56,6 @@ let registerAt = (blockNumber, addresses): MockSource.itemMock => {
     addresses->Array.forEach(address => context.chain["Gravatar"].add(address))
   },
 }
-
-type query = {
-  partitionId: string,
-  fromBlock: int,
-  toBlock: MockSource.toBlock,
-  addresses: array<string>,
-  clientFilteredContracts: option<array<string>>,
-}
-
-let pendingQueries = (sourceMock: MockSource.t) =>
-  sourceMock.pendingItemsQueries->Array.map(query => {
-    partitionId: query.partitionId,
-    fromBlock: query.fromBlock,
-    toBlock: query.toBlock,
-    addresses: query->MockSource.addresses->Array.map(Address.toString),
-    clientFilteredContracts: (query->MockSource.selection).clientFilteredContracts,
-  })
 
 let nftFactory = (~partitionId="0", fromBlock) => {
   partitionId,

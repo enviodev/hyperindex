@@ -150,7 +150,7 @@ let regenerateAbove = (world, ~rng, ~keepUpTo) => {
       for _ in 1 to rng() < 0.3 ? 2 : 1 {
         let address = pick(rng, loggingAddresses)
         // A log in the block that registers its address would hinge on the
-        // order within the block, which this fuzz leaves to the unit tests.
+        // order within the block, which FetchStateEarliestItem_test pins.
         let address =
           world.registrationBlocks->Dict.get(address) === Some(blockNumber)
             ? staticAddress
@@ -547,7 +547,7 @@ let injectReorg = async (fuzz, ~seed) => {
       ~prevRangeLastBlock={blockNumber: reorged, blockHash: `0x${reorged->Int.toString}a`},
     )
     let rounds = ref(0)
-    while fuzz->reorgsDetected === before && rounds.contents < 100 {
+    while fuzz->reorgsDetected === before && rounds.contents < 2000 {
       rounds := rounds.contents + 1
       // Real time: the reply is checked against the block store off the clock.
       await Utils.delay(1)

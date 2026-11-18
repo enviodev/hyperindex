@@ -1,4 +1,5 @@
 open Vitest
+open ItemsQueryView.ClientFiltered
 
 // A contract whose registered address count crosses the threshold is fetched
 // client-side: its partitions fold into one address-free partition whose
@@ -100,23 +101,6 @@ let eventAt = (handled, blockNumber): MockSource.itemMock => {
   logIndex: 1,
   handler: async _ => handled->Array.push(blockNumber)->ignore,
 }
-
-type query = {
-  partitionId: string,
-  fromBlock: int,
-  toBlock: MockSource.toBlock,
-  addresses: array<string>,
-  clientFilteredContracts: option<array<string>>,
-}
-
-let pendingQueries = (sourceMock: MockSource.t) =>
-  sourceMock.pendingItemsQueries->Array.map(query => {
-    partitionId: query.partitionId,
-    fromBlock: query.fromBlock,
-    toBlock: query.toBlock,
-    addresses: query->MockSource.addresses->Array.map(Address.toString),
-    clientFilteredContracts: (query->MockSource.selection).clientFilteredContracts,
-  })
 
 let upTo = (~items=[], block) => MockSource.Respond({items, latestFetchedBlockNumber: block})
 

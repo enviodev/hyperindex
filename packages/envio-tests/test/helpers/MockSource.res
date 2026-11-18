@@ -165,9 +165,18 @@ let installMockSourceRegistrations = (
     // any other's. It joins the contract a source names, or else the config's
     // first one. A chain without contracts has no address index for it to live
     // in, and nothing for a mock item to be delivered to.
-    let contractName = switch sourceStates->Array.findMap(state => state.mockEventContract) {
-    | Some(contractName) => Some(contractName)
-    | None => chainConfig.contracts->Array.get(0)->Option.map(contract => contract.name)
+    let contractName = switch sourceStates
+    ->Array.filterMap(state => state.mockEventContract)
+    ->Utils.Set.fromArray
+    ->Utils.Set.toArray {
+    | [] => chainConfig.contracts->Array.get(0)->Option.map(contract => contract.name)
+    | [contractName] => Some(contractName)
+    | contractNames =>
+      JsError.throwWithMessage(
+        `The mock sources of chain ${chainConfig.id->ChainId.toString} name different contracts for their mock event: ${contractNames->Array.join(
+            ", ",
+          )}. A chain has one.`,
+      )
     }
     switch contractName {
     | Some(contractName) if !(sourceStates->Utils.Array.isEmpty) =>
@@ -354,14 +363,18 @@ type t = {
   // Lets the chain fetch up to `blockNumber`: waits for the indexer to settle,
   // answers every query starting at or below `blockNumber` up to its own
   // toBlock, never past `blockNumber`, with the `items` its range covers, and
-  // repeats until a settled indexer has no such query left. A query starting
-  // past `blockNumber` stays pending. Only inside a scenario, which hands the
-  // mock its indexer to wait for.
+  // repeats until a settled indexer has no such query left, then fails unless
+  // the chain got to `blockNumber`. A query starting past `blockNumber` stays
+  // pending. Only inside a scenario, which hands the mock its indexer.
   respondUpTo: (int, ~items: array<itemMock>=?) => promise<unit>,
   // `respondUpTo` without items, for a test that just needs the chain somewhere.
   respondEmptyUpTo: int => promise<unit>,
-  // Helpers only: how `respondUpTo` waits for the indexer to settle.
-  setWaitUntilIdle: (unit => promise<unit>) => unit,
+  // Helpers only: how `respondUpTo` waits for the indexer to settle, and reads
+  // the block the settled chain has fetched and processed up to.
+  attachIndexer: (
+    ~waitUntilIdle: unit => promise<unit>,
+    ~progressBlock: unit => promise<option<int>>,
+  ) => unit,
   // Empty-responds every pending query, up to its own toBlock unless
   // `~latestFetchedBlockNumber` says otherwise. Never waits, and throws with none.
   drainPendingItemsQueries: (~latestFetchedBlockNumber: int=?) => unit,
@@ -399,9 +412,10 @@ type t = {
   unsubscribeHeightSubscription: unit => unit,
 }
 
-// The item queries the source took that aren't in `seen`, in arrival order,
-// added to `seen` so the next call returns only later ones.
-let takeNewItemsQueries = (mock: t, ~seen: array<pendingItemsQuery>) => {
+// The pending item queries that aren't in `seen`, in arrival order, added to
+// `seen` so the next call returns only later ones. Only the test answers a
+// query, so none comes and goes between two calls without the test knowing.
+let takeNewPendingItemsQueries = (mock: t, ~seen: array<pendingItemsQuery>) => {
   let fresh = mock.pendingItemsQueries->Array.filter(query => !(seen->Array.includes(query)))
   fresh->Array.forEach(query => seen->Array.push(query)->ignore)
   fresh
@@ -606,6 +620,8 @@ let make = (
   // The ledger's pending queries as the objects a test holds, in the same
   // arrival order, so the same query stays the same object while it's pending.
   let pendingItemsQueries: array<pendingItemsQuery> = []
+  // Items a reply carried that the query doesn't fetch, for the failure report.
+  let droppedItems: array<string> = []
   let queriesById: Map.t<int, pendingItemsQuery> = Map.make()
   let repliedItemsQueries: array<pendingItemsQuery> = []
 
@@ -873,9 +889,21 @@ let make = (
             | registrations => registrations
             }
           }
-          registrations
-          ->Array.filter(registration => item->isFetchedFor(registration, ~selection, ~addressSet))
-          ->Array.map(onEventRegistration => makeEventItem(item, onEventRegistration))
+          switch registrations->Array.filter(registration =>
+            item->isFetchedFor(registration, ~selection, ~addressSet)
+          ) {
+          | [] =>
+            droppedItems
+            ->Array.push(
+              `block ${item.blockNumber->Int.toString} log ${item.logIndex->Int.toString} from ${item.srcAddress->Option.getOr(
+                  "",
+                )}`,
+            )
+            ->ignore
+            []
+          | fetched =>
+            fetched->Array.map(onEventRegistration => makeEventItem(item, onEventRegistration))
+          }
         })
         ->Array.concat(
           blocks->Array.flatMap(({blockNumber, ?blockFields}) =>
@@ -905,12 +933,20 @@ let make = (
     }
   }
 
-  let waitUntilIdle = ref(async () =>
+  let notAttached = () =>
     JsError.throwWithMessage(
       "respondUpTo needs the indexer to wait for, which only a scenario hands the mock",
     )
-  )
+  let waitUntilIdle = ref(async () => notAttached())
+  let progressBlock = ref(async () => notAttached())
   let respondUpTo = async (blockNumber, ~items: array<itemMock>=[]) => {
+    switch items->Array.find(item => item.blockNumber > blockNumber) {
+    | Some(item) =>
+      JsError.throwWithMessage(
+        `respondUpTo(${blockNumber->Int.toString}) has an item at block ${item.blockNumber->Int.toString}, past the block it fetches to, so no query would deliver it.`,
+      )
+    | None => ()
+    }
     let rec wave = async (~count) => {
       if count > 1000 {
         JsError.throwWithMessage(
@@ -936,6 +972,13 @@ let make = (
       }
     }
     await wave(~count=0)
+    switch await progressBlock.contents() {
+    | Some(reached) if reached < blockNumber =>
+      JsError.throwWithMessage(
+        `respondUpTo(${blockNumber->Int.toString}) stopped with the chain at block ${reached->Int.toString}: no query asks for a block up to ${blockNumber->Int.toString}. A height the chain doesn't know yet, or a timer it waits on, holds it back.`,
+      )
+    | _ => ()
+    }
   }
 
   let expectItemsQueries = async (expected, ~within=2000.) => {
@@ -1068,7 +1111,10 @@ let make = (
     repliedItemsQueries,
     respondUpTo,
     respondEmptyUpTo: blockNumber => respondUpTo(blockNumber),
-    setWaitUntilIdle: wait => waitUntilIdle := wait,
+    attachIndexer: (~waitUntilIdle as wait, ~progressBlock as progress) => {
+      waitUntilIdle := wait
+      progressBlock := progress
+    },
     drainPendingItemsQueries: (~latestFetchedBlockNumber=?) =>
       ledger
       ->Ledger.drainItemsQueries(latestFetchedBlockNumber->Null.fromOption)
@@ -1123,7 +1169,15 @@ let make = (
         }
       }
     },
-    describeState: () => ledger->Ledger.describeState,
+    describeState: () =>
+      ledger->Ledger.describeState ++
+        switch droppedItems {
+        | [] => ""
+        | dropped =>
+          `\n  items dropped as no query fetching their address carried them: ${dropped->Array.join(
+              "; ",
+            )}`
+        },
     dropPendingCalls: () => {
       ledger
       ->Ledger.dropPendingCalls

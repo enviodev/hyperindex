@@ -47,7 +47,7 @@ let toIssuedQuery = (query: MockSource.pendingItemsQuery): issuedQuery => {
 // The queries issued since the last call, in arrival order.
 let takeNewQueries = (mock: MockSource.t, ~seen: array<MockSource.pendingItemsQuery>) => {
   mock
-  ->MockSource.takeNewItemsQueries(~seen)
+  ->MockSource.takeNewPendingItemsQueries(~seen)
   ->Array.map(toIssuedQuery)
 }
 

@@ -1,4 +1,5 @@
 open Vitest
+open ItemsQueryView.Summary
 
 let gravatar = "0x1111111111111111111111111111111111111111"
 let nftFactory = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -68,26 +69,6 @@ indexer.onEvent({ contract: "Gravatar", event: "Register" }, async () => {});
 indexer.onEvent({ contract: "NftFactory", event: "Register" }, async () => {});
 `,
 )
-
-type querySummary = {
-  partitionId: string,
-  fromBlock: int,
-  toBlock: MockSource.toBlock,
-  addresses: array<string>,
-}
-
-let summarize = (queries: array<MockSource.pendingItemsQuery>) =>
-  queries
-  ->Array.map(query => {
-    partitionId: query.partitionId,
-    fromBlock: query.fromBlock,
-    toBlock: query.toBlock,
-    addresses: query
-    ->MockSource.addresses
-    ->Array.map(Address.toString)
-    ->Array.toSorted(String.compare),
-  })
-  ->Array.toSorted((a, b) => String.compare(a.partitionId, b.partitionId))
 
 let register = (
   ~blockNumber,

@@ -113,4 +113,23 @@ describe("MockSource.respondUpTo", () => {
       ).toEqual(["300"])
     },
   )
+
+  scenario->Scenario.it(
+    "fails when the chain can't get to the block with the queries it has",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer as _, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(200)
+      t.expect(
+        switch await mock.respondEmptyUpTo(300) {
+        | () => None
+        | exception JsExn(error) => error->JsExn.message
+        },
+      ).toEqual(
+        Some(
+          "respondUpTo(300) stopped with the chain at block 200: no query asks for a block up to 300. A height the chain doesn't know yet, or a timer it waits on, holds it back.",
+        ),
+      )
+    },
+  )
 })

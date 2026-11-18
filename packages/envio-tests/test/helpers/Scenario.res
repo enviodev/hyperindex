@@ -327,7 +327,13 @@ let run = async (
     ~chains?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
     async indexer => {
-      mocks->Array.forEach(((_, mock)) => mock.setWaitUntilIdle(indexer.waitUntilIdle))
+      mocks->Array.forEach(((chain, mock)) =>
+        mock.attachIndexer(~waitUntilIdle=indexer.waitUntilIdle, ~progressBlock=async () =>
+          (await indexer.metric("envio_progress_block"))
+          ->Array.find(({labels}) => labels->Dict.get("chainId") === Some(chain->Int.toString))
+          ->Option.flatMap(({value}) => value->Int.fromString)
+        )
+      )
       switch {
         await body(~indexer, ~source)
         // Only after the body passed: a failing body has its own error to

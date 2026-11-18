@@ -52,7 +52,12 @@ let sources: array<Scenario.sourceMock> = [
 let inReorgThreshold = async (indexer: IndexerRunner.t) =>
   (await indexer.metric("envio_reorg_threshold"))->Array.map(sample => sample.value)
 
-let respondUpTo = async (~indexer: IndexerRunner.t, ~mock: MockSource.t, ~fromBlock, ~to) => {
+let respondOnceAndWaitForBatch = async (
+  ~indexer: IndexerRunner.t,
+  ~mock: MockSource.t,
+  ~fromBlock,
+  ~to,
+) => {
   await mock.expectItemsQueries([
     {fromBlock, reply: Respond({items: [], latestFetchedBlockNumber: to})},
   ])
@@ -68,9 +73,9 @@ let thresholdShortOfAndAt = async (
 ) => {
   let mock = source(1)
   mock.resolveGetHeightOrThrow(1000)
-  await respondUpTo(~indexer, ~mock, ~fromBlock=1, ~to=readyAt - 1)
+  await respondOnceAndWaitForBatch(~indexer, ~mock, ~fromBlock=1, ~to=readyAt - 1)
   let shortOf = await inReorgThreshold(indexer)
-  await respondUpTo(~indexer, ~mock, ~fromBlock=readyAt, ~to=readyAt)
+  await respondOnceAndWaitForBatch(~indexer, ~mock, ~fromBlock=readyAt, ~to=readyAt)
   (shortOf, await inReorgThreshold(indexer))
 }
 
@@ -121,9 +126,9 @@ describe("FetchState readiness for the reorg threshold", () => {
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(1000)
-      await respondUpTo(~indexer, ~mock, ~fromBlock=1, ~to=59)
+      await respondOnceAndWaitForBatch(~indexer, ~mock, ~fromBlock=1, ~to=59)
       let beforeEndBlock = await inReorgThreshold(indexer)
-      await respondUpTo(~indexer, ~mock, ~fromBlock=60, ~to=100)
+      await respondOnceAndWaitForBatch(~indexer, ~mock, ~fromBlock=60, ~to=100)
       t.expect((beforeEndBlock, await inReorgThreshold(indexer))).toEqual((["0"], ["1"]))
     },
   )

@@ -1,4 +1,5 @@
 open Vitest
+open ItemsQueryView.ClientFiltered
 
 // Once a contract is fetched client-side, an address it registers below what
 // the address-free partition has already covered gets an address-bound
@@ -60,23 +61,6 @@ let eventAt = (handled, blockNumber): MockSource.itemMock => {
   logIndex: 1,
   handler: async _ => handled->Array.push(blockNumber)->ignore,
 }
-
-type query = {
-  partitionId: string,
-  fromBlock: int,
-  toBlock: MockSource.toBlock,
-  addresses: array<string>,
-  clientFilteredContracts: option<array<string>>,
-}
-
-let pendingQueries = (sourceMock: MockSource.t) =>
-  sourceMock.pendingItemsQueries->Array.map(query => {
-    partitionId: query.partitionId,
-    fromBlock: query.fromBlock,
-    toBlock: query.toBlock,
-    addresses: query->MockSource.addresses->Array.map(Address.toString),
-    clientFilteredContracts: (query->MockSource.selection).clientFilteredContracts,
-  })
 
 // The lowest pending query of each partition: a partition that learned its
 // event density from a response fetches ahead in chunks.
@@ -396,7 +380,7 @@ describe("FetchState client-side filtering catch-up partitions", () => {
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
     ~maxAddrInPartition=10,
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       // Partition 2 fetches to the head it knows, 50, and waits there.
       await sourceMock->collapseGravatar(~height=50)
@@ -418,6 +402,7 @@ describe("FetchState client-side filtering catch-up partitions", () => {
         },
       ])
       await sourceMock.expectItemsQueries([{partitionId: "2", fromBlock: 51, reply: LeavePending}])
+      await indexer.waitUntilIdle()
 
       t.expect(
         sourceMock->pendingQueries,

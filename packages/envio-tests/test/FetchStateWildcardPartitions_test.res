@@ -1,4 +1,5 @@
 open Vitest
+open ItemsQueryView.Summary
 
 let factory0 = "0xf000000000000000000000000000000000000000"
 let factory1 = "0xf000000000000000000000000000000000000001"
@@ -11,26 +12,6 @@ let gravatar4 = "0x1000000000000000000000000000000000000004"
 let factory5 = "0xf000000000000000000000000000000000000005"
 let contractA = "0xa000000000000000000000000000000000000001"
 let contractB = "0xb000000000000000000000000000000000000001"
-
-type querySummary = {
-  partitionId: string,
-  fromBlock: int,
-  toBlock: MockSource.toBlock,
-  addresses: array<string>,
-}
-
-let summarize = (queries: array<MockSource.pendingItemsQuery>) =>
-  queries
-  ->Array.map(query => {
-    partitionId: query.partitionId,
-    fromBlock: query.fromBlock,
-    toBlock: query.toBlock,
-    addresses: query
-    ->MockSource.addresses
-    ->Array.map(Address.toString)
-    ->Array.toSorted(String.compare),
-  })
-  ->Array.toSorted((a, b) => String.compare(a.partitionId, b.partitionId))
 
 type selectionSummary = {
   partitionId: string,

@@ -43,10 +43,11 @@ describe("MockSource's own registration", () => {
   scenario->Scenario.it(
     "keeps a contract without handlers out of every query",
     ~sources=[{chain: 1, mockEventContract: "Token"}],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(100_000)
       await mock.expectItemsQueries([{reply: LeavePending}])
+      await indexer.waitUntilIdle()
       t.expect(
         mock.pendingItemsQueries->Array.map(
           query => query->MockSource.addresses->Array.map(Address.toString),

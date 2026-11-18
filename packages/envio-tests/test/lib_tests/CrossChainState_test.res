@@ -1007,7 +1007,7 @@ describe("ChainState cold start", () => {
 
   Async.it("a chain with no discovered first event never becomes a dead anchor", async t => {
     // Chain 1 has found no events yet (firstEventBlock=None) but has already
-    // scanned to 90% of its range. TestFetchState.getProgressPercentage reports it
+    // scanned to 90% of its range. FetchState.getProgressPercentage reports it
     // at 0% (its priority rank), yet its fetch frontier is far ahead. The
     // alignment anchor must be chain 2 (furthest behind by frontier progress),
     // so chain 3 (just ahead of chain 2) is held near chain 2's line instead of

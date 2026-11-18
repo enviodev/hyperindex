@@ -23,9 +23,6 @@ let eventStoreOf = (fetchState: FetchState.t) =>
 let keepStore = (next: FetchState.t, ~from: FetchState.t) =>
   next->pair(~eventStore=from->eventStoreOf)
 
-let bufferedBlockNumbers = (fetchState: FetchState.t) =>
-  fetchState->eventStoreOf->TestEventStore.blockNumbers
-
 let make = (
   ~startBlock,
   ~endBlock,
@@ -82,6 +79,3 @@ let updateKnownHeight = (fetchState, ~knownHeight) =>
   fetchState
   ->FetchState.updateKnownHeight(~eventStore=fetchState->eventStoreOf, ~knownHeight)
   ->keepStore(~from=fetchState)
-
-let getProgressPercentage = fetchState =>
-  fetchState->FetchState.getProgressPercentage(~eventStore=fetchState->eventStoreOf)

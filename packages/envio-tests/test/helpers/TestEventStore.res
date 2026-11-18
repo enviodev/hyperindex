@@ -16,12 +16,6 @@ let takeAll = (store: EventStore.t, ~context: StoredItems.context): array<Intern
   items
 }
 
-// The block number of every row the store holds, in order. The rows stay.
-let blockNumbers = (store: EventStore.t) =>
-  Array.fromInitializer(~length=store->EventStore.length, index =>
-    store->EventStore.blockNumberAt(index)->Null.getUnsafe
-  )
-
 // A decoded EVM log as its item reports it.
 type evmLog = {
   logIndex: int,
