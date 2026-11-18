@@ -585,6 +585,18 @@ module Schema = {
     serializer: (bytes: Uint8Array.t) => bytes,
   })
 
+  // An address kept as its raw bytes reads back as the `0x` and lowercase hex
+  // the handler wrote, which is all `set` lets one be.
+  let addressBytes = S.custom("Address", s => {
+    parser: unknown =>
+      switch unknown->Bytes.asUint8Array {
+      | Some(bytes) => "0x" ++ bytes->Bytes.toHex
+      | None if typeof(unknown) === #string => unknown->(magic: unknown => string)
+      | None => s.fail("Expected Uint8Array")
+      },
+    serializer: (address: string) => address,
+  })
+
   // A bytea[] column's value. The parser takes the one level a bytea[] column
   // returns.
   let bytesArray = S.custom("BytesArray", s => {

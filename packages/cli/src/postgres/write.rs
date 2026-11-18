@@ -7,7 +7,7 @@ use std::fmt::Write;
 
 use super::param::Param;
 use crate::columnar::{Column, ColumnKind};
-use crate::storage::schema::{iso_millis, Encoding};
+use crate::storage::schema::{address_hex, iso_millis, Encoding, Field, FieldType};
 
 /// How a staged column's cells become text, beyond what their slot says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,13 +18,19 @@ pub enum Render {
     /// A list's JSON, which becomes the row's own array literal; its elements
     /// are encoded as the list's element type says.
     List(Encoding),
+    /// An address's text, which a bytea column takes as its `length` bytes.
+    Address(u32),
+    /// A list of addresses' JSON, each element taken as its `length` bytes.
+    AddressList(u32),
 }
 
 impl Render {
-    pub fn of(encoding: Encoding, element: Encoding) -> Self {
-        match encoding {
-            Encoding::Date => Render::Date,
-            Encoding::List => Render::List(element),
+    pub fn of(field: &Field) -> Self {
+        match (field.encoding(), &field.field_type) {
+            (Encoding::List, FieldType::Address { length }) => Render::AddressList(*length),
+            (_, FieldType::Address { length }) => Render::Address(*length),
+            (Encoding::Date, _) => Render::Date,
+            (Encoding::List, field_type) => Render::List(field_type.encoding()),
             _ => Render::Plain,
         }
     }
@@ -59,11 +65,22 @@ fn push_hex(into: &mut String, bytes: impl IntoIterator<Item = u8>) {
 /// the quote and the backslash mean anything, so nothing here has to know what
 /// the element type treats as special. A sub-list is written unquoted, which is
 /// how Postgres spells a further dimension.
-fn list_literal(into: &mut String, list: &[Value], element: Encoding) -> Result<()> {
+fn list_literal(
+    into: &mut String,
+    list: &[Value],
+    element: Encoding,
+    address_length: Option<u32>,
+) -> Result<()> {
     into.push('{');
     for (index, item) in list.iter().enumerate() {
         if index > 0 {
             into.push(',');
+        }
+        if let (Value::String(text), Some(length)) = (item, address_length) {
+            into.push_str("\"\\\\x");
+            into.push_str(address_hex(text, length)?);
+            into.push('"');
+            continue;
         }
         match item {
             Value::Null => into.push_str("NULL"),
@@ -84,7 +101,7 @@ fn list_literal(into: &mut String, list: &[Value], element: Encoding) -> Result<
                 );
                 into.push('"');
             }
-            Value::Array(items) => list_literal(into, items, element)?,
+            Value::Array(items) => list_literal(into, items, element, address_length)?,
             Value::Bool(flag) => into.push_str(if *flag { "\"t\"" } else { "\"f\"" }),
             Value::Number(number) if element == Encoding::Date => {
                 let ms = number
@@ -120,8 +137,19 @@ fn write_cell(into: &mut String, column: &Column, render: Render, row: usize) ->
             let list: Vec<Value> = serde_json::from_slice(column.bytes_at(row))
                 .context("a list's value is not a JSON array")?;
             let mut literal = String::new();
-            list_literal(&mut literal, &list, element)?;
+            list_literal(&mut literal, &list, element, None)?;
             push_escaped(into, &literal);
+        }
+        (Render::AddressList(length), ColumnKind::Text) => {
+            let list: Vec<Value> = serde_json::from_slice(column.bytes_at(row))
+                .context("a list's value is not a JSON array")?;
+            let mut literal = String::new();
+            list_literal(&mut literal, &list, Encoding::Text, Some(length))?;
+            push_escaped(into, &literal);
+        }
+        (Render::Address(length), ColumnKind::Text) => {
+            into.push_str("\\\\x");
+            into.push_str(address_hex(column.str_at(row)?, length)?);
         }
         (_, ColumnKind::F64) => {
             let _ = write!(into, "{}", column.f64_at(row));
@@ -268,6 +296,55 @@ mod tests {
             2,
         );
         assert_eq!(params(&arena, Render::Plain), text("{\"\\\\xdead\",NULL}"));
+    }
+
+    #[test]
+    fn an_address_becomes_the_hex_literal_of_its_bytes() {
+        assert_eq!(
+            (
+                params(&text_column(&[Some("0xab01"), None]), Render::Address(2)),
+                params(
+                    &text_column(&[Some(r#"["0xab01",null]"#), Some("[]")]),
+                    Render::AddressList(2)
+                ),
+            ),
+            (
+                text("{\"\\\\xab01\",NULL}"),
+                text(r#"{"{\"\\\\xab01\",NULL}","{}"}"#),
+            )
+        );
+    }
+
+    /// Postgres would read `0xAB01` as the bytes of its hex, giving back
+    /// `0xab01`, and take `0xab` as a shorter address.
+    #[test]
+    fn an_address_not_in_its_stored_spelling_is_refused() {
+        let refusal = |column: Arena, render| {
+            let rows = (0..column.rows()).collect::<Vec<_>>();
+            unnest_params(
+                &[Source::Staged {
+                    column: &column.columns()[0],
+                    render,
+                }],
+                &rows,
+            )
+            .unwrap_err()
+            .to_string()
+        };
+        assert_eq!(
+            (
+                refusal(text_column(&[Some("0xAB01")]), Render::Address(2)),
+                refusal(text_column(&[Some(r#"["0xab"]"#)]), Render::AddressList(2)),
+            ),
+            (
+                "`0xAB01` is not an address of 2 bytes: it must be 0x followed by 4 lowercase \
+                 hex characters"
+                    .to_string(),
+                "`0xab` is not an address of 2 bytes: it must be 0x followed by 4 lowercase hex \
+                 characters"
+                    .to_string(),
+            )
+        );
     }
 
     /// A whole number is written without a point: the column it goes into is an

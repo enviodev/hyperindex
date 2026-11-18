@@ -4,7 +4,7 @@ let kindOf = (fieldType: Table.fieldType): valueKind =>
   switch fieldType {
   | String => Text
   | Boolean => Boolean
-  | Bytea => Bytes
+  | Bytea | Address(_) => Bytes
   | Json => Json
   | Date => Timestamp
   | Enum(_) => Enum

@@ -18,6 +18,22 @@ describe("Indexer smoke test", () => {
         {
           "changes": [
             {
+              "AddressAccount": {
+                "sets": [
+                  {
+                    "id": "0x0000000000000000000000000000000000000000",
+                    "token": "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+                  },
+                ],
+              },
+              "AddressTransfer": {
+                "sets": [
+                  {
+                    "id": "1-10861674-23",
+                    "sender_id": "0x0000000000000000000000000000000000000000",
+                  },
+                ],
+              },
               "ChainAccount": {
                 "sets": [
                   {
@@ -67,7 +83,7 @@ describe("Indexer smoke test", () => {
                     "blockNumber": 10861674,
                     "from": "0x0000000000000000000000000000000000000000",
                     "id": "1-10861674-23",
-                    "to": "0x41653c7d61609D856f29355E404F310Ec4142Cfb",
+                    "to": "0x41653c7d61609d856f29355e404f310ec4142cfb",
                     "transactionHash": "0x4b37d2f343608457ca3322accdab2811c707acf3eb07a40dd8d9567093ea5b82",
                     "value": 1000000000000000000000000000n,
                   },

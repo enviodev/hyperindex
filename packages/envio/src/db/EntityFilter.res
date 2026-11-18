@@ -80,6 +80,11 @@ let expectedValueType = (field: Table.field) =>
   switch field.fieldType {
   | Date => Some(field.isArray ? "an array of Date" : "a Date")
   | Bytea => Some(field.isArray ? "an array of Uint8Array" : "a Uint8Array")
+  | Address({length}) =>
+    let address = `an Address kept as its ${length->Int.toString} bytes: ${Table.storedAddressRequirement(
+        ~length,
+      )}`
+    Some(field.isArray ? `an array of ${address}` : address)
   | _ if field.isArray => Some("an array")
   | _ => None
   }
@@ -98,6 +103,7 @@ let matchesFieldType = (value: unknown, ~field: Table.field) => {
     switch field.fieldType {
     | Date => value->isDate
     | Bytea => value->Utils.Bytes.asUint8Array->Option.isSome
+    | Address({length}) => value->Table.isStoredAddress(~length)
     | _ => true
     }
   field.isArray
@@ -437,6 +443,9 @@ let scalarCompare = (fieldType: Table.fieldType): valueCompare =>
   | Json => json
   | Bytea => bytes
   | Enum({config}) => enum_(config)
+  // Lowercase hex of one width sorts as its bytes do, the order the bytea
+  // column compares in.
+  | Address(_)
   | String
   | Boolean
   | Uint32

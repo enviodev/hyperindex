@@ -23,6 +23,8 @@ pub enum ChType {
     /// own variant so the column kind can carry the bytes as they are, where
     /// `String` carries text.
     Bytes,
+    /// An address's raw bytes, staged as its `0x` hex text.
+    FixedString(u32),
     /// Milliseconds since the epoch. The precision is fixed at 3 rather than
     /// carried: `Date` is the only field type that lands here and JS measures
     /// time in milliseconds, so a column of any other precision would silently
@@ -120,6 +122,7 @@ impl Field {
         let base = match &self.field_type {
             FieldType::String | FieldType::Json => ChType::String,
             FieldType::Bytea => ChType::Bytes,
+            FieldType::Address { length } => ChType::FixedString(*length),
             FieldType::Boolean => ChType::Bool,
             FieldType::Uint32 => ChType::UInt32,
             FieldType::UInt52 | FieldType::UInt64 => ChType::UInt64,
@@ -183,6 +186,7 @@ impl fmt::Display for ChType {
             ChType::Float64 => f.write_str("Float64"),
             ChType::Bool => f.write_str("Bool"),
             ChType::String | ChType::Bytes => f.write_str("String"),
+            ChType::FixedString(length) => write!(f, "FixedString({length})"),
             ChType::DateTime64 => f.write_str("DateTime64(3, 'UTC')"),
             ChType::Decimal { precision, scale } => write!(f, "Decimal({precision},{scale})"),
             ChType::Enum { variants } => {

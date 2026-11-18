@@ -2,6 +2,8 @@
 name: e2e_test
 description: E2E test indexer
 raw_events: true
+# Keeps `Address` fields as their 20 bytes, so Hasura serves a bytea.
+address_format: lowercase
 # Existing entities keep their cross-chain behavior via @crossChain; the
 # ChainTransfer/ChainAccount pair is what exercises the per-chain mode.
 disable_default_cross_chain: true

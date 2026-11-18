@@ -28,7 +28,7 @@ pub fn pg_field_type(
         },
         FieldType::Uint32 | FieldType::UInt52 | FieldType::UInt64 => "BIGINT".to_string(),
         FieldType::SmallInt => "SMALLINT".to_string(),
-        FieldType::Bytea => "BYTEA".to_string(),
+        FieldType::Bytea | FieldType::Address { .. } => "BYTEA".to_string(),
         FieldType::Number => "DOUBLE PRECISION".to_string(),
         // Scale is always 0 for a BigInt: it holds whole numbers.
         FieldType::BigInt { precision } => match precision {

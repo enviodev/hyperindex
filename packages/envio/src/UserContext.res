@@ -139,6 +139,11 @@ let makeEntityContext = (params: params, ~entityConfig: Internal.entityConfig) =
 
   let loadById = entityId => {
     let run = RunScope.currentHandlerRunOrThrow(~prop)
+    entityConfig.table->Table.validateAddressIdOrThrow(
+      entityId->(Utils.magic: string => unknown),
+      ~entityName=entityConfig.name,
+      ~method="get",
+    )
     LoadLayer.loadById(
       ~loadManager=params.loadManager,
       ~persistence=params.persistence,
@@ -164,6 +169,10 @@ let makeEntityContext = (params: params, ~entityConfig: Internal.entityConfig) =
   let set = (entity: Internal.entity) => {
     let run = RunScope.currentHandlerRunOrThrow(~prop)
     if !run.isPreload {
+      entityConfig.table->Table.validateAddressesOrThrow(
+        entity->(Utils.magic: Internal.entity => dict<unknown>),
+        ~entityName=entityConfig.name,
+      )
       run->write(
         Set({
           entityId: entity.id->EntityId.unsafeOfString,
@@ -177,6 +186,11 @@ let makeEntityContext = (params: params, ~entityConfig: Internal.entityConfig) =
   let deleteUnsafe = entityId => {
     let run = RunScope.currentHandlerRunOrThrow(~prop)
     if !run.isPreload {
+      entityConfig.table->Table.validateAddressIdOrThrow(
+        entityId->(Utils.magic: EntityId.t => unknown),
+        ~entityName=entityConfig.name,
+        ~method="deleteUnsafe",
+      )
       run->write(Delete({entityId, checkpointId: run.checkpointId}))
     }
   }

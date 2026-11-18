@@ -8,8 +8,8 @@ use super::table::Table;
 use crate::columnar::{self, ColumnKind};
 use crate::storage::changes::ChangeSet;
 use crate::storage::rows::{Cell, ReadKind};
-use crate::storage::schema::iso_millis;
 use crate::storage::schema::FieldType;
+use crate::storage::schema::{address_bytes, iso_millis};
 use crate::storage::types::{DELETE, SET};
 
 fn put_varint(out: &mut Vec<u8>, mut value: u64) {
@@ -196,6 +196,7 @@ fn put_int(out: &mut Vec<u8>, value: i128, ch_type: &ChType) -> Result<()> {
 fn encode_text_scalar(out: &mut Vec<u8>, ch_type: &ChType, text: &str) -> Result<()> {
     match ch_type {
         ChType::String => put_string(out, text),
+        ChType::FixedString(length) => out.extend_from_slice(&address_bytes(text, *length)?),
         ChType::Decimal { scale, .. } => put_int(out, decimal_to_i128(text, *scale)?, ch_type)?,
         ChType::Enum { .. } => {
             let numeric = ch_type
@@ -268,9 +269,10 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
                 .collect::<Result<Vec<u8>>>()?;
             put_bytes(out, &bytes)
         }
-        (ChType::Enum { .. } | ChType::Decimal { .. }, Value::String(text)) => {
-            encode_text_scalar(out, ch_type, text)?
-        }
+        (
+            ChType::Enum { .. } | ChType::Decimal { .. } | ChType::FixedString(_),
+            Value::String(text),
+        ) => encode_text_scalar(out, ch_type, text)?,
         (ChType::Decimal { scale, .. }, Value::Number(number)) => {
             let scaled = match number
                 .as_i64()
@@ -302,6 +304,7 @@ fn fixed_width(ch_type: &ChType) -> Result<usize> {
         ChType::Float64 => 8,
         ChType::Decimal { precision, .. } => super::ch_type::decimal_bytes(*precision)?,
         ChType::Enum { variants } => ChType::enum_bytes(variants),
+        ChType::FixedString(length) => *length as usize,
         other => bail!("{other:?} has no fixed width"),
     })
 }
@@ -614,6 +617,7 @@ fn decode_value<'a>(reader: &mut Reader<'a>, ch_type: &ChType, kind: ReadKind) -
                 .with_context(|| format!("{number} numbers no variant of {ch_type:?}"))?;
             Cell::Str(Cow::Owned(variant.clone()))
         }
+        ChType::FixedString(length) => Cell::Bytes(Cow::Borrowed(reader.take(*length as usize)?)),
         ChType::String | ChType::Bytes => {
             let length = reader.varint()? as usize;
             let bytes = reader.take(length)?;
@@ -864,6 +868,81 @@ mod tests {
         assert_eq!(
             format!("{error:#}"),
             "encoding column `chunks` row 0: `256` is not a byte"
+        );
+    }
+
+    /// An address arrives as its text and leaves as exactly its bytes, with no
+    /// length in front: a FixedString's width is the column's.
+    #[test]
+    fn an_address_is_written_as_its_raw_bytes_and_read_back_as_them() {
+        let mut nullable = text_column("opt", "String", &["0x00ff", ""]);
+        nullable.ch_type = ChType::Nullable(Box::new(ChType::FixedString(2)));
+        nullable.set_nulls(&[0, 1]);
+        let mut list = text_column("all", "String", &[r#"["0x0102","0xa0b0"]"#, "[]"]);
+        list.ch_type = ChType::Array(Box::new(ChType::FixedString(2)));
+        let mut scalar = text_column("id", "String", &["0xabcd", "0x0000"]);
+        scalar.ch_type = ChType::FixedString(2);
+        let encoded = encode(&[scalar, nullable, list], 2).unwrap();
+        let fixed = || (ChType::FixedString(2), ReadKind::Bytes);
+        let decoded = decode(
+            &encoded.body,
+            &[
+                fixed(),
+                (
+                    ChType::Nullable(Box::new(ChType::FixedString(2))),
+                    ReadKind::Bytes,
+                ),
+                (
+                    ChType::Array(Box::new(ChType::FixedString(2))),
+                    ReadKind::Bytes,
+                ),
+            ],
+        )
+        .unwrap();
+        let bytes = |value: &'static [u8]| Cell::Bytes(Cow::Borrowed(value));
+        assert_eq!(
+            (encoded.body.to_vec(), decoded),
+            (
+                vec![
+                    0xab, 0xcd, 0, 0x00, 0xff, 2, 0x01, 0x02, 0xa0, 0xb0, //
+                    0x00, 0x00, 1, 0,
+                ],
+                vec![
+                    bytes(&[0xab, 0xcd]),
+                    bytes(&[0x00, 0xff]),
+                    Cell::Arr(vec![bytes(&[0x01, 0x02]), bytes(&[0xa0, 0xb0])]),
+                    bytes(&[0x00, 0x00]),
+                    Cell::Null,
+                    Cell::Arr(vec![]),
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn an_address_not_in_its_stored_spelling_is_refused() {
+        let errors = ["0xABCD", "0xabc", "abcd", "0xabzz"]
+            .iter()
+            .map(|value| {
+                let mut column = text_column("id", "String", &[value]);
+                column.ch_type = ChType::FixedString(2);
+                format!("{:#}", encode(&[column], 1).unwrap_err())
+            })
+            .collect::<Vec<_>>();
+        let refusal = |value: &str| {
+            format!(
+                "encoding column `id` row 0: `{value}` is not an address of 2 bytes: it must be \
+                 0x followed by 4 lowercase hex characters"
+            )
+        };
+        assert_eq!(
+            errors,
+            vec![
+                refusal("0xABCD"),
+                refusal("0xabc"),
+                refusal("abcd"),
+                refusal("0xabzz"),
+            ]
         );
     }
 

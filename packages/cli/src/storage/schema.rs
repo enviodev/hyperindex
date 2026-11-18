@@ -29,13 +29,25 @@ pub enum FieldType {
     Int32,
     ChainId,
     Number,
-    BigInt { precision: Option<u32> },
-    BigDecimal { config: Option<(u32, u32)> },
+    BigInt {
+        precision: Option<u32>,
+    },
+    BigDecimal {
+        config: Option<(u32, u32)>,
+    },
     Serial,
     BigSerial,
     Json,
     Date,
-    Enum { name: String, variants: Vec<String> },
+    Enum {
+        name: String,
+        variants: Vec<String>,
+    },
+    /// An address JavaScript stages as its text, `0x` and lowercase hex, and
+    /// each store keeps as its `length` raw bytes.
+    Address {
+        length: u32,
+    },
 }
 
 /// How a value has to arrive in a staged batch: what JavaScript turns it into,
@@ -90,7 +102,9 @@ impl FieldType {
             | FieldType::ChainId
             | FieldType::Serial => Encoding::Number,
             FieldType::Date => Encoding::Date,
-            FieldType::String | FieldType::Enum { .. } => Encoding::Text,
+            FieldType::String | FieldType::Enum { .. } | FieldType::Address { .. } => {
+                Encoding::Text
+            }
             FieldType::BigInt { .. } | FieldType::UInt64 | FieldType::BigSerial => Encoding::Digits,
             FieldType::BigDecimal { .. } => Encoding::Decimal,
             FieldType::Json => Encoding::Document,
@@ -278,6 +292,34 @@ impl Entity {
             &format!("${}${chain_id}", self.index),
         )
     }
+}
+
+/// The hex digits of an address kept as `length` bytes. Only the spelling the
+/// bytes read back as is taken, so a store never holds an address under a
+/// spelling other than the one the handler wrote.
+pub fn address_hex(text: &str, length: u32) -> Result<&str> {
+    text.strip_prefix("0x")
+        .filter(|hex| {
+            hex.len() == length as usize * 2
+                && hex
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        })
+        .with_context(|| {
+            format!(
+                "`{text}` is not an address of {length} bytes: it must be 0x followed by {} \
+                 lowercase hex characters",
+                length * 2
+            )
+        })
+}
+
+pub fn address_bytes(text: &str, length: u32) -> Result<Vec<u8>> {
+    let hex = address_hex(text, length)?;
+    let mut bytes = vec![0u8; length as usize];
+    faster_hex::hex_decode(hex.as_bytes(), &mut bytes)
+        .with_context(|| format!("`{text}` is not valid hex"))?;
+    Ok(bytes)
 }
 
 /// A Date's milliseconds as the ISO instant a timestamp column reads.
@@ -468,6 +510,7 @@ struct PropertyJson {
     enum_name: Option<String>,
     precision: Option<u32>,
     scale: Option<u32>,
+    byte_length: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -606,6 +649,10 @@ impl PropertyJson {
             "serial" => FieldType::Serial,
             "json" => FieldType::Json,
             "date" => FieldType::Date,
+            "address" => match self.byte_length {
+                Some(length) => FieldType::Address { length },
+                None => FieldType::String,
+            },
             "enum" => {
                 let name = self
                     .enum_name

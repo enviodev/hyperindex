@@ -74,6 +74,19 @@ type NumericArrays @crossChain @storage(postgres: true) {
   bigDecimals: [BigDecimal!]!
 }
 
+# config.yaml sets `address_format: lowercase`, so these Address columns are
+# bytea: Hasura serves them as `\x`-prefixed hex and joins on the bytea key.
+type AddressAccount @crossChain @storage(postgres: true) {
+  id: Address!
+  token: Address! @index
+  transfers: [AddressTransfer!]! @derivedFrom(field: "sender")
+}
+
+type AddressTransfer @crossChain @storage(postgres: true) {
+  id: ID!
+  sender: AddressAccount!
+}
+
 # Per-chain entities: their tables carry a chain-id column in the primary key,
 # spelled per backend (snake_case in Postgres, original in ClickHouse). The
 # relationship between them must join on the chain too, or Hasura would resolve

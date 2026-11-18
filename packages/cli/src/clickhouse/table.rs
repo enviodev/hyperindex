@@ -31,7 +31,7 @@ impl Field {
                 ChainIdMode::Int32 => ReadKind::Float,
                 ChainIdMode::Int64 => ReadKind::Text,
             },
-            FieldType::Bytea => ReadKind::Bytes,
+            FieldType::Bytea | FieldType::Address { .. } => ReadKind::Bytes,
             FieldType::Json => ReadKind::Json,
             FieldType::Date => ReadKind::Timestamp,
             _ => ReadKind::Text,
