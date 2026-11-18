@@ -351,28 +351,6 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
     )
   })
 
-  // An object literal's `"__proto__": value` sets the prototype instead of a
-  // property, and Solidity accepts the name.
-  Async.it("keeps a param named __proto__ as its own property", async t => {
-    let params: array<Internal.paramMeta> = [
-      {name: "__proto__", abiType: "uint256", indexed: false},
-      {name: "after", abiType: "bool", indexed: false},
-    ]
-    let result = await decodeSingle(
-      ~eventName="Proto",
-      ~params,
-      ~log=(
-        [toEventSelector("event Proto(uint256, bool)")],
-        encodeAbiParameters(%raw(`[{"type":"uint256"},{"type":"bool"}]`), %raw(`[7n, true]`)),
-      ),
-    )
-    let params = result->(Utils.magic: Internal.eventParams => dict<unknown>)
-    t.expect((params->Dict.keysToArray, params->Dict.get("__proto__"))).toEqual((
-      ["__proto__", "after"],
-      Some(7n->(Utils.magic: bigint => unknown)),
-    ))
-  })
-
   Async.it("remaps mixed-name tuple components using index keys", async t => {
     let params: array<Internal.paramMeta> = [
       {

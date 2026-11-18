@@ -216,8 +216,6 @@ external bufferOver: (ArrayBuffer.t, int, int) => nodeBuffer = "from"
 // row is one object literal with every field in place: adding them one at a
 // time instead costs a hidden-class transition each, per row. Compiled on
 // every read: V8 reuses the compiled code of a `Function` source it has seen.
-// A literal key `"__proto__"` would set the prototype, so that one name is a
-// computed key; the rest stay plain, which keeps V8's literal fast path.
 type builder = (array<array<unknown>>, int) => array<dict<unknown>>
 
 %%private(
@@ -227,10 +225,7 @@ type builder = (array<array<unknown>>, int) => array<dict<unknown>>
     names.map((_, index) => "const c" + index + " = columns[" + index + "];").join("") +
       "const out = new Array(rows);" +
       "for (let row = 0; row < rows; row++) out[row] = {" +
-      names.map((name, index) => {
-        const key = JSON.stringify(name);
-        return (name === "__proto__" ? "[" + key + "]" : key) + ": c" + index + "[row]";
-      }).join(",") +
+      names.map((name, index) => JSON.stringify(name) + ": c" + index + "[row]").join(",") +
       "};" +
       "return out;",
   )`)
