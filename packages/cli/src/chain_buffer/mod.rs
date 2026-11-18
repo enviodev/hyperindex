@@ -7,7 +7,9 @@ pub(crate) mod decode;
 pub(crate) mod decoded;
 pub(crate) mod deliver;
 pub(crate) mod evm;
+pub(crate) mod fuel;
 pub(crate) mod matching;
+pub(crate) mod matching_fuel;
 pub(crate) mod merge;
 pub(crate) mod page;
 pub(crate) mod schedule;
@@ -55,7 +57,12 @@ impl Ecosystem {
                 evm::transactions_schema(),
                 evm::blocks_schema(),
             ],
-            Ecosystem::Svm | Ecosystem::Fuel => [
+            Ecosystem::Fuel => [
+                fuel::receipts_schema(),
+                evm::transactions_schema(),
+                fuel::blocks_schema(),
+            ],
+            Ecosystem::Svm => [
                 evm::logs_schema(),
                 evm::transactions_schema(),
                 evm::blocks_schema(),
@@ -64,7 +71,10 @@ impl Ecosystem {
     }
 
     pub(crate) fn hash_column(self) -> usize {
-        evm::BLOCK_HASH_COLUMN
+        match self {
+            Ecosystem::Fuel => fuel::BLOCK_HASH_COLUMN,
+            _ => evm::BLOCK_HASH_COLUMN,
+        }
     }
 
     pub(crate) fn hash_text(self, bytes: &[u8]) -> String {
@@ -72,7 +82,10 @@ impl Ecosystem {
     }
 
     pub(crate) fn parse_hash(self, text: &str) -> Result<Vec<u8>> {
-        evm::hash_bytes(text)
+        match self {
+            Ecosystem::Fuel => fuel::hash_bytes(text),
+            _ => evm::hash_bytes(text),
+        }
     }
 
     pub(crate) fn push_observed_block(
@@ -82,11 +95,19 @@ impl Ecosystem {
         hash: Option<&[u8]>,
         timestamp: Option<u64>,
     ) {
-        evm::push_observed_block(builder, number, hash, timestamp)
+        match self {
+            Ecosystem::Fuel => {
+                fuel::push_block(builder, number, hash, timestamp.map(|time| time as i64))
+            }
+            _ => evm::push_observed_block(builder, number, hash, timestamp),
+        }
     }
 
     fn block_timestamp(self, row: &RowRef) -> Option<i64> {
-        evm::block_timestamp(row)
+        match self {
+            Ecosystem::Fuel => fuel::block_timestamp(row),
+            _ => evm::block_timestamp(row),
+        }
     }
 }
 
@@ -100,6 +121,7 @@ pub(crate) struct Shared {
     pub(crate) ecosystem: Ecosystem,
     pub(crate) should_checksum: bool,
     pub(crate) evm: Option<EvmRegistrations>,
+    pub(crate) fuel: Option<matching_fuel::FuelMatcher>,
     pub(crate) schedule: Schedule,
     /// By event registration index.
     transaction_masks: Vec<u64>,
@@ -150,7 +172,10 @@ impl Shared {
         numbers: &[u64],
         masks: &[u64],
     ) -> Result<Columns> {
-        evm::block_columns(rows, numbers, masks, self.should_checksum)
+        match self.ecosystem {
+            Ecosystem::Fuel => fuel::block_columns(rows, numbers, masks),
+            _ => evm::block_columns(rows, numbers, masks, self.should_checksum),
+        }
     }
 }
 
@@ -167,6 +192,8 @@ pub struct ChainBufferConfig {
     pub ecosystem: String,
     pub should_checksum: bool,
     pub evm_registrations: Option<Vec<OnEventRegistrationInput>>,
+    pub fuel_registrations:
+        Option<Vec<crate::fuel_hypersync_source::selection::FuelOnEventRegistrationInput>>,
     pub contract_register_indexes: Vec<i64>,
     pub block_handlers: Vec<BlockHandlerInput>,
     /// By event registration index: the transaction fields each selects.
@@ -283,6 +310,17 @@ impl ChainBuffer {
             }),
             None => None,
         };
+        let fuel = match &config.fuel_registrations {
+            Some(registrations) => Some(
+                matching_fuel::FuelMatcher::new(
+                    registrations,
+                    &config.contract_register_indexes,
+                    address_store,
+                )
+                .map_err(to_napi)?,
+            ),
+            None => None,
+        };
         let mut contract_register = Vec::new();
         for index in &config.contract_register_indexes {
             let index = usize::try_from(*index)
@@ -298,6 +336,7 @@ impl ChainBuffer {
                 ecosystem,
                 should_checksum: config.should_checksum,
                 evm,
+                fuel,
                 schedule: Schedule::new(&config.block_handlers).map_err(to_napi)?,
                 transaction_masks: config.transaction_masks.iter().map(|m| *m as u64).collect(),
                 event_block_masks: config.event_block_masks.iter().map(|m| *m as u64).collect(),

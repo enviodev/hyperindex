@@ -70,7 +70,7 @@ impl EvmDecoder {
             .collect::<Option<Vec<_>>>()?;
         let decoded = registration
             .decoder
-            .decode_log_parts(topics.into_iter(), data)
+            .decode_log_parts(topics, data)
             .ok()?;
         EvmParams::from_decoded(decoded, &registration.schema)
     }

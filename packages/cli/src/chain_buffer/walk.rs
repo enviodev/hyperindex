@@ -8,8 +8,9 @@ use anyhow::Result;
 use super::decoded::DecodedEvent;
 use super::deliver::{Columns, EMPTY_LINK};
 use super::evm::{self, log_column, LogView};
+use super::fuel::ReceiptView;
 use super::table::{make_key, RowRef, Snapshot};
-use super::Shared;
+use super::{decode, Ecosystem, Shared};
 use crate::evm_hypersync_source::types::EvmParams;
 use crate::js_value::JsTape;
 
@@ -254,6 +255,44 @@ impl Walker<'_> {
     }
 
     fn push_row(&mut self, row: &RowRef, contract_register_only: bool) {
+        match self.shared.ecosystem {
+            Ecosystem::Fuel => self.push_receipt(row, contract_register_only),
+            _ => self.push_log(row, contract_register_only),
+        }
+    }
+
+    fn push_receipt(&mut self, row: &RowRef, contract_register_only: bool) {
+        let Some(fuel) = &self.shared.fuel else {
+            return;
+        };
+        let Some(receipt) = ReceiptView::of_row(row) else {
+            return;
+        };
+        let store = fuel.read_store();
+        let mut identity = None;
+        fuel.for_each_match(&receipt, &store, |registration| {
+            if contract_register_only && !registration.has_contract_register {
+                return;
+            }
+            let Some(params) = decode::fuel::params(&registration.registration.kind, &receipt)
+            else {
+                return;
+            };
+            let (tx_id, src_address) = identity
+                .get_or_insert_with(|| (receipt.tx_id(), receipt.src_address()))
+                .clone();
+            self.items.push(Item::Fuel {
+                block_number: receipt.block_height,
+                receipt_index: receipt.receipt_index,
+                registration: registration.index(),
+                tx_id,
+                src_address,
+                params,
+            });
+        });
+    }
+
+    fn push_log(&mut self, row: &RowRef, contract_register_only: bool) {
         let Some(evm) = &self.shared.evm else { return };
         let Some(log) = LogView::of_row(row) else {
             return;

@@ -1,17 +1,16 @@
-use std::collections::HashSet;
-
 use anyhow::Context;
 use napi_derive::napi;
 
 mod config;
-mod selection;
+pub(crate) mod selection;
 mod types;
 
-use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
-use crate::block_store::{BlockStore, FuelBlockRow};
-use crate::event_store::{EventStore, Row, RowData};
+use crate::address_store::{AddressSet, AddressStore, StoreInner};
+use crate::chain_buffer::fuel::{push_block, push_receipt, ReceiptInput, ReceiptView};
+use crate::chain_buffer::matching_fuel::FuelMatcher;
+use crate::chain_buffer::page::{Page, PageData};
+use crate::chain_buffer::Ecosystem;
 use crate::hex::decode_prefixed;
-use crate::js_value::JsTape;
 use config::ClientConfig;
 use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
@@ -22,9 +21,7 @@ use types::{convert_response, Block, ConvertError, RawReceipt};
 pub struct FuelHyperSyncClient {
     inner: hyperfuel_client::Client,
     selection_builder: SelectionBuilder,
-    /// The chain's address index, shared with the fetch state. Read by the
-    /// per-receipt owner gate.
-    address_store: std::sync::Arc<std::sync::RwLock<StoreInner>>,
+    matcher: FuelMatcher,
 }
 
 #[napi]
@@ -34,15 +31,23 @@ impl FuelHyperSyncClient {
         cfg: ClientConfig,
         user_agent: String,
         event_registrations: Vec<FuelOnEventRegistrationInput>,
+        contract_register_indexes: Vec<i64>,
         address_store: &AddressStore,
     ) -> napi::Result<FuelHyperSyncClient> {
-        let handle = address_store.handle();
         let selection_builder = {
+            let handle = address_store.handle();
             let store = handle.read().unwrap();
             SelectionBuilder::from_registrations(&event_registrations, &store)
                 .context("build selection builder")
                 .map_err(map_err)?
         };
+        let matcher = FuelMatcher::new(
+            &event_registrations,
+            &contract_register_indexes,
+            address_store,
+        )
+        .context("build matcher")
+        .map_err(map_err)?;
         let client_config: hyperfuel_client::ClientConfig =
             cfg.try_into().context("build config").map_err(map_err)?;
         let inner = hyperfuel_client::Client::new_with_agent(client_config, user_agent)
@@ -51,7 +56,7 @@ impl FuelHyperSyncClient {
         Ok(FuelHyperSyncClient {
             inner,
             selection_builder,
-            address_store: handle,
+            matcher,
         })
     }
 
@@ -70,7 +75,7 @@ impl FuelHyperSyncClient {
         &self,
         params: EventItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<(EventItemsResponse, BlockStore, EventStore)> {
+    ) -> napi::Result<(EventItemsResponse, Page)> {
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.clone().unwrap_or_default(),
         );
@@ -88,48 +93,17 @@ impl FuelHyperSyncClient {
             .await
             .map_err(|e| request_err("Failed to get data from HyperFuel", e))?;
         let raw = convert_response(res).map_err(convert_error_to_napi)?;
-
-        // The page's raw blocks, keyed by height — merged into the per-chain
-        // store where their ids drive reorg detection and materialisation.
-        let block_store = BlockStore::new_fuel();
-        let rows = raw
-            .blocks
-            .iter()
-            .map(|b| {
-                Ok(FuelBlockRow {
-                    height: u64::try_from(b.height).context("block.height negative")?,
-                    id: Some(decode_prefixed(&b.id, "block.id")?),
-                    time: Some(b.time),
-                })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()
-            .map_err(map_err)?;
-        block_store.insert_fuel_block_rows(rows);
-
-        // Materialise the set's cache before taking the store guard: `cache()`
-        // lazily initialises by reading the same lock, and a writer queued
-        // between the two reads would deadlock the pair.
-        let set_cache = address_set.cache().clone();
-        let (items, rejected_log_data) = {
-            let store = self.address_store.read().unwrap();
-            route_receipts(
-                raw.receipts,
-                &raw.blocks,
-                &built,
-                &set_cache,
-                &client_filtered,
-                &store,
-            )
-            .map_err(convert_error_to_napi)?
-        };
+        let page = tokio::task::block_in_place(|| {
+            let store = self.matcher.read_store();
+            build_page(&raw.receipts, &raw.blocks, &self.matcher, &store)
+        })
+        .map_err(convert_error_to_napi)?;
 
         let response = EventItemsResponse {
             archive_height: raw.archive_height,
             next_block: raw.next_block,
-            rejected_log_data,
         };
-        let page = EventStore::from_rows(items.into_iter().map(EventItem::into_row).collect());
-        Ok((response, block_store, page))
+        Ok((response, Page::from_data(page)))
     }
 }
 
@@ -150,84 +124,11 @@ pub struct EventItemsQuery {
     pub client_filtered_contracts: Option<Vec<String>>,
 }
 
-/// One routed receipt with the params its handler receives.
-pub struct EventItem {
-    /// The registration this receipt routed to, as passed to the client
-    /// constructor.
-    pub on_event_registration_index: i64,
-    pub receipt_index: i64,
-    pub tx_id: String,
-    /// Height of the block this receipt belongs to. The block itself stays in
-    /// the `BlockStore` returned alongside this response.
-    pub block_height: i64,
-    pub src_address: String,
-    /// LogData: the data decoded with the registration's ABI; a receipt its
-    /// logged type rejects never becomes an item at all. Mint/Burn:
-    /// `{subId, amount}`. Transfer/TransferOut/Call: `{to, assetId, amount}`,
-    /// with TransferOut's wallet recipient as `to`.
-    pub params: JsTape,
-}
-
-fn supply_params(sub_id: &str, amount: u64) -> JsTape {
-    let mut tape = JsTape::new();
-    tape.obj(2);
-    tape.key("subId");
-    tape.str(sub_id);
-    tape.key("amount");
-    tape.bigint(false, &[amount]);
-    tape
-}
-
-fn transfer_params(to: &str, asset_id: &str, amount: u64) -> JsTape {
-    let mut tape = JsTape::new();
-    tape.obj(3);
-    tape.key("to");
-    tape.str(to);
-    tape.key("assetId");
-    tape.str(asset_id);
-    tape.key("amount");
-    tape.bigint(false, &[amount]);
-    tape
-}
-
-impl EventItem {
-    /// The store row of this receipt, read back as the record
-    /// `FuelHyperSyncClient.EventItems.item` describes.
-    fn into_row(self) -> Row {
-        Row::event(
-            self.block_height,
-            self.receipt_index,
-            None,
-            self.on_event_registration_index,
-            RowData::FuelReceipt {
-                tx_id: self.tx_id,
-                src_address: self.src_address,
-                params: self.params,
-            },
-        )
-    }
-}
-
-/// What a page covered. Its items are in the `EventStore` returned beside it.
+/// What a page covered. Its rows are in the `Page` returned beside it.
 #[napi(object, object_from_js = false)]
 pub struct EventItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
-    pub rejected_log_data: Vec<RejectedLogData>,
-}
-
-/// The first LogData receipt in the page that a contract-bound registration's
-/// ABI couldn't decode, with how many it rejected in the page. The receipts
-/// are dropped; this only lets JS warn about a likely stale ABI.
-#[napi(object)]
-#[derive(Debug, PartialEq)]
-pub struct RejectedLogData {
-    pub on_event_registration_index: i64,
-    pub block_height: i64,
-    pub receipt_index: i64,
-    pub tx_id: String,
-    pub data_length: i64,
-    pub count: i64,
 }
 
 fn build_query(
@@ -292,133 +193,126 @@ fn required<T>(value: Option<T>, name: &str, missing: &mut Vec<String>) -> Optio
     value
 }
 
-/// Fans each receipt out to every registration of the selection it matches
-/// and flattens the kind-specific columns onto the items. A receipt without a
-/// `root_contract_id` (no contract context for `srcAddress`) is dropped, as is
-/// one that routes to no registration. Kind-required columns the source
-/// omitted surface as `MissingFields` — never as garbage params. LogData a
-/// contract-bound registration's ABI rejects is dropped and reported
-/// alongside the items.
-fn route_receipts(
-    receipts: Vec<RawReceipt>,
-    blocks: &[Block],
-    built: &BuiltSelection,
-    set_cache: &SetCache,
-    client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
-    address_store: &StoreInner,
-) -> Result<(Vec<EventItem>, Vec<RejectedLogData>), ConvertError> {
-    let present_block_heights: HashSet<i64> = blocks.iter().map(|b| b.height).collect();
-    let mut items = Vec::with_capacity(receipts.len());
-    let mut missing: Vec<String> = Vec::new();
-    let mut rejected: Vec<RejectedLogData> = Vec::new();
+fn receipt_view<'a>(receipt: &'a RawReceipt, root_contract_id: &'a [u8]) -> ReceiptView<'a> {
+    ReceiptView {
+        block_height: receipt.block_height as u64,
+        receipt_index: receipt.receipt_index as u64,
+        receipt_type: receipt.receipt_type,
+        root_contract_id,
+        tx_id: receipt.tx_id.as_bytes(),
+        rb: receipt.rb,
+        data: receipt.data.as_deref(),
+        val: receipt.val,
+        sub_id: receipt.sub_id.as_deref().map(str::as_bytes),
+        amount: receipt.amount,
+        asset_id: receipt.asset_id.as_deref().map(str::as_bytes),
+        to: receipt.to.as_deref().map(str::as_bytes),
+        to_address: receipt.to_address.as_deref().map(str::as_bytes),
+    }
+}
 
-    for receipt in receipts {
-        let src_address = match &receipt.root_contract_id {
-            Some(address) => address.clone(),
-            None => continue,
-        };
-        // A malformed root contract id can't be any registered address, so the
-        // receipt only reaches wildcard registrations.
-        let contract_id = Hash::decode_hex(&src_address).ok();
-        let key: &[u8] = contract_id.as_deref().map_or(&[], |bytes| &bytes[..]);
-        let address = Emitter {
-            key,
-            owners: set_cache.owners_of(key),
-            block: receipt.block_height,
-        };
-
-        for reg in &built.registrations {
-            if !reg.matches(
-                receipt.receipt_type,
-                receipt.rb,
-                &address,
-                client_filtered.applies(&reg.contract_name),
-                address_store,
-            ) {
-                continue;
-            }
-            // Every routed item's block must resolve — JS reads it
-            // unconditionally onto the payload.
-            if !present_block_heights.contains(&receipt.block_height) {
-                push_unique(&mut missing, "block");
-            }
-            // Each kind's fields are all checked before giving up on the
-            // item, so one error names every column the source left out.
-            let params = match &reg.kind {
-                RegistrationKind::LogData { decoder, .. } => {
-                    let Some(data) = required(receipt.data.as_ref(), "receipt.data", &mut missing)
-                    else {
-                        continue;
-                    };
-                    // Dropped for this registration only; others on the same
-                    // `rb` decode on their own. A wildcard sees other
-                    // contracts' data under its `rb` routinely, but a
-                    // contract-bound rejection usually means a stale ABI, so
-                    // that one is reported.
-                    let Some(params) = decoder.decode(data) else {
-                        if !reg.is_wildcard {
-                            match rejected
-                                .iter_mut()
-                                .find(|r| r.on_event_registration_index == reg.index)
-                            {
-                                Some(report) => report.count += 1,
-                                None => rejected.push(RejectedLogData {
-                                    on_event_registration_index: reg.index,
-                                    block_height: receipt.block_height,
-                                    receipt_index: receipt.receipt_index,
-                                    tx_id: receipt.tx_id.clone(),
-                                    data_length: data.len() as i64,
-                                    count: 1,
-                                }),
-                            }
-                        }
-                        continue;
-                    };
-                    params
-                }
-                RegistrationKind::Mint | RegistrationKind::Burn => {
-                    let (Some(sub_id), Some(val)) = (
-                        required(receipt.sub_id.as_deref(), "receipt.subId", &mut missing),
-                        required(receipt.val, "receipt.val", &mut missing),
-                    ) else {
-                        continue;
-                    };
-                    supply_params(sub_id, val)
-                }
-                RegistrationKind::Transfer | RegistrationKind::Call => {
-                    // TransferOut receipts carry the wallet recipient in
-                    // `to_address`; everything else uses `to`.
-                    let (recipient, recipient_name) =
-                        if receipt.receipt_type == selection::RECEIPT_TRANSFER_OUT {
-                            (&receipt.to_address, "receipt.toAddress")
-                        } else {
-                            (&receipt.to, "receipt.to")
-                        };
-                    let (Some(amount), Some(asset_id), Some(to)) = (
-                        required(receipt.amount, "receipt.amount", &mut missing),
-                        required(receipt.asset_id.as_deref(), "receipt.assetId", &mut missing),
-                        required(recipient.as_deref(), recipient_name, &mut missing),
-                    ) else {
-                        continue;
-                    };
-                    transfer_params(to, asset_id, amount)
-                }
-            };
-            items.push(EventItem {
-                on_event_registration_index: reg.index,
-                receipt_index: receipt.receipt_index,
-                tx_id: receipt.tx_id.clone(),
-                block_height: receipt.block_height,
-                src_address: src_address.clone(),
-                params,
-            });
+/// Names every column a registration of `kind` reads that the receipt lacks.
+fn check_required(kind: &RegistrationKind, receipt: &RawReceipt, missing: &mut Vec<String>) {
+    match kind {
+        RegistrationKind::LogData { .. } => {
+            required(receipt.data.as_ref(), "receipt.data", missing);
+        }
+        RegistrationKind::Mint | RegistrationKind::Burn => {
+            required(receipt.sub_id.as_ref(), "receipt.subId", missing);
+            required(receipt.val, "receipt.val", missing);
+        }
+        RegistrationKind::Transfer | RegistrationKind::Call => {
+            // TransferOut receipts carry the wallet recipient in
+            // `to_address`; everything else uses `to`.
+            let (recipient, recipient_name) =
+                if receipt.receipt_type == selection::RECEIPT_TRANSFER_OUT {
+                    (&receipt.to_address, "receipt.toAddress")
+                } else {
+                    (&receipt.to, "receipt.to")
+                };
+            required(receipt.amount, "receipt.amount", missing);
+            required(receipt.asset_id.as_ref(), "receipt.assetId", missing);
+            required(recipient.as_ref(), recipient_name, missing);
         }
     }
+}
 
+/// The page: every block of the response, for reorg detection and the
+/// receipts' block fields, and the receipts some registration matches now.
+/// A receipt without a `root_contract_id` has no emitter and is dropped.
+/// Kind-required columns the source omitted for a matching registration
+/// surface as `MissingFields`, as does a kept receipt's missing block.
+fn build_page(
+    receipts: &[RawReceipt],
+    blocks: &[Block],
+    matcher: &FuelMatcher,
+    store: &StoreInner,
+) -> Result<PageData, ConvertError> {
+    let mut page = PageData::new(Ecosystem::Fuel);
+    let mut rows = page.blocks.builder();
+    for block in blocks {
+        let height = u64::try_from(block.height).context("block.height negative")?;
+        let id = decode_prefixed(&block.id, "block.id")?;
+        push_block(&mut rows, height, Some(&id), Some(block.time));
+    }
+    page.add_blocks(rows.finish());
+
+    let mut missing: Vec<String> = Vec::new();
+    let mut registering_blocks = Vec::new();
+    let mut rows = page.events.builder();
+    for receipt in receipts {
+        let Some(root_contract_id) = &receipt.root_contract_id else {
+            continue;
+        };
+        let root_contract_id = Hash::decode_hex(root_contract_id)
+            .with_context(|| format!("receipt.rootContractId {root_contract_id}"))?;
+        let view = receipt_view(receipt, &root_contract_id[..]);
+        let mut kept = false;
+        let mut registers = false;
+        matcher.for_each_match(&view, store, |registration| {
+            kept = true;
+            registers |= registration.has_contract_register;
+            check_required(&registration.registration.kind, receipt, &mut missing);
+        });
+        if !kept {
+            continue;
+        }
+        // Every kept receipt's block must resolve: JS reads it onto the
+        // payload unconditionally.
+        if !blocks
+            .iter()
+            .any(|block| block.height == receipt.block_height)
+        {
+            push_unique(&mut missing, "block");
+        }
+        if registers {
+            registering_blocks.push(view.block_height);
+        }
+        push_receipt(
+            &mut rows,
+            &ReceiptInput {
+                block_height: view.block_height,
+                receipt_index: view.receipt_index,
+                receipt_type: receipt.receipt_type,
+                root_contract_id: &root_contract_id[..],
+                tx_id: &receipt.tx_id,
+                rb: receipt.rb,
+                data: receipt.data.as_deref(),
+                val: receipt.val,
+                sub_id: receipt.sub_id.as_deref(),
+                amount: receipt.amount,
+                asset_id: receipt.asset_id.as_deref(),
+                to: receipt.to.as_deref(),
+                to_address: receipt.to_address.as_deref(),
+            },
+        )?;
+    }
     if !missing.is_empty() {
         return Err(ConvertError::MissingFields(missing));
     }
-    Ok((items, rejected))
+    page.add_events(rows.finish());
+    page.add_registering_blocks(registering_blocks);
+    Ok(page)
 }
 
 /// The client embeds a `{:?}` debug dump in its error message; keep only the
@@ -454,7 +348,7 @@ fn map_err(e: anyhow::Error) -> napi::Error {
 mod tests {
     use super::selection::FuelEventKind;
     use super::*;
-    use crate::address_store::test_support::{fuel_store, set_of};
+    use crate::address_store::test_support::fuel_store;
     use crate::js_value::test_value::JsValue;
 
     #[test]
@@ -510,57 +404,60 @@ mod tests {
 
     fn block_42() -> Block {
         Block {
-            id: "0xblock".to_string(),
+            id: "0xb10c".to_string(),
             height: 42,
             time: 1745179292,
         }
     }
 
-    /// Builds a selection and keeps its store and set alive — routing reads
-    /// both. `addresses` must cover every contract the registrations name.
+    /// The matcher over `registrations`, with the store it reads.
     fn build(
         registrations: &[FuelOnEventRegistrationInput],
-        indexes: &[i64],
         addresses: &[(&str, &[&str])],
-    ) -> (AddressStore, AddressSet, BuiltSelection) {
+    ) -> (AddressStore, FuelMatcher) {
         let store = fuel_store(addresses);
-        let names: Vec<&str> = addresses.iter().map(|(name, _)| *name).collect();
-        let set = set_of(&store, &names);
-        let built =
-            SelectionBuilder::from_registrations(registrations, &store.handle().read().unwrap())
-                .unwrap()
-                .build(indexes, &set, &Default::default())
-                .unwrap();
-        (store, set, built)
+        let matcher = FuelMatcher::new(registrations, &[0], &store).unwrap();
+        (store, matcher)
     }
 
+    struct Matched {
+        on_event_registration_index: i64,
+        params: crate::js_value::JsTape,
+    }
+
+    /// The page's receipts as a build reads them: each kept receipt matched
+    /// and decoded under every registration it belongs to.
     fn route(
-        store: &AddressStore,
-        set: &AddressSet,
-        built: &BuiltSelection,
+        matcher: &FuelMatcher,
         receipts: Vec<RawReceipt>,
-    ) -> Result<Vec<EventItem>, ConvertError> {
-        let address_store = store.handle();
-        let address_store = address_store.read().unwrap();
-        route_receipts(
-            receipts,
-            &[block_42()],
-            built,
-            set.cache(),
-            &Default::default(),
-            &address_store,
-        )
-        .map(|(items, _)| items)
+    ) -> Result<Vec<Matched>, ConvertError> {
+        let store = matcher.read_store();
+        let page = build_page(&receipts, &[block_42()], matcher, &store)?;
+        let mut items = Vec::new();
+        for row in page.events.rows_in_block_range(0, 1 << 30) {
+            let view = ReceiptView::of_row(&row).unwrap();
+            matcher.for_each_match(&view, &store, |registration| {
+                if let Some(params) = crate::chain_buffer::decode::fuel::params(
+                    &registration.registration.kind,
+                    &view,
+                ) {
+                    items.push(Matched {
+                        on_event_registration_index: registration.registration.index,
+                        params,
+                    });
+                }
+            });
+        }
+        Ok(items)
     }
 
     #[test]
     fn routes_transfer_out_recipient_into_to() {
-        let (store, set, built) = build(
+        let (_store, matcher) = build(
             &[reg_input(0, "C", FuelEventKind::Transfer, true, None)],
-            &[0],
             &[("C", &[])],
         );
-        let items = route(&store, &set, &built, vec![raw_receipt(8)]).unwrap();
+        let items = route(&matcher, vec![raw_receipt(8)]).unwrap();
         assert_eq!(
             items
                 .iter()
@@ -579,12 +476,11 @@ mod tests {
 
     #[test]
     fn builds_supply_params_from_mint_receipt() {
-        let (store, set, built) = build(
+        let (_store, matcher) = build(
             &[reg_input(0, "C", FuelEventKind::Mint, true, None)],
-            &[0],
             &[("C", &[])],
         );
-        let items = route(&store, &set, &built, vec![raw_receipt(11)]).unwrap();
+        let items = route(&matcher, vec![raw_receipt(11)]).unwrap();
         assert_eq!(
             items
                 .iter()
@@ -602,15 +498,14 @@ mod tests {
 
     #[test]
     fn fans_out_to_wildcard_and_owned_registration() {
-        let (store, set, built) = build(
+        let (_store, matcher) = build(
             &[
                 reg_input(0, "Owned", FuelEventKind::Mint, false, None),
                 reg_input(1, "W", FuelEventKind::Mint, true, None),
             ],
-            &[0, 1],
             &[("Owned", &[ADDR]), ("W", &[])],
         );
-        let items = route(&store, &set, &built, vec![raw_receipt(11)]).unwrap();
+        let items = route(&matcher, vec![raw_receipt(11)]).unwrap();
         assert_eq!(
             items
                 .iter()
@@ -624,18 +519,17 @@ mod tests {
     fn log_data_its_abi_rejects_drops_only_that_registration() {
         let mut logs_u64 = reg_input(1, "C", FuelEventKind::LogData, true, Some("7"));
         logs_u64.abi = Some(crate::fuel::log_decoder::test_abi("7", "u64"));
-        let (store, set, built) = build(
+        let (_store, matcher) = build(
             &[
                 reg_input(0, "C", FuelEventKind::LogData, true, Some("7")),
                 logs_u64,
             ],
-            &[0, 1],
             &[("C", &[])],
         );
         // One data byte: a u8 for registration 0, too short for 1's u64.
         let mut empty = raw_receipt(6);
         empty.data = Some(Vec::new());
-        let items = route(&store, &set, &built, vec![raw_receipt(6), empty]).unwrap();
+        let items = route(&matcher, vec![raw_receipt(6), empty]).unwrap();
         assert_eq!(
             items
                 .into_iter()
@@ -646,74 +540,54 @@ mod tests {
     }
 
     #[test]
-    fn reports_log_data_only_a_contract_bound_registration_rejects() {
-        let logs_u64 = |index, contract_name, is_wildcard| {
-            let mut reg = reg_input(
-                index,
-                contract_name,
-                FuelEventKind::LogData,
-                is_wildcard,
-                Some("7"),
-            );
-            reg.abi = Some(crate::fuel::log_decoder::test_abi("7", "u64"));
-            reg
-        };
-        let (store, set, built) = build(
-            &[logs_u64(0, "W", true), logs_u64(1, "C", false)],
-            &[0, 1],
-            &[("W", &[]), ("C", &[ADDR])],
+    fn a_page_keeps_matched_receipts_once_and_names_the_blocks_a_contract_register_runs_on() {
+        // Registration 0 has a contractRegister (see `build`); 1 doesn't.
+        let (_store, matcher) = build(
+            &[
+                reg_input(0, "C", FuelEventKind::Mint, true, None),
+                reg_input(1, "C", FuelEventKind::Mint, true, None),
+                reg_input(2, "C", FuelEventKind::Burn, true, None),
+            ],
+            &[("C", &[])],
         );
-        let address_store = store.handle();
-        let address_store = address_store.read().unwrap();
-        // One data byte each — too short for a u64 — so both registrations
-        // reject both receipts; only the contract-bound one is reported.
-        let (items, rejected) = route_receipts(
-            vec![raw_receipt(6), raw_receipt(6)],
+        let store = matcher.read_store();
+        let mut burn = raw_receipt(12);
+        burn.receipt_index = 4;
+        let mut transfer = raw_receipt(7);
+        transfer.receipt_index = 5;
+        let page = build_page(
+            &[raw_receipt(11), burn, transfer],
             &[block_42()],
-            &built,
-            set.cache(),
-            &Default::default(),
-            &address_store,
+            &matcher,
+            &store,
         )
         .unwrap();
         assert_eq!(
-            (items.len(), rejected),
-            (
-                0,
-                vec![RejectedLogData {
-                    on_event_registration_index: 1,
-                    block_height: 42,
-                    receipt_index: 3,
-                    tx_id: "0xtx".to_string(),
-                    data_length: 1,
-                    count: 2,
-                }]
-            )
+            (page.events.len(), page.registering_blocks.clone()),
+            (2, vec![42])
         );
     }
 
     #[test]
     fn unrouted_receipt_is_dropped() {
-        let (store, set, built) = build(
+        let (_store, matcher) = build(
             &[reg_input(0, "C", FuelEventKind::LogData, true, Some("9"))],
-            &[0],
             &[("C", &[])],
         );
         // rb 7 doesn't match the registration's logId 9.
-        let items = route(&store, &set, &built, vec![raw_receipt(6)]).unwrap();
+        let items = route(&matcher, vec![raw_receipt(6)]).unwrap();
         assert!(items.is_empty());
     }
 
     #[test]
     fn missing_kind_required_column_is_typed_error() {
-        let (store, set, built) = build(
+        let (_store, matcher) = build(
             &[reg_input(0, "C", FuelEventKind::Mint, true, None)],
-            &[0],
             &[("C", &[])],
         );
         let mut receipt = raw_receipt(11);
         receipt.val = None;
-        match route(&store, &set, &built, vec![receipt]) {
+        match route(&matcher, vec![receipt]) {
             Err(ConvertError::MissingFields(fields)) => {
                 assert_eq!(fields, vec!["receipt.val".to_string()])
             }
@@ -724,16 +598,15 @@ mod tests {
 
     #[test]
     fn missing_transfer_columns_are_all_named_in_one_error() {
-        let (store, set, built) = build(
+        let (_store, matcher) = build(
             &[reg_input(0, "C", FuelEventKind::Transfer, true, None)],
-            &[0],
             &[("C", &[])],
         );
         let mut receipt = raw_receipt(7);
         receipt.amount = None;
         receipt.asset_id = None;
         receipt.to = None;
-        match route(&store, &set, &built, vec![receipt]) {
+        match route(&matcher, vec![receipt]) {
             Err(ConvertError::MissingFields(fields)) => assert_eq!(
                 fields,
                 vec![
@@ -749,21 +622,12 @@ mod tests {
 
     #[test]
     fn missing_block_for_routed_receipt_is_typed_error() {
-        let (store, set, built) = build(
+        let (_store, matcher) = build(
             &[reg_input(0, "C", FuelEventKind::Mint, true, None)],
-            &[0],
             &[("C", &[])],
         );
-        let address_store = store.handle();
-        let address_store = address_store.read().unwrap();
-        match route_receipts(
-            vec![raw_receipt(11)],
-            &[],
-            &built,
-            set.cache(),
-            &Default::default(),
-            &address_store,
-        ) {
+        let store = matcher.read_store();
+        match build_page(&[raw_receipt(11)], &[], &matcher, &store) {
             Err(ConvertError::MissingFields(fields)) => {
                 assert_eq!(fields, vec!["block".to_string()])
             }

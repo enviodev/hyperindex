@@ -1029,18 +1029,6 @@ pub struct Owners<'a> {
     rest: &'a [u32],
 }
 
-impl Owners<'static> {
-    /// A set holding the address for exactly one contract — the shape every
-    /// single-owner routing test builds by hand.
-    #[cfg(test)]
-    pub(crate) fn single(contract_idx: u32) -> Self {
-        Self {
-            first: Some(contract_idx),
-            rest: &[],
-        }
-    }
-}
-
 impl Owners<'_> {
     pub fn contains(&self, contract_idx: u32) -> bool {
         self.first == Some(contract_idx) || self.rest.contains(&contract_idx)

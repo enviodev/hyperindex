@@ -5,8 +5,9 @@ use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
 use napi_derive::napi;
 
-use crate::address_store::{AddressSet, Emitter, StoreInner};
+use crate::address_store::{AddressSet, StoreInner};
 use crate::fuel::log_decoder::{parse_abi, LogDecoder};
+use crate::registration_start_block::has_started;
 use fuel_abi_types::abi::unified_program::UnifiedProgramABI;
 
 // FuelVM receipt type codes.
@@ -96,18 +97,14 @@ pub(crate) struct Registration {
 impl Registration {
     /// Whether a receipt belongs to this registration: matching receipt type
     /// (and `rb` for LogData), at or after the registration's own start block,
-    /// emitted by an allowed contract.
-    ///
-    /// Owner rules mirror EVM's: a wildcard registration accepts any contract;
-    /// a contract-bound one needs the address to be in this partition's set for
-    /// its own contract (or, when the contract is client-filtered, only in the
-    /// store) and registered at or before the receipt's block.
+    /// and either wildcard or emitted by a contract the store holds for the
+    /// registration's contract at the receipt's block.
     pub(crate) fn matches(
         &self,
         receipt_type: u8,
         rb: Option<u64>,
-        address: &Emitter,
-        force_wildcard: bool,
+        emitter: &[u8],
+        block: i64,
         store: &StoreInner,
     ) -> bool {
         let kind_matches = match &self.kind {
@@ -117,22 +114,88 @@ impl Registration {
             kind => kind.receipt_types().contains(&receipt_type),
         };
         kind_matches
-            && address.matches_registration(
-                store,
-                self.contract_idx,
-                self.is_wildcard,
-                self.start_block,
-                force_wildcard,
-            )
+            && has_started(self.start_block, block)
+            && (self.is_wildcard || store.is_indexed_at(emitter, self.contract_idx, block))
     }
+}
+
+/// Parses every registration once: its kind, with the LogData decoder built
+/// from the contract's ABI, and its contract in the address store.
+pub(crate) fn parse_registrations(
+    registrations: &[FuelOnEventRegistrationInput],
+    store: &StoreInner,
+) -> Result<Vec<Registration>> {
+    // Every LogData registration carries its contract's whole ABI; parse each
+    // distinct one once.
+    let mut programs: Vec<(&serde_json::Value, UnifiedProgramABI)> = Vec::new();
+    let mut parsed: Vec<Registration> = Vec::with_capacity(registrations.len());
+    for reg in registrations {
+        let kind = match reg.kind {
+            FuelEventKind::LogData => {
+                let log_id = reg.log_id.as_ref().with_context(|| {
+                    format!("LogData registration {} is missing logId", reg.event_name)
+                })?;
+                let rb = log_id.parse::<u64>().with_context(|| {
+                    format!("parse logId {} for event {}", log_id, reg.event_name)
+                })?;
+                let abi = reg.abi.as_ref().with_context(|| {
+                    format!("LogData registration {} is missing abi", reg.event_name)
+                })?;
+                let program_idx = match programs.iter().position(|(seen, _)| *seen == abi) {
+                    Some(idx) => idx,
+                    None => {
+                        let program = parse_abi(abi).with_context(|| {
+                            format!("parse the ABI of contract {}", reg.contract_name)
+                        })?;
+                        programs.push((abi, program));
+                        programs.len() - 1
+                    }
+                };
+                let decoder =
+                    LogDecoder::new(&programs[program_idx].1, log_id).with_context(|| {
+                        format!("build the LogData decoder for event {}", reg.event_name)
+                    })?;
+                RegistrationKind::LogData { rb, decoder }
+            }
+            FuelEventKind::Call => {
+                anyhow::ensure!(
+                    reg.is_wildcard,
+                    "Call receipt indexing currently supported only in wildcard mode"
+                );
+                RegistrationKind::Call
+            }
+            FuelEventKind::Mint => RegistrationKind::Mint,
+            FuelEventKind::Burn => RegistrationKind::Burn,
+            FuelEventKind::Transfer => RegistrationKind::Transfer,
+        };
+        let contract_idx = store.contract_idx(&reg.contract_name).with_context(|| {
+            format!(
+                "Contract {} is missing from the chain's address store",
+                reg.contract_name
+            )
+        })?;
+        anyhow::ensure!(
+            parsed.iter().all(|seen| seen.index != reg.index),
+            "Duplicate registration index {} for event {}",
+            reg.index,
+            reg.event_name,
+        );
+        parsed.push(Registration {
+            index: reg.index,
+            contract_name: reg.contract_name.clone(),
+            contract_idx,
+            is_wildcard: reg.is_wildcard,
+            start_block: reg.start_block,
+            kind,
+        });
+    }
+    Ok(parsed)
 }
 
 /// Everything a source query needs that depends on the partition's selection
 /// and current addresses.
 pub(crate) struct BuiltSelection {
     pub receipt_selections: Vec<net_types::ReceiptSelection>,
-    /// The selection's registrations sorted by index, for routing.
-    pub registrations: Vec<std::sync::Arc<Registration>>,
     /// Which receipt columns the selection's kinds read, so the field
     /// selection only requests what item building needs.
     pub needs_log_data: bool,
@@ -167,71 +230,12 @@ impl SelectionBuilder {
         registrations: &[FuelOnEventRegistrationInput],
         store: &StoreInner,
     ) -> Result<Self> {
-        let mut map = HashMap::new();
-        // Every LogData registration carries its contract's whole ABI; parse
-        // each distinct one once.
-        let mut programs: Vec<(&serde_json::Value, UnifiedProgramABI)> = Vec::new();
-        for reg in registrations {
-            let kind = match reg.kind {
-                FuelEventKind::LogData => {
-                    let log_id = reg.log_id.as_ref().with_context(|| {
-                        format!("LogData registration {} is missing logId", reg.event_name)
-                    })?;
-                    let rb = log_id.parse::<u64>().with_context(|| {
-                        format!("parse logId {} for event {}", log_id, reg.event_name)
-                    })?;
-                    let abi = reg.abi.as_ref().with_context(|| {
-                        format!("LogData registration {} is missing abi", reg.event_name)
-                    })?;
-                    let program_idx = match programs.iter().position(|(seen, _)| *seen == abi) {
-                        Some(idx) => idx,
-                        None => {
-                            let program = parse_abi(abi).with_context(|| {
-                                format!("parse the ABI of contract {}", reg.contract_name)
-                            })?;
-                            programs.push((abi, program));
-                            programs.len() - 1
-                        }
-                    };
-                    let decoder =
-                        LogDecoder::new(&programs[program_idx].1, log_id).with_context(|| {
-                            format!("build the LogData decoder for event {}", reg.event_name)
-                        })?;
-                    RegistrationKind::LogData { rb, decoder }
-                }
-                FuelEventKind::Call => {
-                    anyhow::ensure!(
-                        reg.is_wildcard,
-                        "Call receipt indexing currently supported only in wildcard mode"
-                    );
-                    RegistrationKind::Call
-                }
-                FuelEventKind::Mint => RegistrationKind::Mint,
-                FuelEventKind::Burn => RegistrationKind::Burn,
-                FuelEventKind::Transfer => RegistrationKind::Transfer,
-            };
-            let contract_idx = store.contract_idx(&reg.contract_name).with_context(|| {
-                format!(
-                    "Contract {} is missing from the chain's address store",
-                    reg.contract_name
-                )
-            })?;
-            let parsed = Registration {
-                index: reg.index,
-                contract_name: reg.contract_name.clone(),
-                contract_idx,
-                is_wildcard: reg.is_wildcard,
-                start_block: reg.start_block,
-                kind,
-            };
-            anyhow::ensure!(
-                map.insert(reg.index, std::sync::Arc::new(parsed)).is_none(),
-                "Duplicate registration index {} for event {}",
-                reg.index,
-                reg.event_name,
-            );
-        }
-        Ok(Self { registrations: map })
+        Ok(Self {
+            registrations: parse_registrations(registrations, store)?
+                .into_iter()
+                .map(|reg| (reg.index, std::sync::Arc::new(reg)))
+                .collect(),
+        })
     }
 
     pub(crate) fn build(
@@ -251,7 +255,6 @@ impl SelectionBuilder {
         // query is stable across calls.
         let mut ordered_contracts: Vec<&str> = Vec::new();
 
-        let mut registrations = Vec::with_capacity(registration_indexes.len());
         let mut needs_log_data = false;
         let mut needs_supply = false;
         let mut needs_transfer = false;
@@ -262,7 +265,6 @@ impl SelectionBuilder {
                 .registrations
                 .get(id)
                 .with_context(|| format!("Unknown registration index {id} in query selection"))?;
-            registrations.push(reg.clone());
             match &reg.kind {
                 RegistrationKind::LogData { .. } => needs_log_data = true,
                 RegistrationKind::Mint | RegistrationKind::Burn => needs_supply = true,
@@ -301,9 +303,6 @@ impl SelectionBuilder {
                 ordered_contracts.push(reg.contract_name.as_str());
             }
         }
-        // Deterministic item order per receipt, independent of the selection's
-        // index order.
-        registrations.sort_unstable_by_key(|reg| reg.index);
 
         let mut receipt_selections: Vec<net_types::ReceiptSelection> = Vec::new();
         if !wildcard_receipt_types.is_empty() {
@@ -350,7 +349,6 @@ impl SelectionBuilder {
 
         Ok(BuiltSelection {
             receipt_selections,
-            registrations,
             needs_log_data,
             needs_supply,
             needs_transfer,
@@ -363,7 +361,7 @@ impl SelectionBuilder {
 mod tests {
     use super::*;
     use crate::address_store::test_support::{fuel_store, set_of};
-    use crate::address_store::{AddressStore, Owners};
+    use crate::address_store::AddressStore;
 
     const ADDR_1: &str = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1";
     const ADDR_2: &str = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde2";
@@ -402,23 +400,29 @@ mod tests {
         Hash::decode_hex(address).unwrap()
     }
 
-    /// A receipt emitter with the contracts the partition's set claims it for.
-    fn emitter<'a>(set: &'a AddressSet, key: &'a Hash) -> Emitter<'a> {
-        Emitter {
-            key: &key[..],
-            owners: set.cache().owners_of(&key[..]),
-            block: 0,
-        }
+    /// A contract id no contract holds.
+    const UNOWNED_KEY: [u8; 32] = [0xff; 32];
+
+    /// Every registration, as the matcher reads them.
+    fn parsed(regs: &[FuelOnEventRegistrationInput], store: &AddressStore) -> Vec<Registration> {
+        parse_registrations(regs, &store.handle().read().unwrap()).unwrap()
     }
 
-    /// An emitter no contract owns.
-    const UNOWNED_KEY: [u8; 32] = [0xff; 32];
-    fn unowned() -> Emitter<'static> {
-        Emitter {
-            key: &UNOWNED_KEY,
-            owners: Owners::default(),
-            block: 0,
-        }
+    /// The indexes of the registrations a receipt matches.
+    fn matched(
+        regs: &[Registration],
+        store: &AddressStore,
+        receipt_type: u8,
+        rb: Option<u64>,
+        emitter: &[u8],
+        block: i64,
+    ) -> Vec<i64> {
+        let guard = store.handle();
+        let guard = guard.read().unwrap();
+        regs.iter()
+            .filter(|reg| reg.matches(receipt_type, rb, emitter, block, &guard))
+            .map(|reg| reg.index)
+            .collect()
     }
 
     fn selection_view(
@@ -559,26 +563,12 @@ mod tests {
             ]);
         let built = builder.build(&[0, 1, 2], &set, &client_filtered).unwrap();
 
-        let address_store = store.handle();
-        let address_store = address_store.read().unwrap();
-        let c1_reg = built.registrations.iter().find(|r| r.index == 0).unwrap();
+        let regs = parsed(&[reg(0, "C1", FuelEventKind::Mint, false, None)], &store);
+        // The store alone decides: the partition's set holds no C1 address.
+        let route_forced =
+            |key: &Hash| !matched(&regs, &store, RECEIPT_MINT, None, &key[..], 0).is_empty();
         let addr_1 = key_of(ADDR_1);
         let addr_2 = key_of(ADDR_2);
-        // The partition's set can't claim a client-filtered address, so routing
-        // leans on the store alone.
-        let route_forced = |key: &Hash| {
-            c1_reg.matches(
-                RECEIPT_MINT,
-                None,
-                &Emitter {
-                    key: &key[..],
-                    owners: Owners::default(),
-                    block: 0,
-                },
-                true,
-                &address_store,
-            )
-        };
         assert_eq!(
             (
                 built
@@ -666,32 +656,21 @@ mod tests {
 
     #[test]
     fn routing_fans_out_to_wildcards_and_owned_contract() {
-        let (store, set) = addresses(&[("Owned", &[ADDR_1]), ("W", &[]), ("Other", &[])]);
-        let builder = SelectionBuilder::from_registrations(
+        let store = fuel_store(&[("Owned", &[ADDR_1]), ("W", &[]), ("Other", &[])]);
+        let regs = parsed(
             &[
                 reg(0, "Owned", FuelEventKind::Mint, false, None),
                 reg(1, "W", FuelEventKind::Mint, true, None),
                 reg(2, "Other", FuelEventKind::Mint, false, None),
             ],
-            &store.handle().read().unwrap(),
-        )
-        .unwrap();
-        let built = builder
-            .build(&[0, 1, 2], &set, &Default::default())
-            .unwrap();
-        let address_store = store.handle();
-        let address_store = address_store.read().unwrap();
-        let route = |address: &Emitter| -> Vec<i64> {
-            built
-                .registrations
-                .iter()
-                .filter(|reg| reg.matches(RECEIPT_MINT, None, address, false, &address_store))
-                .map(|reg| reg.index)
-                .collect()
-        };
+            &store,
+        );
         let owned_key = key_of(ADDR_1);
         assert_eq!(
-            (route(&emitter(&set, &owned_key)), route(&unowned()),),
+            (
+                matched(&regs, &store, RECEIPT_MINT, None, &owned_key[..], 0),
+                matched(&regs, &store, RECEIPT_MINT, None, &UNOWNED_KEY, 0),
+            ),
             (vec![0, 1], vec![1])
         );
     }
@@ -711,28 +690,14 @@ mod tests {
             contract_name: "Owned".to_string(),
             registration_block: 50,
         }]);
-        let set = set_of(&store, &["Owned"]);
-        let builder = SelectionBuilder::from_registrations(
-            &[reg(0, "Owned", FuelEventKind::Mint, false, None)],
-            &store.handle().read().unwrap(),
-        )
-        .unwrap();
-        let built = builder.build(&[0], &set, &Default::default()).unwrap();
-        let address_store = store.handle();
-        let address_store = address_store.read().unwrap();
+        let regs = parsed(&[reg(0, "Owned", FuelEventKind::Mint, false, None)], &store);
         let owned_key = key_of(ADDR_1);
-        let at = |block| Emitter {
-            key: &owned_key[..],
-            owners: Owners::single(0),
-            block,
-        };
-        let reg = &built.registrations[0];
         assert_eq!(
             (
-                reg.matches(RECEIPT_MINT, None, &at(49), false, &address_store),
-                reg.matches(RECEIPT_MINT, None, &at(50), false, &address_store),
+                matched(&regs, &store, RECEIPT_MINT, None, &owned_key[..], 49),
+                matched(&regs, &store, RECEIPT_MINT, None, &owned_key[..], 50),
             ),
-            (false, true)
+            (vec![], vec![0])
         );
     }
 
@@ -743,53 +708,30 @@ mod tests {
         // contract-wide, so only this per-registration gate separates them.
         let mut restricted = reg(1, "Owned", FuelEventKind::Mint, false, None);
         restricted.start_block = Some(100);
-        let (store, set) = addresses(&[("Owned", &[ADDR_1])]);
-        let builder = SelectionBuilder::from_registrations(
+        let store = fuel_store(&[("Owned", &[ADDR_1])]);
+        let regs = parsed(
             &[
                 reg(0, "Owned", FuelEventKind::Mint, false, None),
                 restricted,
             ],
-            &store.handle().read().unwrap(),
-        )
-        .unwrap();
-        let built = builder.build(&[0, 1], &set, &Default::default()).unwrap();
-        let address_store = store.handle();
-        let address_store = address_store.read().unwrap();
+            &store,
+        );
         let owned_key = key_of(ADDR_1);
-        let at = |block| {
-            let address = Emitter {
-                key: &owned_key[..],
-                owners: Owners::single(0),
-                block,
-            };
-            built
-                .registrations
-                .iter()
-                .filter(|reg| reg.matches(RECEIPT_MINT, None, &address, false, &address_store))
-                .map(|reg| reg.index)
-                .collect::<Vec<_>>()
-        };
+        let at = |block| matched(&regs, &store, RECEIPT_MINT, None, &owned_key[..], block);
         assert_eq!((at(99), at(100)), (vec![0], vec![0, 1]));
     }
 
     #[test]
     fn transfer_matches_both_transfer_and_transfer_out() {
-        let (store, set) = addresses(&[("C", &[])]);
-        let builder = SelectionBuilder::from_registrations(
-            &[reg(0, "C", FuelEventKind::Transfer, true, None)],
-            &store.handle().read().unwrap(),
-        )
-        .unwrap();
-        let built = builder.build(&[0], &set, &Default::default()).unwrap();
-        let address_store = store.handle();
-        let address_store = address_store.read().unwrap();
-        let reg = &built.registrations[0];
-        let any = unowned();
+        let store = fuel_store(&[("C", &[])]);
+        let regs = parsed(&[reg(0, "C", FuelEventKind::Transfer, true, None)], &store);
+        let any =
+            |receipt_type| !matched(&regs, &store, receipt_type, None, &UNOWNED_KEY, 0).is_empty();
         assert_eq!(
             (
-                reg.matches(RECEIPT_TRANSFER, None, &any, false, &address_store),
-                reg.matches(RECEIPT_TRANSFER_OUT, None, &any, false, &address_store),
-                reg.matches(RECEIPT_MINT, None, &any, false, &address_store),
+                any(RECEIPT_TRANSFER),
+                any(RECEIPT_TRANSFER_OUT),
+                any(RECEIPT_MINT),
             ),
             (true, true, false)
         );
@@ -797,25 +739,18 @@ mod tests {
 
     #[test]
     fn log_data_routes_by_rb() {
-        let (store, set) = addresses(&[("C", &[])]);
-        let builder = SelectionBuilder::from_registrations(
+        let store = fuel_store(&[("C", &[])]);
+        let regs = parsed(
             &[
                 reg(0, "C", FuelEventKind::LogData, true, Some("1")),
                 reg(1, "C", FuelEventKind::LogData, true, Some("2")),
             ],
-            &store.handle().read().unwrap(),
-        )
-        .unwrap();
-        let built = builder.build(&[0, 1], &set, &Default::default()).unwrap();
-        let address_store = store.handle();
-        let address_store = address_store.read().unwrap();
-        let routed: Vec<i64> = built
-            .registrations
-            .iter()
-            .filter(|reg| reg.matches(RECEIPT_LOG_DATA, Some(2), &unowned(), false, &address_store))
-            .map(|reg| reg.index)
-            .collect();
-        assert_eq!(routed, vec![1]);
+            &store,
+        );
+        assert_eq!(
+            matched(&regs, &store, RECEIPT_LOG_DATA, Some(2), &UNOWNED_KEY, 0),
+            vec![1]
+        );
     }
 
     #[test]
