@@ -64,6 +64,7 @@ let mockFetchState = (
     knownHeight,
     firstEventBlock: None,
     clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
+    largestPageItems: FetchState.initialPageItems,
   }->TestFetchState.pair(~eventStore=EventStore.make())
 }
 
@@ -85,7 +86,6 @@ describe("FetchState.getNextQuery partition scheduling", () => {
       fromBlock: idx * 10 + 1,
       toBlock: Some(idx * 10 + 10),
       isChunk: true,
-      itemsTarget: None,
       itemsEst: 5000,
       fetchedBlock: None,
     }
@@ -115,9 +115,14 @@ describe("FetchState.getNextQuery partition scheduling", () => {
   })
 
   it("queries every partition behind the head, furthest behind first", t => {
-    let partition0 = mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=4)
-    let partition1 = mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=5)
-    let partition2 = mockFullPartition(~partitionIndex=2, ~latestFetchedBlockNumber=1)
+    // A known density, so each probe is sized by its range to the target.
+    let probing = (~partitionIndex, ~latestFetchedBlockNumber) => {
+      ...mockFullPartition(~partitionIndex, ~latestFetchedBlockNumber),
+      eventDensity: Some(0.),
+    }
+    let partition0 = probing(~partitionIndex=0, ~latestFetchedBlockNumber=4)
+    let partition1 = probing(~partitionIndex=1, ~latestFetchedBlockNumber=5)
+    let partition2 = probing(~partitionIndex=2, ~latestFetchedBlockNumber=1)
 
     t.expect(
       mockFetchState([partition0, partition1, partition2], ~knownHeight=10)->nextQuery,
@@ -125,7 +130,6 @@ describe("FetchState.getNextQuery partition scheduling", () => {
       Ready([
         {
           partitionId: "2",
-          itemsTarget: Some(16_667),
           itemsEst: 16_667,
           fromBlock: 2,
           toBlock: None,
@@ -137,7 +141,6 @@ describe("FetchState.getNextQuery partition scheduling", () => {
           partitionId: "0",
           // Starts at block 5 vs partition "2"'s block 2, so it covers less of
           // the range to the target and gets a smaller probe.
-          itemsTarget: Some(11_111),
           itemsEst: 11_111,
           fromBlock: 5,
           toBlock: None,
@@ -148,7 +151,6 @@ describe("FetchState.getNextQuery partition scheduling", () => {
         {
           partitionId: "1",
           // Starts furthest ahead (block 6), so it gets the smallest probe.
-          itemsTarget: Some(9_259),
           itemsEst: 9_259,
           fromBlock: 6,
           toBlock: None,
@@ -198,6 +200,28 @@ describe("FetchState.getNextQuery partition scheduling", () => {
         ~knownHeight=0,
       )->nextQuery,
     ).toEqual(WaitingForNewBlock)
+  })
+
+  // A probe sends no row limit, so a partition whose density is unknown may
+  // answer with a full page however small its share of the budget: each one
+  // reserves a page, and the budget admits as many as it holds pages.
+  it("admits as many cold probes as the budget holds pages", t => {
+    let itemsEstimates = nextQuery =>
+      switch nextQuery {
+      | FetchState.Ready(queries) => queries->Array.map(q => q.itemsEst)
+      | _ => []
+      }
+    t.expect(
+      mockFetchState(
+        Array.fromInitializer(
+          ~length=10,
+          partitionIndex => mockFullPartition(~partitionIndex, ~latestFetchedBlockNumber=0),
+        ),
+        ~knownHeight=1000,
+      )
+      ->FetchState.getNextQuery(~chainTargetBlock=1000, ~chainTargetItems=20_000.)
+      ->itemsEstimates,
+    ).toEqual([5000, 5000, 5000, 5000])
   })
 
   it("waits for a new block when every partition is at the known height", t => {

@@ -1074,7 +1074,6 @@ let executeQuery = async (
         ~partitionId=query.partitionId,
         ~knownHeight,
         ~selection=query.selection->FetchState.narrowSelectionToRange(~toBlock),
-        ~itemsTarget=query.itemsTarget,
         ~retry,
         ~logger,
       )

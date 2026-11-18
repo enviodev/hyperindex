@@ -105,7 +105,6 @@ let fetch = (source: Source.t, ~addressSet) =>
       onEventRegistrations: onEventRegistrations(),
       onBlockRegistrations: [],
     },
-    ~itemsTarget=Some(5_000),
     ~retry=0,
     ~logger=Logger.makeInMemory()->Logger.withFields({"test": "shared address routing"}),
   )

@@ -1141,7 +1141,6 @@ let make = (
           ~knownHeight,
           ~partitionId,
           ~selection,
-          ~itemsTarget as _,
           ~retry,
           ~logger as _,
         ) => {

@@ -184,7 +184,6 @@ describe("RpcSource - field selection end to end", () => {
         onBlockRegistrations: [],
         onEventRegistrations: [(registration :> Internal.onEventRegistration)],
       },
-      ~itemsTarget=Some(5000),
       ~retry=0,
       ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource field selection"}),
     )
@@ -636,7 +635,6 @@ describe("RpcSource - empty selection", () => {
         ~knownHeight=1,
         ~partitionId="0",
         ~selection={dependsOnAddresses: true, onBlockRegistrations: [], onEventRegistrations: []},
-        ~itemsTarget=Some(5000),
         ~retry=0,
         ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource empty selection"}),
       )
@@ -728,7 +726,6 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
               onBlockRegistrations: [],
               onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
             },
-            ~itemsTarget=Some(5000),
             ~retry=0,
             ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource re-grow"}),
           )
@@ -855,7 +852,6 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
             onBlockRegistrations: [],
             onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
           },
-          ~itemsTarget=Some(5000),
           ~retry=0,
           ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource classify"}),
         )
@@ -980,7 +976,6 @@ describe("RpcSource - builds partition log selections end to end", () => {
             reg => (reg :> Internal.onEventRegistration),
           ),
         },
-        ~itemsTarget=Some(5000),
         ~retry=0,
         ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource selection e2e"}),
       )

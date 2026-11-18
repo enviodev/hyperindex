@@ -71,7 +71,6 @@ let make = (
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
-    ~itemsTarget as _,
     ~retry,
     ~logger as _,
   ) => {

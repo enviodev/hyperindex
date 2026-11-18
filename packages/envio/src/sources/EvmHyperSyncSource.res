@@ -70,7 +70,6 @@ let make = (
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
-    ~itemsTarget,
     ~retry,
     ~logger as _,
   ) => {
@@ -86,7 +85,6 @@ let make = (
       ~query={
         fromBlock,
         toBlock: selection->FetchState.sourceToBlock(~toBlock, ~knownHeight),
-        ?itemsTarget,
         onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
         onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
         clientFilteredContracts: selection.clientFilteredContracts,

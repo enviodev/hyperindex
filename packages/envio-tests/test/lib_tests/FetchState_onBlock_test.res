@@ -78,7 +78,6 @@ describe("FetchState onBlock functionality", () => {
     )
     let query: FetchState.query = {
       partitionId: "0",
-      itemsTarget: Some(0),
       itemsEst: 0,
       toBlock: None,
       isChunk: false,

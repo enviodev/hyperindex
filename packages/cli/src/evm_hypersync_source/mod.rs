@@ -209,7 +209,6 @@ impl EvmHyperSyncClient {
                 params.to_block,
                 !selects_logs,
                 params.reorgable_from,
-                params.items_target,
             )
             .map_err(map_err)?;
         let block_selection = &block_query.selection;
@@ -269,8 +268,6 @@ impl EvmHyperSyncClient {
                     .map(log_selection_from_built)
                     .collect()
             }),
-            max_num_logs: params.items_target.filter(|_| selects_logs),
-            max_num_blocks: block_query.max_blocks.map(|b| b as i64),
             field_selection: query::FieldSelection {
                 block: Some(validated_block_fields.clone()),
                 transaction: selects_logs.then_some(transaction_fields),
@@ -381,9 +378,6 @@ pub struct ItemsQuery {
     pub from_block: i64,
     /// Inclusive; `None` queries to the end of available data.
     pub to_block: Option<i64>,
-    /// Soft cap on the page's items: the logs it selects, or for a query
-    /// selecting blocks alone, its block handlers' runs. `None` sends no cap.
-    pub items_target: Option<i64>,
     /// The event registrations selecting logs, by the index the client was
     /// constructed with. Empty selects no logs.
     pub on_event_registration_indexes: Vec<i64>,

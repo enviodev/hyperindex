@@ -84,7 +84,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
         let query: FetchState.query = {
           partitionId: "0",
-          itemsTarget: Some(0),
           itemsEst: 0,
           fromBlock: 0,
           toBlock: None,
@@ -265,7 +264,6 @@ describe("IndexerState", () => {
             blockNumber => {
               let query: FetchState.query = {
                 partitionId: "0",
-                itemsTarget: Some(0),
                 itemsEst: 0,
                 fromBlock: 0,
                 toBlock: None,
@@ -347,7 +345,6 @@ describe("IndexerState", () => {
         let cs = state->IndexerState.getChainState(~chainId)
         let concurrentQuery: FetchState.query = {
           partitionId: "0",
-          itemsTarget: Some(0),
           itemsEst: 0,
           fromBlock: 0,
           toBlock: None,

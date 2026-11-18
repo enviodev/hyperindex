@@ -96,9 +96,6 @@ type pendingQuery = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
-  // Server maxNumLogs-style cap for this in-flight query. None for bounded
-  // chunk/gap-fill queries, which send no cap (their toBlock is the bound).
-  itemsTarget: option<int>,
   // Estimated items this in-flight query will return, carried from the query so
   // the shared buffer budget can account for what's already being fetched.
   itemsEst: int,
@@ -139,10 +136,9 @@ type partition = {
   // Both must be non-zero before the minimum is trusted for chunk sizing.
   sourceRangeCapacity: int,
   prevSourceRangeCapacity: int,
-  // Smoothed items/block observed in responses. This is independent from the
-  // source's range capacity: even a response truncated by our own itemsTarget
-  // cap is useful density evidence while saying nothing about source capacity.
-  // None distinguishes a new partition from a real zero-density observation.
+  // Smoothed items/block observed in responses, independent from the source's
+  // range capacity. None distinguishes a new partition from a real zero-density
+  // observation.
   eventDensity: option<float>,
   // Tracks the latestFetchedBlock of the most recent response
   // that updated sourceRangeCapacity. Prevents degradation of the chunking
@@ -155,14 +151,9 @@ type query = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
-  // Server-side maxNumLogs-style cap. Some only for open-ended probes, whose
-  // range isn't otherwise bounded; None for bounded chunk/gap-fill queries,
-  // whose toBlock already bounds the response so a cap would only self-truncate
-  // (worse under client-side address filtering, which counts filtered-out items
-  // toward the cap).
-  itemsTarget: option<int>,
   // Density × the query's block range for a known-density partition, the
-  // query's budget share otherwise. This is the unit the chain's per-tick
+  // query's budget share for a probe of known density, and a page for a probe
+  // of unknown density. This is the unit the chain's per-tick
   // budget is reserved/consumed in and that sizes every query.
   itemsEst: int,
   selection: selection,
@@ -213,9 +204,7 @@ let narrowSelectionToRange = (selection: selection, ~toBlock) =>
 // (items/block). toBlock None is the open-ended tail, capped at
 // chainTargetBlock — the soft per-tick horizon the owning chain wants to reach
 // (see getNextQuery).
-let densityItemsTarget = (~density, ~fromBlock, ~toBlock, ~chainTargetBlock) => {
-  // Floor at 1: this is the budget reservation, and for a probe also its server
-  // cap — a 0 cap would ask the backend for nothing.
+let densityItemsEstimate = (~density, ~fromBlock, ~toBlock, ~chainTargetBlock) => {
   Pervasives.max(
     1,
     ((toBlock->Option.getOr(chainTargetBlock) - fromBlock + 1)->Int.toFloat *. density)
@@ -233,7 +222,7 @@ let getMinHistoryRange = (p: partition) => {
 }
 
 // Density has its own initialization signal and is useful independently from
-// source-capacity history, including when an itemsTarget cap truncates a response.
+// source-capacity history.
 let getTrustedDensity = (p: partition) => p.eventDensity
 
 // A response is still owed for this partition, so it owns range nothing else
@@ -750,14 +739,8 @@ module OptimizedPartitions = {
           latestFetchedBlock < knownHeight - 10
         | Some(queryToBlock) =>
           if latestFetchedBlock < queryToBlock {
-            // Partial response is direct capacity evidence — unless it was
-            // truncated by our own itemsTarget cap: that reflects the
-            // reservation we asked for, not what the server could return. A
-            // capless bounded query can only have been truncated by the source.
-            switch query.itemsTarget {
-            | None => true
-            | Some(itemsTarget) => itemsCount < itemsTarget
-            }
+            // No query sends a row limit, so only the source truncates one.
+            true
           } else {
             // A full response updates only when the query's intended range
             // covers at least the partition's current chunk range — meaning it
@@ -901,6 +884,9 @@ type t = {
   knownHeight: int,
   firstEventBlock: option<int>,
   clientFilterPolicy: clientFilterPolicy,
+  // The most items one response on this chain has carried: what a query
+  // sending no row limit may bring back before its density is known.
+  largestPageItems: int,
 }
 
 // The latest block whose items are all in the buffer: the lowest partition
@@ -994,6 +980,7 @@ let updateInternal = (
   ~optimizedPartitions=fetchState.optimizedPartitions,
   ~blockLag=fetchState.blockLag,
   ~knownHeight=fetchState.knownHeight,
+  ~largestPageItems=fetchState.largestPageItems,
 ): t => {
   let latestOnBlockBlockNumber = switch fetchState.onBlockRegistrations {
   | [] => knownHeight
@@ -1042,6 +1029,7 @@ let updateInternal = (
     knownHeight,
     firstEventBlock: fetchState.firstEventBlock,
     clientFilterPolicy: fetchState.clientFilterPolicy,
+    largestPageItems,
   }
 
   updatedFetchState
@@ -1828,6 +1816,7 @@ let handleQueryResult = (
       ~itemsCount,
       ~latestFetchedBlock,
     ),
+    ~largestPageItems=Pervasives.max(fetchState.largestPageItems, itemsCount),
   )
 }
 
@@ -1845,7 +1834,6 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
       fromBlock: q.fromBlock,
       toBlock: q.toBlock,
       isChunk: q.isChunk,
-      itemsTarget: q.itemsTarget,
       itemsEst: q.itemsEst,
       fetchedBlock: None,
     }
@@ -1878,17 +1866,17 @@ let maxInFlightChunksPerPartition = 12
 // per-partition cap alone would admit thousands of concurrent queries.
 let maxChainConcurrency = Env.maxChainConcurrency
 
+// What a probe of unknown density reserves until a response on the chain
+// carries more items than this.
+let initialPageItems = 5000
+
 // Chunk spans grow by this factor over the smallest recently observed source
 // range, so the pipeline keeps probing for more capacity instead of locking in
 // the first measurement.
 let chunkRangeGrowthFactor = 1.8
 
 // Push one density-priced query and return its itemsEst, the density estimate
-// that sizes the query and the chain's budget reservation. These queries are
-// chunks and gap-fills: their toBlock is a tight bound sized to the source's
-// range capacity, so they send no server cap (itemsTarget None) — a cap would
-// only self-truncate the bounded range, worse under client-side address
-// filtering. A rare unbounded call caps at the estimate as its only bound.
+// that sizes the query and the chain's budget reservation.
 let pushDensityPricedQuery = (
   queries: array<query>,
   ~partitionId,
@@ -1900,7 +1888,7 @@ let pushDensityPricedQuery = (
   ~selection,
   ~addresses,
 ) => {
-  let itemsEst = densityItemsTarget(~density, ~fromBlock, ~toBlock, ~chainTargetBlock)
+  let itemsEst = densityItemsEstimate(~density, ~fromBlock, ~toBlock, ~chainTargetBlock)
   queries
   ->Array.push({
     partitionId,
@@ -1908,10 +1896,6 @@ let pushDensityPricedQuery = (
     toBlock,
     selection,
     isChunk,
-    itemsTarget: switch toBlock {
-    | Some(_) => None
-    | None => Some(itemsEst)
-    },
     itemsEst,
     addresses,
   })
@@ -1928,8 +1912,7 @@ let pushDensityPricedQuery = (
 // budget spread over its remaining range this tick. That fallback should be
 // unreachable (a gap implies pipelined chunks, which imply a positive observed
 // density), but if chunking preconditions ever change it must not price by a
-// zero density: that would produce an itemsTarget-1 query crawling a dense gap
-// one item per response.
+// zero density: that would reserve nothing for a gap that may be dense.
 let pushGapFillQueries = (
   queries: array<query>,
   ~partitionId: string,
@@ -2109,6 +2092,7 @@ let pushForwardCandidates = (
   ~inRangeCount: int,
   ~chainTargetBlock: int,
   ~freshBudget: float,
+  ~largestPageItems: int,
 ) => {
   // Even share of the fresh budget across the partitions actually fetching
   // this tick (not every partition — so budget isn't stranded on ones below
@@ -2171,12 +2155,16 @@ let pushForwardCandidates = (
         created := created.contents + 1
       }
     | _ =>
-      // Size the probe by the events its range to the target is expected to
-      // hold — rangeTargetDensity × (chainTargetBlock − fromBlock + 1), split
-      // across the partitions fetching this tick. With no range to the target
-      // fall back to an even share of the fresh budget, so cold chains and
+      // A probe asks for no row limit, so one of unknown density may come
+      // back a full page however small its share: it reserves a page. One of
+      // known density is sized by the events its range to the target is
+      // expected to hold — rangeTargetDensity × (chainTargetBlock − fromBlock +
+      // 1), split across the partitions fetching this tick. With no range to
+      // the target it falls back to an even share of the fresh budget, so
       // caught-up partitions still probe.
-      let itemsEst = if rangeToTarget > 0 {
+      let itemsEst = switch p.eventDensity {
+      | None => largestPageItems
+      | Some(_) if rangeToTarget > 0 =>
         Pervasives.max(
           1,
           Math.round(
@@ -2185,8 +2173,7 @@ let pushForwardCandidates = (
             inRangeCount->Int.toFloat,
           )->Float.toInt,
         )
-      } else {
-        Pervasives.max(1, Math.round(probeShare)->Float.toInt)
+      | Some(_) => Pervasives.max(1, Math.round(probeShare)->Float.toInt)
       }
       candidates
       ->Array.push({
@@ -2195,9 +2182,6 @@ let pushForwardCandidates = (
         toBlock: fs.queryEndBlock,
         isChunk: false,
         selection: p.selection,
-        // An open-ended probe's range isn't bounded to source capacity, so it
-        // keeps a server cap at its estimate to protect the shared buffer.
-        itemsTarget: Some(itemsEst),
         itemsEst,
         addresses: p.addresses,
       })
@@ -2308,10 +2292,11 @@ let headFetchTarget = ({knownHeight, blockLag} as fetchState: t) =>
 //
 // A partition with source-capacity history and a positive density generates
 // density-sized chunks toward the target. Any other partition (no signal, no
-// capacity history, or a density-0 estimate) generates one open-ended probe
-// sized to the events its range to the target is expected to hold —
-// rangeTargetDensity × (chainTargetBlock − fromBlock + 1) / inRangeCount — so
-// unknown-density partitions probe in parallel within one budget.
+// capacity history, or a density-0 estimate) generates one open-ended probe.
+// One of known density reserves the events its range to the target is
+// expected to hold — rangeTargetDensity × (chainTargetBlock − fromBlock + 1) /
+// inRangeCount — and one of unknown density a page, so the budget admits as
+// many cold probes as it holds pages.
 let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock} as fetchState: t,
   ~chainTargetBlock: int,
@@ -2475,6 +2460,7 @@ let getNextQuery = (
       ~inRangeCount,
       ~chainTargetBlock,
       ~freshBudget,
+      ~largestPageItems=fetchState.largestPageItems,
     )
 
     acceptCandidates(
@@ -2721,6 +2707,7 @@ let make = (
     knownHeight,
     firstEventBlock,
     clientFilterPolicy,
+    largestPageItems: initialPageItems,
   }
 
   fetchState

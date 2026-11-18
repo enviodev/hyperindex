@@ -160,7 +160,6 @@ let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
       onBlockRegistrations: [],
       onEventRegistrations: [(registration :> Internal.onEventRegistration)],
     },
-    ~itemsTarget=None,
     ~retry=0,
     ~logger=Logger.makeInMemory(),
   )

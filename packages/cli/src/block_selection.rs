@@ -135,7 +135,6 @@ impl BlockRegistrations {
         to_block: Option<i64>,
         blocks_only: bool,
         reorgable_from: Option<i64>,
-        items_target: Option<i64>,
     ) -> Result<BlockQuery> {
         let read_every_block =
             reorgable_from.is_some_and(|from| to_block.is_none_or(|to| to >= from));
@@ -154,17 +153,23 @@ impl BlockRegistrations {
             Some((from, to, claimed)) => (from, Some(to), Some(claimed)),
             None => (from_block, to_block, None),
         };
-        let max_blocks = items_target
-            .filter(|_| blocks_only && !selection.is_empty() && to_block != Some(from_block))
-            .and_then(|target| u64::try_from(target).ok())
-            .map(|target| selection.blocks_for_runs(target));
+        let (to_block, claimed_to_block) =
+            if blocks_only && !selection.is_empty() && to_block != Some(from_block) {
+                let page_end = from_block + selection.blocks_for_runs(PAGE_RUNS) - 1;
+                let to_block = to_block.map_or(page_end, |to| to.min(page_end));
+                (
+                    Some(to_block),
+                    claimed_to_block.map(|claimed| claimed.min(to_block)),
+                )
+            } else {
+                (to_block, claimed_to_block)
+            };
         Ok(BlockQuery {
             selection,
             blocks_only,
             read_every_block,
             from_block,
             to_block,
-            max_blocks,
             claimed_to_block,
         })
     }
@@ -174,6 +179,11 @@ impl BlockRegistrations {
 /// one block costs less than reading every block up to it.
 const SPARSE_GAP: u64 = 1000;
 
+/// Handler runs a read of every block covers at most. Its range is the bound,
+/// not a block count sent to the server: a count would vary with each page,
+/// and the server caches a query under everything but its range.
+const PAGE_RUNS: u64 = 5000;
+
 pub(crate) struct BlockQuery {
     pub(crate) selection: BlockSelection,
     blocks_only: bool,
@@ -181,9 +191,6 @@ pub(crate) struct BlockQuery {
     pub(crate) from_block: u64,
     /// Inclusive.
     pub(crate) to_block: Option<u64>,
-    /// Caps a page reading every block for its handlers at the blocks its
-    /// item target needs: the target counts handler runs, not blocks.
-    pub(crate) max_blocks: Option<u64>,
     /// A query reading less than its range answers for the rest of it up to
     /// here, where no handler runs.
     claimed_to_block: Option<u64>,
@@ -406,59 +413,40 @@ mod tests {
         range: (i64, Option<i64>),
         blocks_only: bool,
         reorgable_from: Option<i64>,
-        items_target: Option<i64>,
     ) -> BlockQuery {
         let indexes: Vec<i64> = inputs.iter().map(|i| i.index).collect();
         BlockRegistrations::new(inputs)
             .unwrap()
-            .plan(
-                &indexes,
-                range.0,
-                range.1,
-                blocks_only,
-                reorgable_from,
-                items_target,
-            )
+            .plan(&indexes, range.0, range.1, blocks_only, reorgable_from)
             .unwrap()
     }
 
-    fn read_of(query: &BlockQuery, next_block: u64) -> (u64, Option<u64>, Option<u64>, u64) {
+    fn read_of(query: &BlockQuery, next_block: u64) -> (u64, Option<u64>, u64) {
         (
             query.from_block,
             query.to_block,
-            query.max_blocks,
             query.fetched_until(next_block),
         )
     }
 
     #[test]
     fn reads_every_block_between_handler_blocks_a_short_gap_apart() {
-        let query = planned(
-            &[input(0, 10, None, 1000)],
-            (0, Some(5000)),
-            true,
-            None,
-            Some(3),
-        );
-        assert_eq!(read_of(&query, 5001), (10, Some(5000), Some(3000), 5001));
+        let query = planned(&[input(0, 10, None, 1000)], (0, Some(5000)), true, None);
+        assert_eq!(read_of(&query, 5001), (10, Some(5000), 5001));
     }
 
     #[test]
     fn reads_a_handler_block_alone_when_the_next_is_far() {
         let sparse = [input(0, 10, None, 5000)];
-        let first = planned(&sparse, (0, Some(20_000)), true, None, Some(3));
-        let last = planned(&sparse, (15_000, Some(16_000)), true, None, None);
+        let first = planned(&sparse, (0, Some(20_000)), true, None);
+        let last = planned(&sparse, (15_000, Some(16_000)), true, None);
         assert_eq!(
             (
                 read_of(&first, 11),
                 first.fetched_until(10),
                 read_of(&last, 15_011)
             ),
-            (
-                (10, Some(10), None, 5010),
-                10,
-                (15_010, Some(15_010), None, 16_001)
-            )
+            ((10, Some(10), 5010), 10, (15_010, Some(15_010), 16_001))
         );
     }
 
@@ -468,28 +456,19 @@ mod tests {
         assert_eq!(
             (
                 read_of(
-                    &planned(&sparse, (0, Some(20_000)), true, Some(19_800), None),
+                    &planned(&sparse, (0, Some(20_000)), true, Some(19_800)),
                     20_001
                 ),
-                read_of(
-                    &planned(&sparse, (0, None), true, Some(19_800), None),
-                    20_001
-                ),
-                read_of(
-                    &planned(&sparse, (0, Some(20_000)), false, None, Some(3)),
-                    20_001
-                ),
+                read_of(&planned(&sparse, (0, None), true, Some(19_800)), 20_001),
+                read_of(&planned(&sparse, (0, Some(20_000)), false, None), 20_001),
                 // Every block of the range is final, so the gap may stay unread.
-                read_of(
-                    &planned(&sparse, (0, Some(20_000)), true, Some(20_001), None),
-                    11
-                ),
+                read_of(&planned(&sparse, (0, Some(20_000)), true, Some(20_001)), 11),
             ),
             (
-                (0, Some(20_000), None, 20_001),
-                (0, None, None, 20_001),
-                (0, Some(20_000), None, 20_001),
-                (10, Some(10), None, 5010)
+                (0, Some(20_000), 20_001),
+                (0, Some(24_999_999), 20_001),
+                (0, Some(20_000), 20_001),
+                (10, Some(10), 5010)
             )
         );
     }
@@ -499,30 +478,41 @@ mod tests {
         let ended = [input(0, 10, Some(4000), 5000)];
         assert_eq!(
             (
-                planned(&ended, (11, Some(5009)), true, None, Some(3)).unread_until(),
-                planned(&ended, (11, None), true, None, Some(3)).unread_until(),
-                planned(&ended, (11, Some(5009)), false, None, Some(3)).unread_until(),
-                planned(&ended, (11, Some(5009)), true, Some(4800), Some(3)).unread_until(),
+                planned(&ended, (11, Some(5009)), true, None).unread_until(),
+                planned(&ended, (11, None), true, None).unread_until(),
+                planned(&ended, (11, Some(5009)), false, None).unread_until(),
+                planned(&ended, (11, Some(5009)), true, Some(4800)).unread_until(),
             ),
             (Some(5010), None, None, None)
         );
     }
 
     #[test]
-    fn caps_blocks_at_the_handler_runs_the_target_counts() {
-        let cap = |inputs: &[OnBlockRegistrationInput]| {
-            planned(inputs, (0, Some(100_000)), true, None, Some(3)).max_blocks
+    fn ends_a_read_of_every_block_after_a_page_of_handler_runs() {
+        let to_block = |inputs: &[OnBlockRegistrationInput], range, reorgable_from| {
+            planned(inputs, range, true, reorgable_from).to_block
         };
-        // Every 5 and every 2 blocks run 0.7 times a block, so 4 blocks hold
-        // the 3 runs the target asks for; one handler every 1000 needs 3000.
+        // Every 5 and every 2 blocks run 0.7 times a block, so 7,142 blocks
+        // hold a page's 5,000 runs; one handler every 1000 needs 5,000,000.
         assert_eq!(
             (
-                cap(&[input(0, 0, None, 5), input(1, 0, None, 2)]),
-                cap(&[input(0, 0, None, 1000)]),
-                cap(&[input(0, 0, None, 1), input(1, 0, None, 1)]),
+                to_block(
+                    &[input(0, 0, None, 5), input(1, 0, None, 2)],
+                    (0, Some(100_000)),
+                    None
+                ),
+                to_block(&[input(0, 0, None, 1000)], (0, Some(100_000)), None),
+                to_block(&[input(0, 0, None, 2)], (0, None), Some(50)),
             ),
-            (Some(4), Some(3000), Some(1))
+            (Some(7141), Some(100_000), Some(9999))
         );
+    }
+
+    // A read cut short at its page claims no further than it read.
+    #[test]
+    fn claims_no_further_than_a_page_of_handler_runs() {
+        let query = planned(&[input(0, 0, None, 2)], (0, Some(100_000)), true, None);
+        assert_eq!(read_of(&query, 10_000), (0, Some(9999), 10_000));
     }
 
     #[test]

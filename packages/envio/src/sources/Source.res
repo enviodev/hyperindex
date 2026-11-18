@@ -228,14 +228,6 @@ type t = {
     ~knownHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,
-    // Soft cap on the number of primary items (logs/instructions/receipts) the
-    // source should ask its backend for, from the query's own estResponseSize.
-    // A HyperSync-backed source enforces it server-side, so a wrong estimate
-    // truncates the response instead of overshooting the shared buffer. Sources
-    // without an equivalent lever (RPC, Fuel, Simulate) ignore it. None means no
-    // cap: bounded chunk queries fetch their whole range even if denser than
-    // expected, so client-side-filtered items can't truncate the range short.
-    ~itemsTarget: option<int>,
     ~retry: int,
     ~logger: Logger.t,
   ) => promise<blockRangeFetchResponse>,

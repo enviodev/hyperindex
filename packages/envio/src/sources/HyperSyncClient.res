@@ -162,7 +162,6 @@ module QueryTypes = {
     fieldSelection: fieldSelection,
     maxNumBlocks?: int,
     maxNumTransactions?: int,
-    maxNumLogs?: int,
     joinMode?: joinMode,
     includeAllBlocks?: bool,
   }
@@ -258,9 +257,6 @@ module Items = {
     fromBlock: int,
     // Inclusive; None queries to the end of available data.
     toBlock: option<int>,
-    // Soft cap on the page's items: the logs it selects, or for a query
-    // selecting blocks alone, its block handlers' runs. Absent sends no cap.
-    itemsTarget?: int,
     onEventRegistrationIndexes: array<int>,
     onBlockRegistrationIndexes: array<int>,
     // Contract names to fetch address-free even though their registrations

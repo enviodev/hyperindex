@@ -60,6 +60,7 @@ let makeChainState = (
     latestOnBlockBlockNumber: frontier,
     firstEventBlock: Some(firstEventBlock),
     clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
+    largestPageItems: FetchState.initialPageItems,
   }
   let eventStore = TestEventStore.pageOf(
     bufferBlocks->Array.mapWithIndex((blockNumber, logIndex) => mockEvent(~blockNumber, ~logIndex)),
@@ -86,14 +87,15 @@ let makeChainState = (
 
 // A chain state with one fresh address partition behind the head, so
 // getNextQuery actually produces a Ready query (unlike the onBlock-only helper
-// above). The partition has no response yet, so each query estimates at the
-// default size.
+// above). The partition has answered with nothing so far, so its probe is
+// sized by the budget the chain is handed instead of reserving a page.
 let makeFetchingChainState = (
   ~chainId,
   ~knownHeight,
   ~latestFetchedBlock,
   ~endBlock=None,
   ~chainDensity=None,
+  ~partitionDensity=Some(0.),
   ~caughtUpOnce=false,
   ~bufferBlocks=[],
   ~firstEventBlock=Some(0),
@@ -114,7 +116,7 @@ let makeFetchingChainState = (
     mutPendingQueries: [],
     sourceRangeCapacity: 0,
     prevSourceRangeCapacity: 0,
-    eventDensity: None,
+    eventDensity: partitionDensity,
     latestSourceRangeCapacityUpdateBlock: 0,
   }
   let addressStore = TestAddresses.makeStore(
@@ -142,6 +144,7 @@ let makeFetchingChainState = (
     knownHeight,
     firstEventBlock,
     clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
+    largestPageItems: FetchState.initialPageItems,
   }
   let eventStore = TestEventStore.pageOf(
     bufferBlocks->Array.mapWithIndex((blockNumber, logIndex) => mockEvent(~blockNumber, ~logIndex)),
@@ -558,6 +561,7 @@ describe("CrossChainState fetch control", () => {
       knownHeight: 1000,
       firstEventBlock: Some(0),
       clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
+      largestPageItems: FetchState.initialPageItems,
     }->TestFetchState.pair(~eventStore=EventStore.make())
     let mockSource1 = MockSource.make([], ~chainId=1)
     let a = ChainState.make(
@@ -722,7 +726,7 @@ describe("CrossChainState fetch control", () => {
         ~chainDensity=Some(10.),
         ~caughtUpOnce,
       )
-    let itemsTarget = cs =>
+    let itemsEstimate = cs =>
       switch cs->ChainState.getNextQuery(~chainTargetItems=3000.) {
       | Ready([q]) => q.itemsEst
       | _ => JsError.throwWithMessage("expected a single ready query")
@@ -730,7 +734,7 @@ describe("CrossChainState fetch control", () => {
 
     // Range cost to the 20-block endBlock ceiling at density 10 = 200 items.
     t.expect(
-      (makeChain(~caughtUpOnce=false)->itemsTarget, makeChain(~caughtUpOnce=true)->itemsTarget),
+      (makeChain(~caughtUpOnce=false)->itemsEstimate, makeChain(~caughtUpOnce=true)->itemsEstimate),
       ~message="Both are capped at the plain range cost",
     ).toEqual((200, 200))
   })

@@ -256,7 +256,6 @@ impl SvmHyperSyncClient {
                 params.to_slot,
                 !selects_instructions,
                 params.reorgable_from,
-                params.items_target,
             )
             .map_err(map_err)?;
         let block_selection = &block_query.selection;
@@ -309,11 +308,6 @@ impl SvmHyperSyncClient {
                 .map_err(map_err)?,
             instruction_calls: built.instruction_selections.clone(),
             field_selection,
-            max_num_instructions: params
-                .items_target
-                .filter(|_| selects_instructions)
-                .and_then(|v| usize::try_from(v).ok()),
-            max_num_blocks: block_query.max_blocks.and_then(|b| usize::try_from(b).ok()),
             include_all_blocks: block_query.include_all_blocks(),
             ..Default::default()
         };
@@ -336,7 +330,6 @@ impl SvmHyperSyncClient {
                     from_slot,
                     query.to_slot,
                     query.field_selection.block,
-                    query.max_num_blocks,
                 ))
                 .await?;
             let resp = simple::SolanaResponse {
@@ -482,9 +475,6 @@ pub struct ItemsQuery {
     pub from_slot: i64,
     /// Inclusive; `None` queries to the end of available data.
     pub to_slot: Option<i64>,
-    /// Soft cap on the page's items: the instructions it selects, or for a query
-    /// selecting blocks alone, its block handlers' runs. `None` sends no cap.
-    pub items_target: Option<i64>,
     /// The instruction registrations selecting instructions, by index. Empty
     /// selects no instructions.
     pub on_event_registration_indexes: Vec<i64>,
