@@ -171,18 +171,21 @@ describe("Raw events", () => {
             handledLogIndexes,
           )).toEqual((
             [row(~block=4, ~logIndex=65535), row(~block=5, ~logIndex=0)],
-            [(4, 65536.), (5, 4294967266.)]->Array.map(((block, logIndex)) => dict{
-              "level": JSON.String("warn"),
-              "msg": JSON.String(
-                "Not storing a raw event for a log whose index is above 65535, the most raw_events' event_id holds",
-              ),
-              "chainId": JSON.Number(1.),
-              "contract": JSON.String("Gravatar"),
-              "event": JSON.String("MockEvent"),
-              "block": JSON.Number(block->Int.toFloat),
-              "logIndex": JSON.Number(logIndex),
-              "address": JSON.String("0x0000000000000000000000000000000000000000"),
-            }),
+            [(4, 65536.), (5, 4294967266.)]->Array.map(
+              ((block, logIndex)) =>
+                dict{
+                  "level": JSON.String("warn"),
+                  "msg": JSON.String(
+                    "Not storing a raw event for a log whose index is above 65535, the most raw_events' event_id holds",
+                  ),
+                  "chainId": JSON.Number(1.),
+                  "contract": JSON.String("Gravatar"),
+                  "event": JSON.String("MockEvent"),
+                  "block": JSON.Number(block->Int.toFloat),
+                  "logIndex": JSON.Number(logIndex),
+                  "address": JSON.String("0x0000000000000000000000000000000000000000"),
+                },
+            ),
             [65535, 65536, 0, 4294967266.->(Utils.magic: float => int)],
           )),
       )
