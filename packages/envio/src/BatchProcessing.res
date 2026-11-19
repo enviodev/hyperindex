@@ -17,7 +17,9 @@ let rec startProcessing = async (
   ~scheduleFetch,
   ~scheduleRollback,
 ) => {
-  if !(state->IndexerState.isProcessing) && !(state->IndexerState.isStopped) {
+  if state->IndexerState.isProcessing {
+    state->IndexerState.requestProcessing
+  } else if !(state->IndexerState.isStopped) {
     state->IndexerState.beginProcessing
     // FIXME: Needed only for test determinism. The mocks resolve several fetch
     // responses synchronously in one tick; this yield lets them all land before
@@ -28,9 +30,10 @@ let rec startProcessing = async (
     await yieldTick()
     // Seeded true so the first batch always runs (it handles the caught-up exit
     // even when there's nothing to process, eg resuming fully-synced state).
-    // Keep looping only while the last batch actually processed something: an
-    // empty/idle batch records nothing, so the counter stays put and the loop
-    // exits, leaving producers (fetch, rollback) to re-kick it.
+    // Keep looping only while the last batch actually processed something or
+    // processing was asked for while it ran: an empty/idle batch records
+    // nothing, so the counter stays put and the loop exits, leaving producers
+    // (fetch, rollback, contractRegister) to re-kick it.
     let hasMoreWork = ref(true)
     while (
       hasMoreWork.contents &&
@@ -38,6 +41,7 @@ let rec startProcessing = async (
       !(state->IndexerState.isResolvingReorg)
     ) {
       let processedBatchesBefore = state->IndexerState.processedBatchesCount
+      state->IndexerState.takeProcessingRequest->ignore
       switch await processNextBatch(state, ~runtime, ~scheduleFetch) {
       | exception exn =>
         IndexerState.errorExit(
@@ -47,7 +51,10 @@ let rec startProcessing = async (
             ~msg=IndexerState.unexpectedErrorMsg,
           ),
         )
-      | () => hasMoreWork := state->IndexerState.processedBatchesCount > processedBatchesBefore
+      | () =>
+        hasMoreWork :=
+          state->IndexerState.processedBatchesCount > processedBatchesBefore ||
+            state->IndexerState.takeProcessingRequest
       }
     }
     state->IndexerState.endProcessing

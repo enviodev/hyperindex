@@ -90,6 +90,9 @@ type t = {
   chainMetaThrottler: Throttler.t,
   // True while a batch is being processed; guards ProcessEventBatch re-entry.
   mutable isProcessing: bool,
+  // Processing was asked for while a batch was in flight. That batch was built
+  // before whatever asked, so the loop runs another round for it.
+  mutable isProcessingRequested: bool,
   // Whole-indexer view over every chain's runtime state plus the run-wide flags
   // derived from it. Mutated in place through CrossChainState.
   crossChainState: CrossChainState.t,
@@ -204,6 +207,7 @@ let make = (
     chainMetaDirty: false,
     chainMetaThrottler,
     isProcessing: false,
+    isProcessingRequested: false,
     crossChainState: CrossChainState.make(
       ~chainStates,
       ~isRealtime,
@@ -483,6 +487,12 @@ let beginProcessing = (state: t) => {
   state.isProcessing = true
 }
 let endProcessing = (state: t) => state.isProcessing = false
+let requestProcessing = (state: t) => state.isProcessingRequested = true
+let takeProcessingRequest = (state: t) => {
+  let isRequested = state.isProcessingRequested
+  state.isProcessingRequested = false
+  isRequested
+}
 
 // Start attributing idle time to fetch starvation. Called when the processing
 // loop exits with no work left; skipped when it exits for a reorg or shutdown,
