@@ -201,7 +201,6 @@ let runOneWrite = async (state: IndexerState.t) => {
         if mayHaveLanded.contents && (await state->hasBatchLanded(~moved)) {
           ()
         } else {
-          mayHaveLanded := false
           switch await persistence.storage.writeBatch(
             ~batch,
             ~rollback,
@@ -219,6 +218,16 @@ let runOneWrite = async (state: IndexerState.t) => {
           | exception Persistence.CommitUncertain(message) =>
             mayHaveLanded := true
             throw(Persistence.ConnectionLost(message))
+          | exception Persistence.ConnectionLost(message) =>
+            throw(Persistence.ConnectionLost(message))
+          // A COMMIT cut off on its way can reach the server after the batch
+          // was looked for. Writing it again then waits on that transaction's
+          // rows and collides with it on the checkpoint key once it commits,
+          // so the batch is looked for once more.
+          | exception exn if mayHaveLanded.contents =>
+            if !(await state->hasBatchLanded(~moved)) {
+              throw(exn)
+            }
           }
         }
       ),

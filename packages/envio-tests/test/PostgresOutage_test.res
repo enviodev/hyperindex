@@ -110,6 +110,64 @@ let retriedOperations = (indexer: IndexerRunner.t) =>
   ->Set.values
   ->Array.fromIterator
 
+// Other test files share the server, each in a schema of its own, so a lock
+// wait counts only when its statement names this run's schema.
+let lockWaitersOf = (indexer: IndexerRunner.t) =>
+  `FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%"${indexer.pgSchema}"%'`
+
+// Cuts the batch's COMMIT and holds it back until the batch, looked for and not
+// found, is written again and waits on the held transaction's rows. Releasing
+// the returned gate lets the COMMIT reach the server, or with `~deliver=false`
+// drops it.
+let holdCommitUntilRewriteBlocks = async (
+  indexer: IndexerRunner.t,
+  ~outage: PostgresOutage.t,
+  ~releaseHandler,
+  ~deliver,
+) => {
+  let commitArrives = MockSource.Gate.make()
+  outage.cutNextCommit(~deliver, ~holdUntil=commitArrives.wait())
+  releaseHandler()
+  await indexer.advanceTime(0)
+  await indexer.advanceTime(5_000)
+  await indexer.usePostgresSql(async sql => {
+    let rec waitForBlockedRewrite = async (~attempts) => {
+      let waiting =
+        (
+          await sql->StorageClient.queryForTests(
+            `SELECT count(*)::int AS waiting ${indexer->lockWaitersOf}`,
+          )
+        )->Array.map(row => row->Dict.getUnsafe("waiting")->(Utils.magic: unknown => int))
+      switch waiting {
+      | [count] if count > 0 => ()
+      | _ if attempts > 0 =>
+        // Real time: the batch is looked for and written again over the
+        // network, off the indexer's clock.
+        await Utils.delay(10)
+        await waitForBlockedRewrite(~attempts=attempts - 1)
+      | _ => JsError.throwWithMessage("The batch was never written again")
+      }
+    }
+    await waitForBlockedRewrite(~attempts=500)
+  })
+  commitArrives
+}
+
+let settleHeldCommitOnceRewriteBlocks = async (
+  indexer: IndexerRunner.t,
+  ~outage,
+  ~releaseHandler,
+  ~deliver,
+) => {
+  let commitArrives = await indexer->holdCommitUntilRewriteBlocks(
+    ~outage,
+    ~releaseHandler,
+    ~deliver,
+  )
+  commitArrives.release()
+  await indexer.waitUntilIdle()
+}
+
 describe("Postgres going away mid-run", () => {
   scenario->Scenario.it(
     "loads the entity again once it is back, without stopping",
@@ -458,4 +516,165 @@ describe("Postgres going away mid-run", () => {
       },
     )
   })
+
+  // The batch is looked for before its COMMIT reaches the server, so it reads
+  // as unwritten and goes out again. Writing it again waits on the held
+  // transaction's rows and collides with it on the checkpoint key once that
+  // commits, after which the batch is found.
+  let lateCommitErrors = []
+  scenario->Scenario.it(
+    "finds a batch landed when its cut-off COMMIT reaches the server after the batch is looked for",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~postgresPort=proxyPort,
+    ~onError=error => lateCommitErrors->Array.push(error.msg)->ignore,
+    async (~t, ~indexer, ~source) => {
+      let outage = outageWithDatabaseUp()
+      let source = source(1337)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
+      let (handled, releaseHandler) = makeHeldHandler()
+      await source->replyWithOneTally(~handled, ~load=false)
+      await indexer.advanceTime(1_000)
+
+      await indexer->settleHeldCommitOnceRewriteBlocks(~outage, ~releaseHandler, ~deliver=true)
+
+      let tallies: array<tally> = await indexer.query("Tally")
+      t.expect((
+        tallies,
+        (await indexer.queryChains())->Array.map(chain => chain.progressBlock),
+        (await indexer.queryCheckpoints())->Array.map(({blockNumber}) => blockNumber),
+        lateCommitErrors,
+      )).toEqual(([{id: "1", count: 1.}], [50], [1, 50], []))
+    },
+  )
+
+  // The rewrite waits on the same rows, but the server rolls the held
+  // transaction back, so the rewrite is the one that stores the batch.
+  let droppedCommitErrors = []
+  scenario->Scenario.it(
+    "stores a batch once when its held COMMIT never reaches the server while the batch is written again",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~postgresPort=proxyPort,
+    ~onError=error => droppedCommitErrors->Array.push(error.msg)->ignore,
+    async (~t, ~indexer, ~source) => {
+      let outage = outageWithDatabaseUp()
+      let source = source(1337)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
+      let (handled, releaseHandler) = makeHeldHandler()
+      await source->replyWithOneTally(~handled, ~load=false)
+      await indexer.advanceTime(1_000)
+
+      await indexer->settleHeldCommitOnceRewriteBlocks(~outage, ~releaseHandler, ~deliver=false)
+
+      let tallies: array<tally> = await indexer.query("Tally")
+      t.expect((
+        tallies,
+        (await indexer.queryChains())->Array.map(chain => chain.progressBlock),
+        (await indexer.queryCheckpoints())->Array.map(({blockNumber}) => blockNumber),
+        indexer->retriedOperations,
+        droppedCommitErrors,
+      )).toEqual(([{id: "1", count: 1.}], [50], [1, 50], ["batch write"], []))
+    },
+  )
+
+  // The rewrite fails on its own, for a reason other than a lost connection,
+  // while the held COMMIT still hasn't reached the server. That failure says
+  // nothing about the batch, so the batch is looked for. It isn't there, so the
+  // run stops rather than take the batch as saved.
+  let failedRewriteErrors = []
+  scenario->Scenario.it(
+    "stops when a rewrite fails while its batch, whose COMMIT was cut off, is not there",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~postgresPort=proxyPort,
+    ~onError=error => failedRewriteErrors->Array.push(error.msg)->ignore,
+    async (~t, ~indexer, ~source) => {
+      let outage = outageWithDatabaseUp()
+      let source = source(1337)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
+      let (handled, releaseHandler) = makeHeldHandler()
+      await source->replyWithOneTally(~handled, ~load=false)
+      await indexer.advanceTime(1_000)
+
+      let commitArrives = await indexer->holdCommitUntilRewriteBlocks(
+        ~outage,
+        ~releaseHandler,
+        ~deliver=false,
+      )
+      let cancelled = []
+      await indexer.usePostgresSql(async sql => {
+        (
+          await sql->StorageClient.queryForTests(
+            `SELECT pg_cancel_backend(pid) AS cancelled ${indexer->lockWaitersOf}`,
+          )
+        )->Array.forEach(
+          row =>
+            cancelled->Array.push(row->Dict.getUnsafe("cancelled")->(Utils.magic: unknown => bool)),
+        )
+        let rec waitForStop = async (~attempts) =>
+          if failedRewriteErrors->Utils.Array.isEmpty && attempts > 0 {
+            // Real time: the batch is looked for over the network, off the
+            // indexer's clock.
+            await Utils.delay(10)
+            await waitForStop(~attempts=attempts - 1)
+          }
+        await waitForStop(~attempts=200)
+      })
+      commitArrives.release()
+
+      let tallies: array<tally> = await indexer.query("Tally")
+      t.expect((
+        cancelled,
+        tallies,
+        (await indexer.queryCheckpoints())->Array.map(({blockNumber}) => blockNumber),
+        failedRewriteErrors,
+      )).toEqual(([true], [], [], [Some("Failed writing batch to the database")]))
+    },
+  )
+
+  let afterLateCommitErrors = []
+  scenario->Scenario.it(
+    "builds the next batch on a batch found landed behind its late COMMIT",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~postgresPort=proxyPort,
+    ~onError=error => afterLateCommitErrors->Array.push(error.msg)->ignore,
+    async (~t, ~indexer, ~source) => {
+      let outage = outageWithDatabaseUp()
+      let source = source(1337)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
+      let (handled, releaseHandler) = makeHeldHandler()
+      await source->replyWithOneTally(~handled, ~load=false)
+      await indexer.advanceTime(1_000)
+
+      await indexer->settleHeldCommitOnceRewriteBlocks(~outage, ~releaseHandler, ~deliver=true)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 51,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 60,
+                logIndex: 0,
+                handler: async args => {
+                  let tally = (args->contextOf).tally
+                  let count = (await tally.get("1"))->Option.mapOr(0., tally => tally.count)
+                  tally.set({id: "1", count: count +. 1.})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 70,
+            knownHeight: 100,
+          }),
+        },
+      ])
+      await indexer.advanceTime(1_000)
+
+      let tallies: array<tally> = await indexer.query("Tally")
+      t.expect((
+        tallies,
+        (await indexer.queryChains())->Array.map(chain => chain.progressBlock),
+        (await indexer.queryCheckpoints())->Array.map(({blockNumber}) => blockNumber),
+        afterLateCommitErrors,
+      )).toEqual(([{id: "1", count: 2.}], [70], [1, 50, 60, 70], []))
+    },
+  )
 })

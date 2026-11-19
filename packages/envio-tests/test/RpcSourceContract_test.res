@@ -229,7 +229,10 @@ describe("RPC source public contract", () => {
       async mock => {
         let registration = makeRegistration()
         let (source, addressStore) = makeSource(~url=mock.url, ~registration)
-        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
+        switch await RpcSourcePins.capture(
+          () => source->invoke(~registration, ~addressStore),
+          ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
+        ) {
         | Ok(page) => page
         | Error(_) => JsError.throwWithMessage("Expected the pinned RPC page to succeed")
         }
@@ -343,7 +346,10 @@ describe("RPC source public contract", () => {
           ~registration,
           ~lowercaseAddresses=false,
         )
-        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
+        switch await RpcSourcePins.capture(
+          () => source->invoke(~registration, ~addressStore),
+          ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
+        ) {
         | Ok(page) => page.events->Array.map(event => event.srcAddress)
         | Error(_) => JsError.throwWithMessage("Expected the pinned RPC page to succeed")
         }
@@ -413,6 +419,7 @@ describe("RPC source public contract", () => {
         let call = async (~retry) =>
           switch await RpcSourcePins.capture(
             () => source->invoke(~registration, ~addressStore, ~retry),
+            ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
           ) {
           | Error(error) => error
           | Ok(_) => JsError.throwWithMessage("Expected missing receipt data to be retryable")
@@ -490,7 +497,10 @@ describe("RPC source public contract", () => {
       async mock => {
         let registration = makeRegistration(~receiptOnly=true)
         let (source, addressStore) = makeSource(~url=mock.url, ~registration)
-        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
+        switch await RpcSourcePins.capture(
+          () => source->invoke(~registration, ~addressStore),
+          ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
+        ) {
         | Error(error) => error
         | Ok(_) => JsError.throwWithMessage("Expected the page to fail")
         }
@@ -535,7 +545,10 @@ describe("RPC source public contract", () => {
       async mock => {
         let registration = makeRegistration(~receiptOnly=true)
         let (source, addressStore) = makeSource(~url=mock.url, ~registration)
-        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
+        switch await RpcSourcePins.capture(
+          () => source->invoke(~registration, ~addressStore),
+          ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
+        ) {
         | Error(error) => error
         | Ok(_) => JsError.throwWithMessage("Expected the page to fail")
         }
@@ -605,6 +618,7 @@ describe("RPC source public contract", () => {
                 ~retry=0,
                 ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC interval pin"}),
               ),
+            ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
           )
         (await call(), await call())
       },
@@ -681,7 +695,10 @@ describe("RPC source public contract", () => {
       ],
       async mock => {
         let (source, addressStore) = makeSource(~url=mock.url, ~registration)
-        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
+        switch await RpcSourcePins.capture(
+          () => source->invoke(~registration, ~addressStore),
+          ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
+        ) {
         | Ok(page) => page
         | Error(_) => JsError.throwWithMessage("Expected the OR-filter page to succeed")
         }
@@ -730,6 +747,7 @@ describe("RPC source public contract", () => {
               ~retry=0,
               ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC skip-all pin"}),
             ),
+          ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
         ) {
         | Ok(page) => page
         | Error(_) => JsError.throwWithMessage("Expected the skip-all page to advance")
@@ -865,6 +883,10 @@ describe("RPC source public contract", () => {
                 "test": "RPC contract scoping pin",
               }),
             ),
+          ~onEventRegistrations=[
+            (eventA :> Internal.onEventRegistration),
+            (eventB :> Internal.onEventRegistration),
+          ],
         ) {
         | Ok(page) => page
         | Error(_) => JsError.throwWithMessage("Expected contract-scoped queries to succeed")
@@ -969,6 +991,10 @@ describe("RPC source public contract", () => {
                 ~retry=0,
                 ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC address fallback"}),
               ),
+            ~onEventRegistrations=[
+              (clientFiltered :> Internal.onEventRegistration),
+              (wildcard :> Internal.onEventRegistration),
+            ],
           )
         },
       )

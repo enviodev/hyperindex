@@ -62,7 +62,7 @@ let addressStore = () =>
 // from. It has to be seeded: an unseeded store matches none of the logs the mock
 // serves, and a page with no items references no blocks, so nothing but the
 // checked head blocks is ever fetched. `makeChainState` keeps an unseeded
-// store instead and lets `FetchState.make` seed it, as production does.
+// store instead and lets `TestFetchState.make` seed it, as production does.
 let sourceAddressStore = TestAddresses.makeStore(
   ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
   ~addresses=indexedAddresses,
@@ -168,7 +168,7 @@ let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
 let makeChainState = (~source: Source.t, ~knownHeight, ~blockStore) => {
   let chainConfig = TestConfig.make(~chainId=1337).chainMap->ChainMap.get(chainId)
   let store = addressStore()
-  let fetchState = FetchState.make(
+  let fetchState = TestFetchState.make(
     ~onNotice=ignore,
     ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
     ~addressStore=store,
@@ -187,6 +187,7 @@ let makeChainState = (~source: Source.t, ~knownHeight, ~blockStore) => {
   ChainState.make(
     ~chainConfig,
     ~fetchState={...fetchState, FetchState.knownHeight},
+    ~eventStore=fetchState->TestFetchState.eventStoreOf,
     ~addressStore=store,
     ~sourceManager=SourceManager.make(
       ~logger=Logger.makeInMemory(),

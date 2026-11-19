@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use alloy_dyn_abi::{DynSolEvent, DynSolType};
@@ -10,9 +9,8 @@ use hypersync_client::simple_types;
 use crate::address_store::{AddressStore, Emitter, SetCache, StoreInner};
 use crate::evm_hypersync_source::topic_filter::TopicFilters;
 use crate::evm_hypersync_source::types::{
-    event_params_tape, Log, OnEventRegistrationInput, ParamMeta,
+    EvmParams, Log, OnEventRegistrationInput, ParamMeta, ParamSchema,
 };
-use crate::js_value::JsTape;
 
 /// Everything needed to match a log against one registration and decode it
 /// under that registration's own ABI declaration. Registrations sharing an
@@ -30,12 +28,16 @@ struct OnEventRegistration {
     /// Earliest block this registration accepts; `None` is unrestricted.
     start_block: Option<i64>,
     topic_filters: TopicFilters,
-    params: Vec<ParamMeta>,
+    schema: Arc<ParamSchema>,
     decoder: DynSolEvent,
 }
 
 impl OnEventRegistration {
-    fn parse(ep: &OnEventRegistrationInput, store: &StoreInner) -> Result<Self> {
+    fn parse(
+        ep: &OnEventRegistrationInput,
+        store: &StoreInner,
+        checksummed_addresses: bool,
+    ) -> Result<Self> {
         let sighash = ep
             .sighash
             .as_ref()
@@ -62,7 +64,7 @@ impl OnEventRegistration {
             is_wildcard: ep.is_wildcard,
             start_block: ep.start_block,
             topic_filters: TopicFilters::parse(ep)?,
-            params: ep.params.clone(),
+            schema: Arc::new(ParamSchema::new(ep.params.clone(), checksummed_addresses)),
             decoder: build_event_decoder(sighash, &ep.params).context("build decoder")?,
         })
     }
@@ -109,12 +111,12 @@ impl OnEventRegistration {
     }
 }
 
-/// All registrations passed at client construction, keyed by their
-/// chain-scoped index. Holds no routing state itself — a query resolves its
+/// All registrations passed at client construction, at their chain-scoped
+/// index. Holds no routing state itself — a query resolves its
 /// own selection into a `SelectionDecoder` via `selection`.
 #[derive(Clone)]
 pub(crate) struct Decoder {
-    registrations: Arc<HashMap<i64, Arc<OnEventRegistration>>>,
+    registrations: Arc<Vec<Option<Arc<OnEventRegistration>>>>,
     checksummed_addresses: bool,
     /// The chain's address index, shared with the fetch state. Every address
     /// gate reads it; nothing here writes to it.
@@ -128,14 +130,23 @@ impl Decoder {
         address_store: &AddressStore,
     ) -> Result<Self> {
         let handle = address_store.handle();
-        let mut map = HashMap::new();
+        let mut by_index: Vec<Option<Arc<OnEventRegistration>>> = Vec::new();
         {
             let store = handle.read().unwrap();
             for ep in registrations {
-                let parsed = OnEventRegistration::parse(ep, &store)
+                let parsed = OnEventRegistration::parse(ep, &store, checksum_addresses)
                     .with_context(|| format!("parse registration for {}", ep.event_name))?;
+                let index = usize::try_from(ep.index).with_context(|| {
+                    format!(
+                        "Negative registration index {} for event {}",
+                        ep.index, ep.event_name
+                    )
+                })?;
+                if by_index.len() <= index {
+                    by_index.resize(index + 1, None);
+                }
                 anyhow::ensure!(
-                    map.insert(ep.index, Arc::new(parsed)).is_none(),
+                    by_index[index].replace(Arc::new(parsed)).is_none(),
                     "Duplicate registration index {} for event {}",
                     ep.index,
                     ep.event_name,
@@ -143,7 +154,7 @@ impl Decoder {
             }
         }
         Ok(Self {
-            registrations: Arc::new(map),
+            registrations: Arc::new(by_index),
             checksummed_addresses: checksum_addresses,
             store: handle,
         })
@@ -166,9 +177,12 @@ impl Decoder {
         let mut registrations = registration_indexes
             .iter()
             .map(|id| {
-                let registration = self.registrations.get(id).cloned().with_context(|| {
-                    format!("Unknown registration index {id} in query selection")
-                })?;
+                let registration = usize::try_from(*id)
+                    .ok()
+                    .and_then(|index| self.registrations.get(index).cloned().flatten())
+                    .with_context(|| {
+                        format!("Unknown registration index {id} in query selection")
+                    })?;
                 // A client-filtered contract is queried address-free and holds
                 // no addresses in the partition's set, so the store alone
                 // decides which emitters it accepts.
@@ -302,9 +316,9 @@ impl SelectionDecoder {
                     .map(|t| t.as_ref().unwrap().into()),
                 data,
             );
-            let params = decoded.ok().and_then(|decoded| {
-                event_params_tape(&decoded, &reg.params, self.checksummed_addresses)
-            });
+            let params = decoded
+                .ok()
+                .and_then(|decoded| EvmParams::from_decoded(decoded, &reg.schema));
             if let Some(params) = params {
                 routed.push(RoutedEvent {
                     index: reg.index,
@@ -318,7 +332,7 @@ impl SelectionDecoder {
 
 pub(crate) struct RoutedEvent {
     pub index: i64,
-    pub params: JsTape,
+    pub params: EvmParams,
 }
 
 /// Build the positional decoder for one registration. The decoder's topic0 is
@@ -592,7 +606,7 @@ mod tests {
             .expect("renamed event must decode under its real sighash");
 
         assert_eq!(
-            (routed.index, JsValue::of(&routed.params)),
+            (routed.index, JsValue::of(&routed.params.to_tape())),
             (
                 7,
                 JsValue::obj([
@@ -650,7 +664,7 @@ mod tests {
                 &unowned(),
             )
             .iter()
-            .map(|routed| (routed.index, JsValue::of(&routed.params)))
+            .map(|routed| (routed.index, JsValue::of(&routed.params.to_tape())))
             .collect::<Vec<_>>()
         };
         assert_eq!(
@@ -1246,7 +1260,7 @@ mod tests {
         // declared.
         let values: Vec<(i64, JsValue)> = routed
             .iter()
-            .map(|r| (r.index, JsValue::of(&r.params)))
+            .map(|r| (r.index, JsValue::of(&r.params.to_tape())))
             .collect();
         assert_eq!(
             values,

@@ -81,6 +81,40 @@ let onEventRegistrations = () => {
   )
 }
 
+let responseItems = (response: Source.blockRangeFetchResponse) =>
+  response.items->TestEventStore.takeAll(
+    ~context={
+      chainId: 1->ChainId.fromInt,
+      onEventRegistrations: onEventRegistrations()->(
+        Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>
+      ),
+      onBlockRegistrations: [],
+    },
+  )
+
+// A response's items with their transactions and blocks, read from the given
+// stores the way a batch's take reads the chain's.
+let joinedItems = async (
+  response: Source.blockRangeFetchResponse,
+  ~transactionStore,
+  ~blockStore,
+  ~shouldChecksum,
+) => {
+  let (items, readFields) = response.items->StoredItems.takeWithFields(
+    response.items->EventStore.length,
+    ~context={
+      chainId: 1->ChainId.fromInt,
+      onEventRegistrations: onEventRegistrations()->(
+        Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>
+      ),
+      onBlockRegistrations: [],
+    },
+    ~fields={transactionStore, blockStore, shouldChecksum},
+  )
+  await readFields()
+  items
+}
+
 let makeSource = (~url, ~lowercaseAddresses=true) => {
   let addressStore = TestAddresses.storeOf(
     ~contracts=[{name: "Token", startBlock: None, dependsOnAddresses: true}],
@@ -292,13 +326,12 @@ describe("HyperSync source contract", () => {
         | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
         | None => ()
         }
-        await ChainState.materializePageItems(
-          ~items=page.parsedQueueItems,
+        let items = await page->joinedItems(
           ~transactionStore,
           ~blockStore=page.blockStore,
           ~shouldChecksum=false,
         )
-        page.parsedQueueItems
+        items
       },
     )
 
@@ -611,7 +644,7 @@ describe("HyperSync source responses", () => {
         {
           "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
           "knownHeight": response.knownHeight,
-          "items": response.parsedQueueItems->Array.length,
+          "items": response.items->EventStore.length,
         }
       },
     )
@@ -675,7 +708,7 @@ describe("HyperSync source responses", () => {
           ],
         })
         let response = await source->fetch(~addressSet)
-        response.parsedQueueItems->Array.length
+        response.items->EventStore.length
       },
     )
     t.expect(counts).toBe(0)
@@ -696,13 +729,12 @@ describe("HyperSync source responses", () => {
         | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
         | None => ()
         }
-        await ChainState.materializePageItems(
-          ~items=response.parsedQueueItems,
+        let items = await response->joinedItems(
           ~transactionStore,
           ~blockStore=response.blockStore,
           ~shouldChecksum=true,
         )
-        let summary = response.parsedQueueItems->Array.map(eventSummary)->Array.getUnsafe(0)
+        let summary = items->Array.map(eventSummary)->Array.getUnsafe(0)
         {
           "param": summary["params"].to->Option.getOrThrow->Address.toString,
           "transaction": summary["transaction"].to->Option.getOrThrow->Address.toString,

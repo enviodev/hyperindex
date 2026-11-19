@@ -30,7 +30,7 @@ type chainMetrics = {
   waitingForNewBlockSeconds: float,
   queryingSeconds: float,
   blockRangeFetchSeconds: float,
-  blockRangeParseSeconds: float,
+  parseSeconds: float,
   blockRangeFetchCount: float,
   blockRangeFetchedEvents: float,
   blockRangeFetchedBlocks: float,
@@ -534,10 +534,10 @@ let renderMetrics = (b: builder, metrics: t) => {
   )
   b->series(
     ~name="envio_fetching_block_range_parse_seconds",
-    ~help="Cumulative time spent parsing block range fetch responses.",
+    ~help="Cumulative time spent turning fetched rows into a batch's handler events, including the wait for their block and transaction fields, which are read off the main thread alongside other chains'.",
     ~kind="counter",
     ~entries=chains,
-    ~value=m => m.blockRangeParseSeconds,
+    ~value=m => m.parseSeconds,
   )
   b->series(
     ~name="envio_fetching_block_range_total",

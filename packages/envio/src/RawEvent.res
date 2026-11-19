@@ -17,6 +17,37 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
   }
 }
 
+// `EventUtils.packEventIndex` keeps 16 bits for the log index, so a log above
+// this would take an `event_id` of the next block's.
+let maxLogIndex = 65535
+
+let logIndexFitsEventId = (eventItem: Internal.eventItem) => eventItem.logIndex <= maxLogIndex
+
+// A single on-chain log fans out to one item per matching registration;
+// `raw_events` records the log itself, so this keeps one item per coordinate
+// (chain, block, logIndex) among the event items `keep` accepts.
+let eventItemsOnePerLog = (items: array<Internal.item>, ~keep: Internal.eventItem => bool) => {
+  let seenLogCoordinates = Utils.Set.make()
+  items->Array.filterMap(item =>
+    switch item {
+    | Internal.Event(_) =>
+      let eventItem = item->Internal.castUnsafeEventItem
+      if keep(eventItem) {
+        let coordinate = `${eventItem.chainId->ChainId.toString}-${eventItem.blockNumber->Int.toString}-${eventItem.logIndex->Int.toString}`
+        if seenLogCoordinates->Utils.Set.has(coordinate) {
+          None
+        } else {
+          seenLogCoordinates->Utils.Set.add(coordinate)->ignore
+          Some(item)
+        }
+      } else {
+        None
+      }
+    | Internal.Block(_) => None
+    }
+  )
+}
+
 // Block and transaction are passed already extracted from the ecosystem's
 // concrete payload (EVM or Fuel) — `RawEvent` stays payload-shape-agnostic and
 // only needs them as opaque field bags to serialise. The dedicated

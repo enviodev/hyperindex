@@ -9,10 +9,11 @@ type t = {
   goDown: unit => unit,
   comeBack: unit => unit,
   // Cuts the connection that next sends a COMMIT, before the client hears
-  // back. With `~deliver` the server gets the COMMIT first and commits; without
-  // it the COMMIT is dropped and the server rolls back. Either way the client
-  // only sees its connection go.
-  cutNextCommit: (~deliver: bool) => unit,
+  // back. With `~deliver` the server gets the COMMIT and commits; without it the
+  // COMMIT is dropped and the server rolls back. `~holdUntil` holds the
+  // transaction open until the promise resolves, as a slow network would.
+  // Either way the client only sees its connection go.
+  cutNextCommit: (~deliver: bool, ~holdUntil: promise<unit>=?) => unit,
   close: unit => promise<unit>,
 }
 
@@ -39,16 +40,20 @@ let start: (
     }
     const upstream = net.connect(upstreamPort, "127.0.0.1");
     track(upstream);
-    client.on("close", () => upstream.destroy());
+    const closeUpstream = () => upstream.destroy();
+    client.on("close", closeUpstream);
     upstream.on("close", () => client.destroy());
     client.on("data", (chunk) => {
       if (commitCut && chunk.includes(commitMessage)) {
-        const { deliver } = commitCut;
+        const { deliver, holdUntil } = commitCut;
         commitCut = null;
         upstream.unpipe(client);
+        // The upstream outlives the client here, so the COMMIT reaches the server.
+        client.off("close", closeUpstream);
         client.destroy();
-        if (deliver) upstream.end(chunk);
-        else upstream.destroy();
+        const settle = () => (deliver ? upstream.end(chunk) : upstream.destroy());
+        if (holdUntil) holdUntil.then(settle);
+        else settle();
         return;
       }
       upstream.write(chunk);
@@ -64,8 +69,8 @@ let start: (
     comeBack: () => {
       isDown = false;
     },
-    cutNextCommit: (deliver) => {
-      commitCut = { deliver };
+    cutNextCommit: (deliver, holdUntil) => {
+      commitCut = { deliver, holdUntil };
     },
     close: () =>
       new Promise((resolve) => {

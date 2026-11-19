@@ -17,7 +17,6 @@ pub struct OnBlockRegistrationInput {
     pub block_field_mask: f64,
 }
 
-#[napi(object)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockItem {
     pub block_number: i64,
@@ -25,6 +24,16 @@ pub struct BlockItem {
     /// The chain produced no block at this number: an SVM skipped slot. The
     /// handler still runs on it, without a block.
     pub skipped: bool,
+}
+
+impl BlockItem {
+    pub(crate) fn into_row(self) -> crate::event_store::Row {
+        crate::event_store::Row::block(
+            self.block_number,
+            self.on_block_registration_index,
+            self.skipped,
+        )
+    }
 }
 
 #[derive(Clone)]

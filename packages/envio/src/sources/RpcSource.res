@@ -100,7 +100,7 @@ let make = (
     }
 
     let pageFetchTimeRef = Performance.now()
-    let (result, pageBlockStore, pageTransactionStore) = await rpcClient.getNextPage(
+    let (result, pageBlockStore, pageTransactionStore, items) = await rpcClient.getNextPage(
       {
         fromBlock,
         toBlockCeiling: toBlock,
@@ -194,21 +194,13 @@ let make = (
       )
     }
 
-    let parsingTimeRef = Performance.now()
-    let parsedQueueItems =
-      result.eventItems
-      ->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
-      ->Array.concat(result.blockItems->BlockItem.toInternalItems(~onBlockRegistrations))
-    let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
-
     {
-      parsedQueueItems,
+      items,
       transactionStore: Some(pageTransactionStore),
       blockStore: pageBlockStore,
       latestFetchedBlockNumber: result.toBlock,
       stats: {
         totalTimeElapsed: totalTimeRef->Performance.secondsSince,
-        parsingTimeElapsed,
         pageFetchTime,
       },
       knownHeight,

@@ -8,16 +8,20 @@
 
 use std::sync::Mutex;
 
+use alloy_primitives::U256;
 use anyhow::{Context, Result};
 use hypersync_client::format::{Hash, Hex, Quantity};
 use hypersync_client::simple_types;
 use hypersync_client_solana::simple_types as solana_simple;
+use napi::bindgen_prelude::Float64Array;
 use napi_derive::napi;
 use strum::VariantArray;
 
 use crate::evm_hypersync_source::map_err;
-use crate::evm_hypersync_source::types::{encode_address, map_bigint, map_i64};
-use crate::field_columns::{build_columns, bytes, field_names, Column, Columns, Ecosystem};
+use crate::evm_hypersync_source::types::{encode_address, map_i64};
+use crate::field_columns::{
+    build_columns, bytes, field_names, Column, Columns, Ecosystem, FieldRead,
+};
 use crate::field_table::{
     bytes_cells, fixed_from, hash_list_cells, hash_list_from, hex_full, hex_quantity, i64_cells,
     i64_from, str_cells, str_from, u64_cells, u64_from, var_from, AnyCol, Coverage, Table,
@@ -240,7 +244,7 @@ fn decode_evm_block_field(
         | MixHash => Column::Str(bytes_cells(col, len, |b| Ok(Some(hex_full(b))))?),
         Nonce | Difficulty | TotalDifficulty | Size | GasLimit | GasUsed | BaseFeePerGas
         | BlobGasUsed | ExcessBlobGas => {
-            Column::Big(bytes_cells(col, len, |b| Ok(map_bigint(&Some(b))))?)
+            Column::Big(bytes_cells(col, len, |b| Ok(Some(U256::from_be_slice(b))))?)
         }
         Miner => Column::Str(bytes_cells(col, len, |b| {
             let address = <[u8; 20]>::try_from(b).expect("miner cell width");
@@ -808,55 +812,55 @@ impl BlockStore {
             .collect()
     }
 
-    /// Bulk-materialise blocks in columnar form, one row per `block_numbers[i]`
-    /// key, decoding only the fields whose bit is set in that row's own
-    /// `masks[i]`. Each mask is a JS number (`f64`) carrying a selection bitmask
-    /// over field codes. The lock is held only to gather the requested cells;
-    /// decoding runs after it is released, off the JS thread via
-    /// `block_in_place`. Missing keys yield an empty object. Result is aligned
-    /// with input. `should_checksum` is the caller's: rows are stored as raw
-    /// bytes, so the only place an address spelling is decided is here.
-    #[napi(ts_return_type = "Promise<object[]>")]
-    pub async fn materialize(
+    /// The selected fields of the blocks at `block_numbers`, a row per key,
+    /// each decoding only the fields set in its own `masks[i]`. A missing key
+    /// gives a row with no values. `should_checksum` is the caller's: rows are
+    /// stored as raw bytes, so the only place an address spelling is decided
+    /// is here.
+    pub(crate) fn columns(
+        &self,
+        block_numbers: &[i64],
+        masks: &[u64],
+        should_checksum: bool,
+    ) -> Result<Columns> {
+        let scratch = self.gather(block_numbers, masks);
+        match self.ecosystem {
+            Ecosystem::Evm => {
+                decode_evm_block_columns(&scratch, block_numbers, masks, should_checksum)
+            }
+            Ecosystem::Svm => decode_svm_block_columns(&scratch, block_numbers, masks),
+            Ecosystem::Fuel => decode_fuel_block_columns(&scratch, block_numbers, masks),
+        }
+    }
+
+    /// The selected fields of the blocks a batch's take keyed, read off the JS
+    /// thread.
+    #[napi]
+    pub async fn read_fields(
+        &self,
+        block_numbers: Float64Array,
+        masks: Float64Array,
+        should_checksum: bool,
+    ) -> napi::Result<FieldRead> {
+        let block_numbers: Vec<i64> = block_numbers.iter().map(|block| *block as i64).collect();
+        let masks: Vec<u64> = masks.iter().map(|mask| *mask as u64).collect();
+        tokio::task::block_in_place(|| {
+            self.columns(&block_numbers, &masks, should_checksum)?
+                .hold()
+        })
+        .map_err(map_err)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn materialize_columns(
         &self,
         block_numbers: Vec<i64>,
         masks: Vec<f64>,
         should_checksum: bool,
     ) -> napi::Result<Columns> {
-        // The two columns are zipped row-wise; a length mismatch would silently
-        // truncate and misalign the result with the caller's items.
-        if block_numbers.len() != masks.len() {
-            return Err(napi::Error::from_reason(format!(
-                "materialize column length mismatch: block_numbers={}, masks={}",
-                block_numbers.len(),
-                masks.len()
-            )));
-        }
         let masks: Vec<u64> = masks.iter().map(|&m| m as u64).collect();
-
-        match self.ecosystem {
-            Ecosystem::Evm => {
-                let scratch = self.gather(&block_numbers, &masks);
-                tokio::task::block_in_place(|| {
-                    decode_evm_block_columns(&scratch, &block_numbers, &masks, should_checksum)
-                })
-                .map_err(map_err)
-            }
-            Ecosystem::Svm => {
-                let scratch = self.gather(&block_numbers, &masks);
-                tokio::task::block_in_place(|| {
-                    decode_svm_block_columns(&scratch, &block_numbers, &masks)
-                })
-                .map_err(map_err)
-            }
-            Ecosystem::Fuel => {
-                let scratch = self.gather(&block_numbers, &masks);
-                tokio::task::block_in_place(|| {
-                    decode_fuel_block_columns(&scratch, &block_numbers, &masks)
-                })
-                .map_err(map_err)
-            }
-        }
+        self.columns(&block_numbers, &masks, should_checksum)
+            .map_err(map_err)
     }
 
     /// Drop blocks at or below `up_to_block` (already processed), except that
@@ -1252,7 +1256,6 @@ mod tests {
         1u64 << (field as u32)
     }
 
-    // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
     #[tokio::test(flavor = "multi_thread")]
     async fn materialize_decodes_only_masked_fields() {
         let store = BlockStore::new_evm();
@@ -1262,7 +1265,7 @@ mod tests {
 
         let mask = bit(EvmBlockField::GasUsed) as f64;
         let cols = store
-            .materialize(vec![1], vec![mask], false)
+            .materialize_columns(vec![1], vec![mask], false)
             .await
             .expect("materialize");
 
@@ -1285,7 +1288,7 @@ mod tests {
 
         let mask = bit(EvmBlockField::Number) as f64;
         let cols = store
-            .materialize(vec![7, 3], vec![mask, mask], false)
+            .materialize_columns(vec![7, 3], vec![mask, mask], false)
             .await
             .expect("materialize");
         match column(&cols, "number") {
@@ -1310,7 +1313,7 @@ mod tests {
 
         let mask = bit(EvmBlockField::GasUsed) as f64;
         let cols = store
-            .materialize(vec![1, 2], vec![mask, 0.], false)
+            .materialize_columns(vec![1, 2], vec![mask, 0.], false)
             .await
             .expect("materialize");
         match column(&cols, "gasUsed") {
@@ -1335,7 +1338,7 @@ mod tests {
             | bit(EvmBlockField::Hash)
             | bit(EvmBlockField::GasUsed)) as f64;
         let cols = store
-            .materialize(vec![10], vec![mask], false)
+            .materialize_columns(vec![10], vec![mask], false)
             .await
             .expect("materialize");
         let summary = (
@@ -1379,7 +1382,7 @@ mod tests {
 
         let mask = (bit(EvmBlockField::Hash) | bit(EvmBlockField::GasUsed)) as f64;
         let cols = store
-            .materialize(vec![20], vec![mask], false)
+            .materialize_columns(vec![20], vec![mask], false)
             .await
             .expect("materialize");
         let summary = (
@@ -1407,7 +1410,7 @@ mod tests {
             | (1u64 << (SvmBlockField::Time as u32))
             | (1u64 << (SvmBlockField::Height as u32))) as f64;
         let cols = store
-            .materialize(vec![9], vec![mask], false)
+            .materialize_columns(vec![9], vec![mask], false)
             .await
             .expect("materialize");
         let summary = (
@@ -1460,7 +1463,7 @@ mod tests {
 
         let mask = SvmBlockField::TRANSACTION_COUNTS_MASK as f64;
         let cols = store
-            .materialize(vec![9, 10, 11], vec![mask; 3], false)
+            .materialize_columns(vec![9, 10, 11], vec![mask; 3], false)
             .await
             .expect("materialize");
         let counts = |name| match column(&cols, name) {
@@ -1604,12 +1607,12 @@ mod tests {
         let mask = bit(EvmBlockField::Timestamp) as f64;
         store.prune(10, 11);
         let after_prune = store
-            .materialize(vec![10, 20, 30], vec![mask, mask, mask], false)
+            .materialize_columns(vec![10, 20, 30], vec![mask, mask, mask], false)
             .await
             .expect("materialize");
         store.rollback(20);
         let after_rollback = store
-            .materialize(vec![10, 20, 30], vec![mask, mask, mask], false)
+            .materialize_columns(vec![10, 20, 30], vec![mask, mask, mask], false)
             .await
             .expect("materialize");
 
@@ -1636,7 +1639,7 @@ mod tests {
 
     async fn materialized_miner(store: &BlockStore, should_checksum: bool) -> Option<String> {
         let cols = store
-            .materialize(
+            .materialize_columns(
                 vec![1],
                 vec![bit(EvmBlockField::Miner) as f64],
                 should_checksum,
@@ -1694,7 +1697,7 @@ mod tests {
 
         let mask = bit(EvmBlockField::Timestamp) as f64;
         let cols = persistent
-            .materialize(vec![20], vec![mask], false)
+            .materialize_columns(vec![20], vec![mask], false)
             .await
             .expect("materialize");
         match column(&cols, "timestamp") {
@@ -1919,7 +1922,7 @@ mod tests {
         // The kept rows are hash-only: timestamp no longer materialises.
         let mask = (bit(EvmBlockField::Timestamp) | bit(EvmBlockField::Hash)) as f64;
         let cols = store
-            .materialize(vec![20], vec![mask], false)
+            .materialize_columns(vec![20], vec![mask], false)
             .await
             .expect("materialize");
         assert_eq!(
@@ -2139,7 +2142,7 @@ mod tests {
             | (1u64 << (FuelBlockField::Time as u32))
             | (1u64 << (FuelBlockField::Id as u32))) as f64;
         let cols = persistent
-            .materialize(vec![5], vec![mask], false)
+            .materialize_columns(vec![5], vec![mask], false)
             .await
             .expect("materialize");
         let summary = (
@@ -2209,7 +2212,7 @@ mod tests {
             | bit(EvmBlockField::Timestamp)
             | bit(EvmBlockField::Hash)) as f64;
         let cols = store
-            .materialize(vec![7], vec![mask], false)
+            .materialize_columns(vec![7], vec![mask], false)
             .await
             .expect("materialize");
         let summary = (
@@ -2249,7 +2252,7 @@ mod tests {
         // the range carries only the parent hash the guard reports.
         let mask = (bit(EvmBlockField::Timestamp) | bit(EvmBlockField::Hash)) as f64;
         let cols = page
-            .materialize(vec![20, 10], vec![mask, mask], false)
+            .materialize_columns(vec![20, 10], vec![mask, mask], false)
             .await
             .expect("materialize");
         assert_eq!(

@@ -16,7 +16,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.toExn->throw, 
     ]
     let addresses = []
     let addressStore = TestAddresses.makeStore(~onEventRegistrations)
-    let fetchState = FetchState.make(
+    let fetchState = TestFetchState.make(
       ~onNotice=ignore,
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
@@ -32,6 +32,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.toExn->throw, 
     let chainState = ChainState.make(
       ~chainConfig,
       ~fetchState,
+      ~eventStore=fetchState->TestFetchState.eventStoreOf,
       ~addressStore,
       ~sourceManager=SourceManager.make(
         ~logger=Logger.makeInMemory(),

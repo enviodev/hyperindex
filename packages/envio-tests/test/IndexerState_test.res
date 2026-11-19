@@ -31,7 +31,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     ]
     let addresses = []
     let addressStore = TestAddresses.makeStore(~onEventRegistrations)
-    let fetcherStateInit: FetchState.t = FetchState.make(
+    let fetcherStateInit: FetchState.t = TestFetchState.make(
       ~onNotice=ignore,
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
@@ -72,9 +72,13 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           onEventRegistration: {"index": 0}->(
             Utils.magic: {"index": int} => Internal.onEventRegistration
           ),
-          payload: `mock event (chainId)${id->ChainId.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->(
-            Utils.magic: string => Internal.eventPayload
-          ),
+          // Carries its transaction and block, as a simulate item does, so
+          // the take reads neither from the chain's stores.
+          payload: {
+            "description": `mock event (chainId)${id->ChainId.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`,
+            "transaction": Dict.make(),
+            "block": Dict.make(),
+          }->(Utils.magic: {..} => Internal.eventPayload),
         })
         allEvents->Array.push(batchItem)->ignore
 
@@ -92,10 +96,10 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
 
         fetchState :=
-          fetchState.contents->FetchState.handleQueryResult(
+          fetchState.contents->TestFetchState.handleQueryResult(
             ~query,
             ~latestFetchedBlock=currentBlockNumber.contents,
-            ~newItems=[batchItem],
+            ~page=TestEventStore.pageOf([batchItem]),
           )
 
         numberOfMockEventsCreated := numberOfMockEventsCreated.contents + 1
@@ -104,6 +108,12 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       currentTime := currentTime.contents + blockTime
       currentBlockNumber := currentBlockNumber.contents + 1
     }
+    // The buffer is ready only up to the known height, so it has to cover the
+    // random block range for any batch to take an event.
+    fetchState :=
+      fetchState.contents->TestFetchState.updateKnownHeight(
+        ~knownHeight=currentBlockNumber.contents,
+      )
 
     let chainConfig = config.defaultChain->Option.getUnsafe
     // For this test we don't need real sources - just testing event ordering
@@ -112,6 +122,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let mockChainState = ChainState.make(
       ~chainConfig,
       ~fetchState=fetchState.contents,
+      ~eventStore=fetchState.contents->TestFetchState.eventStoreOf,
       ~addressStore,
       ~sourceManager=SourceManager.make(
         ~logger=Logger.makeInMemory(),
@@ -210,9 +221,9 @@ describe("IndexerState", () => {
           ->Array.reduce(0, (accum, cs) => accum + cs->ChainState.bufferSize)
 
         t.expect(
-          amountStillOnQueues + numberOfMockEventsReadFromQueues.contents,
-          ~message="There were a different number of events created to what was recieved from the queues.",
-        ).toBe(numberOfMockEventsCreated)
+          (numberOfMockEventsReadFromQueues.contents, amountStillOnQueues),
+          ~message="Every created event must be processed through batches, none left behind",
+        ).toEqual((numberOfMockEventsCreated, 0))
       },
     )
 
@@ -237,7 +248,7 @@ describe("IndexerState", () => {
           let addresses = []
           let addressStore = TestAddresses.makeStore(~onEventRegistrations)
           let fetchState = ref(
-            FetchState.make(
+            TestFetchState.make(
               ~onNotice=ignore,
               ~maxAddrInPartition=Env.maxAddrInPartition,
               ~endBlock=None,
@@ -267,10 +278,10 @@ describe("IndexerState", () => {
               }
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
               fetchState :=
-                fetchState.contents->FetchState.handleQueryResult(
+                fetchState.contents->TestFetchState.handleQueryResult(
                   ~query,
                   ~latestFetchedBlock=blockNumber,
-                  ~newItems=[
+                  ~page=TestEventStore.pageOf([
                     Internal.Event({
                       chainId,
                       blockNumber,
@@ -282,7 +293,7 @@ describe("IndexerState", () => {
                       ),
                       payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
                     }),
-                  ],
+                  ]),
                 )
             },
           )
@@ -300,6 +311,7 @@ describe("IndexerState", () => {
               let chainState = ChainState.make(
                 ~chainConfig,
                 ~fetchState,
+                ~eventStore=fetchState->TestFetchState.eventStoreOf,
                 ~addressStore,
                 ~sourceManager=SourceManager.make(
                   ~logger=Logger.makeInMemory(),
@@ -348,7 +360,7 @@ describe("IndexerState", () => {
           ~query=concurrentQuery,
           ~newRegistrations=[],
           ~latestFetchedBlock=15,
-          ~newItems=[
+          ~page=TestEventStore.pageOf([
             Internal.Event({
               chainId,
               blockNumber: 15,
@@ -360,7 +372,7 @@ describe("IndexerState", () => {
               ),
               payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
             }),
-          ],
+          ]),
           ~knownHeight=cs->ChainState.knownHeight,
         )
 
@@ -374,14 +386,24 @@ describe("IndexerState", () => {
         t.expect(
           {
             "committedProgressBlockNumber": resultCs->ChainState.committedProgressBlockNumber,
-            // The concurrent fetch buffered 2 events; the batch-time snapshot had 1.
-            // Seeing 2 proves the current (post-fetch) fetchState was kept.
+            // The concurrent fetch buffered 2 events in the chain's store.
             "bufferSize": resultCs->ChainState.bufferSize,
+            // The store is the chain's either way, so only the frontier shows
+            // whether the post-fetch fetch state was kept: the batch-time
+            // snapshot would ask again from block 6.
+            "nextQueryFromBlock": {
+              resultCs->ChainState.updateKnownHeight(~knownHeight=100)
+              switch resultCs->ChainState.getNextQuery(~chainTargetItems=10_000.) {
+              | Ready([query]) => Some(query.fromBlock)
+              | _ => None
+              }
+            },
           },
           ~message="must commit the batch's progress while keeping the mid-batch fetch frontier",
         ).toEqual({
           "committedProgressBlockNumber": progressed.progressBlockNumber,
           "bufferSize": 2,
+          "nextQueryFromBlock": Some(16),
         })
       },
     )

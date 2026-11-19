@@ -168,7 +168,7 @@ describe("Source.blockHashes integration - empty range", () => {
       let response = await source->invoke(~fromBlock, ~toBlock)
 
       t.expect({
-        "parsedQueueItems": response.parsedQueueItems->Array.length,
+        "parsedQueueItems": response.items->EventStore.length,
         "blockNumbers": response.blockStore->storedBlockNumbers,
       }).toEqual({
         "parsedQueueItems": 0,
@@ -186,7 +186,7 @@ describe("Source.blockHashes integration - empty range", () => {
       let response = await source->invoke(~fromBlock, ~toBlock)
 
       t.expect({
-        "parsedQueueItems": response.parsedQueueItems->Array.length,
+        "parsedQueueItems": response.items->EventStore.length,
         "blockNumbers": response.blockStore->storedBlockNumbers,
       }).toEqual({
         "parsedQueueItems": 0,
@@ -215,7 +215,7 @@ describe("Source.blockHashes integration - single-log range", () => {
       let response = await source->invoke(~fromBlock, ~toBlock)
 
       t.expect({
-        "parsedQueueItems": response.parsedQueueItems->Array.length,
+        "parsedQueueItems": response.items->EventStore.length,
         "blockNumbers": response.blockStore->storedBlockNumbers,
         "blockHash": response.blockStore->BlockStore.getHash(fromBlock),
         "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
@@ -235,7 +235,7 @@ describe("Source.blockHashes integration - single-log range", () => {
       let source = makeRpcSource()
       let response = await source->invoke(~fromBlock, ~toBlock)
 
-      t.expect(response.parsedQueueItems->Array.length).toBe(1)
+      t.expect(response.items->EventStore.length).toBe(1)
       t.expect(response.latestFetchedBlockNumber).toBe(toBlock)
 
       // toBlock entry comes from eth_getBlockByNumber; the log's block hash also

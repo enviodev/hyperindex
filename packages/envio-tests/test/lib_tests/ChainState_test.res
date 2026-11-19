@@ -7,7 +7,7 @@ let baseChainConfig = {
 }
 
 // A registrations map with an onBlock config (no address partition) so
-// FetchState.make has something to index without needing real event configs.
+// TestFetchState.make has something to index without needing real event configs.
 let registrationsByChainId: HandlerRegister.registrationsByChainId = {
   let d = Dict.make()
   d->Dict.set(
@@ -184,7 +184,7 @@ describe("ChainState chain density EMA (per batch)", () => {
   // value works here — a fresh, minimal one, independent of the chain state
   // under test.
   let dummyFetchState = () =>
-    FetchState.make(
+    TestFetchState.make(
       ~onNotice=ignore,
       ~onEventRegistrations=[],
       ~addressStore=TestAddresses.makeStore(),
@@ -238,6 +238,7 @@ describe("ChainState chain density EMA (per batch)", () => {
     checkpointItemsCount: [],
     checkpointEventsProcessed: [],
     registeredAddresses: [],
+    fieldReads: [],
   }
 
   it("seeds density from the first batch's own events/block (no prior density to blend)", t => {

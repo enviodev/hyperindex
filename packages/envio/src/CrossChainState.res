@@ -24,11 +24,12 @@ type t = {
   mutable holdRealtime: bool,
 }
 
-// The whole-indexer fetch buffer pool, independent of chain count.
+// The whole-indexer fetch buffer pool, independent of chain count. A buffered
+// item takes about 360 bytes of process memory.
 let calculateTargetBufferSize = () =>
   switch Env.targetBufferSize {
   | Some(size) => size
-  | None => 100_000
+  | None => 200_000
   }
 
 let make = (

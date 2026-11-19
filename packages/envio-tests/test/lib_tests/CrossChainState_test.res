@@ -2,13 +2,13 @@ open Vitest
 
 let baseChainConfig = TestConfig.default.chainMap->ChainMap.values->Utils.Array.firstUnsafe
 
-let mockEvent = (~blockNumber): Internal.item => Internal.Event({
+let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
   chainId: 1->ChainId.fromInt,
   blockNumber,
   // Carries an `index` so the buffer's dedup key resolves; the rest of the
   // registration is unused by these tests.
   onEventRegistration: {"index": 0}->(Utils.magic: {"index": int} => Internal.onEventRegistration),
-  logIndex: 0,
+  logIndex,
   transactionIndex: 0,
   payload: "Mock event in CrossChainState test"->(Utils.magic: string => Internal.eventPayload),
 })
@@ -26,7 +26,7 @@ let makeChainState = (
 ) => {
   let addresses = []
   let addressStore = TestAddresses.makeStore(~onEventRegistrations)
-  let base = FetchState.make(
+  let base = TestFetchState.make(
     ~onNotice=ignore,
     // An onBlock config (no address partition) satisfies "something to fetch"
     // while keeping bufferBlockNumber tied to latestOnBlockBlockNumber.
@@ -60,12 +60,15 @@ let makeChainState = (
     latestOnBlockBlockNumber: frontier,
     firstEventBlock: Some(firstEventBlock),
     clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-    buffer: bufferBlocks->Array.map(blockNumber => mockEvent(~blockNumber)),
   }
+  let eventStore = TestEventStore.pageOf(
+    bufferBlocks->Array.mapWithIndex((blockNumber, logIndex) => mockEvent(~blockNumber, ~logIndex)),
+  )
   let mockSource = MockSource.make([], ~chainId=1)
   ChainState.make(
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
+    ~eventStore,
     ~onEventRegistrations,
     ~addressStore,
     ~sourceManager=SourceManager.make(
@@ -129,7 +132,6 @@ let makeFetchingChainState = (
     ),
     startBlock: 0,
     endBlock,
-    buffer: bufferBlocks->Array.map(blockNumber => mockEvent(~blockNumber)),
     normalSelection,
     latestOnBlockBlockNumber: latestFetchedBlock,
     maxOnBlockBufferSize: 10000,
@@ -141,10 +143,14 @@ let makeFetchingChainState = (
     firstEventBlock,
     clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
   }
+  let eventStore = TestEventStore.pageOf(
+    bufferBlocks->Array.mapWithIndex((blockNumber, logIndex) => mockEvent(~blockNumber, ~logIndex)),
+  )
   let mockSource = MockSource.make([], ~chainId=1)
   ChainState.make(
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
+    ~eventStore,
     ~addressStore,
     ~sourceManager=SourceManager.make(
       ~logger=Logger.makeInMemory(),
@@ -172,6 +178,7 @@ let emptyBatch: Batch.t = {
   checkpointItemsCount: [],
   checkpointEventsProcessed: [],
   registeredAddresses: [],
+  fieldReads: [],
 }
 
 let makeCrossChainState = (~chainStatesList, ~isRealtime=false, ~targetBufferSize=100) => {
@@ -477,7 +484,7 @@ describe("CrossChainState fetch control", () => {
       let releasedQuery = releasedQueries->Utils.Array.firstUnsafe
       first->ChainState.handleQueryResult(
         ~query=releasedQuery,
-        ~newItems=[],
+        ~page=TestEventStore.pageOf([]),
         ~newRegistrations=[],
         ~latestFetchedBlock=1000,
         ~knownHeight=1000,
@@ -541,7 +548,6 @@ describe("CrossChainState fetch control", () => {
       ),
       startBlock: 0,
       endBlock: Some(20),
-      buffer: [],
       normalSelection,
       latestOnBlockBlockNumber: 0,
       maxOnBlockBufferSize: 10000,
@@ -552,11 +558,12 @@ describe("CrossChainState fetch control", () => {
       knownHeight: 1000,
       firstEventBlock: Some(0),
       clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-    }
+    }->TestFetchState.pair(~eventStore=EventStore.make())
     let mockSource1 = MockSource.make([], ~chainId=1)
     let a = ChainState.make(
       ~chainConfig={...baseChainConfig, id: 1->ChainId.fromInt},
       ~fetchState=fetchState1,
+      ~eventStore=fetchState1->TestFetchState.eventStoreOf,
       ~addressStore=addressStore1,
       ~sourceManager=SourceManager.make(
         ~logger=Logger.makeInMemory(),

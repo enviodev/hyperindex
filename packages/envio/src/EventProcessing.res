@@ -166,38 +166,8 @@ type logPartitionInfo = {
   lastItemBlockNumber?: int,
 }
 
-// Off the hot path: bulk-materialise the selected transaction and block fields
-// for the batch's store-backed (HyperSync) items and write them onto the
-// payloads, so handlers read plain objects. A batch can span chains, each with
-// its own stores and field masks, so group items by chain before materialising.
-let materializeBatchEvents = async (batch: Batch.t, ~chainStates: dict<ChainState.t>) => {
-  switch chainStates->Dict.valuesToArray {
-  // Single-chain indexers (the common case): every item belongs to the one
-  // chain, so skip the per-chain grouping and its allocations.
-  | [cs] => await cs->ChainState.materializeBatchItems(~items=batch.items)
-  | _ =>
-    let itemsByChain: dict<array<Internal.item>> = Dict.make()
-    batch.items->Array.forEach(item => {
-      let chainId = item->Internal.getItemChainId->ChainId.toString
-      switch itemsByChain->Utils.Dict.dangerouslyGetNonOption(chainId) {
-      | Some(items) => items->Array.push(item)
-      | None => itemsByChain->Dict.set(chainId, [item])
-      }
-    })
-
-    let _ = await itemsByChain
-    ->Dict.toArray
-    ->Array.map(async ((chainId, items)) => {
-      let cs = chainStates->Dict.getUnsafe(chainId)
-      await cs->ChainState.materializeBatchItems(~items)
-    })
-    ->Promise.all
-  }
-}
-
 let processEventBatch = async (~batch: Batch.t, ~runtime: HandlerRuntime.t) => {
   let indexerState = runtime.params.indexerState
-  let chainStates = indexerState->IndexerState.chainStates
   runtime->HandlerRuntime.refreshChains
 
   let logger = indexerState->IndexerState.logger
@@ -216,9 +186,7 @@ let processEventBatch = async (~batch: Batch.t, ~runtime: HandlerRuntime.t) => {
     let timeRef = Performance.now()
 
     if batch.items->Utils.Array.notEmpty {
-      // Materialise store-backed transactions onto payloads before any handler
-      // (preload or execute) reads them.
-      await materializeBatchEvents(batch, ~chainStates)
+      let _ = await batch.fieldReads->Array.map(readFields => readFields())->Promise.all
       await batch->preloadBatchOrThrow(~runtime)
     }
 
@@ -229,6 +197,18 @@ let processEventBatch = async (~batch: Batch.t, ~runtime: HandlerRuntime.t) => {
     }
 
     let elapsedTimeAfterProcessing = timeRef->Performance.secondsSince
+
+    if (indexerState->IndexerState.config).enableRawEvents {
+      batch.items
+      ->RawEvent.eventItemsOnePerLog(~keep=eventItem => !RawEvent.logIndexFitsEventId(eventItem))
+      ->Array.forEach(item =>
+        indexerState
+        ->IndexerState.loggerForItem(item)
+        ->Logger.warn(
+          `Not storing a raw event for a log whose index is above ${RawEvent.maxLogIndex->Int.toString}, the most raw_events' event_id holds`,
+        )
+      )
+    }
 
     indexerState->Writing.commitBatch(~batch)
 

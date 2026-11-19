@@ -110,8 +110,6 @@ let make = (
     //In the query
     let heighestBlockQueried = pageUnsafe.nextBlock - 1
 
-    let parsingTimeRef = Performance.now()
-
     pageUnsafe.rejectedLogData->Array.forEach(rejected => {
       if !(rejectedLogDataWarned->Utils.Set.has(rejected.onEventRegistrationIndex)) {
         rejectedLogDataWarned->Utils.Set.add(rejected.onEventRegistrationIndex)->ignore
@@ -131,48 +129,15 @@ let make = (
       }
     })
 
-    let parsedQueueItems = pageUnsafe.items->Array.map(item => {
-      // Routing happened in Rust; the item references its registration by
-      // chain-scoped index.
-      let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
-      let {contractName, name: eventName} = onEventRegistration.eventConfig
-
-      Internal.Event({
-        onEventRegistration,
-        chainId,
-        blockNumber: item.blockHeight,
-        logIndex: item.receiptIndex,
-        // Fuel carries the transaction inline on the payload; the store key is
-        // unused (Fuel identifies transactions by hash, kept on the payload).
-        transactionIndex: 0,
-        payload: {
-          contractName,
-          eventName,
-          chainId,
-          params: item.params,
-          transaction: {
-            "id": item.txId,
-          }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
-          // `block` is omitted; it's materialised from the block store onto the
-          // payload at batch prep (like EVM/SVM).
-          srcAddress: item.srcAddress,
-          logIndex: item.receiptIndex,
-        }->Fuel.fromPayload,
-      })
-    })
-
-    let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
-
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     let stats = {
       totalTimeElapsed,
-      parsingTimeElapsed,
       pageFetchTime,
     }
 
     {
-      parsedQueueItems,
+      items: pageUnsafe.items,
       // Fuel keeps transaction and block inline on the payload; the block store
       // carries only the (height, id) rows that drive reorg detection (Fuel
       // never rolls back, so it's detect-only logging).

@@ -30,6 +30,7 @@ use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInn
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
 use crate::block_store::{BlockStore, SvmBlockField, SvmTransactionCounts};
+use crate::event_store::{EventStore, Row, RowData};
 use crate::js_value::JsTape;
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
 use crate::transaction_store::TransactionStore;
@@ -241,7 +242,7 @@ impl SvmHyperSyncClient {
         &self,
         params: ItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore)> {
+    ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore, EventStore)> {
         let built = self
             .selection_builder
             .build(&params.on_event_registration_indexes)
@@ -263,11 +264,10 @@ impl SvmHyperSyncClient {
             return Ok((
                 ItemsResponse {
                     next_slot: next_slot as i64,
-                    event_items: Vec::new(),
-                    block_items: Vec::new(),
                 },
                 TransactionStore::new_svm(),
                 BlockStore::new_svm(),
+                EventStore::empty(),
             ));
         }
         let from_slot = block_query.from_block;
@@ -437,10 +437,15 @@ impl SvmHyperSyncClient {
             next_slot: i64::try_from(block_query.fetched_until(resp.next_slot))
                 .context("next_slot overflow")
                 .map_err(map_err)?,
-            event_items: items,
-            block_items,
         };
-        Ok((response, store, block_store))
+        let page = EventStore::from_rows(
+            items
+                .into_iter()
+                .map(EventItem::into_row)
+                .chain(block_items.into_iter().map(BlockItem::into_row))
+                .collect(),
+        );
+        Ok((response, store, block_store, page))
     }
 }
 
@@ -496,20 +501,17 @@ pub struct ItemsQuery {
     pub reorgable_from: Option<i64>,
 }
 
-#[napi(object)]
 #[derive(Clone)]
 pub struct LogItem {
     pub kind: Option<String>,
     pub message: Option<String>,
 }
 
-/// One routed instruction. Carries everything JS needs to build the handler
-/// payload; the parent transaction and block are materialised from the
-/// per-chain stores at batch prep.
-#[napi(object, object_from_js = false)]
+/// One routed instruction. Its parent transaction and block are read from the
+/// per-chain stores when a batch takes it.
 pub struct EventItem {
     /// The registration this instruction routed to, as passed to the client
-    /// constructor. Instructions that route nowhere never cross the boundary.
+    /// constructor.
     pub on_event_registration_index: i64,
     pub slot: i64,
     pub transaction_index: i64,
@@ -529,11 +531,49 @@ pub struct EventItem {
     pub logs: Option<Vec<LogItem>>,
 }
 
+impl EventItem {
+    /// The store row of this instruction, read back as the record
+    /// `SvmHyperSyncClient.Items.item` describes.
+    fn into_row(self) -> Row {
+        let logs = self.logs.map(|logs| {
+            let mut tape = JsTape::new();
+            tape.arr(logs.len());
+            for log in logs {
+                tape.obj(2);
+                tape.key("kind");
+                match &log.kind {
+                    Some(kind) => tape.str(kind),
+                    None => tape.undefined(),
+                }
+                tape.key("message");
+                match &log.message {
+                    Some(message) => tape.str(message),
+                    None => tape.undefined(),
+                }
+            }
+            tape
+        });
+        Row::event(
+            self.slot,
+            self.transaction_index,
+            Some(self.path),
+            self.on_event_registration_index,
+            RowData::SvmInstruction {
+                program_id: self.program_id,
+                accounts: self.accounts,
+                data: self.data.to_vec(),
+                is_inner: self.is_inner,
+                args: self.args,
+                logs,
+            },
+        )
+    }
+}
+
+/// What a page covered. Its items are in the `EventStore` returned beside it.
 #[napi(object, object_from_js = false)]
 pub struct ItemsResponse {
     pub next_slot: i64,
-    pub event_items: Vec<EventItem>,
-    pub block_items: Vec<BlockItem>,
 }
 
 fn project_logs(logs: &[LogItem], columns: &[&str]) -> Vec<LogItem> {
@@ -1451,7 +1491,6 @@ mod tests {
         simple::Hash(key(4, slot))
     }
 
-    // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
     #[tokio::test(flavor = "multi_thread")]
     async fn store_keeps_only_the_transactions_and_balances_items_reference() {
         let tx = |slot, index| simple::Transaction {
@@ -1479,7 +1518,7 @@ mod tests {
             | (1u64 << (crate::transaction_store::SvmTxField::AccountActivities as u32)))
             as f64;
         let cols = store
-            .materialize(vec![42, 43], vec![7, 7], vec![mask, mask], false)
+            .materialize_columns(vec![42, 43], vec![7, 7], vec![mask, mask], false)
             .await
             .expect("materialize");
 
@@ -1528,7 +1567,7 @@ mod tests {
         let mask =
             (1u64 << (crate::transaction_store::SvmTxField::AccountActivities as u32)) as f64;
         let cols = store
-            .materialize(vec![43], vec![7], vec![mask], false)
+            .materialize_columns(vec![43], vec![7], vec![mask], false)
             .await
             .expect("materialize");
         match column(&cols, "accountActivities") {
@@ -1576,7 +1615,7 @@ mod tests {
         let block_store = take_blocks(&mut resp, None).expect("take blocks");
 
         let txs = store
-            .materialize(
+            .materialize_columns(
                 vec![43],
                 vec![7],
                 vec![(1u64 << (crate::transaction_store::SvmTxField::FeePayer as u32)) as f64],
@@ -1585,7 +1624,7 @@ mod tests {
             .await
             .expect("materialize transactions");
         let blocks = block_store
-            .materialize(
+            .materialize_columns(
                 vec![43],
                 vec![(1u64 << (crate::block_store::SvmBlockField::Hash as u32)) as f64],
                 false,
@@ -1624,7 +1663,7 @@ mod tests {
 
         let mask = (1u64 << (crate::block_store::SvmBlockField::Hash as u32)) as f64;
         let cols = block_store
-            .materialize(vec![42, 43], vec![mask, mask], false)
+            .materialize_columns(vec![42, 43], vec![mask, mask], false)
             .await
             .expect("materialize");
 
