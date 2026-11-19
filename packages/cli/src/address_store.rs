@@ -269,17 +269,6 @@ impl StoreInner {
         (entry.effective_start_block, &entry.key, entry.contract_idx)
     }
 
-    /// Live ids registered for an address, one per owning contract.
-    fn live_ids(&self, key: &[u8]) -> Vec<u64> {
-        let mut ids = Vec::new();
-        let mut cursor = self.id_by_key.get(key).copied();
-        while let Some(id) = cursor {
-            ids.push(id);
-            cursor = self.entry(id).next_by_key;
-        }
-        ids
-    }
-
     fn live_id_for(&self, key: &[u8], contract_idx: u32) -> Option<u64> {
         let mut cursor = self.id_by_key.get(key).copied();
         while let Some(id) = cursor {
@@ -389,7 +378,8 @@ pub struct StartBlockGroup {
     pub count: i64,
 }
 
-#[napi(object)]
+#[cfg(test)]
+#[derive(Debug)]
 pub struct AddressEntry {
     pub address: String,
     pub contract_name: String,
@@ -578,29 +568,6 @@ impl AddressStore {
         self.read().unwritten.len() as i64
     }
 
-    /// The registrations still awaiting persistence, in registration order.
-    ///
-    /// For assertions only; nothing in the indexer reads it. The write path
-    /// drains instead, and `pending_count` is what the runtime asks — neither
-    /// lets a test see which registrations are queued without consuming them.
-    #[napi]
-    pub fn pending_entries_for_test(&self) -> Vec<AddressEntry> {
-        let store = self.read();
-        store
-            .unwritten
-            .iter()
-            .map(|&id| {
-                let entry = store.entry(id);
-                AddressEntry {
-                    address: address_string(store.ecosystem, &entry.key),
-                    contract_name: store.contract_name(entry.contract_idx).to_string(),
-                    registration_block: entry.registration_block,
-                    effective_start_block: entry.effective_start_block,
-                }
-            })
-            .collect()
-    }
-
     /// An ordered snapshot of one contract's addresses. Empty selections are
     /// legal — a wildcard partition carries an empty set rather than none.
     #[napi]
@@ -732,34 +699,6 @@ impl AddressStore {
             .collect();
         store.unwritten = live_unwritten;
         rolled_back
-    }
-
-    /// Every entry an address is registered under, in set order — one per
-    /// owning contract. Empty once every registration is rolled back.
-    ///
-    /// For assertions only; nothing in the indexer reads it. The gate the
-    /// runtime asks is `is_indexed_at`, and what the user sees is
-    /// `contract_addresses` — neither exposes an entry's own start blocks or
-    /// the order registrations sort into, which is what a test needs to pin.
-    #[napi]
-    pub fn get_all_for_test(&self, address: String) -> Vec<AddressEntry> {
-        let store = self.read();
-        let Some(key) = address_key(store.ecosystem, &address) else {
-            return Vec::new();
-        };
-        store
-            .sorted_ids(store.live_ids(&key))
-            .into_iter()
-            .map(|id| {
-                let entry = store.entry(id);
-                AddressEntry {
-                    address: address_string(store.ecosystem, &entry.key),
-                    contract_name: store.contract_name(entry.contract_idx).to_string(),
-                    registration_block: entry.registration_block,
-                    effective_start_block: entry.effective_start_block,
-                }
-            })
-            .collect()
     }
 
     /// Contract names holding at least one dynamically registered address. The
@@ -1363,23 +1302,63 @@ impl AddressSet {
 }
 
 #[cfg(test)]
+impl AddressStore {
+    /// The registrations still awaiting persistence, in registration order.
+    pub(crate) fn pending_entries_for_test(&self) -> Vec<AddressEntry> {
+        let store = self.read();
+        store
+            .unwritten
+            .iter()
+            .map(|&id| store.address_entry(id))
+            .collect()
+    }
+
+    /// Every entry an address is registered under, in set order — one per
+    /// owning contract. Empty once every registration is rolled back.
+    pub(crate) fn get_all_for_test(&self, address: String) -> Vec<AddressEntry> {
+        let store = self.read();
+        let Some(key) = address_key(store.ecosystem, &address) else {
+            return Vec::new();
+        };
+        store
+            .sorted_ids(store.live_ids(&key))
+            .into_iter()
+            .map(|id| store.address_entry(id))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+impl StoreInner {
+    /// Live ids registered for an address, one per owning contract.
+    fn live_ids(&self, key: &[u8]) -> Vec<u64> {
+        let mut ids = Vec::new();
+        let mut cursor = self.id_by_key.get(key).copied();
+        while let Some(id) = cursor {
+            ids.push(id);
+            cursor = self.entry(id).next_by_key;
+        }
+        ids
+    }
+
+    fn address_entry(&self, id: u64) -> AddressEntry {
+        let entry = self.entry(id);
+        AddressEntry {
+            address: address_string(self.ecosystem, &entry.key),
+            contract_name: self.contract_name(entry.contract_idx).to_string(),
+            registration_block: entry.registration_block,
+            effective_start_block: entry.effective_start_block,
+        }
+    }
+}
+
+#[cfg(test)]
 impl AddressSet {
     /// The set's entries in set order. A projection only assertions need: the
     /// query path reads `cache()`, and everything else reads the store.
     pub(crate) fn entries(&self) -> Vec<AddressEntry> {
         let store = self.store.read().unwrap();
-        self.ids
-            .iter()
-            .map(|&id| {
-                let entry = store.entry(id);
-                AddressEntry {
-                    address: address_string(store.ecosystem, &entry.key),
-                    contract_name: store.contract_name(entry.contract_idx).to_string(),
-                    registration_block: entry.registration_block,
-                    effective_start_block: entry.effective_start_block,
-                }
-            })
-            .collect()
+        self.ids.iter().map(|&id| store.address_entry(id)).collect()
     }
 }
 

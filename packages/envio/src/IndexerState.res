@@ -499,7 +499,6 @@ let config = (state: t) => state.config
 let logger = (state: t) => state.logger
 let clock = (state: t) => state.clock
 let persistence = (state: t) => state.persistence
-let allEntities = (state: t) => state.allEntities
 let entities = (state: t) => state.entities
 
 // Every in-memory entity table across all scopes, cross-chain first. The size,
@@ -602,7 +601,6 @@ let markReady = (state: t, ~readyAt) => state.crossChainState->CrossChainState.m
 let reportFinished = (state: t) => state.crossChainState->CrossChainState.reportFinished
 
 let rollbackState = (state: t) => state.rollbackState
-let indexerStartTime = (state: t) => state.indexerStartTime
 let loadManager = (state: t) => state.loadManager
 let keepProcessAlive = (state: t) => state.keepProcessAlive
 let exitAfterFirstEventBlock = (state: t) => state.exitAfterFirstEventBlock

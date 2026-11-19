@@ -474,7 +474,6 @@ let makeFromDbState = (
 // --- Read accessors. ---
 
 let logger = (cs: t) => cs.logger
-let blockStore = (cs: t) => cs.blockStore
 let transactionStore = (cs: t) => cs.transactionStore
 let itemContext = (cs: t) => cs.itemContext
 let itemFields = (cs: t): StoredItems.fields => {
@@ -509,7 +508,6 @@ let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let committedProgressBlockTime = (cs: t) => cs.committedProgressBlockTime
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
 let pendingBudget = (cs: t) => cs.pendingBudget
-let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
 
 // --- Metric counters. ---
 
@@ -544,10 +542,8 @@ let contractAddresses = (cs: t, ~contractName) =>
 let drainAddressesForWrite = (cs: t, ~toBlockInclusive, ~checkpointBlockNumbers) =>
   cs.addressStore->AddressStore.drainForWrite(toBlockInclusive, checkpointBlockNumbers)
 let hasAddressesToWrite = (cs: t) => cs.addressStore->AddressStore.pendingCount > 0
-let bufferSize = (cs: t) => cs.eventStore->EventStore.length
 let bufferReadyCount = (cs: t) =>
   cs.fetchState->FetchState.bufferReadyCount(~eventStore=cs.eventStore)
-let chainDensity = (cs: t) => cs.chainDensity
 let hasReadyItem = (cs: t) =>
   cs.fetchState->FetchState.isActivelyIndexing(~eventStore=cs.eventStore) &&
     cs.fetchState->FetchState.hasReadyItem(~eventStore=cs.eventStore)

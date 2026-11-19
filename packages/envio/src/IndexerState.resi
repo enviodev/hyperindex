@@ -76,7 +76,6 @@ let config: t => Config.t
 let logger: t => Logger.t
 let clock: t => Clock.t
 let persistence: t => Persistence.t
-let allEntities: t => array<Internal.entityConfig>
 let entities: t => EntityTables.t
 let eachEntityTable: (
   t,
@@ -102,21 +101,18 @@ let chainStates: t => dict<ChainState.t>
 let isInReorgThreshold: t => bool
 let shouldSaveHistory: t => dict<bool>
 let isRealtime: t => bool
-let isFinalizingIndexes: t => bool
 let markCaughtUpIfSettled: t => unit
 let isReadyToEnterReorgThreshold: (t, ~batch: Batch.t) => bool
 let shouldFinalizeIndexes: t => bool
 // Wires the loop's way back in. IndexerLoop calls this as it starts.
 let bindScheduleProcessing: (t, unit => unit) => unit
 let isHoldingRealtime: t => bool
-let hasArrivedAtHead: t => bool
 let reportArrivalAtHead: t => unit
 // The supervisor's go-ahead for a process driving part of a split run.
 let releaseRealtime: t => unit
 let markReady: (t, ~readyAt: Date.t) => unit
 let reportFinished: t => unit
 let rollbackState: t => rollbackState
-let indexerStartTime: t => Date.t
 let loadManager: t => LoadManager.t
 let keepProcessAlive: t => bool
 let exitAfterFirstEventBlock: t => bool

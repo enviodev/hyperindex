@@ -16,32 +16,6 @@ let seedConfigAddresses: (
   ~contractMapping: ContractMapping.t,
 ) => unit
 
-let make: (
-  ~chainConfig: Config.chain,
-  ~fetchState: FetchState.t,
-  ~eventStore: EventStore.t,
-  ~onEventRegistrations: array<Internal.onEventRegistration>=?,
-  ~onBlockRegistrations: array<Internal.onBlockRegistration>=?,
-  ~addressStore: AddressStore.t,
-  ~sourceManager: SourceManager.t,
-  ~committedProgressBlockNumber: int,
-  ~committedProgressBlockTime: option<int>=?,
-  ~safeCheckpointTracking: option<SafeCheckpointTracking.t>=?,
-  ~shouldRollbackOnReorg: bool,
-  ~maxReorgDepth: int,
-  ~isInReorgThreshold: bool=?,
-  ~numEventsProcessed: float=?,
-  ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
-  ~isProgressAtHead: bool=?,
-  ~transactionStore: TransactionStore.t=?,
-  ~chainDensity: option<float>=?,
-  ~blockStore: BlockStore.t=?,
-  ~shouldChecksum: bool=?,
-  ~reorgThresholdReadyTolerance: int=?,
-  ~perChainEntities: array<Internal.entityConfig>=?,
-  ~logger: Logger.t,
-) => t
-
 let makeFromDbState: (
   Config.chain,
   ~resumedChainState: Persistence.initialChainState,
@@ -57,7 +31,6 @@ let makeFromDbState: (
 
 // Accessors.
 let logger: t => Logger.t
-let blockStore: t => BlockStore.t
 let transactionStore: t => TransactionStore.t
 // The chain's registrations by the index stored rows carry.
 let itemContext: t => StoredItems.context
@@ -82,7 +55,6 @@ let committedProgressBlockTime: t => option<int>
 let numEventsProcessed: t => float
 let pendingBudget: t => float
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
-let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 
 // Metric counters, rendered by Metrics at scrape time.
 let recordBlockRangeFetch: (
@@ -103,14 +75,11 @@ let drainAddressesForWrite: (
   ~checkpointBlockNumbers: array<int>,
 ) => array<AddressStore.drainedAddress>
 let hasAddressesToWrite: t => bool
-let bufferSize: t => int
 let bufferReadyCount: t => int
-let chainDensity: t => option<float>
 let effectiveDensity: t => option<float>
 let hasReadyItem: t => bool
 
 // Fetch control.
-let targetBlock: (t, ~chainTargetItems: float) => int
 let blockAtProgress: (t, ~progress: float) => int
 let frontierProgress: t => float
 let getNextQuery: (t, ~chainTargetItems: float, ~maxTargetBlock: int=?) => FetchState.nextQuery

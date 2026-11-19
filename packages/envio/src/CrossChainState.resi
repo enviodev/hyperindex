@@ -22,7 +22,6 @@ let targetBufferSize: t => int
 let shouldSaveHistory: t => dict<bool>
 
 // Derived (pure).
-let nextItemIsNone: t => bool
 let getSafeCheckpointIdByChain: (
   t,
   ~sequence: CheckpointSequence.t,
@@ -43,7 +42,6 @@ let markReady: (t, ~readyAt: Date.t) => unit
 let reportFinished: t => unit
 
 // Fetch control.
-let priorityOrder: t => array<ChainState.t>
 let checkAndFetch: (
   t,
   ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
