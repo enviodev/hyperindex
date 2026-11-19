@@ -305,14 +305,20 @@ impl StoreInner {
     /// name and out-of-range block, so nothing here can fail partway through a
     /// batch.
     ///
-    /// An address is indexed from its earliest registration, whatever order
+    /// An address is kept from its earliest registration, whatever order
     /// registrations arrive in: partitions fetch at their own pace, so a later
     /// block's registration can land first. An earlier one retires the entry
-    /// and adds a fresh one rather than moving its start block, because sets
-    /// are ordered by start block and must stay so while they hold the retired
-    /// id. The retired entry can't have been written yet: the earlier block is
+    /// and adds a fresh one rather than moving its block, because sets are
+    /// ordered by start block and must stay so while they hold the retired id.
+    ///
+    /// Registration blocks are compared, not start blocks: below the contract's
+    /// start block two registrations start at the same block, yet only the
+    /// earlier survives a rollback to between them.
+    ///
+    /// The retired entry can't have been written yet: the earlier block is
     /// still on the contractRegister backlog, which holds processing, and so
-    /// every batch write, below both blocks.
+    /// every batch write, below both blocks. A config address (block -1) is
+    /// never retired.
     fn register_one(
         &mut self,
         reg: &AddressRegistration,
@@ -328,11 +334,7 @@ impl StoreInner {
             .contract_idx(&reg.contract_name)
             .expect("register_all validates every contract name before applying the batch");
         if let Some(id) = self.live_id_for(&key, contract_idx) {
-            let effective_start_block = derive_effective_start_block(
-                reg.registration_block,
-                self.contract_start_blocks[contract_idx as usize],
-            );
-            if effective_start_block >= self.entry(id).effective_start_block {
+            if reg.registration_block >= self.entries.registration_block(id) {
                 return RegistrationVerdict {
                     kind: VERDICT_DUPLICATE.to_string(),
                     fetchable: false,
@@ -1074,9 +1076,16 @@ impl AddressSet {
                     ids.push(right[j]);
                     j += 1;
                 }
-                // Equal sort keys, including contract_idx: one id.
+                // Equal sort keys, including contract_idx: one address. The
+                // ids differ only when one retired the other with the same
+                // start block, and the live one must survive, or a rollback
+                // that prunes the dead one drops the address.
                 std::cmp::Ordering::Equal => {
-                    ids.push(left[i]);
+                    ids.push(if store.entries.is_dead(left[i]) {
+                        right[j]
+                    } else {
+                        left[i]
+                    });
                     i += 1;
                     j += 1;
                 }

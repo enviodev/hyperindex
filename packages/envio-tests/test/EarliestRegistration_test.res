@@ -9,8 +9,8 @@ let hub = "0x00000000000000000000000000000000000000b1"
 // the wildcard `Created.Born`. Either registers the child, from different
 // partitions, so they can arrive in any order. `Factory` can also open a `Hub`,
 // a dynamic factory of children.
-let scenario = Scenario.make(
-  ~configYaml=`
+let configYaml = (~childOptions) =>
+  `
 name: earliest-registration
 rollback_on_reorg: true
 chains:
@@ -33,18 +33,20 @@ chains:
       - name: Created
         events:
           - event: "Born()"
-      - name: Child
+      - name: Child${childOptions}
         events:
           - event: "Ping()"
-`,
-  ~schema=`
+`
+
+let schema = `
 type Ping {
   id: ID!
   block: Int!
   handled: Int!
 }
-`,
-  ~handlers=`
+`
+
+let handlers = `
 import { indexer } from "envio";
 
 indexer.contractRegister({ contract: "Factory", event: "Pointed" }, async ({ event, context }) => {
@@ -74,7 +76,16 @@ indexer.onEvent({ contract: "Child", event: "Ping" }, async ({ event, context })
   const seen = await context.Ping.get(id);
   context.Ping.set({ id, block: event.block.number, handled: (seen?.handled ?? 0) + 1 });
 });
-`,
+`
+
+let scenario = Scenario.make(~configYaml=configYaml(~childOptions=""), ~schema, ~handlers)
+
+// `Child` starts at block 200, so every registration below it is effective
+// from 200.
+let lateStartScenario = Scenario.make(
+  ~configYaml=configYaml(~childOptions="\n        start_block: 200"),
+  ~schema,
+  ~handlers,
 )
 
 let sources: array<Scenario.sourceMock> = [{chain: 1337, autoHeight: 1000}]
@@ -444,6 +455,70 @@ describe("A rollback after an address moved to an earlier registration", () => {
       t.expect(await replaceThenReorg(~indexer, ~source=source(1337), ~validUpTo=200)).toEqual((
         beforeReorg,
         ([110, 120, 160], [(child, 110)]),
+      ))
+    },
+  )
+})
+
+// https://github.com/enviodev/hyperindex/issues/1810
+describe("An address registered twice below its contract's start block", () => {
+  // Both registrations are effective from block 200, the contract's start, so
+  // only their blocks tell them apart. The reorg takes the later one away.
+  lateStartScenario->Scenario.it(
+    "survives a rollback that removes the later registration",
+    ~sources=[
+      {
+        chain: 1337,
+        methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        // Off `Child`, the config's first contract, or the mock's own
+        // registration would lift Child's start block.
+        mockEventContract: "Factory",
+      },
+    ],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1337)
+      source.resolveGetHeightOrThrow(300)
+      await source.respondUpTo(99)
+      await source.expectItemsQueries([
+        {
+          where: isFetchingFor(factory, ...),
+          reply: Respond({
+            items: [pointed(~blockNumber=150, child)],
+            latestFetchedBlockNumber: 200,
+          }),
+        },
+        {reply: LeavePending},
+      ])
+      await indexer.waitUntilIdle()
+      await source.respondUpTo(
+        250,
+        ~items=[born(~blockNumber=110, child), ping(~blockNumber=210, child)],
+      )
+      await source.expectItemsQueries([
+        {
+          where: isAddressFree,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 251,
+            prevRangeLastBlock: {blockNumber: 250, blockHash: "0x250a"},
+          }),
+        },
+        {reply: LeavePending},
+      ])
+      // The new chain keeps the birth at 110 but not the pointer at 150.
+      await Scenario.driveRollback(
+        ~source,
+        ~validUpTo=130,
+        ~head=251,
+        ~refetched=[ping(~blockNumber=210, child)],
+      )
+      await indexer.waitUntilIdle()
+      await source.respondUpTo(300, ~items=[ping(~blockNumber=280, child)])
+      await indexer.advanceTime(500)
+
+      t.expect((await pingedBlocks(indexer), await registeredChildren(indexer))).toEqual((
+        [210, 280],
+        [(child, 110)],
       ))
     },
   )

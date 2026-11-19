@@ -559,10 +559,9 @@ let captureRefusal = () => {
 }
 
 // Answers whatever the reorg resolution asks for: block hashes for the depth
-// search (blocks past `validUpTo` come back re-orged), and empty responses for
-// the re-fetch queries the rollback schedules.
+// search (blocks past `validUpTo` come back re-orged), and, for every query up
+// to `head`, the `refetched` items of its range: what the new chain holds.
 let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetched=[]) => {
-  let refetched = ref(refetched)
   for _ in 0 to 300 {
     if source.getBlockHashesCalls->Array.length > 0 {
       let requested = source.getBlockHashesCalls->Array.copy
@@ -593,7 +592,7 @@ let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetc
             partitionId: query.partitionId,
             fromBlock: query.fromBlock,
             reply: Respond({
-              items: refetched.contents->Array.filter((item: MockSource.itemMock) =>
+              items: refetched->Array.filter((item: MockSource.itemMock) =>
                 item.blockNumber >= query.fromBlock && item.blockNumber <= latest
               ),
               latestFetchedBlockNumber: latest,
@@ -601,7 +600,6 @@ let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetc
           }
         }),
       )
-      refetched := []
     }
     await Utils.delay(0)
   }
@@ -609,7 +607,7 @@ let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetc
 
 // Reorgs the chain above `validUpTo`: the next response arrives with block
 // `head` re-orged, and the rollback that follows is driven to completion. The
-// first refetch after it answers with `refetched`.
+// new chain holds `refetched` up to `head`.
 let reorgAbove = async (
   ~indexer: IndexerRunner.t,
   ~source: MockSource.t,
