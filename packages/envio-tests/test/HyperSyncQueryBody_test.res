@@ -7,14 +7,17 @@ open Vitest
 
 let token = "0x1000000000000000000000000000000000000001"
 let pool = "0x2000000000000000000000000000000000000002"
-let swapSighash = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67"
+let swapSighash = "0x3ebfdaaf4031bec9a2b7b0a1c594d2d03f3d0b8d68531c9164c2829bac00fefa"
+// Past the last page the test pushes: a pushed page carries no logs, so a
+// Swap it covers would never be served.
+let swapBlocks = Array.fromInitializer(~length=7, i => 651 + 50 * i)
 
 let served = ServedEvmChain.serveDuringSuite(
   ~hyperSyncPort=18751,
   ~rpcPort=18752,
   ~height=1000,
-  ~logs=Array.fromInitializer(~length=20, i => {
-    ServedEvmChain.blockNumber: 50 * i + 1,
+  ~logs=swapBlocks->Array.map(blockNumber => {
+    ServedEvmChain.blockNumber,
     logIndex: 0,
     address: pool,
     topics: [swapSighash],
@@ -53,11 +56,21 @@ indexer.onEvent({ contract: "Pool", event: "Swap", wildcard: true }, async ({ ev
 `,
 )
 
-let selectsAnAddress = (query: JSON.t) =>
+let selectsToken = (query: JSON.t) =>
   switch query {
   | Object(body) =>
     switch body->Dict.get("logs") {
-    | Some(Array([Object(selection)])) => selection->Dict.get("address")->Option.isSome
+    | Some(Array(selections)) =>
+      selections->Array.some(selection =>
+        switch selection {
+        | Object(selection) =>
+          switch selection->Dict.get("address") {
+          | Some(Array(addresses)) => addresses->Array.includes(JSON.String(token))
+          | _ => false
+          }
+        | _ => false
+        }
+      )
     | _ => false
     }
   | _ => false
@@ -81,19 +94,28 @@ describe("HyperSync query body", () => {
       [101, 201, 301, 401, 501, 601]->Array.forEach(
         nextBlock => hyperSync->MockHyperSyncServer.pushResponse({nextBlock: nextBlock}),
       )
-      await served->ServedEvmChain.run(scenario, async _ => ())
+      let routed = ref([])
+      await served->ServedEvmChain.run(
+        scenario,
+        async indexer => {
+          routed := (await indexer->ServedEvmChain.readRouted)
+        },
+      )
 
       let bodies =
         hyperSync
         ->MockHyperSyncServer.takeQueries
-        ->Array.filter(selectsAnAddress)
+        ->Array.filter(selectsToken)
         ->Array.map(withoutRange)
       let uploads =
         hyperSync
         ->MockHyperSyncServer.takeUploads
-        ->Array.filter(selectsAnAddress)
+        ->Array.filter(selectsToken)
         ->Array.map(withoutRange)
-      t.expect((bodies->Array.length > 2, bodies, uploads)).toEqual((
+      t.expect((routed.contents, bodies->Array.length > 2, bodies, uploads)).toEqual((
+        swapBlocks
+        ->Array.map(blockNumber => ServedEvmChain.routed(~chainId=1, ~blockNumber, "Swap"))
+        ->ServedEvmChain.sorted,
         true,
         Array.make(~length=bodies->Array.length, bodies->Array.getUnsafe(0)),
         [bodies->Array.getUnsafe(0)],

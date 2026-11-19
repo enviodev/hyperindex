@@ -75,7 +75,7 @@ impl Schedule {
             && !selection.is_empty()
             && to_block != Some(from_block)
         {
-            let page_end = from_block + selection.blocks_for_runs(PAGE_RUNS) - 1;
+            let page_end = selection.page_end(from_block);
             let to_block = to_block.map_or(page_end, |to| to.min(page_end));
             (
                 Some(to_block),
@@ -223,15 +223,18 @@ impl BlockSelection {
         })
     }
 
-    /// How many blocks hold `runs` handler runs: each handler runs once every
-    /// `interval` blocks, so together they run `Σ 1/interval` times a block.
-    fn blocks_for_runs(&self, runs: u64) -> u64 {
+    /// The last block of a page from `from_block` holding `PAGE_RUNS` handler
+    /// runs: each handler runs once every `interval` blocks, so together they
+    /// run `Σ 1/interval` times a block. A handler can run rarely enough for
+    /// the page to span past the last block a u64 holds.
+    fn page_end(&self, from_block: u64) -> u64 {
         let runs_per_block: f64 = self
             .registrations
             .iter()
             .map(|r| 1.0 / r.interval as f64)
             .sum();
-        ((runs as f64 / runs_per_block) as u64).max(1)
+        let blocks = ((PAGE_RUNS as f64 / runs_per_block) as u64).max(1);
+        from_block.saturating_add(blocks - 1)
     }
 
     pub(crate) fn first_from(&self, block_number: u64) -> Option<u64> {
@@ -475,6 +478,16 @@ mod tests {
                 to_block(&[input(0, 0, None, 2)], (0, None), Some(50)),
             ),
             (Some(7141), Some(100_000), Some(9999))
+        );
+    }
+
+    // A page spanning past the last block a u64 holds still ends at the range.
+    #[test]
+    fn ends_a_read_at_its_range_when_a_page_spans_past_the_last_block() {
+        let rare = [input(0, 100, None, 4_000_000_000_000_000)];
+        assert_eq!(
+            planned(&rare, (100, Some(200)), true, Some(150)).to_block,
+            Some(200)
         );
     }
 

@@ -344,9 +344,9 @@ describe("CrossChainState fetch control", () => {
   })
 
   Async.it("checkAndFetch still dispatches when the only query exceeds the budget", async t => {
-    // Fresh partition behind the head: its query estimates at the default
-    // (10000), far above the tiny remaining budget (1). Admission must still let
-    // one query through, otherwise the chain would never make progress.
+    // A cold chain is handed a tenth of the one-item pool, and its probe
+    // reserves no less than one item. Admission must still let the probe
+    // through, otherwise the chain would never make progress.
     let cs = makeFetchingChainState(
       ~chainId=1->ChainId.fromInt,
       ~knownHeight=1000,
@@ -361,8 +361,8 @@ describe("CrossChainState fetch control", () => {
         ->Array.push((
           chainId->ChainId.toInt,
           switch action {
-          | Ready(queries) => queries->Array.length
-          | _ => 0
+          | Ready(queries) => queries->Array.map(query => query.itemsEst)
+          | _ => []
           },
         ))
         ->ignore
@@ -370,7 +370,7 @@ describe("CrossChainState fetch control", () => {
       },
     )
 
-    t.expect(dispatched).toEqual([(1, 1)])
+    t.expect(dispatched).toEqual([(1, [1])])
   })
 
   let queryWithFreeBudget = async (~freeBudget) => {
