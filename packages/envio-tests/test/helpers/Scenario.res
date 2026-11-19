@@ -326,17 +326,19 @@ let run = async (
     ~provideClickHouse?,
     ~chains?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
-    async indexer => {
+    ~onIndexerStarted=indexer =>
       mocks->Array.forEach(((chain, mock)) =>
         mock.attachIndexer(
           ~waitUntilIdle=indexer.waitUntilIdle,
           ~isRegisteringContracts=indexer.isRegisteringContracts,
+          ~isIndexedAt=indexer.isIndexedAt(~chainId=chain, ...),
           ~progressBlock=async () =>
             (await indexer.metric("envio_progress_block"))
             ->Array.find(({labels}) => labels->Dict.get("chainId") === Some(chain->Int.toString))
             ->Option.flatMap(({value}) => value->Int.fromString),
         )
-      )
+      ),
+    async indexer => {
       switch {
         await body(~indexer, ~source)
         // Only after the body passed: a failing body has its own error to
@@ -579,10 +581,26 @@ let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetc
       )
       source.getBlockHashesCalls->Utils.Array.clearInPlace
     }
-    if source.pendingItemsQueries->Array.length > 0 {
-      await source.expectItemsQueries([
-        {reply: Respond({items: refetched.contents, latestFetchedBlockNumber: head})},
-      ])
+    let due = source.pendingItemsQueries->Array.filter(query => query.fromBlock <= head)
+    if due->Array.length > 0 {
+      await source.expectItemsQueries(
+        due->Array.map((query): MockSource.expectedItemsQuery => {
+          let latest = switch query.toBlock {
+          | Bounded(toBlock) => Math.Int.min(toBlock, head)
+          | Unbounded => head
+          }
+          {
+            partitionId: query.partitionId,
+            fromBlock: query.fromBlock,
+            reply: Respond({
+              items: refetched.contents->Array.filter((item: MockSource.itemMock) =>
+                item.blockNumber >= query.fromBlock && item.blockNumber <= latest
+              ),
+              latestFetchedBlockNumber: latest,
+            }),
+          }
+        }),
+      )
       refetched := []
     }
     await Utils.delay(0)

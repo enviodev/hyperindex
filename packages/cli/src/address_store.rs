@@ -304,6 +304,15 @@ impl StoreInner {
     /// Infallible: `register_all` has already rejected every unknown contract
     /// name and out-of-range block, so nothing here can fail partway through a
     /// batch.
+    ///
+    /// An address is indexed from its earliest registration, whatever order
+    /// registrations arrive in: partitions fetch at their own pace, so a later
+    /// block's registration can land first. An earlier one retires the entry
+    /// and adds a fresh one rather than moving its start block, because sets
+    /// are ordered by start block and must stay so while they hold the retired
+    /// id. The retired entry can't have been written yet: the earlier block is
+    /// still on the contractRegister backlog, which holds processing, and so
+    /// every batch write, below both blocks.
     fn register_one(
         &mut self,
         reg: &AddressRegistration,
@@ -313,24 +322,24 @@ impl StoreInner {
             return RegistrationVerdict {
                 kind: VERDICT_INVALID.to_string(),
                 fetchable: false,
-                effective_start_block: 0,
-                existing_effective_start_block: None,
             };
         };
         let contract_idx = self
             .contract_idx(&reg.contract_name)
             .expect("register_all validates every contract name before applying the batch");
-        let effective_start_block = derive_effective_start_block(
-            reg.registration_block,
-            self.contract_start_blocks[contract_idx as usize],
-        );
         if let Some(id) = self.live_id_for(&key, contract_idx) {
-            return RegistrationVerdict {
-                kind: VERDICT_DUPLICATE.to_string(),
-                fetchable: false,
-                effective_start_block,
-                existing_effective_start_block: Some(self.entry(id).effective_start_block),
-            };
+            let effective_start_block = derive_effective_start_block(
+                reg.registration_block,
+                self.contract_start_blocks[contract_idx as usize],
+            );
+            if effective_start_block >= self.entry(id).effective_start_block {
+                return RegistrationVerdict {
+                    kind: VERDICT_DUPLICATE.to_string(),
+                    fetchable: false,
+                };
+            }
+            self.retire(id);
+            self.unwritten.retain(|&pending| pending != id);
         }
         let id = self.insert(&key, contract_idx, reg.registration_block);
         if track_unwritten {
@@ -339,8 +348,6 @@ impl StoreInner {
         RegistrationVerdict {
             kind: VERDICT_ADDED.to_string(),
             fetchable: self.contract_depends_on_addresses[contract_idx as usize],
-            effective_start_block,
-            existing_effective_start_block: None,
         }
     }
 
@@ -377,6 +384,16 @@ impl StoreInner {
         self.live_count_by_contract[contract_idx as usize] += 1;
         id
     }
+
+    /// Tombstones a live entry. Its id stays valid, so a set still holding it
+    /// keeps its order and still asks for the address. Only this registration
+    /// leaves the key's index: the same address registered for another
+    /// contract stays.
+    fn retire(&mut self, id: Id) {
+        self.index.remove(id, &self.entries);
+        self.entries.kill(id);
+        self.live_count_by_contract[self.entries.contract_idx(id) as usize] -= 1;
+    }
 }
 
 /// A registration block the columns hold: -1 for a config address, else a
@@ -410,8 +427,6 @@ pub struct AddressRegistration {
 pub struct RegistrationVerdict {
     pub kind: String,
     pub fetchable: bool,
-    pub effective_start_block: i64,
-    pub existing_effective_start_block: Option<i64>,
 }
 
 pub const VERDICT_ADDED: &str = "added";
@@ -496,8 +511,8 @@ impl AddressStore {
 
     /// Registers a batch of dynamic registrations, resolving each address
     /// against both the store and the batch's own earlier entries, so the same
-    /// address registered twice for one contract inside a single batch is a
-    /// duplicate just as it is across batches. What it adds is marked pending
+    /// address registered twice for one contract inside a single batch resolves
+    /// just as it does across batches. What it adds is marked pending
     /// persistence.
     #[napi]
     pub fn register_batch(
@@ -723,16 +738,11 @@ impl AddressStore {
             if store.entries.is_dead(id) || store.entries.registration_block(id) <= target_block {
                 continue;
             }
-            let contract_idx = store.entries.contract_idx(id);
-            // Only this registration leaves the key's index: the same address
-            // registered for another contract survives the rollback.
-            store.index.remove(id, &store.entries);
-            store.entries.kill(id);
-            store.live_count_by_contract[contract_idx as usize] -= 1;
+            store.retire(id);
             if !pending_insert.contains(&id) {
                 rolled_back.push(RolledBackAddress {
                     address: store.entries.key(id).to_vec().into(),
-                    contract_id: contract_idx,
+                    contract_id: store.entries.contract_idx(id),
                 });
             }
         }

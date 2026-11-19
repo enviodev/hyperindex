@@ -77,6 +77,9 @@ type rec t = {
   // A contractRegister run is in flight: its handlers run off the clock, and
   // the registrations it makes reach fetching only once it ends.
   isRegisteringContracts: unit => bool,
+  // Whether the chain indexes the address for the contract at the block: the
+  // gate a real source applies to every item it matches.
+  isIndexedAt: (~chainId: int, Address.t, ~contractName: string, ~blockNumber: int) => bool,
   // A reorg rollback is under way: no chain dispatches a query until it ends.
   isResolvingReorg: unit => bool,
   // Moves a virtual-time run's clock forward, firing every source timer due
@@ -257,6 +260,9 @@ let run = async (
   // Runs after `restart` has stopped the previous indexer and before the next
   // one starts, so mocked sources can void what the stopped one left in flight.
   ~onIndexerStopped: unit => unit=() => (),
+  // Runs with every indexer the run starts, a restart's included, so mocked
+  // sources answer for the one now running.
+  ~onIndexerStarted: t => unit=_ => (),
   // Leaves the `ENVIO_CLICKHOUSE_*` settings to the environment rather than
   // pointing them at a database of the run's own, for a test about a run that
   // has none.
@@ -699,6 +705,11 @@ let run = async (
       },
       waitUntilIdle,
       isRegisteringContracts: () => state->IndexerState.isRegisteringContracts,
+      isIndexedAt: (~chainId, address, ~contractName, ~blockNumber) =>
+        state
+        ->IndexerState.getChainState(~chainId=chainId->ChainId.fromInt)
+        ->ChainState.addressStore
+        ->AddressStore.isIndexedAt(address, contractName, blockNumber),
       isResolvingReorg: () => state->IndexerState.isResolvingReorg,
       advanceTime: millis =>
         switch clock {
@@ -890,7 +901,9 @@ let run = async (
         // shared persistence, else the two race against the same db.
         await stop()
         onIndexerStopped()
-        await make(~reset, ~config, ~chains?, ~asWorker?)
+        let indexer = await make(~reset, ~config, ~chains?, ~asWorker?)
+        onIndexerStarted(indexer)
+        indexer
       },
       dumpEffectCache: () => storage.dumpEffectCache(),
     }
@@ -898,6 +911,7 @@ let run = async (
 
   let outcome = try {
     let indexer = await make(~reset=chains->Option.isNone, ~config, ~chains?)
+    onIndexerStarted(indexer)
     // A body waiting on progress the failed indexer will never make would
     // otherwise sit until the test times out.
     await Promise.race([

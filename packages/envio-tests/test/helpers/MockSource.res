@@ -390,6 +390,7 @@ type t = {
     ~waitUntilIdle: unit => promise<unit>,
     ~progressBlock: unit => promise<option<int>>,
     ~isRegisteringContracts: unit => bool,
+    ~isIndexedAt: (Address.t, ~contractName: string, ~blockNumber: int) => bool,
   ) => unit,
   // Empty-responds every pending query, up to its own toBlock unless
   // `~latestFetchedBlockNumber` says otherwise. Never waits, and throws with none.
@@ -639,6 +640,9 @@ let make = (
   let arrivalGeneration = ref(0)
   let settling = ref(false)
   let isRegisteringContracts = ref(() => false)
+  // The chain's own address gate, once a scenario attaches its indexer. A mock
+  // outside one can't see the chain's store, so it lets every item through.
+  let isIndexedAt = ref((_, ~contractName as _, ~blockNumber as _) => true)
   let notifyArrival = () => {
     arrivalGeneration := arrivalGeneration.contents + 1
     if !settling.contents {
@@ -768,8 +772,8 @@ let make = (
   // Like a real source, an item that names its emitter reaches an
   // address-bound registration only through a query fetching that address,
   // from the block it was registered at. A client-filtered contract is fetched
-  // address-free and gated on the chain's address store, which the mock can't
-  // see, so its items arrive as given, as does an item that names no emitter.
+  // address-free and gated on the chain's address store. An item that names no
+  // emitter arrives as given.
   let isFetchedFor = (
     item: itemMock,
     registration: Internal.onEventRegistration,
@@ -782,12 +786,11 @@ let make = (
         names->Array.includes(contractName)
       )
     switch item.srcAddress {
-    | Some(srcAddress) if registration.dependsOnAddresses && !isClientFiltered =>
-      addressSet->AddressSet.containsAt(
-        srcAddress->Address.unsafeFromString,
-        contractName,
-        item.blockNumber,
-      )
+    | Some(srcAddress) if registration.dependsOnAddresses =>
+      let address = srcAddress->Address.unsafeFromString
+      isClientFiltered
+        ? isIndexedAt.contents(address, ~contractName, ~blockNumber=item.blockNumber)
+        : addressSet->AddressSet.containsAt(address, contractName, item.blockNumber)
     | _ => true
     }
   }
@@ -1132,10 +1135,12 @@ let make = (
       ~waitUntilIdle as wait,
       ~progressBlock as progress,
       ~isRegisteringContracts as registering,
+      ~isIndexedAt as gate,
     ) => {
       waitUntilIdle := wait
       progressBlock := progress
       isRegisteringContracts := registering
+      isIndexedAt := gate
     },
     drainPendingItemsQueries: (~latestFetchedBlockNumber=?) =>
       ledger
