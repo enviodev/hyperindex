@@ -75,7 +75,7 @@ impl<'a> TransactionRead<'a> {
             .iter()
             .any(|registration| registration.transaction_mask & tx_mask_of(Carrier::Receipt) != 0);
         (filters_status || reads_receipt_fields)
-            .then(|| receipt_fields | if filters_status { STATUS_BIT } else { 0 })
+            .then_some(receipt_fields | if filters_status { STATUS_BIT } else { 0 })
     }
 }
 
