@@ -25,10 +25,6 @@ let isUnauthorizedError: string => bool
 // because a token can be replaced without restarting the indexer.
 let rethrowLoggingUnauthorized: (exn, ~logger: Logger.t, ~warned: ref<bool>, ~product: string) => 'a
 
-// Map a native client's `PREFIX:<int>` failure marker onto the exception
-// SourceManager retries on (`RateLimited` / `SourceBehindHead`), falling back to
-// the original cause.
-let mapNativeFailure: Source.nativeRequestFailure => exn
 let mapNativeFailureExn: exn => exn
 let reraiseIfRecoverable: exn => unit
 

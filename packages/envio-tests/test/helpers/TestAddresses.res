@@ -1,4 +1,4 @@
-// Address-store scaffolding for the fetch-state tests. `makeStore` mirrors what
+// Address-store scaffolding for the source tests. `makeStore` mirrors what
 // `ChainState.makeInternal` does in production: one store per chain, built from
 // that chain's registrations, holding every address the chain indexes.
 
@@ -37,23 +37,6 @@ let rowsOf = (
     registrationBlock: a.registrationBlock,
   })
   ->AddressRows.seedRowsOf
-}
-
-// Plain registrations in the columnar form `FetchState.make` seeds from,
-// resolved against the same contract list `makeStore` builds its store from.
-let addressRows = (
-  ~addresses: array<Internal.indexingAddress>,
-  ~onEventRegistrations: array<Internal.onEventRegistration>=[],
-  ~configContractNames: array<string>=[],
-  ~ecosystem: Ecosystem.name=Evm,
-): AddressRows.seedRows => {
-  let contractMapping = contractMapping(~onEventRegistrations, ~configContractNames)
-  rowsOf(
-    ~addresses,
-    ~contractId=name =>
-      contractMapping->ContractMapping.idOfOrThrow(name, ~context=" registered by a test address"),
-    ~ecosystem,
-  )
 }
 
 // A store over `contracts` holding `addresses` as config addresses, seeded
@@ -164,7 +147,7 @@ function makeFakeSet(unordered) {
   // Set order: fixtures are all config addresses, so they share an effective
   // start block and order by address alone. Applied to both sides of an
   // assertion, so a partition's contents compare regardless of how the fixture
-  // listed them; the ordering rule itself is asserted in AddressStore_test.
+  // listed them; the ordering rule itself is asserted in address_store.rs.
   var entries = unordered.slice().sort(function (a, b) {
     return a.address < b.address ? -1 : 1;
   });

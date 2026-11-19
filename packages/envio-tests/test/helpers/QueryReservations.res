@@ -9,10 +9,16 @@ let int = json => json->JSON.Decode.float->Option.getOrThrow->Float.toInt
 type started = {partitionId: string, fromBlock: int, targetBlock: option<int>, reservedItems: int}
 
 // The last query each dispatch started per partition, one array per tick,
-// oldest first.
-let startedTicks = (indexer: IndexerRunner.t) =>
+// oldest first. With `chainId`, only that chain's dispatches.
+let startedTicks = (indexer: IndexerRunner.t, ~chainId=?) =>
   indexer.allLogsAsJson()
-  ->Array.filter(line => line->Dict.get("msg") == Some(JSON.String("Started querying")))
+  ->Array.filter(line =>
+    line->Dict.get("msg") == Some(JSON.String("Started querying")) &&
+      switch chainId {
+      | Some(chainId) => line->Dict.get("chainId") == Some(JSON.Number(chainId->Int.toFloat))
+      | None => true
+      }
+  )
   ->Array.map(line =>
     line
     ->Dict.get("partitions")
@@ -33,14 +39,25 @@ let startedTicks = (indexer: IndexerRunner.t) =>
     })
   )
 
+let latestStarted = (indexer, ~chainId=?, ~partitionId, ~fromBlock, ~isMatch) =>
+  indexer
+  ->startedTicks(~chainId?)
+  ->Array.flat
+  ->Array.findLast(query =>
+    query.partitionId === partitionId && query.fromBlock === fromBlock && isMatch(query)
+  )
+
+// The items reserved by the latest query started for `partitionId` at
+// `fromBlock`.
+let reservation = (indexer, ~chainId=?, ~partitionId, ~fromBlock) =>
+  indexer
+  ->latestStarted(~chainId?, ~partitionId, ~fromBlock, ~isMatch=_ => true)
+  ->Option.map(query => query.reservedItems)
+
 // The items reserved by the latest open-ended probe started for `partitionId`
 // at `fromBlock`. None for a bounded query: a chunk's reservation follows from
 // its density.
-let probeReservation = (indexer: IndexerRunner.t, ~partitionId, ~fromBlock) =>
+let probeReservation = (indexer, ~chainId=?, ~partitionId, ~fromBlock) =>
   indexer
-  ->startedTicks
-  ->Array.flat
-  ->Array.findLast(query =>
-    query.partitionId === partitionId && query.fromBlock === fromBlock && query.targetBlock === None
-  )
+  ->latestStarted(~chainId?, ~partitionId, ~fromBlock, ~isMatch=query => query.targetBlock === None)
   ->Option.map(query => query.reservedItems)

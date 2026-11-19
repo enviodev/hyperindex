@@ -72,6 +72,23 @@ chains:${chainYaml(100, ~maxReorgDepth=199)}${chainYaml(1337, ~maxReorgDepth=0)}
 `,
 )
 
+// A reorg depth, but no rollback to use it: a run resumed within that depth of
+// the head starts in the reorg threshold, which is all it would take otherwise.
+let noRollbackScenario = Scenario.make(
+  ~supervised=false,
+  ~schema,
+  ~handlers,
+  ~configYaml=`
+name: zero-reorg-depth-history-no-rollback
+rollback_on_reorg: false
+contracts:
+  - name: Token
+    events:
+      - event: Transfer(uint256 count)
+chains:${chainYaml(100, ~maxReorgDepth=10)}
+`,
+)
+
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
 let setCounter = (~block, ~count: bigint): MockSource.itemMock => {
@@ -121,6 +138,47 @@ describe("A chain with no reorg depth keeps no history", () => {
             history->Array.length,
             ~message="A chain no rollback can reach writes no history",
           ).toBe(0)
+        },
+      )
+    },
+  )
+
+  noRollbackScenario->Scenario.it(
+    "Writes no history for a chain that isn't rolled back, resumed within its reorg depth",
+    ~sources=[{chain: 100, methods}],
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      await Scenario.resolveInitialHeight(~source=source100, ~head=120)
+      await source100.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [setCounter(~block=110, ~count=1n)],
+            latestFetchedBlockNumber: 120,
+          }),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+      await indexer.waitUntilIdle()
+
+      let restarted = await indexer.restart()
+      source100.resolveGetHeightOrThrow(130)
+      await source100.expectItemsQueries([
+        {
+          fromBlock: 121,
+          reply: Respond({
+            items: [setCounter(~block=125, ~count=2n)],
+            latestFetchedBlockNumber: 130,
+          }),
+        },
+      ])
+      await restarted.getBatchWritePromise()
+      await restarted.waitUntilIdle()
+
+      await restarted.usePostgresSql(
+        async _ => {
+          let history: array<Change.t<counter>> = await restarted.queryHistory("Counter")
+          t.expect(history).toEqual([])
         },
       )
     },
