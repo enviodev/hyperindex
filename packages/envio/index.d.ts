@@ -1165,6 +1165,102 @@ export type EvmOnBlockHandler<Fields extends EvmOnBlockFieldsSelection> =
 export type EvmOnBlockOptions<Fields extends EvmOnBlockFieldsSelection = {}> =
   EvmOnBlockOptionsFor<Fields, GlobalConfig>;
 
+// ============== EVM onTransaction types ==============
+
+/**
+ * The filter an EVM `indexer.onTransaction` `where` returns for a chain.
+ * Fields are ANDed and the values within a field are ORed; an absent field
+ * matches any value.
+ */
+export type EvmOnTransactionFilter = {
+  readonly transaction: {
+    /** Senders. */
+    readonly from?: readonly Address[];
+    /** Recipients. A contract creation has none, so it never matches. */
+    readonly to?: readonly Address[];
+    /** 4-byte selectors the calldata starts with, e.g. `"0xa9059cbb"`. */
+    readonly sighash?: readonly Hex[];
+    /** `1` succeeded, `0` reverted. Absent runs on both: a reverted
+     * transaction is mined too. */
+    readonly status?: 0 | 1;
+  };
+};
+
+/**
+ * Return type of an EVM `indexer.onTransaction` `where` predicate.
+ * - `false` → skip this chain.
+ * - `true` → run on every transaction of the chain.
+ * - {@link EvmOnTransactionFilter} → run on the transactions it matches.
+ */
+export type EvmOnTransactionWhereResult = boolean | EvmOnTransactionFilter;
+
+/** Argument passed to an EVM `indexer.onTransaction` `where` predicate. Filter
+ * values are static: `chain.<Contract>.addresses` can't be read here. */
+export type EvmOnTransactionWhereArgs<Config extends IndexerConfigTypes = GlobalConfig> =
+  EvmOnBlockWhereArgs<Config>;
+
+/** Carried by every transaction handler's transaction without being listed. */
+type EvmOnTransactionAlwaysSelectedTransactionField = "transactionIndex" | "hash" | "from" | "to";
+/** Carried by every transaction handler's block without being listed. */
+type EvmOnTransactionAlwaysSelectedBlockField = "number" | "timestamp" | "hash";
+
+/** The transaction an EVM transaction handler runs on: `transactionIndex`,
+ * `hash`, `from` and `to`, plus the fields listed in `fields.transaction`. */
+export type EvmOnTransactionTransaction<Fields extends EvmFieldsSelection> = SelectedFields<
+  EvmAllTransactionFields,
+  EvmOnTransactionAlwaysSelectedTransactionField | ListedFields<Fields, "transaction">,
+  "transaction"
+>;
+
+/** The block of the transaction: `number`, `timestamp` and `hash`, plus the
+ * fields listed in `fields.block`. */
+export type EvmOnTransactionBlock<Fields extends EvmFieldsSelection> = SelectedFields<
+  EvmAllBlockFields,
+  EvmOnTransactionAlwaysSelectedBlockField | ListedFields<Fields, "block">,
+  "block"
+>;
+
+type EvmOnTransactionArgsFor<Fields extends EvmFieldsSelection, Config extends IndexerConfigTypes> = {
+  readonly transaction: EvmOnTransactionTransaction<Fields>;
+  readonly block: EvmOnTransactionBlock<Fields>;
+  /** Handler context: entity operations, logger, effect caller, chain state. */
+  readonly context: EvmOnEventContext<Config>;
+};
+
+type EvmOnTransactionHandlerFor<Fields extends EvmFieldsSelection, Config extends IndexerConfigTypes> = (
+  args: EvmOnTransactionArgsFor<Fields, Config>,
+) => Promise<void>;
+
+type EvmOnTransactionOptionsFor<Fields extends EvmFieldsSelection, Config extends IndexerConfigTypes> = {
+  /** Unique name for this transaction handler. Used in logs and error
+      messages. */
+  readonly name: string;
+  /** Evaluated once per configured chain at registration time. Return `false`
+      to skip a chain, `true` to run on every transaction, or a filter. */
+  readonly where: (args: EvmOnTransactionWhereArgs<Config>) => EvmOnTransactionWhereResult;
+  /** Block and transaction fields this handler reads besides the ones it
+      always gets, with the same names as an event handler's `fields`. */
+  readonly fields?: Fields & FieldsLiteralCheck<Fields>;
+};
+
+/** Arguments passed to an EVM transaction handler. */
+export type EvmOnTransactionHandlerArgs<Fields extends EvmFieldsSelection> =
+  EvmOnTransactionArgsFor<Fields, GlobalConfig>;
+
+/** Handler function for an EVM `indexer.onTransaction` registration. Takes the
+ * registration's fields selection, so a standalone handler needs a single
+ * annotation:
+ *
+ *     const handleTransaction: EvmOnTransactionHandler<typeof fields> =
+ *       async ({ transaction, block, context }) => { ... };
+ */
+export type EvmOnTransactionHandler<Fields extends EvmFieldsSelection> =
+  EvmOnTransactionHandlerFor<Fields, GlobalConfig>;
+
+/** Options for an EVM `indexer.onTransaction` registration. */
+export type EvmOnTransactionOptions<Fields extends EvmFieldsSelection = {}> =
+  EvmOnTransactionOptionsFor<Fields, GlobalConfig>;
+
 // ============== Fuel event fields ==============
 
 /** The block and transaction fields a Fuel registration reads. Fuel selects
@@ -1784,6 +1880,17 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
               options: EvmOnBlockOptionsFor<F, Config>,
               handler: EvmOnBlockHandlerFor<F, Config>,
             ) => void;
+            /**
+             * Register a transaction handler: it runs on every mined
+             * transaction its filter matches, whether or not it emitted a
+             * log. `where` is evaluated once per configured chain at
+             * registration time; return `false` to skip a chain, `true` to
+             * run on every transaction, or an {@link EvmOnTransactionFilter}.
+             */
+            readonly onTransaction: <const F extends EvmFieldsSelection = {}>(
+              options: EvmOnTransactionOptionsFor<F, Config>,
+              handler: EvmOnTransactionHandlerFor<F, Config>,
+            ) => void;
           } & (Config["evm"] extends {
             contracts: infer Contracts extends Record<string, Record<string, any>>;
           }
@@ -1971,6 +2078,7 @@ type CodegenRequiredFallback = {
   readonly onEvent: (...hint: CodegenRequiredHint[]) => void;
   readonly onInstruction: (...hint: CodegenRequiredHint[]) => void;
   readonly onBlock: (...hint: CodegenRequiredHint[]) => void;
+  readonly onTransaction: (...hint: CodegenRequiredHint[]) => void;
   readonly onSlot: (...hint: CodegenRequiredHint[]) => void;
   readonly contractRegister: (...hint: CodegenRequiredHint[]) => void;
 };

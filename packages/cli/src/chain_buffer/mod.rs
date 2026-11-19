@@ -11,6 +11,7 @@ pub(crate) mod fuel;
 pub(crate) mod matching;
 pub(crate) mod matching_fuel;
 pub(crate) mod matching_svm;
+pub(crate) mod matching_transactions;
 pub(crate) mod merge;
 pub(crate) mod page;
 pub(crate) mod schedule;
@@ -35,6 +36,7 @@ use crate::svm_hypersync_source::selection as svm_selection;
 use crate::svm_hypersync_source::selection::SvmProgramInput;
 use decoded::DecodedEvents;
 use deliver::{BuiltItems, Columns};
+use matching_transactions::{OnTransactionRegistrationInput, TransactionMatcher};
 use merge::HashMismatch;
 use page::Page;
 use schedule::{BlockHandlerInput, Schedule};
@@ -215,6 +217,7 @@ pub(crate) struct Shared {
     pub(crate) should_checksum: bool,
     pub(crate) registrations: Registrations,
     pub(crate) schedule: Schedule,
+    pub(crate) transactions: TransactionMatcher,
     /// By event registration index.
     transaction_masks: Vec<u64>,
     event_block_masks: Vec<u64>,
@@ -259,6 +262,15 @@ impl Shared {
             .get(registration as usize)
             .copied()
             .unwrap_or(0)
+    }
+
+    /// The transaction and block fields a transaction registration reads.
+    pub(crate) fn on_transaction_masks(&self, registration: u32) -> (u64, u64) {
+        self.transactions
+            .registration(registration)
+            .map_or((0, 0), |registration| {
+                (registration.transaction_mask, registration.block_mask)
+            })
     }
 
     pub(crate) fn block_handler_mask(&self, registration: u32) -> Option<u64> {
@@ -325,6 +337,8 @@ pub struct ChainBufferConfig {
     pub transaction_masks: Vec<f64>,
     /// By event registration index: the block fields each selects.
     pub event_block_masks: Vec<f64>,
+    /// EVM only.
+    pub transaction_registrations: Vec<OnTransactionRegistrationInput>,
 }
 
 #[napi(object)]
@@ -448,6 +462,11 @@ impl ChainBuffer {
         )
         .map_err(to_napi)?;
         let ecosystem = registrations.ecosystem();
+        if ecosystem != Ecosystem::Evm && !config.transaction_registrations.is_empty() {
+            return Err(napi::Error::from_reason(
+                "transaction handlers are supported on EVM chains only",
+            ));
+        }
         let [events, transactions, blocks] = ecosystem.schemas();
         Ok(ChainBuffer {
             shared: Arc::new(Shared {
@@ -455,6 +474,8 @@ impl ChainBuffer {
                 should_checksum: config.should_checksum,
                 registrations,
                 schedule: Schedule::new(&config.block_handlers).map_err(to_napi)?,
+                transactions: TransactionMatcher::new(&config.transaction_registrations)
+                    .map_err(to_napi)?,
                 transaction_masks: config.transaction_masks.iter().map(|m| *m as u64).collect(),
                 event_block_masks: config.event_block_masks.iter().map(|m| *m as u64).collect(),
                 contract_registers,
@@ -559,7 +580,8 @@ impl ChainBuffer {
     }
 
     /// Rows and block handler runs of blocks `[from_block, to_block]`: what a
-    /// build of the range produces at most.
+    /// build of the range produces at most. With transaction handlers, every
+    /// transaction row counts, matched or joined to a log.
     #[napi]
     pub fn count_items_in_block_range(&self, from_block: i64, to_block: i64) -> u32 {
         if to_block < from_block {
@@ -567,8 +589,11 @@ impl ChainBuffer {
         }
         let (from, to) = (block(from_block), block(to_block).min(LAST_BLOCK));
         let tables = self.tables();
-        let rows =
+        let mut rows =
             tables.events.count_in_block_range(from, to) + tables.decoded.count_range(from, to);
+        if !self.shared.transactions.is_empty() {
+            rows += tables.transactions.count_in_block_range(from, to);
+        }
         rows as u32 + self.shared.schedule.count_runs(from, to, |_| true) as u32
     }
 

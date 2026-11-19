@@ -151,6 +151,7 @@ let fetch = (
         Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>
       ),
       onBlockRegistrations: [],
+      onTransactionRegistrations: [],
     },
     ~retry=0,
     ~logger=Logger.makeInMemory()->Logger.withFields({"test": "HyperSync source contract"}),
@@ -227,7 +228,8 @@ let eventSummary = (item: Internal.item) =>
         ->(Utils.magic: Internal.eventTransaction => transactionView),
       }
     }
-  | Internal.Block(_) => JsError.throwWithMessage("Expected an event item")
+  | Internal.Block(_) | Internal.Transaction(_) =>
+    JsError.throwWithMessage("Expected an event item")
   }
 
 describe("HyperSync source contract", () => {

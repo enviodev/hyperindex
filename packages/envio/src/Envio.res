@@ -10,6 +10,25 @@ type evmOnBlockArgs<'context> = {
   context: 'context,
 }
 
+/** The transaction a transaction handler runs on: these fields, plus those
+ listed in `fields.transaction`. */
+type evmOnTransactionTransaction = {
+  transactionIndex: int,
+  hash: string,
+  from: option<Address.t>,
+  to: option<Address.t>,
+}
+
+/** The transaction's block: these fields, plus those listed in `fields.block`. */
+type evmOnTransactionBlock = {number: int, timestamp: int, hash: string}
+
+/** Arguments passed to handlers registered via `indexer.onTransaction`. */
+type evmOnTransactionArgs<'context> = {
+  transaction: evmOnTransactionTransaction,
+  block: evmOnTransactionBlock,
+  context: 'context,
+}
+
 type fuelOnBlockArgs<'context> = {
   block: {height: int},
   context: 'context,
@@ -118,6 +137,15 @@ type onBlockWhereArgs<'chain> = {chain: 'chain}
 type onBlockOptions<'chain> = {
   name: string,
   where?: onBlockWhereArgs<'chain> => unknown,
+}
+
+// `where` returns `false` to skip the chain, `true` to run on every
+// transaction, or `{transaction: {from?, to?, sighash?, status?}}` (see
+// `EvmOnTransactionFilter` in `packages/envio/index.d.ts`).
+type onTransactionOptions<'chain> = {
+  name: string,
+  where: onBlockWhereArgs<'chain> => unknown,
+  fields?: unknown,
 }
 
 type whereOperator<'fieldType> = {

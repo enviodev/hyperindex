@@ -538,11 +538,18 @@ impl EvmTxField {
     }
 }
 
+/// The first four bytes of the calldata, which a `sighash` filter matches.
+/// Internal: past the fields a handler can select, so filtering on it keeps
+/// the calldata itself out of the buffer.
+pub(crate) const SELECTOR_COLUMN: usize = EvmTxField::VARIANTS.len();
+pub(crate) const SELECTOR_BIT: u64 = 1 << SELECTOR_COLUMN;
+
 pub(crate) fn transactions_schema() -> Schema {
     Schema {
         columns: EvmTxField::VARIANTS
             .iter()
             .map(|field| field.column_kind())
+            .chain([ColumnKind::Fixed(4)])
             .collect(),
         has_tiebreak: false,
         has_fetched: true,
@@ -550,9 +557,32 @@ pub(crate) fn transactions_schema() -> Schema {
 }
 
 const TRANSACTION_INDEX_BIT: u64 = 1 << EvmTxField::TransactionIndex as u32;
+const INPUT_BIT: u64 = 1 << EvmTxField::Input as u32;
+
+/// A transaction's selector: none for calldata shorter than four bytes, which
+/// no `sighash` filter matches.
+pub(crate) fn transaction_selector(transaction: &simple_types::Transaction) -> Option<&[u8]> {
+    transaction
+        .sighash
+        .as_ref()
+        .map(|sighash| sighash.as_ref())
+        .or_else(|| transaction.input.as_ref().map(|input| input.as_ref()))
+        .and_then(|bytes| bytes.get(..4))
+}
+
+/// A fetched mask with the selector held wherever the calldata it comes from
+/// is.
+pub(crate) fn with_selector(fetched: u64) -> u64 {
+    if fetched & INPUT_BIT != 0 {
+        fetched | SELECTOR_BIT
+    } else {
+        fetched
+    }
+}
 
 /// Appends a HyperSync transaction. A transaction without its key is
-/// dropped: nothing can join it.
+/// dropped: nothing can join it. Its selector is held when `fetched` names it
+/// or the calldata it comes from.
 pub(crate) fn push_transaction(
     builder: &mut ChunkBuilder,
     transaction: &simple_types::Transaction,
@@ -567,8 +597,9 @@ pub(crate) fn push_transaction(
     builder.push_row(
         make_key(u64::from(block_number), u64::from(index)),
         0,
-        fetched | TRANSACTION_INDEX_BIT,
+        with_selector(fetched) | TRANSACTION_INDEX_BIT,
     );
+    builder.set_optional_bytes(SELECTOR_COLUMN, transaction_selector(transaction));
     let t = transaction;
     let set = |builder: &mut ChunkBuilder, field: EvmTxField, value: Option<&[u8]>| {
         builder.set_optional_bytes(field as usize, value)

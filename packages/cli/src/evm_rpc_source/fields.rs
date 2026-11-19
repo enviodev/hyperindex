@@ -18,7 +18,7 @@ use hypersync_client::simple_types::{Block, Transaction};
 use serde_json::Value as Json;
 
 use crate::chain_buffer::evm::EvmBlockField;
-use crate::chain_buffer::evm::EvmTxField;
+use crate::chain_buffer::evm::{EvmTxField, SELECTOR_BIT};
 use crate::evm_hypersync_source::query::TransactionField;
 
 /// Which JSON-RPC response carries a transaction field.
@@ -104,12 +104,13 @@ pub(crate) fn tx_field_column(field: TransactionField) -> Option<EvmTxField> {
     })
 }
 
-/// Selection mask over store field ordinals.
+/// Selection mask over store field ordinals. `Sighash` lands in the internal
+/// selector column.
 pub(crate) fn tx_mask(fields: &[TransactionField]) -> u64 {
-    fields
-        .iter()
-        .filter_map(|&f| tx_field_column(f))
-        .fold(0, |acc, f| acc | 1u64 << (f as u32))
+    fields.iter().fold(0, |acc, &field| match field {
+        TransactionField::Sighash => acc | SELECTOR_BIT,
+        field => tx_field_column(field).map_or(acc, |column| acc | 1u64 << (column as u32)),
+    })
 }
 
 /// The block field the store derives from its key, so a row always has it.

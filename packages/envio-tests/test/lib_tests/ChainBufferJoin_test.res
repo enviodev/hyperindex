@@ -47,7 +47,12 @@ let makeItem = (
 let buildJoined = async (items, ~registrations, ~ecosystem=Ecosystem.Evm) =>
   await TestChainBuffer.pageOf(items, ~ecosystem)->TestChainBuffer.buildAll(
     ~buffer=TestChainBuffer.decodedBuffer(~onEventRegistrations=registrations, ~ecosystem),
-    ~context={chainId, onEventRegistrations: registrations, onBlockRegistrations: []},
+    ~context={
+      chainId,
+      onEventRegistrations: registrations,
+      onBlockRegistrations: [],
+      onTransactionRegistrations: [],
+    },
   )
 
 let rawTx = (item: Internal.item) =>

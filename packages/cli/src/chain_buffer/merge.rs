@@ -3,6 +3,7 @@
 
 use napi_derive::napi;
 
+use super::matching_transactions::TransactionView;
 use super::page::PageData;
 use super::table::{make_key, Table, LAST_BLOCK};
 use super::{Ecosystem, Shared, Tables};
@@ -37,6 +38,22 @@ pub(crate) fn first_hash_mismatch(
                 received_hash: ecosystem.hash_text(received),
             })
         })
+}
+
+/// The page's transactions a transaction handler runs on: rows like any other
+/// for the density a partition is priced by.
+fn matched_transactions(shared: &Shared, transactions: &Table) -> usize {
+    if shared.transactions.is_empty() {
+        return 0;
+    }
+    transactions
+        .rows_in_block_range(0, LAST_BLOCK)
+        .filter(|row| {
+            shared
+                .transactions
+                .matches_any(&TransactionView::of_row(row))
+        })
+        .count()
 }
 
 /// The blocks `incoming` holds under a hash other than the stored one: a
@@ -87,7 +104,9 @@ pub(crate) fn merge_page(
             registering_blocks: Vec::new(),
         };
     }
-    let rows_kept = tables.events.merge_table(&page.events) + tables.decoded.merge(&page.decoded);
+    let rows_kept = tables.events.merge_table(&page.events)
+        + tables.decoded.merge(&page.decoded)
+        + matched_transactions(shared, &page.transactions);
     tables.transactions.merge_table(&page.transactions);
     for block_number in blocks_with_other_hash(&tables.blocks, &page.blocks, page.ecosystem) {
         tables.blocks.remove_block_range(block_number, block_number);

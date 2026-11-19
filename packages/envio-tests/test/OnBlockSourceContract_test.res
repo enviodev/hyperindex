@@ -91,7 +91,12 @@ let buildItems = async (
   )
   await response.page->TestChainBuffer.buildAll(
     ~buffer,
-    ~context={chainId: 1->ChainId.fromInt, onEventRegistrations: [], onBlockRegistrations},
+    ~context={
+      chainId: 1->ChainId.fromInt,
+      onEventRegistrations: [],
+      onBlockRegistrations,
+      onTransactionRegistrations: [],
+    },
     ~fromBlock,
     ~maxBlock=response.latestFetchedBlockNumber,
   )
@@ -161,7 +166,8 @@ let materializedBlocks = async (page: Source.blockRangeFetchResponse) => {
         blockNumber,
         block->Option.map(block => block->(Utils.magic: Internal.eventBlock => blockView)),
       )
-    | Internal.Event(_) => JsError.throwWithMessage("Expected a block item")
+    | Internal.Event(_) | Internal.Transaction(_) =>
+      JsError.throwWithMessage("Expected a block item")
     }
   )
 }

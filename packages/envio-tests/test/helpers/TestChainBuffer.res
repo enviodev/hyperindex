@@ -38,7 +38,12 @@ let itemsOf = async (
   )
   await page->buildAll(
     ~buffer,
-    ~context={chainId: ChainId.fromInt(0), onEventRegistrations, onBlockRegistrations},
+    ~context={
+      chainId: ChainId.fromInt(0),
+      onEventRegistrations,
+      onBlockRegistrations,
+      onTransactionRegistrations: [],
+    },
     ~maxBlock?,
   )
 }
@@ -80,6 +85,7 @@ let evmLogsOf = async (
       blockHandlers: [],
       transactionMasks: [],
       eventBlockMasks: [],
+      transactionRegistrations: [],
     },
     addressStore,
   )
@@ -87,7 +93,12 @@ let evmLogsOf = async (
   (
     await page->buildAll(
       ~buffer,
-      ~context={chainId: ChainId.fromInt(0), onEventRegistrations, onBlockRegistrations: []},
+      ~context={
+        chainId: ChainId.fromInt(0),
+        onEventRegistrations,
+        onBlockRegistrations: [],
+        onTransactionRegistrations: [],
+      },
     )
   )->Array.map(item => {
     let event = item->Internal.castUnsafeEventItem
@@ -121,6 +132,7 @@ let decodedBuffer = (
       eventBlockMasks: onEventRegistrations->Array.map(registration =>
         registration.fieldSelection.blockMask
       ),
+      transactionRegistrations: [],
     },
     TestAddresses.storeOf(~contracts=[], ~addresses=[]),
   )
@@ -154,6 +166,7 @@ let forInputs = (~evmRegistrations, ~addressStore) =>
       blockHandlers: [],
       transactionMasks: [],
       eventBlockMasks: [],
+      transactionRegistrations: [],
     },
     addressStore,
   )

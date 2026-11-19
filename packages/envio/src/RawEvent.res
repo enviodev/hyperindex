@@ -43,7 +43,7 @@ let eventItemsOnePerLog = (items: array<Internal.item>, ~keep: Internal.eventIte
       } else {
         None
       }
-    | Internal.Block(_) => None
+    | Internal.Block(_) | Internal.Transaction(_) => None
     }
   )
 }

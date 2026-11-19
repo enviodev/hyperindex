@@ -29,7 +29,7 @@ pub struct LogSelection {
 
 /// Filter for selecting transactions based on various criteria
 #[napi(object)]
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, PartialEq)]
 pub struct TransactionFilter {
     /// Address the transaction should originate from. If transaction.from matches any of these, the transaction
     ///  will be returned. Keep in mind that this has an and relationship with to filter, so each transaction should
@@ -68,7 +68,7 @@ pub struct TransactionSelection {
 
 /// Selection criteria for transaction authorization lists
 #[napi(object)]
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, PartialEq)]
 pub struct AuthorizationSelection {
     /// List of chain ids to match in the transaction authorizationList
     pub chain_id: Option<Vec<i64>>,

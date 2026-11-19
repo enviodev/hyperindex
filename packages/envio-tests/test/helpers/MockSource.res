@@ -195,6 +195,7 @@ let installMockSourceRegistrations = (
         let registrations: HandlerRegister.chainRegistrations = {
           onEventRegistrations: [],
           onBlockRegistrations: [],
+          onTransactionRegistrations: [],
         }
         registrationsByChainId->Dict.set(key, registrations)
         registrations

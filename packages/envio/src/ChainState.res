@@ -147,6 +147,7 @@ let make = (
   ~chainBuffer: ChainBuffer.t,
   ~onEventRegistrations,
   ~onBlockRegistrations,
+  ~onTransactionRegistrations,
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
@@ -169,7 +170,12 @@ let make = (
     entities: EntityTables.make(perChainEntities),
     fetchState,
     chainBuffer,
-    itemContext: {chainId: chainConfig.id, onEventRegistrations, onBlockRegistrations},
+    itemContext: {
+      chainId: chainConfig.id,
+      onEventRegistrations,
+      onBlockRegistrations,
+      onTransactionRegistrations,
+    },
     addressStore,
     sourceManager,
     chainConfig,
@@ -273,10 +279,14 @@ let makeInternal = (
   // Handler binding + `where`-derived fetch state, and onBlock registrations,
   // are already collected by `HandlerRegister.finishRegistration`, keyed by
   // chain - this just looks up this chain's slice.
-  let {onEventRegistrations, onBlockRegistrations} =
+  let {onEventRegistrations, onBlockRegistrations, onTransactionRegistrations} =
     registrationsByChainId
     ->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->ChainId.toString)
-    ->Option.getOr({onEventRegistrations: [], onBlockRegistrations: []})
+    ->Option.getOr({
+      onEventRegistrations: [],
+      onBlockRegistrations: [],
+      onTransactionRegistrations: [],
+    })
   // A block handler without `_gte` counts its interval from the chain's start
   // block. Spelled out here because a source matching blocks to handlers needs
   // the origin, and the chain's start block is only resolved by now.
@@ -330,6 +340,7 @@ let makeInternal = (
     ),
     ~blockThrottle=chainConfig.blockThrottle,
     ~onBlockRegistrations,
+    ~onTransactionRegistrations,
     ~firstEventBlock,
     // Fuel and SVM route through the address store like EVM does, so the
     // client-side path works for them - but their address counts are nowhere
@@ -356,6 +367,7 @@ let makeInternal = (
     ~ecosystem=config.ecosystem.name,
     ~onEventRegistrations,
     ~onBlockRegistrations,
+    ~onTransactionRegistrations,
     ~shouldChecksum=!lowercaseAddresses,
     ~addressStore,
   )
@@ -398,6 +410,7 @@ let makeInternal = (
     ~chainBuffer,
     ~onEventRegistrations,
     ~onBlockRegistrations,
+    ~onTransactionRegistrations,
     ~addressStore,
     ~sourceManager=SourceManager.make(~sources, ~logger, ~isRealtime, ~timing=?sourceTiming),
     ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
@@ -1232,12 +1245,7 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
       // inline by processing time; its timestamp may still be absent (e.g. an
       // SVM slot with no block row) - the metric is skipped then.
       switch batch
-      ->Batch.findLastEventItem(~chainId)
-      ->Option.flatMap(eventItem =>
-        eventItem.payload
-        ->Internal.getPayloadBlock
-        ->Nullable.toOption
-      )
+      ->Batch.findLastItemBlock(~chainId)
       ->Option.flatMap(block =>
         block
         ->(Utils.magic: Internal.eventBlock => dict<unknown>)

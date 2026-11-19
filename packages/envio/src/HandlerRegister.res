@@ -5,6 +5,7 @@
 type chainRegistrations = {
   onEventRegistrations: array<Internal.onEventRegistration>,
   onBlockRegistrations: array<Internal.onBlockRegistration>,
+  onTransactionRegistrations: array<Internal.onTransactionRegistration>,
 }
 
 // The finished registration state returned by `finishRegistration`.
@@ -124,6 +125,7 @@ let getChainRegistrations = (r: activeRegistration, ~chainId: ChainId.t): chainR
     let fresh: chainRegistrations = {
       onEventRegistrations: [],
       onBlockRegistrations: [],
+      onTransactionRegistrations: [],
     }
     r.registrationsByChainId->Dict.set(key, fresh)
     fresh
@@ -586,18 +588,19 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
           }
         })
 
+        // Copies, so a consumer appending to the output (e.g. simulate source
+        // registration) never mutates the persistent store.
+        let stored = r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key)
         registrationsByChainId->Dict.set(
           key,
           {
             onEventRegistrations,
-            // Copy so a consumer appending to the output (e.g. simulate source
-            // registration) never mutates the persistent store.
-            onBlockRegistrations: switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(
-              key,
-            ) {
-            | Some(chainRegs) => chainRegs.onBlockRegistrations->Array.copy
-            | None => []
-            },
+            onBlockRegistrations: stored->Option.mapOr([], chainRegs =>
+              chainRegs.onBlockRegistrations->Array.copy
+            ),
+            onTransactionRegistrations: stored->Option.mapOr([], chainRegs =>
+              chainRegs.onTransactionRegistrations->Array.copy
+            ),
           },
         )
       })
@@ -807,6 +810,206 @@ let registerOnBlock = (
     if !matchedAny.contents {
       logger->Logger.warn(
         `\`indexer.${ecosystem.onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
+      )
+    }
+  })
+}
+
+let isPlainObject = (value: unknown) =>
+  typeof(value) === #object && value !== %raw(`null`) && !Array.isArray(value)
+
+let hexPattern = bytes => RegExp.fromString(`^0x[0-9a-fA-F]{${(bytes * 2)->Int.toString}}$`)
+let addressPattern = hexPattern(20)
+let selectorPattern = hexPattern(4)
+
+// The `chain` a transaction `where` is handed: the chain object, with every
+// contract's `addresses` refusing to be read. A filter is evaluated once at
+// registration, so addresses registered later would never reach it.
+let makeOnTransactionChainArg = (chainObj: unknown, ~chainConfig: Config.chain, ~name) => {
+  let chainArg =
+    Utils.Object.createNullObject()
+    ->Object.assign(chainObj->(Utils.magic: unknown => {..}))
+    ->(Utils.magic: {..} => dict<unknown>)
+  chainConfig.contracts->Array.forEach(contract => {
+    let contractArg = Utils.Object.createNullObject()
+    contractArg
+    ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: contract.name})
+    ->Utils.Object.defineProperty(
+      "addresses",
+      {
+        enumerable: true,
+        get: () =>
+          JsError.throwWithMessage(
+            `\`indexer.onTransaction("${name}")\` filters on static values, so \`chain.${contract.name}.addresses\` can't be used: contracts registered while indexing would never reach the filter. List the addresses instead.`,
+          ),
+      },
+    )
+    ->ignore
+    chainArg->Dict.set(contract.name, contractArg->(Utils.magic: {..} => unknown))
+  })
+  chainArg
+}
+
+let parseTransactionFilterOrThrow = (
+  result: unknown,
+  ~name,
+  ~chainId: ChainId.t,
+): Internal.transactionFilter => {
+  let fail = message =>
+    JsError.throwWithMessage(
+      `\`indexer.onTransaction("${name}")\` \`where\` returned an invalid filter for chain ${chainId->ChainId.toString}: ${message}`,
+    )
+  let shape = "Expected `true`, `false` or { transaction: { from?, to?, sighash?, status? } }."
+  let outer = result->(Utils.magic: unknown => dict<unknown>)
+  if outer->Dict.keysToArray != ["transaction"] {
+    fail(shape)
+  }
+  let inner = outer->Dict.getUnsafe("transaction")
+  if !isPlainObject(inner) {
+    fail(shape)
+  }
+  let inner = inner->(Utils.magic: unknown => dict<unknown>)
+  inner
+  ->Dict.keysToArray
+  ->Array.forEach(key =>
+    if !(["from", "to", "sighash", "status"]->Array.includes(key)) {
+      fail(`Unknown field \`${key}\`. ${shape}`)
+    }
+  )
+  let values = (key, ~pattern, ~noun) =>
+    switch inner->Dict.get(key) {
+    | None => None
+    | Some(value) if value === %raw(`undefined`) => None
+    | Some(value) =>
+      if !Array.isArray(value) {
+        fail(`\`${key}\` must be an array of ${noun}es.`)
+      }
+      let values = value->(Utils.magic: unknown => array<unknown>)
+      if values->Utils.Array.isEmpty {
+        fail(`\`${key}\` lists no value, so it would match no transaction.`)
+      }
+      Some(
+        values->Array.map(value =>
+          switch value->(Utils.magic: unknown => JSON.t) {
+          | JSON.String(text) if pattern->RegExp.test(text) => text->String.toLowerCase
+          | _ =>
+            fail(
+              `\`${key}\` value ${value
+                ->JSON.stringifyAny
+                ->Option.getOr("undefined")} is not a ${noun}.`,
+            )
+          }
+        ),
+      )
+    }
+  let status = switch inner->Dict.get("status") {
+  | None => None
+  | Some(value) if value === %raw(`undefined`) => None
+  | Some(value) if value === %raw(`0`) || value === %raw(`1`) =>
+    Some(value->(Utils.magic: unknown => int))
+  | Some(_) => fail("`status` must be 0 (reverted) or 1 (succeeded).")
+  }
+  {
+    from: ?values("from", ~pattern=addressPattern, ~noun="20-byte hex address"),
+    to: ?values("to", ~pattern=addressPattern, ~noun="20-byte hex address"),
+    sighash: ?values("sighash", ~pattern=selectorPattern, ~noun="4-byte hex selector"),
+    ?status,
+  }
+}
+
+// Mirrors `Envio.onBlockWhereArgs` without depending on the module.
+type onTransactionWhereArgs = {chain: unknown}
+
+// `where` is evaluated once per configured chain at registration time, like a
+// block handler's. Deferred via `withRegistration` so the per-chain loop sees
+// the registration's config.
+let registerOnTransaction = (
+  ~name: string,
+  ~where: unknown,
+  ~fields: unknown,
+  ~handler: Internal.onTransactionArgs => promise<unit>,
+  ~getChainsObject: Config.t => dict<unknown>,
+) => {
+  withRegistration(registration => {
+    let config = registration.config
+    if config.ecosystem.name !== Evm {
+      JsError.throwWithMessage(
+        `\`indexer.onTransaction\` is supported on EVM chains only, and this indexer indexes ${(config.ecosystem.name :> string)}.`,
+      )
+    }
+    if typeof(where) !== #function {
+      JsError.throwWithMessage(
+        `\`indexer.onTransaction("${name}")\` expected \`where\` to be a function returning the filter for a chain, but got ${(typeof(
+            where,
+          ) :> string)}.`,
+      )
+    }
+    let where = where->(Utils.magic: unknown => onTransactionWhereArgs => unknown)
+    let (transactionFieldMask, blockFieldMask) = EventConfigBuilder.resolveOnTransactionFieldMasks(
+      fields,
+      ~name,
+    )
+    let chainsDict = getChainsObject(config)
+    let logger = registration.logger->Logger.withFields({"onTransaction": name})
+    let matchedAny = ref(false)
+
+    config.chainMap
+    ->ChainMap.values
+    ->Array.forEach(chainConfig => {
+      let chainId = chainConfig.id
+      let chain =
+        chainsDict
+        ->Dict.getUnsafe(chainId->ChainId.toString)
+        ->makeOnTransactionChainArg(~chainConfig, ~name)
+      let result = where({chain: chain->(Utils.magic: dict<unknown> => unknown)})
+      let filter = if result === %raw(`true`) {
+        Some(({}: Internal.transactionFilter))
+      } else if result === %raw(`false`) {
+        None
+      } else if isPlainObject(result) {
+        Some(result->parseTransactionFilterOrThrow(~name, ~chainId))
+      } else {
+        JsError.throwWithMessage(
+          `\`indexer.onTransaction("${name}")\` \`where\` returned an invalid value of type ${(typeof(
+              result,
+            ) :> string)}. Expected \`true\`, \`false\` or a filter object.`,
+        )
+      }
+      switch filter {
+      | None => ()
+      | Some(filter) =>
+        matchedAny := true
+        if filter.from === None && filter.to === None && filter.sighash === None {
+          let readsOverRpc = switch chainConfig.sourceConfig {
+          | EvmSourceConfig({rpcs}) => rpcs->Utils.Array.notEmpty
+          | _ => false
+          }
+          logger->Logger.warn(
+            `\`indexer.onTransaction("${name}")\` runs on every transaction of chain ${chainId->ChainId.toString}: its filter names no \`from\`, \`to\` or \`sighash\`.${readsOverRpc
+                ? ` Over RPC that reads every block in full${filter.status === None
+                      ? ""
+                      : ", and a receipt for every transaction to check its status"}.`
+                : ""}`,
+          )
+        }
+        let chainRegs = registration->getChainRegistrations(~chainId)
+        chainRegs.onTransactionRegistrations
+        ->Array.push({
+          index: chainRegs.onTransactionRegistrations->Array.length,
+          name,
+          chainId,
+          filter,
+          transactionFieldMask,
+          blockFieldMask,
+          handler,
+        })
+        ->ignore
+      }
+    })
+
+    if !matchedAny.contents {
+      logger->Logger.warn(
+        `\`indexer.onTransaction("${name}")\` matched 0 chains. Check the \`where\` predicate.`,
       )
     }
   })

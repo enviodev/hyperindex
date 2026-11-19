@@ -11,6 +11,7 @@ let context: StoredItems.context = {
   chainId,
   onEventRegistrations: [registration],
   onBlockRegistrations: [],
+  onTransactionRegistrations: [],
 }
 
 let eventWithPayload = (payload: dict<unknown>): Internal.item => Internal.Event({

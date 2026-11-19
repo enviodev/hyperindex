@@ -119,6 +119,7 @@ module Items = {
     toBlock: option<int>,
     onEventRegistrationIndexes: array<int>,
     onBlockRegistrationIndexes: array<int>,
+    onTransactionRegistrationIndexes: array<int>,
     // Contract names to fetch address-free even though their registrations
     // depend on addresses (client-side filtering). None/empty means
     // every address-dependent contract is filtered server-side.

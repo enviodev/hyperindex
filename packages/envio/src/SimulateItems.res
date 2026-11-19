@@ -756,6 +756,7 @@ let patchConfig = (
             let registrations: HandlerRegister.chainRegistrations = {
               onEventRegistrations: [],
               onBlockRegistrations: [],
+              onTransactionRegistrations: [],
             }
             registrationsByChainId->Dict.set(chainIdStr, registrations)
             registrations
