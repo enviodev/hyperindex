@@ -55,7 +55,44 @@ let sizes = (~onTransactionRegistrations) => {
   )
 }
 
+// The rows a merge reports kept price the next queries. A page bringing
+// transactions the buffer already runs handlers on keeps none of them again,
+// while one completing a row a log joined does keep it.
+let keptAcrossMerges = () => {
+  let buffer = ChainBuffer.makeForChain(
+    ~ecosystem=Evm,
+    ~onEventRegistrations=[],
+    ~onBlockRegistrations=[],
+    ~onTransactionRegistrations=[onTransactionRegistration],
+    ~shouldChecksum=false,
+    ~addressStore=TestAddresses.storeOf(~contracts=[], ~addresses=[]),
+  )
+  let merge = transactions =>
+    (
+      buffer->ChainBuffer.mergePage(
+        BufferPage.fromEvmJs(~transactions, ~blocks=[]),
+        ~reorgThreshold=0,
+        ~reportOnly=false,
+      )
+    ).rowsKept
+  let joinedOnly = dict{
+    "blockNumber": JSON.String("0x7"),
+    "transactionIndex": JSON.String("0x0"),
+    "hash": JSON.String("0x" ++ String.repeat("ab", 32)),
+  }
+  [
+    merge([transactionRow(~blockNumber=5, ~transactionIndex=0)]),
+    merge([transactionRow(~blockNumber=5, ~transactionIndex=0)]),
+    merge([joinedOnly]),
+    merge([transactionRow(~blockNumber=7, ~transactionIndex=0)]),
+  ]
+}
+
 describe("A chain buffer's transaction rows", () => {
+  it("are kept once however many pages bring them", t => {
+    t.expect(keptAcrossMerges()).toEqual([1, 0, 0, 1])
+  })
+
   it("count as rows only on a chain with transaction handlers", t => {
     t.expect((
       sizes(~onTransactionRegistrations=[onTransactionRegistration]),

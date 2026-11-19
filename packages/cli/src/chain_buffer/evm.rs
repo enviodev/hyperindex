@@ -779,13 +779,13 @@ pub(crate) fn transaction_columns(
     )
 }
 
-/// The mask of the fields `object` names, as a JSON-RPC node spells them. A
-/// key naming no field is a typo the test would otherwise never see.
+/// The mask of the fields `object` names, as a JSON-RPC node spells them; a
+/// field's ordinal is its position in `variants`. A key naming no field is a
+/// typo the test would otherwise never see.
 fn named_mask<F: Copy>(
     object: &serde_json::Map<String, serde_json::Value>,
     variants: &[F],
     name: impl Fn(F) -> &'static str,
-    ordinal: impl Fn(F) -> u32,
     keys: &'static [&'static str],
     table: &str,
 ) -> Result<u64> {
@@ -793,11 +793,11 @@ fn named_mask<F: Copy>(
         if keys.contains(&key.as_str()) {
             return Ok(mask);
         }
-        let field = variants
+        let ordinal = variants
             .iter()
-            .find(|field| name(**field) == key)
+            .position(|field| name(*field) == key)
             .with_context(|| format!("unknown {table} field \"{key}\""))?;
-        Ok(mask | 1 << ordinal(*field))
+        Ok(mask | 1 << ordinal)
     })
 }
 
@@ -819,7 +819,6 @@ pub(crate) fn push_simulated_block(
         block,
         EvmBlockField::VARIANTS,
         EvmBlockField::name,
-        |field| field as u32,
         &[],
         "block",
     )?;
@@ -847,7 +846,6 @@ pub(crate) fn push_simulated_transaction(
         transaction,
         EvmTxField::VARIANTS,
         EvmTxField::name,
-        |field| field as u32,
         &["blockNumber"],
         "transaction",
     )?;

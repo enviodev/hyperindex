@@ -40,18 +40,21 @@ pub(crate) fn first_hash_mismatch(
         })
 }
 
-/// The page's transactions a transaction handler runs on: rows like any other
-/// for the density a partition is priced by.
-fn matched_transactions(shared: &Shared, transactions: &Table) -> usize {
-    if shared.transactions.is_empty() {
+/// The page's transactions a transaction handler runs on that the store holds
+/// no running copy of yet: rows like any other for the density a partition is
+/// priced by, counted once however many pages bring them.
+fn matched_transactions(shared: &Shared, stored: &Table, incoming: &Table) -> usize {
+    let matcher = &shared.transactions;
+    if matcher.is_empty() {
         return 0;
     }
-    transactions
+    incoming
         .rows_in_block_range(0, LAST_BLOCK)
         .filter(|row| {
-            shared
-                .transactions
-                .matches_any(&TransactionView::of_row(row))
+            matcher.matches_any(&TransactionView::of_row(row))
+                && !stored
+                    .find(row.key(), 0)
+                    .is_some_and(|stored| matcher.matches_any(&TransactionView::of_row(&stored)))
         })
         .count()
 }
@@ -106,7 +109,7 @@ pub(crate) fn merge_page(
     }
     let rows_kept = tables.events.merge_table(&page.events)
         + tables.decoded.merge(&page.decoded)
-        + matched_transactions(shared, &page.transactions);
+        + matched_transactions(shared, &tables.transactions, &page.transactions);
     tables.transactions.merge_table(&page.transactions);
     for block_number in blocks_with_other_hash(&tables.blocks, &page.blocks, page.ecosystem) {
         tables.blocks.remove_block_range(block_number, block_number);

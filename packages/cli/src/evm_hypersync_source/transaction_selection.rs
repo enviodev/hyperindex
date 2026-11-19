@@ -4,6 +4,7 @@
 use napi::bindgen_prelude::Either;
 
 use super::query::{BlockField, TransactionField, TransactionFilter, TransactionSelection};
+use crate::chain_buffer::evm::EvmTxField;
 use crate::chain_buffer::matching_transactions::OnTransactionRegistration;
 use crate::evm_rpc_source::fields::tx_fields_in;
 
@@ -56,7 +57,10 @@ pub(crate) fn build(registrations: &[&OnTransactionRegistration]) -> BuiltTransa
         };
         push_unique(&mut filters, built);
     }
-    let mut transaction_fields = tx_fields_in(transaction_mask);
+    // Matching the returned rows reads their sender and recipient whatever
+    // the handlers list.
+    let call_fields = (1 << EvmTxField::From as u64) | (1 << EvmTxField::To as u64);
+    let mut transaction_fields = tx_fields_in(transaction_mask | call_fields);
     if filters_sighash {
         push_unique(&mut transaction_fields, TransactionField::Sighash);
     }
@@ -73,7 +77,6 @@ pub(crate) fn build(registrations: &[&OnTransactionRegistration]) -> BuiltTransa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chain_buffer::evm::EvmTxField;
     use crate::chain_buffer::matching_transactions::{
         OnTransactionRegistrationInput, TransactionMatcher,
     };
@@ -130,6 +133,7 @@ mod tests {
                 transaction_fields: vec![
                     TransactionField::From,
                     TransactionField::Hash,
+                    TransactionField::To,
                     TransactionField::Sighash,
                     TransactionField::Status,
                 ],

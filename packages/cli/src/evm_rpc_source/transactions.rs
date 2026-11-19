@@ -96,9 +96,24 @@ fn malformed(block_number: u64, message: impl std::fmt::Display) -> EnrichError 
     ))
 }
 
-fn hex_field(response: &Json, name: &str) -> Option<Vec<u8>> {
-    let text = response.get(name)?.as_str()?;
-    crate::hex::decode_prefixed(text, name).ok()
+/// A hex field: `None` when the transaction has none (null or absent), an
+/// error when it has one that won't decode, which would otherwise read as
+/// absent and silently match no filter.
+fn hex_field(
+    block_number: u64,
+    response: &Json,
+    name: &str,
+) -> Result<Option<Vec<u8>>, EnrichError> {
+    match response.get(name) {
+        None | Some(Json::Null) => Ok(None),
+        Some(Json::String(text)) => crate::hex::decode_prefixed(text, name)
+            .map(Some)
+            .map_err(|error| malformed(block_number, format!("{error:#}"))),
+        Some(other) => Err(malformed(
+            block_number,
+            format!("a transaction's \"{name}\" is {other}"),
+        )),
+    }
 }
 
 fn calls_of(block_number: u64, block: &Json) -> Result<Vec<Call<'_>>, EnrichError> {
@@ -126,15 +141,15 @@ fn calls_of(block_number: u64, block: &Json) -> Result<Vec<Call<'_>>, EnrichErro
                 .and_then(Json::as_str)
                 .and_then(|hash| format::Hash::decode_hex(hash).ok())
                 .ok_or_else(|| malformed(block_number, "a transaction has no hash"))?;
-            let from = hex_field(response, "from")
+            let from = hex_field(block_number, response, "from")?
                 .ok_or_else(|| malformed(block_number, "a transaction has no sender"))?;
             Ok(Call {
                 response,
                 index,
                 hash,
                 from,
-                to: hex_field(response, "to"),
-                selector: hex_field(response, "input")
+                to: hex_field(block_number, response, "to")?,
+                selector: hex_field(block_number, response, "input")?
                     .and_then(|input| input.get(..4).map(<[u8]>::to_vec)),
             })
         })
@@ -184,15 +199,34 @@ pub(crate) async fn read(
     let read_transactions = join_all(candidates.into_iter().map(
         |(block_number, call, matched, receipt_fields)| async move {
             let receipt = match receipt_fields {
-                Some(_) => Some(
-                    require(
+                Some(_) => {
+                    let receipt = require(
                         client,
                         fetches,
                         FetchKey::Receipt(**call.hash),
                         block_number,
                     )
-                    .await?,
-                ),
+                    .await?;
+                    // Read after the block, so the chain may have moved: a
+                    // receipt from another block would decide a status filter
+                    // on another fork's outcome.
+                    let hash_at = |response: &Json, key: &str| {
+                        response
+                            .get(key)
+                            .and_then(Json::as_str)
+                            .map(str::to_ascii_lowercase)
+                    };
+                    if hash_at(&receipt, "blockHash") != hash_at(&blocks[&block_number], "hash") {
+                        return Err(malformed(
+                            block_number,
+                            format!(
+                                "the receipt of transaction {} names another block than the one it was read from",
+                                call.hash.encode_hex()
+                            ),
+                        ));
+                    }
+                    Some(receipt)
+                }
                 None => None,
             };
             let fetched = read.transaction_fields() | receipt_fields.unwrap_or(0);
