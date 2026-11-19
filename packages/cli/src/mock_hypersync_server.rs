@@ -18,7 +18,7 @@
     reason = "real time outside the source layer: a test server answering in real time"
 )]
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::net::TcpListener as StdTcpListener;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -30,7 +30,8 @@ use arrow::array::{
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::FileWriter;
 use hypersync_net_types::hypersync_net_types_capnp;
-use hypersync_net_types::request::Request as CapnpRequest;
+use hypersync_net_types::request::{QueryId, Request as CapnpRequest};
+use hypersync_net_types::Query;
 use hypersync_net_types::{BlockField, LogField, TransactionField};
 use napi_derive::napi;
 use serde_json::Value;
@@ -50,6 +51,11 @@ struct State {
     height: u64,
     /// Raw JSON bodies POSTed to the query endpoint, oldest first.
     queries: Vec<String>,
+    /// The capnp bodies the client had to upload in full because their id
+    /// wasn't cached yet, oldest first, as JSON.
+    uploads: Vec<String>,
+    /// Bodies the client asked to cache, by the id it looks them up with.
+    cached_queries: HashMap<QueryId, Query>,
     /// Response specs, one per query. An exhausted queue serves an empty page
     /// covering the queried range, so a test only has to pin the pages it
     /// cares about.
@@ -155,6 +161,13 @@ impl MockHyperSyncServer {
         std::mem::take(&mut self.state.lock().unwrap().queries)
     }
 
+    /// Drain the capnp query bodies the client had to upload in full, oldest
+    /// first. A query answered from its cached id isn't among them.
+    #[napi]
+    pub fn take_uploads(&self) -> Vec<String> {
+        std::mem::take(&mut self.state.lock().unwrap().uploads)
+    }
+
     #[napi]
     pub fn close(&mut self) {
         let _ = self.shutdown.send(true);
@@ -226,17 +239,53 @@ async fn handle_connection(
                 stream_heights(&mut stream, state, shutdown).await?;
                 return Ok(());
             }
-            ("POST", QUERY_PATH) => answer_query(&mut stream, &state, body).await?,
+            ("POST", QUERY_PATH) => answer_query(&mut stream, &state, body, Wrap::Plain).await?,
             ("POST", CAPNP_QUERY_PATH) => match CapnpRequest::from_capnp_bytes(&request.body) {
                 // The client asks by id first when it caches queries, and sends
-                // the full query once told the id isn't known.
-                Ok(CapnpRequest::QueryId { .. }) => {
-                    write_response(&mut stream, 200, "application/octet-stream", &not_cached()?)
-                        .await?
+                // the full query once told the id isn't known. Like HyperSync,
+                // the id covers everything but the block range.
+                Ok(CapnpRequest::QueryId {
+                    from_block,
+                    to_block,
+                    id,
+                }) => {
+                    let cached = state.lock().unwrap().cached_queries.get(&id).cloned();
+                    match cached {
+                        Some(query) => {
+                            let query = Query {
+                                from_block,
+                                to_block,
+                                ..query
+                            };
+                            let body =
+                                serde_json::to_string(&query).context("serialize capnp query")?;
+                            answer_query(&mut stream, &state, body, Wrap::Cached).await?
+                        }
+                        None => {
+                            write_response(
+                                &mut stream,
+                                200,
+                                "application/octet-stream",
+                                &not_cached()?,
+                            )
+                            .await?
+                        }
+                    }
                 }
-                Ok(CapnpRequest::QueryBody { query, .. }) => {
+                Ok(CapnpRequest::QueryBody {
+                    should_cache,
+                    query,
+                }) => {
                     let body = serde_json::to_string(&query).context("serialize capnp query")?;
-                    answer_query(&mut stream, &state, body).await?
+                    {
+                        let mut state = state.lock().unwrap();
+                        state.uploads.push(body.clone());
+                        if should_cache {
+                            let id = QueryId::from_query(&query).context("hash capnp query")?;
+                            state.cached_queries.insert(id, *query);
+                        }
+                    }
+                    answer_query(&mut stream, &state, body, Wrap::Plain).await?
                 }
                 Err(e) => {
                     write_response(&mut stream, 400, "text/plain", format!("{e}").as_bytes())
@@ -252,6 +301,7 @@ async fn answer_query(
     stream: &mut TcpStream,
     state: &Arc<Mutex<State>>,
     body: String,
+    wrap: Wrap,
 ) -> Result<()> {
     let (spec, chain, height) = {
         let mut state = state.lock().unwrap();
@@ -280,7 +330,7 @@ async fn answer_query(
                 (None, Some(chain)) => Some(chain_page(&chain, &query, height)),
                 (spec, _) => spec,
             };
-            build_page(spec.as_ref(), &query, height)
+            build_page(spec.as_ref(), &query, height, wrap)
         });
     match page {
         Ok(body) => write_response(stream, 200, "application/octet-stream", &body).await,
@@ -486,7 +536,15 @@ async fn stream_heights(
 /// `field_selection`). Values are `0x` hex strings, or numbers for the
 /// numeric fields. A key the row omits comes back null, which is how a test
 /// makes the server withhold a field the query asked for.
-fn build_page(spec: Option<&Value>, query: &Value, height: u64) -> Result<Vec<u8>> {
+/// How a page goes on the wire: on its own, or inside the reply to a query the
+/// client asked for by its cached id.
+#[derive(Clone, Copy)]
+enum Wrap {
+    Plain,
+    Cached,
+}
+
+fn build_page(spec: Option<&Value>, query: &Value, height: u64, wrap: Wrap) -> Result<Vec<u8>> {
     let empty = Value::Null;
     let spec = spec.unwrap_or(&empty);
 
@@ -511,8 +569,15 @@ fn build_page(spec: Option<&Value>, query: &Value, height: u64) -> Result<Vec<u8
 
     let mut message = capnp::message::Builder::new_default();
     {
-        let mut response =
-            message.init_root::<hypersync_net_types_capnp::query_response::Builder>();
+        let mut response = match wrap {
+            Wrap::Plain => {
+                message.init_root::<hypersync_net_types_capnp::query_response::Builder>()
+            }
+            Wrap::Cached => message
+                .init_root::<hypersync_net_types_capnp::cached_query_response::Builder>()
+                .init_either()
+                .init_query_response(),
+        };
         response.set_archive_height(archive_height);
         response.set_next_block(next_block);
         response.set_total_execution_time(0);
@@ -803,7 +868,7 @@ mod tests {
     }
 
     fn decode(spec: Value, query: Value) -> Decoded {
-        let bytes = build_page(Some(&spec), &query, 100).expect("build page");
+        let bytes = build_page(Some(&spec), &query, 100, Wrap::Plain).expect("build page");
         let message = capnp::serialize_packed::read_message(
             bytes.as_slice(),
             capnp::message::ReaderOptions::new(),
@@ -972,6 +1037,7 @@ mod tests {
             Some(&serde_json::json!({"logs": [{"nope": 1}]})),
             &serde_json::json!({}),
             0,
+            Wrap::Plain,
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains("'nope' is not a HyperSync log field"));

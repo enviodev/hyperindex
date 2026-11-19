@@ -76,7 +76,6 @@ let getItems = async (
     ~knownHeight=1000,
     ~partitionId="0",
     ~selection,
-    ~itemsTarget=None,
     ~retry=0,
     ~logger=Logger.makeInMemory(),
   )

@@ -24,12 +24,7 @@ const MAX_NUM_TRANSACTIONS: usize = 1_000_000;
 /// Every block of `[from_slot, to_slot)` beside every transaction's slot and
 /// outcome. It selects no other table: joined to a selection matching every
 /// transaction, the instruction table would return each one's instructions.
-pub(super) fn query(
-    from_slot: u64,
-    to_slot: Option<u64>,
-    block: Vec<BlockField>,
-    max_num_blocks: Option<usize>,
-) -> SolanaQuery {
+pub(super) fn query(from_slot: u64, to_slot: Option<u64>, block: Vec<BlockField>) -> SolanaQuery {
     SolanaQuery {
         from_slot,
         to_slot,
@@ -40,7 +35,6 @@ pub(super) fn query(
             transaction: vec![TransactionField::Slot, TransactionField::Success],
             ..Default::default()
         },
-        max_num_blocks,
         max_num_transactions: Some(MAX_NUM_TRANSACTIONS),
         ..Default::default()
     }

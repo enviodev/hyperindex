@@ -117,10 +117,12 @@ describe("FetchState batch priority across chains", () => {
     },
   )
 
+  // Chain 3 is never answered here, so its first probe holds its 5000-item
+  // page throughout: the pool leaves room beside it for the other chains.
   scenario->Scenario.it(
     "takes a chain with a full batch before one further behind",
     ~sources,
-    ~targetBufferSize=1000,
+    ~targetBufferSize=100_000,
     async (~t, ~indexer, ~source) => {
       let runs = await handlerOrder(
         ~indexer,
@@ -134,7 +136,7 @@ describe("FetchState batch priority across chains", () => {
   scenario->Scenario.it(
     "counts a chain holding exactly a batch as full",
     ~sources,
-    ~targetBufferSize=1000,
+    ~targetBufferSize=100_000,
     async (~t, ~indexer, ~source) => {
       let runs = await handlerOrder(
         ~indexer,

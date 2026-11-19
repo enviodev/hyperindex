@@ -31,7 +31,6 @@ let make = ({chainId, endpointUrl, apiToken, chainBuffer, logger}: options): t =
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
-    ~itemsTarget as _,
     ~retry,
     ~logger as _,
   ) => {

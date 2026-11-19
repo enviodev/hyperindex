@@ -712,6 +712,7 @@ let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
     ~processingBlockNumber=cs.processingBlockNumber,
     ~chainTargetBlock,
     ~chainTargetItems,
+    ~chainDensity=?cs->effectiveDensity,
   )
 }
 

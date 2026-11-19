@@ -16,6 +16,7 @@ external classNew: (Core.mockHyperSyncServerCtor, Null.t<int>, Null.t<int>) => t
 @send external pushResponseJson: (t, string) => unit = "pushResponse"
 @send external serveChainJson: (t, string) => unit = "serveChain"
 @send external takeQueriesJson: t => array<string> = "takeQueries"
+@send external takeUploadsJson: t => array<string> = "takeUploads"
 @send external close: t => unit = "close"
 
 // The addon's client rejects a token that isn't a UUID before it ever reaches
@@ -64,6 +65,11 @@ let pushRawReply = (server, reply: rawReply) =>
 
 /// The query bodies received so far, oldest first, draining them.
 let takeQueries = server => server->takeQueriesJson->Array.map(body => body->JSON.parseOrThrow)
+
+/// The query bodies the client had to upload in full, oldest first, draining
+/// them. The server caches a body under everything but its block range, the
+/// way HyperSync does, so a query whose id it already holds isn't among them.
+let takeUploads = server => server->takeUploadsJson->Array.map(body => body->JSON.parseOrThrow)
 
 let withServer = async (~height=?, body) => {
   let server = make(~height?)

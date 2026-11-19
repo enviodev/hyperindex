@@ -2,8 +2,9 @@ open Vitest
 
 // Two single-address partitions; holding partition "1"'s first probe in flight
 // keeps the chain cold, so every tick hands partition "0" targetBufferSize / 10
-// fresh items. An end block bounds the probes, which then carry both a toBlock
-// and an item cap.
+// fresh items. Each first probe reserves a 5000-item page, so the pool is at
+// least 100_000 for both to go out at once. An end block gives the probes a
+// toBlock.
 let makeScenario = (~endBlock=?) =>
   Scenario.make(
     ~configYaml=`
@@ -36,7 +37,6 @@ type issuedQuery = {
   partitionId: string,
   fromBlock: int,
   toBlock: MockSource.toBlock,
-  itemsTarget: option<int>,
 }
 
 // The queries issued since the last call, in arrival order.
@@ -47,25 +47,16 @@ let takeNewQueries = (mock: MockSource.t, ~seen: array<MockSource.pendingItemsQu
     partitionId: query.partitionId,
     fromBlock: query.fromBlock,
     toBlock: query.toBlock,
-    itemsTarget: query->MockSource.itemsTarget,
   })
 }
 
 let newPartitionZeroQueries = (mock, ~seen) =>
   mock->takeNewQueries(~seen)->Array.filter(query => query.partitionId === "0")
 
-let probe = (~fromBlock, ~toBlock, ~itemsTarget) => {
-  partitionId: "0",
-  fromBlock,
-  toBlock,
-  itemsTarget: Some(itemsTarget),
-}
-
 let chunk = (~fromBlock, ~toBlock) => {
   partitionId: "0",
   fromBlock,
   toBlock: Bounded(toBlock),
-  itemsTarget: None,
 }
 
 // Replies to partition "0"'s query at `fromBlock` with `count(query)` items, all
@@ -95,10 +86,8 @@ let startHoldingPartitionOne = async (mock: MockSource.t) => {
   ])
 }
 
-let itemsTargetOf = query => query->MockSource.itemsTarget->Option.getOrThrow
-
-// Two 10-block probe responses set up 18-block chunks; with 100 fresh items the
-// blended density decides how many of them go out.
+// Two 10-block probe responses set up 18-block chunks; with 10000 fresh items
+// the blended density decides how many of them go out.
 let chunksAfterTwoResponses = async (mock: MockSource.t, ~firstCount, ~secondCount) => {
   await mock->startHoldingPartitionOne
   await mock->respond(~fromBlock=1, ~count=firstCount, ~latestFetchedBlockNumber=10)
@@ -111,55 +100,21 @@ let chunksAfterTwoResponses = async (mock: MockSource.t, ~firstCount, ~secondCou
 }
 
 describe("FetchState response density and source range capacity over the indexer loop", () => {
-  // The probe at 301 asks for at most 1000 items. Answering all 1000 by block
-  // 390 is the cap, not the source, stopping it: the 300-block capacity from the
-  // first response stays, so once a second full-range response lands the
-  // chunks span 300 * 1.8 = 540 blocks.
+  // No query sends a row limit, so a probe stopping at block 390 is the source
+  // stopping, however many items it brought: the 90 blocks become capacity and
+  // the chunks span ceil(90 * 1.8) = 162 blocks.
   makeScenario(
     ~endBlock=100_000,
   )->Scenario.it(
-    "keeps the source range capacity when a capped query stops at its cap",
+    "takes the source range capacity from a probe that stops short of its range",
     ~sources,
     ~maxAddrInPartition=1,
-    ~targetBufferSize=10_000,
-    async (~t, ~indexer as _, ~source) => {
-      let mock = source(1)
-      let seen = []
-      await mock->startHoldingPartitionOne
-      await mock->respond(~fromBlock=1, ~count=_ => 100, ~latestFetchedBlockNumber=300)
-      await mock.expectItemsQueries([{partitionId: "0", fromBlock: 301, reply: LeavePending}])
-      let afterFirst = mock->newPartitionZeroQueries(~seen)
-      await mock->respond(~fromBlock=301, ~count=itemsTargetOf, ~latestFetchedBlockNumber=390)
-      await mock.expectItemsQueries([{partitionId: "0", fromBlock: 391, reply: LeavePending}])
-      let afterCapHit = mock->newPartitionZeroQueries(~seen)
-      await mock->respond(~fromBlock=391, ~count=_ => 100, ~latestFetchedBlockNumber=690)
-      await mock.expectItemsQueries([{partitionId: "0", fromBlock: 691, reply: LeavePending}])
-      t.expect((afterFirst, afterCapHit, mock->newPartitionZeroQueries(~seen))).toEqual((
-        [probe(~fromBlock=301, ~toBlock=Bounded(100_000), ~itemsTarget=1000)],
-        [probe(~fromBlock=391, ~toBlock=Bounded(100_000), ~itemsTarget=1000)],
-        [chunk(~fromBlock=691, ~toBlock=1230)],
-      ))
-    },
-  )
-
-  // 999 of the 1000 items is the source stopping short on its own: the 90
-  // blocks become capacity and the chunks span ceil(90 * 1.8) = 162 blocks.
-  makeScenario(
-    ~endBlock=100_000,
-  )->Scenario.it(
-    "takes the source range capacity from a capped query that stops short of its cap",
-    ~sources,
-    ~maxAddrInPartition=1,
-    ~targetBufferSize=10_000,
+    ~targetBufferSize=100_000,
     async (~t, ~indexer as _, ~source) => {
       let mock = source(1)
       await mock->startHoldingPartitionOne
-      await mock->respond(~fromBlock=1, ~count=_ => 100, ~latestFetchedBlockNumber=300)
-      await mock->respond(
-        ~fromBlock=301,
-        ~count=query => query->itemsTargetOf - 1,
-        ~latestFetchedBlockNumber=390,
-      )
+      await mock->respond(~fromBlock=1, ~count=_ => 1000, ~latestFetchedBlockNumber=300)
+      await mock->respond(~fromBlock=301, ~count=_ => 10_000, ~latestFetchedBlockNumber=390)
       await mock.expectItemsQueries([
         {partitionId: "0", fromBlock: 391, reply: LeavePending},
         {partitionId: "0", fromBlock: 553, reply: LeavePending},
@@ -175,18 +130,18 @@ describe("FetchState response density and source range capacity over the indexer
     "takes the source range capacity from a chunk that stops short of its range",
     ~sources,
     ~maxAddrInPartition=1,
-    ~targetBufferSize=10_000,
+    ~targetBufferSize=100_000,
     async (~t, ~indexer as _, ~source) => {
       let mock = source(1)
       await mock->startHoldingPartitionOne
-      await mock->respond(~fromBlock=1, ~count=_ => 100, ~latestFetchedBlockNumber=10)
-      await mock->respond(~fromBlock=11, ~count=_ => 100, ~latestFetchedBlockNumber=20)
+      await mock->respond(~fromBlock=1, ~count=_ => 1000, ~latestFetchedBlockNumber=10)
+      await mock->respond(~fromBlock=11, ~count=_ => 1000, ~latestFetchedBlockNumber=20)
       await mock.expectItemsQueries([
         {partitionId: "0", fromBlock: 111, toBlock: Bounded(128), reply: LeavePending},
         {partitionId: "0", reply: LeavePending},
       ])
       let seen = mock.pendingItemsQueries->Array.copy
-      await mock->respond(~fromBlock=21, ~count=_ => 50, ~latestFetchedBlockNumber=25)
+      await mock->respond(~fromBlock=21, ~count=_ => 500, ~latestFetchedBlockNumber=25)
       await mock.expectItemsQueries([
         {partitionId: "0", fromBlock: 26, reply: LeavePending},
         {partitionId: "0", fromBlock: 174, reply: LeavePending},
@@ -211,11 +166,12 @@ describe("FetchState response density and source range capacity over the indexer
     "keeps a first response with no items as a zero density sample",
     ~sources,
     ~maxAddrInPartition=1,
-    ~targetBufferSize=1_000,
+    ~targetBufferSize=100_000,
     async (~t, ~indexer as _, ~source) => {
-      // (0 + 2) / 2 = 1 item/block prices a chunk at 18 items: six cover 100.
+      // (0 + 200) / 2 = 100 items/block prices a chunk at 1800 items: six
+      // cover 10000.
       t.expect(
-        await source(1)->chunksAfterTwoResponses(~firstCount=_ => 0, ~secondCount=20),
+        await source(1)->chunksAfterTwoResponses(~firstCount=_ => 0, ~secondCount=2000),
       ).toEqual(
         Array.fromInitializer(
           ~length=6,
@@ -226,15 +182,15 @@ describe("FetchState response density and source range capacity over the indexer
   )
 
   makeScenario()->Scenario.it(
-    "seeds density from a first response that hit its cap",
+    "seeds density from the first response",
     ~sources,
     ~maxAddrInPartition=1,
-    ~targetBufferSize=1_000,
+    ~targetBufferSize=100_000,
     async (~t, ~indexer as _, ~source) => {
-      // The first probe gets as many items as it asked for, 50. (5 + 1) / 2 =
-      // 3 items/block prices a chunk at 54 items: two cover 100.
+      // 5000 items over the first probe's 10 blocks. (500 + 100) / 2 = 300
+      // items/block prices a chunk at 5400 items: two cover 10000.
       t.expect(
-        await source(1)->chunksAfterTwoResponses(~firstCount=itemsTargetOf, ~secondCount=10),
+        await source(1)->chunksAfterTwoResponses(~firstCount=_ => 5000, ~secondCount=1000),
       ).toEqual([chunk(~fromBlock=21, ~toBlock=38), chunk(~fromBlock=39, ~toBlock=56)])
     },
   )

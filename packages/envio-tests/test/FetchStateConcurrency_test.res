@@ -34,38 +34,44 @@ type issuedQuery = {
   partitionId: string,
   fromBlock: int,
   toBlock: MockSource.toBlock,
-  itemsTarget: option<int>,
+  reservedItems: option<int>,
 }
 
-let toIssuedQuery = (query: MockSource.pendingItemsQuery): issuedQuery => {
-  partitionId: query.partitionId,
-  fromBlock: query.fromBlock,
-  toBlock: query.toBlock,
-  itemsTarget: query->MockSource.itemsTarget,
-}
-
-// The queries issued since the last call, in arrival order.
-let takeNewQueries = (mock: MockSource.t, ~seen: array<MockSource.pendingItemsQuery>) => {
+// The queries issued since the last call, in arrival order, each probe with
+// the buffer items it reserved.
+let takeNewQueries = (
+  mock: MockSource.t,
+  ~indexer: IndexerRunner.t,
+  ~seen: array<MockSource.pendingItemsQuery>,
+) => {
   mock
   ->MockSource.takeNewPendingItemsQueries(~seen)
-  ->Array.map(toIssuedQuery)
+  ->Array.map((query): issuedQuery => {
+    partitionId: query.partitionId,
+    fromBlock: query.fromBlock,
+    toBlock: query.toBlock,
+    reservedItems: indexer->QueryReservations.probeReservation(
+      ~partitionId=query.partitionId,
+      ~fromBlock=query.fromBlock,
+    ),
+  })
 }
 
 let itemsAt = (~blockNumber, ~count) =>
   Array.fromInitializer(~length=count, logIndex => {MockSource.blockNumber, logIndex})
 
-let probe = (~partitionId, ~fromBlock, ~itemsTarget) => {
+let probe = (~partitionId, ~fromBlock, ~reservedItems) => {
   partitionId,
   fromBlock,
   toBlock: Unbounded,
-  itemsTarget: Some(itemsTarget),
+  reservedItems: Some(reservedItems),
 }
 
 let chunk = (~partitionId, ~fromBlock, ~toBlock) => {
   partitionId,
   fromBlock,
   toBlock: Bounded(toBlock),
-  itemsTarget: None,
+  reservedItems: None,
 }
 
 describe("FetchState per-chain concurrency over the indexer loop", () => {
@@ -75,13 +81,13 @@ describe("FetchState per-chain concurrency over the indexer loop", () => {
     "keeps at most 100 queries in flight while sizing probes by every partition in range",
     ~sources,
     ~maxAddrInPartition=1,
-    ~targetBufferSize=10_000,
-    async (~t, ~indexer as _, ~source) => {
+    ~targetBufferSize=5_000_000,
+    async (~t, ~indexer, ~source) => {
       let mock = source(1)
       let seen = []
       mock.resolveGetHeightOrThrow(100_000)
       await mock.expectItemsQueries([{reply: LeavePending}])
-      let firstRound = mock->takeNewQueries(~seen)
+      let firstRound = mock->takeNewQueries(~indexer, ~seen)
       await mock.expectItemsQueries(
         Array.fromInitializer(
           ~length=30,
@@ -95,29 +101,32 @@ describe("FetchState per-chain concurrency over the indexer loop", () => {
         {partitionId: "29", fromBlock: 11, reply: LeavePending},
         {reply: LeavePending},
       ])
-      let afterThirtyResponses = mock->takeNewQueries(~seen)
+      let afterThirtyResponses = mock->takeNewQueries(~indexer, ~seen)
       t.expect({
         "firstRound": firstRound,
         "afterThirtyResponses": afterThirtyResponses,
         "inFlight": mock.pendingItemsQueries->Array.length,
       }).toEqual({
-        // 1000 cold items split over all 120 partitions in range, though only
-        // 100 of them are admitted.
+        // On a chain with no density each probe reserves a 5000-item page; the
+        // 500000-item cold budget holds them all, and the cap admits 100.
         "firstRound": Array.fromInitializer(
           ~length=100,
-          index => probe(~partitionId=index->Int.toString, ~fromBlock=1, ~itemsTarget=8),
+          index => probe(~partitionId=index->Int.toString, ~fromBlock=1, ~reservedItems=5000),
         ),
         // Each response frees one slot, taken by the partition furthest behind:
-        // first the 20 never queried, then the ones that answered most recently.
-        // 21 partitions are in range each time, so each probe gets 1000 / 21.
+        // first the 20 never queried, still reserving a page each, then the
+        // ones that answered most recently. Those now have a density, so with
+        // 21 partitions in range each time each gets 500000 / 21.
         "afterThirtyResponses": Array.concat(
           Array.fromInitializer(
             ~length=20,
-            index => probe(~partitionId=(100 + index)->Int.toString, ~fromBlock=1, ~itemsTarget=48),
+            index =>
+              probe(~partitionId=(100 + index)->Int.toString, ~fromBlock=1, ~reservedItems=5000),
           ),
           Array.fromInitializer(
             ~length=10,
-            index => probe(~partitionId=(20 + index)->Int.toString, ~fromBlock=11, ~itemsTarget=48),
+            index =>
+              probe(~partitionId=(20 + index)->Int.toString, ~fromBlock=11, ~reservedItems=23_810),
           ),
         ),
         "inFlight": 100,
@@ -126,15 +135,16 @@ describe("FetchState per-chain concurrency over the indexer loop", () => {
   )
 
   // Holding partition "1"'s probe keeps the chain cold, handing it
-  // targetBufferSize / 10 = 3000 fresh items per tick.
+  // targetBufferSize / 10 = 30000 fresh items per tick, room for both first
+  // probes' 5000-item pages.
   makeScenario(
     ~addressCount=2,
   )->Scenario.it(
     "keeps a partition querying past its pipeline while only the head chunk is still being fetched",
     ~sources,
     ~maxAddrInPartition=1,
-    ~targetBufferSize=30_000,
-    async (~t, ~indexer as _, ~source) => {
+    ~targetBufferSize=300_000,
+    async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(100_000)
       await mock.expectItemsQueries([
@@ -142,7 +152,7 @@ describe("FetchState per-chain concurrency over the indexer loop", () => {
           partitionId: "0",
           fromBlock: 1,
           reply: Respond({
-            items: itemsAt(~blockNumber=10, ~count=100),
+            items: itemsAt(~blockNumber=10, ~count=1000),
             latestFetchedBlockNumber: 10,
           }),
         },
@@ -153,7 +163,7 @@ describe("FetchState per-chain concurrency over the indexer loop", () => {
           partitionId: "0",
           fromBlock: 11,
           reply: Respond({
-            items: itemsAt(~blockNumber=15, ~count=100),
+            items: itemsAt(~blockNumber=15, ~count=1000),
             latestFetchedBlockNumber: 20,
           }),
         },
@@ -163,7 +173,8 @@ describe("FetchState per-chain concurrency over the indexer loop", () => {
         {partitionId: "0", reply: LeavePending},
       ])
       let seen = []
-      let pipeline = mock->takeNewQueries(~seen)->Array.filter(query => query.partitionId === "0")
+      let pipeline =
+        mock->takeNewQueries(~indexer, ~seen)->Array.filter(query => query.partitionId === "0")
       await mock.expectItemsQueries(
         Array.fromInitializer(
           ~length=11,
@@ -175,8 +186,8 @@ describe("FetchState per-chain concurrency over the indexer loop", () => {
         ),
       )
       await mock.expectItemsQueries([{partitionId: "0", reply: LeavePending}])
-      t.expect((pipeline, mock->takeNewQueries(~seen))).toEqual((
-        // The budget affords 17 chunks of 180 items; the pipeline stops at 12.
+      t.expect((pipeline, mock->takeNewQueries(~indexer, ~seen))).toEqual((
+        // The budget affords 17 chunks of 1800 items; the pipeline stops at 12.
         Array.fromInitializer(
           ~length=12,
           index => chunk(~partitionId="0", ~fromBlock=21 + index * 18, ~toBlock=38 + index * 18),
@@ -206,7 +217,7 @@ describe("FetchState per-chain concurrency over the indexer loop", () => {
     "re-sorts partitions when a response overtakes another",
     ~sources,
     ~maxAddrInPartition=1,
-    ~targetBufferSize=10_000,
+    ~targetBufferSize=100_000,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(100_000)

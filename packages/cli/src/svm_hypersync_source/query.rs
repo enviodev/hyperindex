@@ -27,11 +27,6 @@ pub struct SvmQuery {
     pub account_activity: Option<Vec<AccountActivitySelection>>,
     pub include_all_blocks: Option<bool>,
     pub fields: Option<FieldSelection>,
-    pub max_num_blocks: Option<i64>,
-    pub max_num_transactions: Option<i64>,
-    pub max_num_instructions: Option<i64>,
-    pub max_num_logs: Option<i64>,
-    pub max_num_account_activity: Option<i64>,
 }
 
 #[napi(object)]
@@ -280,20 +275,11 @@ impl TryFrom<SvmQuery> for net::SolanaQuery {
                 .map(TryInto::try_into)
                 .transpose()?
                 .unwrap_or_default(),
-            max_num_blocks: q.max_num_blocks.filter(|v| *v >= 0).map(|v| v as usize),
-            max_num_transactions: q
-                .max_num_transactions
-                .filter(|v| *v >= 0)
-                .map(|v| v as usize),
-            max_num_instructions: q
-                .max_num_instructions
-                .filter(|v| *v >= 0)
-                .map(|v| v as usize),
-            max_num_logs: q.max_num_logs.filter(|v| *v >= 0).map(|v| v as usize),
-            max_num_account_activity: q
-                .max_num_account_activity
-                .filter(|v| *v >= 0)
-                .map(|v| v as usize),
+            max_num_blocks: None,
+            max_num_transactions: None,
+            max_num_instructions: None,
+            max_num_logs: None,
+            max_num_account_activity: None,
         })
     }
 }

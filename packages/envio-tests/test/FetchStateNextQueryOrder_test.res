@@ -40,16 +40,20 @@ type queryShape = {
   partitionId: string,
   fromBlock: int,
   toBlock: MockSource.toBlock,
-  itemsTarget: option<int>,
+  reservedItems: option<int>,
   addresses: array<string>,
 }
 
-let pendingShapes = (source: MockSource.t) =>
+// The pending queries, each open-ended probe with the buffer items it reserved.
+let pendingShapes = (source: MockSource.t, ~indexer: IndexerRunner.t) =>
   source.pendingItemsQueries->Array.map(query => {
     partitionId: query.partitionId,
     fromBlock: query.fromBlock,
     toBlock: query.toBlock,
-    itemsTarget: query->MockSource.itemsTarget,
+    reservedItems: indexer->QueryReservations.probeReservation(
+      ~partitionId=query.partitionId,
+      ~fromBlock=query.fromBlock,
+    ),
     addresses: query->MockSource.addresses->Array.map(Address.toString),
   })
 
@@ -105,7 +109,7 @@ describe("FetchState next query order", () => {
     "Queries every partition behind the head, furthest behind first",
     ~sources=[{chain: 1337}],
     ~maxAddrInPartition=1,
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(10)
       await sync.expectItemsQueries([
@@ -113,26 +117,28 @@ describe("FetchState next query order", () => {
         {partitionId: "1", reply: LeavePending},
         {partitionId: "2", reply: LeavePending},
       ])
-      t.expect(sync->pendingShapes).toEqual([
+      // The chain has no density yet, so each probe reserves a 5000-item page
+      // whatever its start, and the default pool's cold budget holds all three.
+      t.expect(sync->pendingShapes(~indexer)).toEqual([
         {
           partitionId: "0",
           fromBlock: 0,
           toBlock: Unbounded,
-          itemsTarget: Some(10000),
+          reservedItems: Some(5000),
           addresses: ["0x0000000000000000000000000000000000000003"],
         },
         {
           partitionId: "1",
           fromBlock: 5,
           toBlock: Unbounded,
-          itemsTarget: Some(5455),
+          reservedItems: Some(5000),
           addresses: ["0x0000000000000000000000000000000000000001"],
         },
         {
           partitionId: "2",
           fromBlock: 6,
           toBlock: Unbounded,
-          itemsTarget: Some(4545),
+          reservedItems: Some(5000),
           addresses: ["0x0000000000000000000000000000000000000002"],
         },
       ])
@@ -161,14 +167,14 @@ describe("FetchState next query order", () => {
       ])
       await indexer.advanceTime(1000)
       await sync.expectNewHeightCalls(0)
-      let behindHead = sync->pendingShapes
+      let behindHead = sync->pendingShapes(~indexer)
 
       await sync.expectItemsQueries([
         {partitionId: "2", reply: upTo(10)},
         {partitionId: "3", reply: upTo(10)},
       ])
       await sync.expectNewHeightCalls(1)
-      let atHead = sync->pendingShapes
+      let atHead = sync->pendingShapes(~indexer)
 
       sync.resolveGetHeightOrThrow(20)
       await sync.expectItemsQueries([
@@ -177,7 +183,7 @@ describe("FetchState next query order", () => {
         {partitionId: "2", reply: LeavePending},
         {partitionId: "3", reply: LeavePending},
       ])
-      let toEndBlock = sync->pendingShapes
+      let toEndBlock = sync->pendingShapes(~indexer)
       await sync.expectItemsQueries([
         {partitionId: "0", reply: upTo(11)},
         {partitionId: "1", reply: upTo(11)},
@@ -195,7 +201,7 @@ describe("FetchState next query order", () => {
         behindHead,
         atHead,
         toEndBlock,
-        sync->pendingShapes,
+        sync->pendingShapes(~indexer),
         exitedBeforeLastPartition,
         exited.contents,
       )).toEqual((
@@ -204,14 +210,14 @@ describe("FetchState next query order", () => {
             partitionId: "2",
             fromBlock: 7,
             toBlock: Bounded(11),
-            itemsTarget: Some(30000),
+            reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000003"],
           },
           {
             partitionId: "3",
             fromBlock: 5,
             toBlock: Bounded(11),
-            itemsTarget: Some(30000),
+            reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000004"],
           },
         ],
@@ -221,28 +227,28 @@ describe("FetchState next query order", () => {
             partitionId: "3",
             fromBlock: 11,
             toBlock: Bounded(11),
-            itemsTarget: Some(7500),
+            reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000004"],
           },
           {
             partitionId: "2",
             fromBlock: 11,
             toBlock: Bounded(11),
-            itemsTarget: Some(7500),
+            reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000003"],
           },
           {
             partitionId: "1",
             fromBlock: 11,
             toBlock: Bounded(11),
-            itemsTarget: Some(7500),
+            reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000002"],
           },
           {
             partitionId: "0",
             fromBlock: 11,
             toBlock: Bounded(11),
-            itemsTarget: Some(7500),
+            reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000001"],
           },
         ],
@@ -265,7 +271,14 @@ describe("FetchState next query order", () => {
         Array.fromInitializer(~length=count, i => {MockSource.blockNumber: from + i, logIndex: 0})
       let chunkRanges = () =>
         sync.pendingItemsQueries->Array.map(
-          query => (query.fromBlock, query.toBlock, query->MockSource.itemsTarget),
+          query => (
+            query.fromBlock,
+            query.toBlock,
+            indexer->QueryReservations.probeReservation(
+              ~partitionId=query.partitionId,
+              ~fromBlock=query.fromBlock,
+            ),
+          ),
         )
       sync.resolveGetHeightOrThrow(1_000_000)
       await sync.expectItemsQueries([
