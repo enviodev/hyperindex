@@ -1,7 +1,6 @@
 @@directive("import packageJson from '../package.json' with { type: 'json' }")
 
 external magic: 'a => 'b = "%identity"
-@val external floatToInt: float => int = "Math.trunc"
 
 // Force a function to compile to a regular `function` instead of an arrow,
 // so `this` binds to the call-site receiver (needed for prototype getters,
@@ -79,19 +78,6 @@ module Option = {
     | _ => None
     }
   }
-
-  let flatten = opt =>
-    switch opt {
-    | None => None
-    | Some(opt) => opt
-    }
-
-  let getExn = (opt, message) => {
-    switch opt {
-    | None => JsError.throwWithMessage(message)
-    | Some(v) => v
-    }
-  }
 }
 
 module Dict = {
@@ -136,13 +122,6 @@ module Dict = {
     }
   }
 
-  let pushMany = (dict, key, values) => {
-    switch dict->dangerouslyGetNonOption(key) {
-    | Some(arr) => arr->Array.pushMany(values)
-    | None => dict->Dict.set(key, values)
-    }
-  }
-
   let merge: (dict<'a>, dict<'a>) => dict<'a> = %raw(`(dictA, dictB) => ({...dictA, ...dictB})`)
 
   // Keeps every key either dict has; `pick` decides a key both have.
@@ -153,9 +132,6 @@ module Dict = {
     }
     return merged;
   }`)
-
-  @val
-  external mergeInPlace: (dict<'a>, dict<'a>) => dict<'a> = "Object.assign"
 
   // Use %raw to support for..in which is a ~10% faster than .forEach
   let mapValues: (dict<'a>, 'a => 'b) => dict<'b> = %raw(`(dict, f) => {
@@ -333,7 +309,6 @@ Helper to check if a value exists in an array
   }
 
   let last = (arr: array<'a>): option<'a> => arr->Array.get(arr->Array.length - 1)
-  let first = (arr: array<'a>): option<'a> => arr->Array.get(0)
 
   let lastUnsafe = (arr: array<'a>): 'a => arr->Array.getUnsafe(arr->Array.length - 1)
   let firstUnsafe = (arr: array<'a>): 'a => arr->Array.getUnsafe(0)
@@ -353,9 +328,6 @@ Helper to check if a value exists in an array
     })
     interleaved
   }
-
-  @send
-  external flatten: (array<array<'a>>, @as(1) _) => array<'a> = "flat"
 
   @send
   external copy: array<'a> => array<'a> = "slice"
@@ -420,16 +392,6 @@ module Url = {
       }
     | None => None
     }
-  }
-}
-
-module Result = {
-  let forEach = (result, fn) => {
-    switch result {
-    | Ok(v) => fn(v)
-    | Error(_) => ()
-    }
-    result
   }
 }
 
@@ -637,24 +599,6 @@ external entries: t<'value> => Js_iterator.t<('value, 'value)> = "entries"
   )
   @send
   external forEach: (t<'value>, 'value => unit) => unit = "forEach"
-
-  @ocaml.doc(
-    "Calls `callbackFn` once for each value present in the `Set` object, in insertion order."
-  )
-  @send
-  external forEachWithSet: (t<'value>, ('value, 'value, t<'value>) => unit) => unit = "forEach"
-}
-
-// Typed-key dictionary backed by Js.Dict. Keys must be @unboxed string variants.
-module Record = {
-  type t<'key, 'value>
-
-  external fromDict: dict<'value> => t<'key, 'value> = "%identity"
-  let fromArray: array<('key, 'value)> => t<'key, 'value> = pairs =>
-    pairs->(magic: array<('key, 'value)> => array<(string, 'value)>)->Dict.fromArray->fromDict
-
-  @get_index external getUnsafe: (t<'key, 'value>, 'key) => 'value = ""
-  @get_index external get: (t<'key, 'value>, 'key) => option<'value> = ""
 }
 
 module WeakMap = {
@@ -663,7 +607,6 @@ module WeakMap = {
   @new external make: unit => t<'k, 'v> = "WeakMap"
 
   @send external get: (t<'k, 'v>, 'k) => option<'v> = "get"
-  @send external unsafeGet: (t<'k, 'v>, 'k) => 'v = "get"
   @send external has: (t<'k, 'v>, 'k) => bool = "has"
   @send external set: (t<'k, 'v>, 'k, 'v) => t<'k, 'v> = "set"
 
@@ -687,7 +630,6 @@ module Map = {
   @new external make: unit => t<'k, 'v> = "Map"
 
   @send external get: (t<'k, 'v>, 'k) => option<'v> = "get"
-  @send external unsafeGet: (t<'k, 'v>, 'k) => 'v = "get"
   @send external has: (t<'k, 'v>, 'k) => bool = "has"
   @send external set: (t<'k, 'v>, 'k, 'v) => t<'k, 'v> = "set"
   @send external delete: (t<'k, 'v>, 'k) => bool = "delete"
@@ -852,12 +794,6 @@ module Promise = {
   // Drop a promise's resolved value. We can't use `Promise.ignore` for this
   // because that returns `unit`, not `promise<unit>`.
   external ignoreValue: promise<'a> => promise<unit> = "%identity"
-
-  // Escape hatches for awaiting non-promise values / producing fake promises
-  // in type-directed contexts. Used by a handful of bindings that need to
-  // interoperate with raw JS values.
-  external unsafe_async: 'a => promise<'a> = "%identity"
-  external unsafe_await: promise<'a> => 'a = "?await"
 }
 
 // `JSON.stringify` writes half a surrogate pair as a `\udXXX` escape, which no

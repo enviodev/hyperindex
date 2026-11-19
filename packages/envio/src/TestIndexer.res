@@ -10,12 +10,6 @@ type fuelChainConfig = {
   simulate?: array<Envio.fuelSimulateItem>,
 }
 
-type svmChainConfig = {
-  startBlock?: int,
-  endBlock?: int,
-  simulate?: array<Envio.svmSimulateItem>,
-}
-
 // Internal type used for block range validation and state management
 type chainConfig = {
   startBlock: int,

@@ -92,8 +92,6 @@ module Process = {
   @val @scope("process")
   external onDisconnect: (@as("disconnect") _, unit => unit) => unit = "on"
   @val @scope("process") external argv: array<string> = "argv"
-  @val @scope("process")
-  external emitMessage: (@as("message") _, 'msg) => bool = "emit"
 }
 
 module Buffer = {
@@ -108,7 +106,6 @@ module Buffer = {
   external fromArrayBuffer: (ArrayBuffer.t, ~byteOffset: int, ~length: int) => t = "from"
   @val @scope("Buffer") external fromHex: (string, @as("hex") _) => t = "from"
   @send external toHex: (t, @as("hex") _) => string = "toString"
-  let empty = alloc(0)
 }
 
 module V8 = {
@@ -158,19 +155,10 @@ module PerfHooks = {
 }
 
 module ChildProcess = {
-  type execOptions = {
-    cwd?: string,
-    env?: dict<string>,
-    shell?: string,
-  }
-
   type callback = (~error: Null.t<exn>, ~stdout: string, ~stderr: string) => unit
 
   @module("child_process")
   external exec: (string, callback) => unit = "exec"
-
-  @module("child_process")
-  external execWithOptions: (string, execOptions, callback) => unit = "exec"
 
   type execFileOptions = {
     cwd?: string,
@@ -231,18 +219,9 @@ module ChildProcess = {
 
 module Url = {
   type t
-  @module("url") external fileURLToPath: t => string = "fileURLToPath"
-  @module("url") external fileURLToPathFromString: string => string = "fileURLToPath"
   // Convert a file path to a file:// URL string (for dynamic imports)
   @module("url") external pathToFileURL: string => t = "pathToFileURL"
   @send external toString: t => string = "toString"
-}
-
-module ImportMeta = {
-  type t = {url: Url.t}
-  @val external importMeta: t = "import.meta"
-  // Resolve module specifier to file:// URL
-  @val external resolve: string => string = "import.meta.resolve"
 }
 
 module Path = {
@@ -259,47 +238,11 @@ module Path = {
   external toString: t => string = "%identity"
 }
 
-module WorkerThreads = {
-  // Check if we're in the main thread or a worker
-  @module("worker_threads") external isMainThread: bool = "isMainThread"
-
-  // Worker data passed from main thread
-  @module("worker_threads") external workerData: Nullable.t<'a> = "workerData"
-
-  // MessagePort for communication with parent
-  type messagePort
-  @module("worker_threads") external parentPort: Nullable.t<messagePort> = "parentPort"
-  @send external postMessage: (messagePort, 'a) => unit = "postMessage"
-  @send external onPortMessage: (messagePort, @as("message") _, 'a => unit) => unit = "on"
-
-  // Worker class for spawning workers
-  type worker
-  type workerOptions = {
-    workerData?: JSON.t,
-    execArgv?: array<string>,
-    env?: dict<string>,
-  }
-
-  @new @module("worker_threads")
-  external makeWorker: (string, workerOptions) => worker = "Worker"
-
-  @send external onMessage: (worker, @as("message") _, 'a => unit) => unit = "on"
-  @send external onError: (worker, @as("error") _, exn => unit) => unit = "on"
-  @send external onExit: (worker, @as("exit") _, int => unit) => unit = "on"
-  @send external terminate: worker => promise<int> = "terminate"
-  @send external workerPostMessage: (worker, 'a) => unit = "postMessage"
-}
-
 module Fs = {
   type writeFileOptions = {
     mode?: int,
     // flag?: Flag.t,
     encoding?: string,
-  }
-
-  type mkdirOptions = {
-    recursive?: bool,
-    mode?: int,
   }
 
   @module("fs") external existsSync: string => bool = "existsSync"
@@ -313,34 +256,9 @@ module Fs = {
       ~options: writeFileOptions=?,
     ) => promise<unit> = "writeFile"
 
-    @module("fs") @scope("promises")
-    external appendFile: (
-      ~filepath: Path.t,
-      ~content: string,
-      ~options: writeFileOptions=?,
-    ) => promise<unit> = "appendFile"
-
-    @module("fs") @scope("promises")
-    external access: Path.t => promise<unit> = "access"
-
     type encoding = | @as("utf8") Utf8
 
     @module("fs") @scope("promises")
     external readFile: (~filepath: Path.t, ~encoding: encoding) => promise<string> = "readFile"
-
-    @module("fs") @scope("promises")
-    external mkdir: (~path: Path.t, ~options: mkdirOptions=?) => promise<unit> = "mkdir"
-
-    @module("fs") @scope("promises")
-    external readdir: Path.t => promise<array<string>> = "readdir"
-
-    type rmOptions = {recursive?: bool, force?: bool}
-    @module("fs") @scope("promises")
-    external rm: (Path.t, ~options: rmOptions=?) => promise<unit> = "rm"
-
-    type stats
-    @module("fs") @scope("promises")
-    external stat: Path.t => promise<stats> = "stat"
-    @send external statsIsDirectory: stats => bool = "isDirectory"
   }
 }

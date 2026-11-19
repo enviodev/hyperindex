@@ -2,8 +2,6 @@ open Table
 
 module RowAction = {
   type t = SET | DELETE
-  let variants = [SET, DELETE]
-  let schema = S.enum(variants)
 }
 
 // Prefix with envio_ to avoid colleasions
