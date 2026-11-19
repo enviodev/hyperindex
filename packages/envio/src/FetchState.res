@@ -884,9 +884,6 @@ type t = {
   knownHeight: int,
   firstEventBlock: option<int>,
   clientFilterPolicy: clientFilterPolicy,
-  // The most items one response on this chain has carried: what a query
-  // sending no row limit may bring back before its density is known.
-  largestPageItems: int,
 }
 
 // The latest block whose items are all in the buffer: the lowest partition
@@ -980,7 +977,6 @@ let updateInternal = (
   ~optimizedPartitions=fetchState.optimizedPartitions,
   ~blockLag=fetchState.blockLag,
   ~knownHeight=fetchState.knownHeight,
-  ~largestPageItems=fetchState.largestPageItems,
 ): t => {
   let latestOnBlockBlockNumber = switch fetchState.onBlockRegistrations {
   | [] => knownHeight
@@ -1029,7 +1025,6 @@ let updateInternal = (
     knownHeight,
     firstEventBlock: fetchState.firstEventBlock,
     clientFilterPolicy: fetchState.clientFilterPolicy,
-    largestPageItems,
   }
 
   updatedFetchState
@@ -1816,7 +1811,6 @@ let handleQueryResult = (
       ~itemsCount,
       ~latestFetchedBlock,
     ),
-    ~largestPageItems=Pervasives.max(fetchState.largestPageItems, itemsCount),
   )
 }
 
@@ -1866,9 +1860,9 @@ let maxInFlightChunksPerPartition = 12
 // per-partition cap alone would admit thousands of concurrent queries.
 let maxChainConcurrency = Env.maxChainConcurrency
 
-// What a probe reserves on a chain with no density yet, until a response on
-// the chain carries more items than this.
-let initialPageItems = 5000
+// The items one response can bring back, which a probe reserves on a chain
+// with no density yet.
+let pageItems = 5000
 
 // Chunk spans grow by this factor over the smallest recently observed source
 // range, so the pipeline keeps probing for more capacity instead of locking in
@@ -2092,7 +2086,6 @@ let pushForwardCandidates = (
   ~inRangeCount: int,
   ~chainTargetBlock: int,
   ~freshBudget: float,
-  ~largestPageItems: int,
   ~chainDensity: option<float>,
 ) => {
   // Even share of the fresh budget across the partitions actually fetching
@@ -2167,8 +2160,12 @@ let pushForwardCandidates = (
       // probe out per round trip. With no range to the target it falls back
       // to an even share of the fresh budget, so caught-up partitions still
       // probe.
+      // A page past the fresh budget reserves no more than the budget: it is
+      // admitted alone either way, and charging the rest would hold every
+      // other chain out of the shared pool until it answers.
       let itemsEst = switch (p.eventDensity, chainDensity) {
-      | (None, None) => largestPageItems
+      | (None, None) =>
+        Pervasives.min(pageItems, Pervasives.max(1, Math.ceil(freshBudget)->Float.toInt))
       | _ if rangeToTarget > 0 =>
         Pervasives.max(
           1,
@@ -2467,7 +2464,6 @@ let getNextQuery = (
       ~inRangeCount,
       ~chainTargetBlock,
       ~freshBudget,
-      ~largestPageItems=fetchState.largestPageItems,
       ~chainDensity,
     )
 
@@ -2715,7 +2711,6 @@ let make = (
     knownHeight,
     firstEventBlock,
     clientFilterPolicy,
-    largestPageItems: initialPageItems,
   }
 
   fetchState

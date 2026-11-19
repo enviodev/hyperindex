@@ -157,7 +157,7 @@ describe("FetchState query budget over the indexer loop", () => {
   )
 
   scenario->Scenario.it(
-    "reserves the largest response seen as the page for a later cold probe",
+    "reserves the whole cold budget, not a page, when the budget holds less than one",
     ~sources,
     ~maxAddrInPartition=1,
     ~targetBufferSize=10_000,
@@ -165,24 +165,24 @@ describe("FetchState query budget over the indexer loop", () => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(100_000)
       // The 1000-item cold budget holds less than a page, so one probe goes
-      // out alone, overshooting it.
+      // out alone and reserves the budget: the rest of a page would only hold
+      // other chains out of the shared pool until it answers.
       await mock.expectItemsQueries([
         {
           partitionId: "0",
           fromBlock: 1,
           reply: Respond({
-            items: itemsAt(~blockNumber=10, ~count=6000),
+            items: itemsAt(~blockNumber=10, ~count=10),
             latestFetchedBlockNumber: 10,
           }),
         },
       ])
-      // Partition "1" hasn't answered, so the frontier stays at block 0 and
-      // the chain still has no density: its probe reserves the 6000 items one
-      // response has now carried.
+      // Partition "1" hasn't answered, so the frontier stays at block 0 and the
+      // chain still has no density: its probe goes out once the first lands.
       await mock.expectItemsQueries([{partitionId: "1", fromBlock: 1, reply: LeavePending}])
       t.expect(indexer->QueryReservations.startedTicks).toEqual([
-        [{QueryReservations.partitionId: "0", fromBlock: 1, reservedItems: 5000}],
-        [{partitionId: "1", fromBlock: 1, reservedItems: 6000}],
+        [{QueryReservations.partitionId: "0", fromBlock: 1, reservedItems: 1000}],
+        [{partitionId: "1", fromBlock: 1, reservedItems: 1000}],
       ])
     },
   )

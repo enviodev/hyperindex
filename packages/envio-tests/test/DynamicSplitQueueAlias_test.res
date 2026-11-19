@@ -249,26 +249,35 @@ describe("Dynamic-registration partition split queue aliasing", () => {
         {partitionId: "3", fromBlock: 30_001, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([respondTo("0", ~fromBlock=40_001, ~toBlock=60_000)])
-      await sourceMock.expectItemsQueries([
-        respondTo("3", ~fromBlock=30_001, ~toBlock=40_000),
-        {partitionId: "0", fromBlock: 60_001, reply: LeavePending},
-        {partitionId: "0", fromBlock: 88_801, reply: LeavePending},
-      ])
+      await sourceMock.expectItemsQueries([respondTo("3", ~fromBlock=30_001, ~toBlock=40_000)])
 
       // Resolve every remaining query to its full range, delivering whatever
-      // world events it legitimately covers. NftFactory's range from 40,001 is
-      // queried with its own addresses.
-      await sourceMock.expectItemsQueries([
-        respondTo("0", ~fromBlock=60_001, ~toBlock=88_800),
-        respondTo("0", ~fromBlock=88_801, ~toBlock=99_800),
-        respondTo("3", ~fromBlock=40_001, ~toBlock=50_800),
-        respondTo("3", ~fromBlock=50_801, ~toBlock=61_600),
-      ])
-      await sourceMock.expectItemsQueries([
-        respondTo("3", ~fromBlock=61_601, ~toBlock=79_600),
-        respondTo("3", ~fromBlock=79_601, ~toBlock=97_600),
-      ])
-      await sourceMock.expectItemsQueries([respondTo("3", ~fromBlock=97_601, ~toBlock=99_800)])
+      // world events it legitimately covers, until the indexer asks for
+      // nothing more. NftFactory's range from 40,001 is queried with its own
+      // addresses.
+      let fullRangeEnd = (query: MockSource.pendingItemsQuery) =>
+        switch query.toBlock {
+        | Bounded(toBlock) => toBlock
+        | Unbounded => 99_800
+        }
+      let rec answerEveryQueryInFull = async () => {
+        await indexer.waitUntilIdle()
+        let pending = sourceMock.pendingItemsQueries->Array.copy
+        if pending->Array.length > 0 {
+          await sourceMock.expectItemsQueries(
+            pending->Array.map(
+              (query): MockSource.expectedItemsQuery =>
+                respondTo(
+                  query.partitionId,
+                  ~fromBlock=query.fromBlock,
+                  ~toBlock=query->fullRangeEnd,
+                ),
+            ),
+          )
+          await answerEveryQueryInFull()
+        }
+      }
+      await answerEveryQueryInFull()
       await indexer.getBatchWritePromise()
 
       t.expect(
