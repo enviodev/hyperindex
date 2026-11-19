@@ -21,6 +21,9 @@ type decodedEvent = {
   // Its transaction's key in the buffer, when the item doesn't carry the
   // transaction itself.
   transactionIndex?: int,
+  // The index of the transaction it carries itself, which places it among the
+  // block's transactions.
+  inlineTransactionIndex?: int,
   blockFromStore: bool,
 }
 
@@ -68,6 +71,19 @@ let fromItems = (items: array<Internal.item>, ~blocks, ~ecosystem: Ecosystem.nam
             | Some(_) => None
             | None => Some(transactionIndex)
             },
+            inlineTransactionIndex: ?(
+              payload
+              ->Internal.getPayloadTransaction
+              ->Nullable.toOption
+              ->Option.flatMap(transaction =>
+                transaction
+                ->(Utils.magic: Internal.eventTransaction => dict<unknown>)
+                ->Dict.get("transactionIndex")
+                ->Option.flatMap(
+                  index => index->(Utils.magic: unknown => Nullable.t<int>)->Nullable.toOption,
+                )
+              )
+            ),
             blockFromStore: payload->Internal.getPayloadBlock->Nullable.toOption->Option.isNone,
           }
         | Block({onBlockRegistration, blockNumber, ?block, ?skipped}) =>
@@ -148,3 +164,10 @@ external fromSvmJsRaw: (
 // which simulated instructions read from the buffer as fetched ones do.
 let fromSvmJs = (transactions, activities, blocks) =>
   Core.getAddon().page->fromSvmJsRaw(transactions, activities, blocks)
+
+@send
+external fromEvmJsRaw: (Core.pageCtor, array<dict<JSON.t>>, array<dict<JSON.t>>) => t = "fromEvmJs"
+
+// A page of simulated EVM transactions and their blocks, as a JSON-RPC node
+// spells them, which a build matches and joins as fetched ones.
+let fromEvmJs = (~transactions, ~blocks) => Core.getAddon().page->fromEvmJsRaw(transactions, blocks)

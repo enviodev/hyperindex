@@ -264,7 +264,7 @@ impl Walker<'_> {
         for row in rows {
             while let Some(event) = decoded_events.next_if(|event| event.log_index < row.position())
             {
-                self.push_transactions_through(&mut transactions, event.transaction_index);
+                self.push_transactions_through(&mut transactions, event.place_among_transactions());
                 self.push_decoded(event, contract_register_only);
             }
             if transactions.peek().is_some() {
@@ -274,7 +274,7 @@ impl Walker<'_> {
             self.push_row(row, contract_register_only);
         }
         for event in decoded_events {
-            self.push_transactions_through(&mut transactions, event.transaction_index);
+            self.push_transactions_through(&mut transactions, event.place_among_transactions());
             self.push_decoded(event, contract_register_only);
         }
         self.push_transactions_through(&mut transactions, Some(u32::MAX));

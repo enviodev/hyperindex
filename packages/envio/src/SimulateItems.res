@@ -177,6 +177,32 @@ type rawSimulateItem
 @get external getProgram: rawSimulateItem => option<string> = "program"
 @get external getInstruction: rawSimulateItem => option<string> = "instruction"
 @get external getBlock: rawSimulateItem => option<JSON.t> = "block"
+@get external getTransaction: rawSimulateItem => option<dict<unknown>> = "transaction"
+
+// A simulated value as a JSON-RPC node spells it: quantities in hex, the one
+// decimal field as a number, and nothing for a value the test left empty.
+let toRpcValue = (value: unknown, ~key): option<JSON.t> =>
+  switch typeof(value) {
+  | #bigint =>
+    Some(JSON.String("0x" ++ value->(Utils.magic: unknown => bigint)->BigInt.toString(~radix=16)))
+  | #number if key === "l1FeeScalar" => Some(value->(Utils.magic: unknown => JSON.t))
+  | #number =>
+    Some(JSON.String("0x" ++ value->(Utils.magic: unknown => int)->Int.toString(~radix=16)))
+  | #string if value === %raw(`""`) => None
+  | #string | #object if value !== %raw(`null`) => Some(value->(Utils.magic: unknown => JSON.t))
+  | _ => None
+  }
+
+let toRpcObject = (fields: dict<unknown>) => {
+  let object = Dict.make()
+  fields->Dict.forEachWithKey((value, key) =>
+    switch value->toRpcValue(~key) {
+    | Some(value) => object->Dict.set(key, value)
+    | None => ()
+    }
+  )
+  object
+}
 
 let findEventConfig = (~config: Config.t, ~contractName: string, ~eventName: string) => {
   let found = ref(None)
@@ -339,6 +365,9 @@ let parse = (
   let svmTxs: array<BufferPage.svmTxInput> = []
   let svmActivities: array<BufferPage.svmActivityInput> = []
   let svmBlocks: array<BufferPage.observedBlock> = []
+  let evmTransactions: array<dict<JSON.t>> = []
+  // Per block, the indexes its simulated transactions took.
+  let evmTransactionIndexes: dict<array<int>> = Dict.make()
   // Coordinate "block:logIndex" -> the index of the first item that claimed it,
   // used to reject two items resolving to the same (block, logIndex).
   let seenCoordinates = Dict.make()
@@ -347,6 +376,53 @@ let parse = (
     let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
 
     switch (config.ecosystem.name, raw->getProgram, raw->getInstruction) {
+    | (Evm, None, None)
+      if raw->getContract->Option.isNone &&
+      raw->getEvent->Option.isNone &&
+      raw->getTransaction->Option.isSome =>
+      let fail = message =>
+        JsError.throwWithMessage(
+          `simulate: transaction at index ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString}: ${message}`,
+        )
+      let (block, blockNumber) = parseBlock(
+        ~ecosystem=Evm,
+        ~defaultBlockNumber=currentBlock.contents,
+        ~blockJson=raw->getBlock,
+      )
+      block->addCarriedBlock(~blockNumber)
+      currentBlock := blockNumber
+      let transaction = raw->getTransaction->Option.getUnsafe->Dict.copy
+      transaction
+      ->Dict.keysToArray
+      ->Array.forEach(key =>
+        if !(Evm.transactionFields->Array.includes(key)) {
+          fail(`unknown transaction field "${key}"`)
+        }
+      )
+      let blockKey = blockNumber->Int.toString
+      let taken = switch evmTransactionIndexes->Dict.get(blockKey) {
+      | Some(taken) => taken
+      | None =>
+        let taken = []
+        evmTransactionIndexes->Dict.set(blockKey, taken)
+        taken
+      }
+      let transactionIndex = switch transaction
+      ->Dict.get("transactionIndex")
+      ->Option.map(index => index->(Utils.magic: unknown => int)) {
+      | Some(index) => index
+      | None => taken->Array.reduce(0, (next, index) => Pervasives.max(next, index + 1))
+      }
+      if taken->Array.includes(transactionIndex) {
+        fail(
+          `block ${blockKey} already has a transaction at index ${transactionIndex->Int.toString}. Give each one a distinct transactionIndex (or omit it to take the next free one).`,
+        )
+      }
+      taken->Array.push(transactionIndex)->ignore
+      transaction->Dict.set("transactionIndex", transactionIndex->(Utils.magic: int => unknown))
+      let row = transaction->toRpcObject
+      row->Dict.set("blockNumber", JSON.String("0x" ++ blockNumber->Int.toString(~radix=16)))
+      evmTransactions->Array.push(row)->ignore
     | (Evm | Svm, None, None)
       if raw->getContract->Option.isNone &&
       raw->getEvent->Option.isNone &&
@@ -720,6 +796,27 @@ let parse = (
       items,
       getBlock,
       page: Some(BufferPage.fromSvmJs(svmTxs, svmActivities, svmBlocks)),
+    }
+  | Evm if evmTransactions->Utils.Array.notEmpty => {
+      items,
+      getBlock,
+      // A transaction handler reads its block from the buffer, with the
+      // defaults an event's block gets.
+      page: Some(
+        BufferPage.fromEvmJs(
+          ~transactions=evmTransactions,
+          ~blocks=evmTransactionIndexes
+          ->Dict.keysToArray
+          ->Array.filterMap(blockKey =>
+            blockKey
+            ->Int.fromString
+            ->Option.flatMap(getBlock)
+            ->Option.map(block =>
+              block->(Utils.magic: Internal.eventBlock => dict<unknown>)->toRpcObject
+            )
+          ),
+        ),
+      ),
     }
   | _ => {
       items,

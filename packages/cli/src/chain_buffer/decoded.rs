@@ -22,6 +22,9 @@ pub struct DecodedEventInput {
     /// The key of the item's transaction in the buffer, when the item doesn't
     /// carry the transaction itself.
     pub transaction_index: Option<i64>,
+    /// The index of the transaction the item carries itself, which places it
+    /// among the block's transactions.
+    pub inline_transaction_index: Option<i64>,
     /// Whether the item's block comes from the buffer.
     pub block_from_store: bool,
 }
@@ -35,6 +38,7 @@ pub(crate) struct DecodedEvent {
     pub(crate) registration: u32,
     pub(crate) tape: JsTape,
     pub(crate) transaction_index: Option<u32>,
+    pub(crate) inline_transaction_index: Option<u32>,
     pub(crate) block_from_store: bool,
 }
 
@@ -62,8 +66,14 @@ impl DecodedEvent {
             registration: input.registration_index as u32,
             tape: input.item,
             transaction_index: input.transaction_index.map(|index| index as u32),
+            inline_transaction_index: input.inline_transaction_index.map(|index| index as u32),
             block_from_store: input.block_from_store,
         })
+    }
+
+    /// The transaction whose handlers run ahead of this item.
+    pub(crate) fn place_among_transactions(&self) -> Option<u32> {
+        self.transaction_index.or(self.inline_transaction_index)
     }
 
     fn key(&self) -> Key {

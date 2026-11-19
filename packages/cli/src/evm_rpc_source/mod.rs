@@ -7,14 +7,14 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 mod classify;
-mod client;
+pub(crate) mod client;
 mod enrich;
 pub(crate) mod fields;
 mod head_checks;
 mod inflight;
 mod interval;
 mod logs;
-mod responses;
+pub(crate) mod responses;
 mod transactions;
 
 use crate::address_store::AddressSet;

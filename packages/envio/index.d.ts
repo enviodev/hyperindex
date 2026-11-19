@@ -2136,14 +2136,27 @@ type EvmSimulateItem<Config extends IndexerConfigTypes = GlobalConfig> =
             logIndex?: number;
             /** Override block fields. */
             block?: Partial<Contracts[C][E]["block"]>;
-            /** Override transaction fields. */
-            transaction?: Partial<Contracts[C][E]["transaction"]>;
+            /** Override transaction fields. `transactionIndex`, 0 by default,
+             * places the event among the block's simulated transactions. */
+            transaction?: Partial<Omit<Contracts[C][E]["transaction"], "transactionIndex">> & {
+              readonly transactionIndex?: number;
+            };
             /** Event parameters. Keys match the event's parameter names. */
             params?: Partial<Contracts[C][E]["params"]>;
           };
         }[keyof Contracts[C]];
       }[keyof Contracts]
     : never;
+
+/** A simulated transaction, which runs the transaction handlers whose filter
+ * matches it. Only the fields given are set, so a filter on a field left out
+ * doesn't match. */
+type EvmSimulateTransaction = {
+  /** `transactionIndex` defaults to the block's next free index. */
+  transaction: Partial<EvmAllTransactionFields>;
+  /** The transaction's block. Its number defaults to the previous item's. */
+  block?: { readonly number?: number } & Partial<EvmAllBlockFields>;
+};
 
 /** Simulate item type for Fuel ecosystem. */
 type FuelSimulateItem<Config extends IndexerConfigTypes = GlobalConfig> =
@@ -2177,7 +2190,7 @@ type EvmTestIndexerChainConfig<Config extends IndexerConfigTypes = GlobalConfig>
   /** The block number to stop processing at. Defaults to max simulate block number when simulate is provided. */
   endBlock?: number;
   /** Simulate items to process instead of fetching from real sources. */
-  simulate?: (EvmSimulateItem<Config> | EvmSimulateBlock)[];
+  simulate?: (EvmSimulateItem<Config> | EvmSimulateBlock | EvmSimulateTransaction)[];
 };
 
 /** A simulated block header, read by the block handlers that select fields.

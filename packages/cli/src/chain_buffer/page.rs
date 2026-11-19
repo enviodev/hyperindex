@@ -235,6 +235,27 @@ impl Page {
         Ok(page)
     }
 
+    /// A page of simulated EVM transactions and their blocks, as a JSON-RPC
+    /// node spells them, which a build matches and joins as fetched ones.
+    #[napi(factory)]
+    pub fn from_evm_js(
+        transactions: Vec<serde_json::Map<String, serde_json::Value>>,
+        blocks: Vec<serde_json::Map<String, serde_json::Value>>,
+    ) -> napi::Result<Self> {
+        let mut data = PageData::new(Ecosystem::Evm);
+        let mut rows = data.blocks.builder();
+        for block in &blocks {
+            super::evm::push_simulated_block(&mut rows, block).map_err(to_napi)?;
+        }
+        data.add_blocks(rows.finish());
+        let mut rows = data.transactions.builder();
+        for transaction in &transactions {
+            super::evm::push_simulated_transaction(&mut rows, transaction).map_err(to_napi)?;
+        }
+        data.add_transactions(rows.finish());
+        Ok(Page::from_data(data))
+    }
+
     #[napi]
     pub fn first_row_block_number(&self) -> Option<i64> {
         self.data
