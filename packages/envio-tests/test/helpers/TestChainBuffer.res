@@ -74,9 +74,8 @@ let evmLogsOf = async (
   )
   let buffer = Core.getAddon().chainBuffer->ChainBuffer.make(
     {
-      ecosystem: "evm",
+      registrations: Evm({registrations: registrations}),
       shouldChecksum: false,
-      evmRegistrations: registrations,
       contractRegisterIndexes: [],
       blockHandlers: [],
       transactionMasks: [],
@@ -112,7 +111,7 @@ let decodedBuffer = (
 ) =>
   Core.getAddon().chainBuffer->ChainBuffer.make(
     {
-      ecosystem: (ecosystem :> string),
+      registrations: ChainBuffer.emptyRegistrations(ecosystem),
       shouldChecksum: false,
       contractRegisterIndexes: [],
       blockHandlers: [],
@@ -149,9 +148,8 @@ let forChain = (
 let forInputs = (~evmRegistrations, ~addressStore) =>
   Core.getAddon().chainBuffer->ChainBuffer.make(
     {
-      ecosystem: "evm",
+      registrations: Evm({registrations: evmRegistrations}),
       shouldChecksum: false,
-      evmRegistrations,
       contractRegisterIndexes: [],
       blockHandlers: [],
       transactionMasks: [],

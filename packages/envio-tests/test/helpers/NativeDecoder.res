@@ -78,9 +78,8 @@ let decodeLogs = async (
       )
       let knownBuffer = Core.getAddon().chainBuffer->ChainBuffer.make(
         {
-          ecosystem: "evm",
+          registrations: Evm({registrations: eventRegistrations}),
           shouldChecksum: false,
-          evmRegistrations: eventRegistrations,
           contractRegisterIndexes: [],
           blockHandlers: [],
           transactionMasks: [],

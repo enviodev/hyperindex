@@ -613,11 +613,10 @@ mod tests {
             "hyperindex-test".into(),
             &ChainBuffer::make(
                 crate::chain_buffer::ChainBufferConfig {
-                    ecosystem: "svm".into(),
+                    registrations: crate::chain_buffer::RegistrationsInput::Svm {
+                        programs: vec![],
+                    },
                     should_checksum: false,
-                    evm_registrations: None,
-                    svm_registrations: Some(vec![]),
-                    fuel_registrations: None,
                     contract_register_indexes: vec![],
                     block_handlers: vec![],
                     transaction_masks: vec![],
@@ -813,11 +812,10 @@ mod tests {
         let page = page_of(&store, programs, &mut response);
         let buffer = ChainBuffer::make(
             ChainBufferConfig {
-                ecosystem: "svm".into(),
+                registrations: crate::chain_buffer::RegistrationsInput::Svm {
+                    programs: programs.to_vec(),
+                },
                 should_checksum: false,
-                evm_registrations: None,
-                fuel_registrations: None,
-                svm_registrations: Some(programs.to_vec()),
                 contract_register_indexes: vec![],
                 block_handlers: vec![],
                 transaction_masks: vec![],
@@ -1335,11 +1333,8 @@ mod tests {
         let store = svm_store(&[]);
         let buffer = ChainBuffer::make(
             ChainBufferConfig {
-                ecosystem: "svm".into(),
+                registrations: crate::chain_buffer::RegistrationsInput::Svm { programs: vec![] },
                 should_checksum: false,
-                evm_registrations: None,
-                fuel_registrations: None,
-                svm_registrations: Some(vec![]),
                 contract_register_indexes: vec![],
                 block_handlers: vec![crate::chain_buffer::schedule::BlockHandlerInput {
                     index: 0,

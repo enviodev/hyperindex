@@ -139,15 +139,64 @@ pub(crate) struct FuelRegistrations {
     pub(crate) matcher: matching_fuel::FuelMatcher,
 }
 
+pub(crate) enum Registrations {
+    Evm(EvmRegistrations),
+    Svm(SvmRegistrations),
+    Fuel(FuelRegistrations),
+}
+
+impl Registrations {
+    fn compile(
+        input: RegistrationsInput,
+        contract_registers: &matching::ContractRegisters,
+        should_checksum: bool,
+        address_store: &AddressStore,
+    ) -> Result<Self> {
+        Ok(match input {
+            RegistrationsInput::Evm { registrations } => Registrations::Evm(EvmRegistrations {
+                matcher: matching::EvmMatcher::new(
+                    &registrations,
+                    contract_registers.clone(),
+                    address_store,
+                )?,
+                decoder: decode::evm::EvmDecoder::new(&registrations, should_checksum)?,
+                inputs: registrations,
+            }),
+            RegistrationsInput::Svm { programs } => Registrations::Svm(SvmRegistrations {
+                matcher: matching_svm::SvmMatcher::new(
+                    &programs,
+                    contract_registers.clone(),
+                    address_store,
+                )?,
+                programs,
+            }),
+            RegistrationsInput::Fuel { registrations } => Registrations::Fuel(FuelRegistrations {
+                matcher: matching_fuel::FuelMatcher::new(
+                    &registrations,
+                    contract_registers.clone(),
+                    address_store,
+                )?,
+                inputs: registrations,
+            }),
+        })
+    }
+
+    fn ecosystem(&self) -> Ecosystem {
+        match self {
+            Registrations::Evm(_) => Ecosystem::Evm,
+            Registrations::Svm(_) => Ecosystem::Svm,
+            Registrations::Fuel(_) => Ecosystem::Fuel,
+        }
+    }
+}
+
 /// A chain's registrations compiled once, for its buffer's builds and for
 /// every source querying the chain.
 pub(crate) struct Shared {
     pub(crate) ecosystem: Ecosystem,
     pub(crate) should_checksum: bool,
     pub(crate) store: Arc<RwLock<StoreInner>>,
-    pub(crate) evm: Option<EvmRegistrations>,
-    pub(crate) svm: Option<SvmRegistrations>,
-    pub(crate) fuel: Option<FuelRegistrations>,
+    pub(crate) registrations: Registrations,
     /// Every block handler; the ones selecting fields are what sources fetch
     /// blocks for.
     pub(crate) block_handlers: Vec<BlockHandlerInput>,
@@ -169,21 +218,24 @@ impl Shared {
     }
 
     pub(crate) fn evm(&self) -> Result<&EvmRegistrations> {
-        self.evm
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("the chain buffer holds no EVM registrations"))
+        match &self.registrations {
+            Registrations::Evm(evm) => Ok(evm),
+            _ => anyhow::bail!("the chain buffer holds no EVM registrations"),
+        }
     }
 
     pub(crate) fn svm(&self) -> Result<&SvmRegistrations> {
-        self.svm
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("the chain buffer holds no SVM registrations"))
+        match &self.registrations {
+            Registrations::Svm(svm) => Ok(svm),
+            _ => anyhow::bail!("the chain buffer holds no SVM registrations"),
+        }
     }
 
     pub(crate) fn fuel(&self) -> Result<&FuelRegistrations> {
-        self.fuel
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("the chain buffer holds no Fuel registrations"))
+        match &self.registrations {
+            Registrations::Fuel(fuel) => Ok(fuel),
+            _ => anyhow::bail!("the chain buffer holds no Fuel registrations"),
+        }
     }
 
     pub(crate) fn has_contract_register(&self, registration: u32) -> bool {
@@ -245,16 +297,23 @@ pub(crate) struct Tables {
     pub(crate) decoded: DecodedEvents,
 }
 
+/// A chain's event registrations, tagged by its ecosystem.
+#[napi(discriminant = "ecosystem", discriminant_case = "lowercase")]
+pub enum RegistrationsInput {
+    Evm {
+        registrations: Vec<OnEventRegistrationInput>,
+    },
+    /// The programs with their instructions and registrations.
+    Svm { programs: Vec<SvmProgramInput> },
+    Fuel {
+        registrations: Vec<FuelOnEventRegistrationInput>,
+    },
+}
+
 #[napi(object)]
 pub struct ChainBufferConfig {
-    /// `evm`, `svm` or `fuel`.
-    pub ecosystem: String,
+    pub registrations: RegistrationsInput,
     pub should_checksum: bool,
-    pub evm_registrations: Option<Vec<OnEventRegistrationInput>>,
-    /// The SVM programs with their instructions and registrations, as the
-    /// SVM HyperSync client takes them.
-    pub svm_registrations: Option<Vec<SvmProgramInput>>,
-    pub fuel_registrations: Option<Vec<FuelOnEventRegistrationInput>>,
     pub contract_register_indexes: Vec<i64>,
     pub block_handlers: Vec<BlockHandlerInput>,
     /// By event registration index: the transaction fields each selects.
@@ -373,57 +432,24 @@ impl ChainBuffer {
 impl ChainBuffer {
     #[napi(factory)]
     pub fn make(config: ChainBufferConfig, address_store: &AddressStore) -> napi::Result<Self> {
-        let ecosystem = Ecosystem::parse(&config.ecosystem).map_err(to_napi)?;
         let contract_registers =
             matching::ContractRegisters::from_indexes(&config.contract_register_indexes)
                 .map_err(to_napi)?;
-        let svm = match config.svm_registrations {
-            Some(programs) => Some(SvmRegistrations {
-                matcher: matching_svm::SvmMatcher::new(
-                    &programs,
-                    contract_registers.clone(),
-                    address_store,
-                )
-                .map_err(to_napi)?,
-                programs,
-            }),
-            None => None,
-        };
-        let evm = match config.evm_registrations {
-            Some(inputs) => Some(EvmRegistrations {
-                matcher: matching::EvmMatcher::new(
-                    &inputs,
-                    contract_registers.clone(),
-                    address_store,
-                )
-                .map_err(to_napi)?,
-                decoder: decode::evm::EvmDecoder::new(&inputs, config.should_checksum)
-                    .map_err(to_napi)?,
-                inputs,
-            }),
-            None => None,
-        };
-        let fuel = match config.fuel_registrations {
-            Some(inputs) => Some(FuelRegistrations {
-                matcher: matching_fuel::FuelMatcher::new(
-                    &inputs,
-                    contract_registers.clone(),
-                    address_store,
-                )
-                .map_err(to_napi)?,
-                inputs,
-            }),
-            None => None,
-        };
+        let registrations = Registrations::compile(
+            config.registrations,
+            &contract_registers,
+            config.should_checksum,
+            address_store,
+        )
+        .map_err(to_napi)?;
+        let ecosystem = registrations.ecosystem();
         let [events, transactions, blocks] = ecosystem.schemas();
         Ok(ChainBuffer {
             shared: Arc::new(Shared {
                 ecosystem,
                 should_checksum: config.should_checksum,
                 store: address_store.handle(),
-                evm,
-                svm,
-                fuel,
+                registrations,
                 schedule: Schedule::new(&config.block_handlers).map_err(to_napi)?,
                 block_handlers: config.block_handlers,
                 transaction_masks: config.transaction_masks.iter().map(|m| *m as u64).collect(),

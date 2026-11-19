@@ -1195,11 +1195,10 @@ mod tests {
         };
         let buffer = ChainBuffer::make(
             chain_buffer::ChainBufferConfig {
-                ecosystem: "evm".to_string(),
+                registrations: crate::chain_buffer::RegistrationsInput::Evm {
+                    registrations: vec![],
+                },
                 should_checksum: false,
-                evm_registrations: Some(vec![]),
-                svm_registrations: None,
-                fuel_registrations: None,
                 contract_register_indexes: vec![],
                 block_handlers: vec![handler],
                 transaction_masks: vec![],

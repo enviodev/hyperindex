@@ -11,7 +11,9 @@ use super::evm::{self, log_column, LogView};
 use super::fuel::ReceiptView;
 use super::svm::InstructionView;
 use super::table::{make_key, RowRef, Snapshot};
-use super::{decode, Ecosystem, FuelRegistrations, Shared};
+use super::{
+    decode, matching_fuel, Ecosystem, EvmRegistrations, Registrations, Shared, SvmRegistrations,
+};
 use crate::evm_hypersync_source::types::EvmParams;
 use crate::js_value::JsTape;
 
@@ -283,15 +285,22 @@ impl Walker<'_> {
     }
 
     fn push_row(&mut self, row: &RowRef, contract_register_only: bool) {
-        match self.shared.ecosystem {
-            Ecosystem::Evm => self.push_log(row, contract_register_only),
-            Ecosystem::Svm => self.push_instruction(row, contract_register_only),
-            Ecosystem::Fuel => self.push_receipt(row, contract_register_only),
+        let shared = self.shared;
+        match &shared.registrations {
+            Registrations::Evm(evm) => self.push_log(evm, row, contract_register_only),
+            Registrations::Svm(svm) => self.push_instruction(svm, row, contract_register_only),
+            Registrations::Fuel(fuel) => {
+                self.push_receipt(&fuel.matcher, row, contract_register_only)
+            }
         }
     }
 
-    fn push_instruction(&mut self, row: &RowRef, contract_register_only: bool) {
-        let Some(svm) = &self.shared.svm else { return };
+    fn push_instruction(
+        &mut self,
+        svm: &SvmRegistrations,
+        row: &RowRef,
+        contract_register_only: bool,
+    ) {
         let Some(call) = InstructionView::of_row(row) else {
             return;
         };
@@ -308,10 +317,12 @@ impl Walker<'_> {
         );
     }
 
-    fn push_receipt(&mut self, row: &RowRef, contract_register_only: bool) {
-        let Some(FuelRegistrations { matcher: fuel, .. }) = &self.shared.fuel else {
-            return;
-        };
+    fn push_receipt(
+        &mut self,
+        fuel: &matching_fuel::FuelMatcher,
+        row: &RowRef,
+        contract_register_only: bool,
+    ) {
         let Some(receipt) = ReceiptView::of_row(row) else {
             return;
         };
@@ -339,8 +350,7 @@ impl Walker<'_> {
         });
     }
 
-    fn push_log(&mut self, row: &RowRef, contract_register_only: bool) {
-        let Some(evm) = &self.shared.evm else { return };
+    fn push_log(&mut self, evm: &EvmRegistrations, row: &RowRef, contract_register_only: bool) {
         let Some(log) = LogView::of_row(row) else {
             return;
         };

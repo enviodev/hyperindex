@@ -15,12 +15,22 @@ let contractRegisterIndexesOf = (onEventRegistrations: array<Internal.onEventReg
     }
   )
 
+@tag("ecosystem")
+type registrations =
+  | @as("evm") Evm({registrations: array<HyperSyncClient.Registration.input>})
+  | @as("svm") Svm({programs: array<SvmHyperSyncClient.Registration.program>})
+  | @as("fuel") Fuel({registrations: array<FuelHyperSyncClient.Registration.input>})
+
+let emptyRegistrations = (ecosystem: Ecosystem.name) =>
+  switch ecosystem {
+  | Evm => Evm({registrations: []})
+  | Svm => Svm({programs: []})
+  | Fuel => Fuel({registrations: []})
+  }
+
 type config = {
-  ecosystem: string,
+  registrations: registrations,
   shouldChecksum: bool,
-  evmRegistrations?: array<HyperSyncClient.Registration.input>,
-  svmRegistrations?: array<SvmHyperSyncClient.Registration.program>,
-  fuelRegistrations?: array<FuelHyperSyncClient.Registration.input>,
   contractRegisterIndexes: array<int>,
   blockHandlers: array<BlockItem.blockHandlerInput>,
   // By event registration index.
@@ -184,35 +194,29 @@ let makeForChain = (
 ) =>
   Core.getAddon().chainBuffer->make(
     {
-      ecosystem: (ecosystem :> string),
-      shouldChecksum,
-      evmRegistrations: ?switch ecosystem {
+      registrations: switch ecosystem {
       | Evm =>
-        Some(
-          onEventRegistrations
+        Evm({
+          registrations: onEventRegistrations
           ->(Utils.magic: array<Internal.onEventRegistration> => array<
             Internal.evmOnEventRegistration,
           >)
           ->HyperSyncClient.Registration.fromOnEventRegistrations,
-        )
-      | Svm | Fuel => None
-      },
-      svmRegistrations: ?switch ecosystem {
+        })
       | Svm =>
-        Some(
-          onEventRegistrations
+        Svm({
+          programs: onEventRegistrations
           ->(Utils.magic: array<Internal.onEventRegistration> => array<
             Internal.svmOnEventRegistration,
           >)
           ->SvmHyperSyncClient.Registration.fromOnEventRegistrations,
-        )
-      | Evm | Fuel => None
-      },
-      fuelRegistrations: ?switch ecosystem {
+        })
       | Fuel =>
-        Some(onEventRegistrations->FuelHyperSyncClient.Registration.fromOnEventRegistrations)
-      | Evm | Svm => None
+        Fuel({
+          registrations: onEventRegistrations->FuelHyperSyncClient.Registration.fromOnEventRegistrations,
+        })
       },
+      shouldChecksum,
       contractRegisterIndexes: onEventRegistrations->contractRegisterIndexesOf,
       blockHandlers: onBlockRegistrations->BlockItem.toBlockHandlerInputs,
       transactionMasks: onEventRegistrations->Array.map(registration =>
