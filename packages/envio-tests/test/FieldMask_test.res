@@ -35,7 +35,7 @@ describe("field-code mask ceiling", () => {
   )
 })
 
-describe("TransactionStore field-code contract", () => {
+describe("Transaction field-code contract", () => {
   // The selection mask is built in ReScript from these arrays' order and decoded
   // in Rust by EvmTxField/SvmTxField ordinal, so a drift silently materialises
   // the wrong field. `Evm.transactionFields`/`Svm.transactionFields` derive from

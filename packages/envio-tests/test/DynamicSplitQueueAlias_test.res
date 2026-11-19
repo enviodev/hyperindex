@@ -83,12 +83,13 @@ describe("Dynamic-registration partition split queue aliasing", () => {
       let gravatarAddress = "0x2b2f78c5bf6d9c12ee1225d5f374aa91204580c3"->Address.unsafeFromString
       let nftFactoryAddress = "0xa2f6e6029638ccb484a2ccb6414499ad3e825cac"->Address.unsafeFromString
 
-      // The chain's ground truth: one event per static contract at block 50,000.
-      // A query delivers an event when it covers the block and carries the
-      // emitter's address — exactly what a real source would return.
+      // The chain's ground truth: one event per static contract at block
+      // 150,000, past the split. A query delivers an event when it covers the
+      // block and carries the emitter's address — exactly what a real source
+      // would return.
       let worldEvents = [
-        (gravatarAddress, 50_000, 0, "gravatar-50000"),
-        (nftFactoryAddress, 50_000, 1, "nftFactory-50000"),
+        (gravatarAddress, 150_000, 0, "gravatar-150000"),
+        (nftFactoryAddress, 150_000, 1, "nftFactory-150000"),
       ]
       let itemsFor = (query: MockSource.pendingItemsQuery, ~toBlock) => {
         let addresses = query->MockSource.addresses
@@ -114,17 +115,34 @@ describe("Dynamic-registration partition split queue aliasing", () => {
           query => {items: query->itemsFor(~toBlock), latestFetchedBlockNumber: toBlock},
         ),
       }
+      let respondInFull = (partitionId, ~fromBlock): MockSource.expectedItemsQuery => {
+        partitionId,
+        fromBlock,
+        reply: RespondWith(
+          query => {
+            let toBlock = switch query.toBlock {
+            | Bounded(toBlock) => toBlock
+            | Unbounded => 199_800
+            }
+            {items: query->itemsFor(~toBlock), latestFetchedBlockNumber: toBlock}
+          },
+        ),
+      }
 
       sourceMock.resolveGetHeightOrThrow(100_000)
 
       // Partition "0" holds both static config addresses (Gravatar + NftFactory)
-      // merged together — the mixed partition this test splits.
+      // merged together — the mixed partition this test splits. It fetches its
+      // whole range to 99,800 at once and sits idle there: the SimpleNft
+      // partition holds the chain's frontier back, so it doesn't wait for a new
+      // block either. It has to be idle when the registration lands: a
+      // contractRegister run ends after the fetch tick of the response it came
+      // in, so a partition still fetching always has its next query out by
+      // then, and gets a catch-up partition instead of a split.
       //
-      // Seed items at blocks 2-9 sit below the dynamic partition's start block,
-      // so they process immediately and give the chain a density signal. The
-      // registration at block 10 creates the SimpleNft partition — the sibling
-      // whose later response delivers the NftFactory registration while
-      // partition "0" is idle.
+      // The seed items give the chain a density signal; the registration at
+      // block 10 creates the SimpleNft partition "2", whose later response
+      // delivers the NftFactory registration.
       await sourceMock.expectItemsQueries([
         {
           partitionId: "0",
@@ -148,7 +166,7 @@ describe("Dynamic-registration partition split queue aliasing", () => {
                 },
               },
             ],
-            latestFetchedBlockNumber: 24_000,
+            latestFetchedBlockNumber: 99_800,
           }),
         },
       ])
@@ -161,17 +179,12 @@ describe("Dynamic-registration partition split queue aliasing", () => {
           reply: Respond({items: [], latestFetchedBlockNumber: 20_000}),
         },
       ])
-      // The next SimpleNft response has to land after this one commits. Answered
-      // sooner, the registration meets a different fetch state than the split
-      // pinned below.
       await indexer.getBatchWritePromise()
 
-      // The SimpleNft response delivers the first NftFactory dynamic
-      // registration while partition "0" is idle (the SimpleNft probe holds the
-      // whole fetch budget, so "0" has no query in flight). This splits "0":
-      // it keeps Gravatar, the new partition "3" takes the static NftFactory
-      // address, and partition "4" backfills the fresh address up to the
-      // split's frontier.
+      // The first NftFactory dynamic registration lands while partition "0" is
+      // idle. This splits "0": it keeps Gravatar, the new partition "3" takes
+      // the static NftFactory address, and partition "4" backfills the fresh
+      // address up to the split's frontier.
       await sourceMock.expectItemsQueries([
         {
           partitionId: "2",
@@ -193,88 +206,88 @@ describe("Dynamic-registration partition split queue aliasing", () => {
           }),
         },
       ])
-      await indexer.getBatchWritePromise()
+      await indexer.waitUntilIdle()
 
+      // A new head sets both split halves querying past 99,800.
       await sourceMock.expectItemsQueries([
-        {partitionId: "4", fromBlock: 20_050, reply: LeavePending},
-        {partitionId: "0", fromBlock: 24_001, reply: LeavePending},
-        {partitionId: "3", fromBlock: 24_001, reply: LeavePending},
-        {partitionId: "2", fromBlock: 45_001, reply: LeavePending},
+        {
+          partitionId: "2",
+          fromBlock: 45_001,
+          reply: Respond({items: [], latestFetchedBlockNumber: 80_984, knownHeight: 200_000}),
+        },
         {partitionId: "2", fromBlock: 80_985, reply: LeavePending},
+        {partitionId: "4", fromBlock: 20_050, reply: LeavePending},
       ])
-      t.expect(
+      await indexer.waitUntilIdle()
+      let afterSplit =
         sourceMock.pendingItemsQueries
         ->Array.map(
           query => (query.partitionId, query.fromBlock, query->MockSource.addresses->Array.length),
         )
-        // Two partitions share fromBlock 24,001, and their relative order is
-        // an enqueue detail this test doesn't describe — break the tie on id.
+        // Partitions sharing a fromBlock go out in an enqueue order this test
+        // doesn't describe — break the tie on id.
         ->Array.toSorted(
           ((pA, a, _), (pB, b, _)) => a === b ? String.compare(pA, pB) : Int.compare(a, b),
-        ),
-        ~message="the registration splits partition '0' into Gravatar ('0') and NftFactory ('3')",
-      ).toEqual([
-        ("4", 20_050, 1),
-        ("0", 24_001, 1),
-        ("3", 24_001, 2),
-        ("2", 45_001, 1),
-        ("2", 80_985, 1),
-      ])
-
-      // Clear the SimpleNft partition and the bounded backfill so only the two
-      // split halves stay in play.
-      await sourceMock.expectItemsQueries([
-        respondTo("2", ~fromBlock=45_001, ~toBlock=80_984),
-        respondTo("2", ~fromBlock=80_985, ~toBlock=99_800),
-        respondTo("4", ~fromBlock=20_050, ~toBlock=24_000),
-      ])
-      await indexer.getBatchWritePromise()
+        )
 
       // Both split halves respond partially, putting them at different
-      // frontiers: Gravatar at 40,000, NftFactory at 30,000.
-      await sourceMock.expectItemsQueries([respondTo("0", ~fromBlock=24_001, ~toBlock=40_000)])
+      // frontiers: Gravatar at 140,000, NftFactory at 120,000.
       await sourceMock.expectItemsQueries([
-        respondTo("3", ~fromBlock=24_001, ~toBlock=30_000),
-        {partitionId: "0", fromBlock: 40_001, reply: LeavePending},
+        respondTo("0", ~fromBlock=99_801, ~toBlock=140_000),
+        {partitionId: "2", fromBlock: 99_801, reply: LeavePending},
+        {partitionId: "3", fromBlock: 99_801, reply: LeavePending},
+      ])
+      await sourceMock.expectItemsQueries([
+        respondTo("3", ~fromBlock=99_801, ~toBlock=120_000),
+        {partitionId: "2", fromBlock: 144_801, reply: LeavePending},
+        {partitionId: "2", fromBlock: 189_801, reply: LeavePending},
+        {partitionId: "0", fromBlock: 140_001, reply: LeavePending},
       ])
 
-      // Gravatar's next query (40,001..) resolves first — for Gravatar's address
-      // only, delivering its block-50,000 event. NftFactory's next query
-      // (30,001..) then lands exactly at 40,000. With the aliased queue,
+      // Gravatar's next query (140,001..) resolves first — for Gravatar's
+      // address only, delivering its block-150,000 event. NftFactory's next
+      // query (120,001..) then lands exactly at 140,000. With an aliased queue,
       // NftFactory's consume pass eats Gravatar's fetched result and jumps its
-      // frontier to 60,000 — blocks 40,001-60,000 are never queried with the
-      // NftFactory addresses, so its block-50,000 event is lost.
+      // frontier to 160,000 — blocks 140,001-160,000 are never queried with the
+      // NftFactory addresses, so its block-150,000 event is lost.
       await sourceMock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 40_001, reply: LeavePending},
-        {partitionId: "3", fromBlock: 30_001, reply: LeavePending},
+        respondTo("0", ~fromBlock=140_001, ~toBlock=160_000),
+        {partitionId: "3", fromBlock: 120_001, reply: LeavePending},
       ])
-      await sourceMock.expectItemsQueries([respondTo("0", ~fromBlock=40_001, ~toBlock=60_000)])
       await sourceMock.expectItemsQueries([
-        respondTo("3", ~fromBlock=30_001, ~toBlock=40_000),
-        {partitionId: "0", fromBlock: 60_001, reply: LeavePending},
-        {partitionId: "0", fromBlock: 88_801, reply: LeavePending},
+        respondTo("3", ~fromBlock=120_001, ~toBlock=140_000),
+        {partitionId: "0", fromBlock: 160_001, reply: LeavePending},
+      ])
+      await sourceMock.expectItemsQueries([
+        {partitionId: "3", fromBlock: 140_001, reply: LeavePending},
       ])
 
       // Resolve every remaining query to its full range, delivering whatever
-      // world events it legitimately covers. NftFactory's range from 40,001 is
-      // queried with its own addresses.
+      // world events it legitimately covers.
       await sourceMock.expectItemsQueries([
-        respondTo("0", ~fromBlock=60_001, ~toBlock=88_800),
-        respondTo("0", ~fromBlock=88_801, ~toBlock=99_800),
-        respondTo("3", ~fromBlock=40_001, ~toBlock=50_800),
-        respondTo("3", ~fromBlock=50_801, ~toBlock=61_600),
+        respondInFull("2", ~fromBlock=80_985),
+        respondInFull("4", ~fromBlock=20_050),
+        respondInFull("2", ~fromBlock=99_801),
+        respondInFull("2", ~fromBlock=144_801),
+        respondInFull("2", ~fromBlock=189_801),
+        respondInFull("0", ~fromBlock=160_001),
+        respondInFull("3", ~fromBlock=140_001),
       ])
       await sourceMock.expectItemsQueries([
-        respondTo("3", ~fromBlock=61_601, ~toBlock=79_600),
-        respondTo("3", ~fromBlock=79_601, ~toBlock=97_600),
+        respondInFull("3", ~fromBlock=176_001),
+        respondInFull("4", ~fromBlock=99_801),
+        respondInFull("0", ~fromBlock=196_001),
       ])
-      await sourceMock.expectItemsQueries([respondTo("3", ~fromBlock=97_601, ~toBlock=99_800)])
+      await indexer.waitUntilIdle()
       await indexer.getBatchWritePromise()
 
-      t.expect(
-        processed->Array.toSorted(String.compare),
-        ~message="both static contracts' block-50,000 events are fetched and processed",
-      ).toEqual(["gravatar-50000", "nftFactory-50000"])
+      t.expect((afterSplit, processed->Array.toSorted(String.compare))).toEqual((
+        // The registration split partition "0" into Gravatar ("0") and
+        // NftFactory ("3"), each querying past 99,800 with its one address.
+        [("4", 20_050, 1), ("2", 80_985, 1), ("0", 99_801, 1), ("2", 99_801, 1), ("3", 99_801, 1)],
+        // Both static contracts' block-150,000 events are fetched and processed.
+        ["gravatar-150000", "nftFactory-150000"],
+      ))
     },
   )
 })

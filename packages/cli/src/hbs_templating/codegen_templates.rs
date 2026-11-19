@@ -3596,7 +3596,7 @@ type GlobalCounter @crossChain {
                 .map(|(name, _)| name)
                 .collect();
         names.insert("accountActivities".to_string());
-        let materializer: BTreeSet<String> = crate::transaction_store::SvmTxField::VARIANTS
+        let materializer: BTreeSet<String> = crate::chain_buffer::svm::SvmTxField::VARIANTS
             .iter()
             .map(|f| f.name().to_string())
             .collect();

@@ -14,10 +14,10 @@ module Registration = {
     | @as("Call") Call
 
   // The full per-(event, chain) registration passed to the Rust client at
-  // construction: routing identity plus the receipt-selection state queries
+  // construction: matching identity plus the receipt-selection state queries
   // are built from.
   type input = {
-    // Chain-scoped sequential registration index, echoed back on routed items.
+    // Chain-scoped sequential registration index, echoed back on matched items.
     index: int,
     eventName: string,
     contractName: string,
@@ -61,7 +61,7 @@ module Registration = {
 module EventItems = {
   // The whole per-query input beside the partition's address set: block range
   // and the registration selection (by index). Receipt selections, field
-  // selection, and routing are derived on the Rust side.
+  // selection, and matching are derived on the Rust side.
   type query = {
     fromBlock: int,
     // Inclusive; None queries to the end of available data.
@@ -73,31 +73,10 @@ module EventItems = {
     clientFilteredContracts: option<array<string>>,
   }
 
-  // One routed receipt with the params its handler receives, built in Rust
-  // for every receipt kind.
-  type item = {
-    receiptIndex: int,
-    txId: string,
-    blockHeight: int,
-    srcAddress: Address.t,
-    params: Internal.eventParams,
-  }
-
-  // The page's first LogData receipt a contract-bound registration's ABI
-  // rejected, with how many it rejected. The receipts themselves are dropped.
-  type rejectedLogData = {
-    onEventRegistrationIndex: int,
-    blockHeight: int,
-    receiptIndex: int,
-    txId: string,
-    dataLength: int,
-    count: int,
-  }
-
+  // What the page covered; its rows come in the page beside it.
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    rejectedLogData: array<rejectedLogData>,
   }
 }
 
@@ -106,28 +85,27 @@ external classNew: (
   Core.fuelHyperSyncClientCtor,
   cfg,
   ~userAgent: string,
-  array<Registration.input>,
-  AddressStore.t,
+  // The chain's compiled registrations and addresses.
+  BufferPage.buffer,
 ) => t = "new"
 
-let make = (cfg: cfg, ~eventRegistrations, ~addressStore) => {
+let make = (cfg: cfg, ~chainBuffer) => {
   let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().fuelHyperSyncClient->classNew(
     cfg,
     ~userAgent=`hyperindex/${envioVersion}`,
-    eventRegistrations,
-    addressStore,
+    chainBuffer,
   )
 }
 
-// Returns what the page covered, its block store (Fuel blocks keyed by
-// height, whose ids drive reorg detection on merge) and its routed items.
+// Returns what the page covered and its page: the receipts some registration
+// matches and the blocks, whose ids drive reorg detection on merge.
 @send
 external getEventItems: (
   t,
   EventItems.query,
   AddressSet.t,
-) => promise<(EventItems.response, BlockStore.t, EventStore.t)> = "getEventItems"
+) => promise<(EventItems.response, BufferPage.t)> = "getEventItems"
 
 @send
 external getHeight: t => promise<int> = "getHeight"

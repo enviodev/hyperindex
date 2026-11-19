@@ -15,8 +15,8 @@ module Registration = {
   }
 
   // One `onInstruction`/`contractRegister` binding of an instruction on a
-  // chain: the handler-specific routing state and the fetch state queries are
-  // built from. Chain-scoped `index` is echoed back on routed items.
+  // chain: the handler-specific matching state and the fetch state queries are
+  // built from. Chain-scoped `index` is echoed back on matched items.
   type input = {
     index: int,
     isWildcard: bool,
@@ -118,9 +118,9 @@ module Registration = {
 }
 
 module Items = {
-  // The whole per-query input beside the partition's address set: slot range
-  // and what it selects from each table. Instruction selections, field
-  // selection, and routing are derived on the Rust side.
+  // The whole per-query input: slot range and what it selects from each
+  // table. Instruction selections and field selection are derived on the Rust
+  // side.
   type query = {
     fromSlot: int,
     // Inclusive; None queries to the end of available data.
@@ -130,10 +130,6 @@ module Items = {
     itemsTarget?: int,
     onEventRegistrationIndexes: array<int>,
     onBlockRegistrationIndexes: array<int>,
-    // Program names to fetch address-free even though their registrations
-    // depend on addresses (client-side filtering). None/empty means every
-    // address-dependent program is filtered server-side.
-    clientFilteredContracts: option<array<string>>,
     // Slots at or above this one can still be reorged, so a page reaching
     // them reads every slot of its range, which also tells a skipped slot from
     // an unfetched one. Absent when the range is final.
@@ -147,8 +143,8 @@ module Items = {
     message: Nullable.t<string>,
   }
 
-  // One routed instruction; its `block` and `transaction` are read from the
-  // per-chain stores when a batch takes it.
+  // One matched instruction; its `block` and `transaction` are joined by the
+  // build that delivers it.
   type item = {
     slot: int,
     transactionIndex: int,
@@ -158,10 +154,10 @@ module Items = {
     data: Uint8Array.t,
     isInner: bool,
     // Borsh-decoded args as a JS value tree (wide integers as bigint).
-    // Present exactly when the routed registration selected `args`: an
+    // Present exactly when the matched registration selected `args`: an
     // instruction its layout rejects is dropped in Rust.
     args: Nullable.t<unknown>,
-    // Present exactly when the routed registration selected `fields.log`.
+    // Present exactly when the matched registration selected `fields.log`.
     logs: Nullable.t<array<log>>,
   }
 
@@ -172,14 +168,10 @@ type t = {
   getHeight: unit => promise<int>,
   // Block-hash query construction, pagination, and cursor-backed skipped-slot
   // coverage live in Rust.
-  getBlockHashes: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<RequestStat.t>)>,
-  // Returns pages of raw transactions and blocks (kept in Rust), keyed by
-  // (slot, transactionIndex) / slot, and of routed items, all materialised at
-  // batch prep.
-  getItems: (
-    ~query: Items.query,
-    ~addressSet: AddressSet.t,
-  ) => promise<(Items.response, TransactionStore.t, BlockStore.t, EventStore.t)>,
+  getBlockHashes: (~blockNumbers: array<int>) => promise<(BufferPage.t, array<RequestStat.t>)>,
+  // Returns the page of raw instructions some registration matches, with the
+  // transactions and slots they read.
+  getItems: (~query: Items.query) => promise<(Items.response, BufferPage.t)>,
 }
 
 @send
@@ -187,9 +179,8 @@ external classFromConfig: (
   Core.svmHyperSyncClientCtor,
   cfg,
   string,
-  array<Registration.program>,
-  array<BlockItem.registrationInput>,
-  AddressStore.t,
+  // The chain's compiled registrations, block handlers and addresses.
+  BufferPage.buffer,
 ) => t = "fromConfig"
 
 let make = (
@@ -198,9 +189,7 @@ let make = (
   ~httpReqTimeoutMillis=?,
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
-  ~programs=[],
-  ~onBlockRegistrations,
-  ~addressStore,
+  ~chainBuffer,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().svmHyperSyncClient->classFromConfig(
@@ -212,8 +201,6 @@ let make = (
       ?retryCeilingMs,
     },
     `hyperindex/${envioVersion}`,
-    programs,
-    onBlockRegistrations->BlockItem.toRegistrationInputs,
-    addressStore,
+    chainBuffer,
   )
 }

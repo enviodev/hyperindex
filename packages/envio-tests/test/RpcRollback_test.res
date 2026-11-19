@@ -124,11 +124,10 @@ let startServer = state =>
     }
   })
 
-let makeSource = (~url, ~blockStore, ~transactionStore) =>
+let makeSource = (~url, ~chainBuffer) =>
   RpcSource.make({
     url,
     chainId,
-    onEventRegistrations: [registration],
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({
       initialBlockInterval: 10,
@@ -137,12 +136,9 @@ let makeSource = (~url, ~blockStore, ~transactionStore) =>
       backoffMillis: 1,
       queryTimeoutMillis: 5_000,
     }),
-    lowercaseAddresses: true,
-    addressStore: sourceAddressStore,
-    blockStore,
-    transactionStore,
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
+    chainBuffer,
   })
 
 let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
@@ -165,7 +161,7 @@ let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
     ~logger=Logger.makeInMemory(),
   )
 
-let makeChainState = (~source: Source.t, ~knownHeight, ~blockStore) => {
+let makeChainState = (~source: Source.t, ~knownHeight, ~chainBuffer) => {
   let chainConfig = TestConfig.make(~chainId=1337).chainMap->ChainMap.get(chainId)
   let store = addressStore()
   let fetchState = TestFetchState.make(
@@ -180,14 +176,13 @@ let makeChainState = (~source: Source.t, ~knownHeight, ~blockStore) => {
     ~startBlock=0,
     ~endBlock=None,
     ~maxAddrInPartition=10,
-    ~maxOnBlockBufferSize=1000,
     ~chainId,
     ~knownHeight,
   )
   ChainState.make(
     ~chainConfig,
     ~fetchState={...fetchState, FetchState.knownHeight},
-    ~eventStore=fetchState->TestFetchState.eventStoreOf,
+    ~chainBuffer,
     ~addressStore=store,
     ~sourceManager=SourceManager.make(
       ~logger=Logger.makeInMemory(),
@@ -197,29 +192,40 @@ let makeChainState = (~source: Source.t, ~knownHeight, ~blockStore) => {
     ~shouldRollbackOnReorg=true,
     ~maxReorgDepth=200,
     ~committedProgressBlockNumber=-1,
-    ~blockStore,
     ~logger=Logger.makeInMemory(),
   )
+}
+
+// What reorg detection makes of a response: its page merges into the chain's
+// buffer unless a block's hash disagrees with the stored one.
+let mergeResponse = (chainState, response: Source.blockRangeFetchResponse, ~knownHeight) => {
+  let (reorgResult, _) = chainState->ChainState.mergePage(~page=response.page, ~knownHeight)
+  reorgResult
 }
 
 describe("Rollback against a real RPC server", () => {
   Async.it("detects a reorg from fetched hashes and finds the rollback depth", async t => {
     let state = {height: 105, forkFrom: 999}
     let mock = await startServer(state)
-    let (blockStore, transactionStore) = RpcSourcePins.makeStores()
-    let source = makeSource(~url=mock.url, ~blockStore, ~transactionStore)
-    let chainState = makeChainState(~source, ~knownHeight=state.height, ~blockStore)
+    let chainBuffer = TestChainBuffer.forChain(
+      ~onEventRegistrations=[registration],
+      ~addressStore=sourceAddressStore,
+    )
+    let source = makeSource(~url=mock.url, ~chainBuffer)
+    let chainState = makeChainState(~source, ~knownHeight=state.height, ~chainBuffer)
 
     // Blocks 100-102 on the original chain.
     let page = await source->fetchRange(~fromBlock=100, ~toBlock=102, ~knownHeight=state.height)
     t.expect(
-      chainState->ChainState.registerReorgGuard(~blockStore=page.blockStore, ~knownHeight=105),
+      chainState->mergeResponse(page, ~knownHeight=105),
       ~message="The first range has nothing to disagree with",
     ).toEqual(ReorgDetection.NoReorg)
     t.expect(
-      chainState
-      ->ChainState.blockStore
-      ->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=200),
+      (
+        chainState
+        ->ChainState.chainBuffer
+        ->ChainBuffer.getBlockHashes(~fromBlock=0, ~belowBlock=200)
+      ).blockNumbers,
       ~message="Every observed block contributes its own hash and its parent's",
     ).toEqual([99, 100, 101, 102])
 
@@ -232,10 +238,7 @@ describe("Rollback against a real RPC server", () => {
     )
 
     t.expect(
-      chainState->ChainState.registerReorgGuard(
-        ~blockStore=reorgedPage.blockStore,
-        ~knownHeight=105,
-      ),
+      chainState->mergeResponse(reorgedPage, ~knownHeight=105),
       ~message="Block 102 arrives as the parent of 103 with the other fork's hash",
     ).toEqual(
       ReorgDetection.ReorgDetected({
@@ -259,14 +262,15 @@ describe("Rollback against a real RPC server", () => {
   Async.it("searches past the blocks whose stored hashes the fork invalidated", async t => {
     let state = {height: 105, forkFrom: 999}
     let mock = await startServer(state)
-    let (blockStore, transactionStore) = RpcSourcePins.makeStores()
-    let source = makeSource(~url=mock.url, ~blockStore, ~transactionStore)
-    let chainState = makeChainState(~source, ~knownHeight=state.height, ~blockStore)
+    let chainBuffer = TestChainBuffer.forChain(
+      ~onEventRegistrations=[registration],
+      ~addressStore=sourceAddressStore,
+    )
+    let source = makeSource(~url=mock.url, ~chainBuffer)
+    let chainState = makeChainState(~source, ~knownHeight=state.height, ~chainBuffer)
 
     let page = await source->fetchRange(~fromBlock=100, ~toBlock=102, ~knownHeight=state.height)
-    t.expect(
-      chainState->ChainState.registerReorgGuard(~blockStore=page.blockStore, ~knownHeight=105),
-    ).toEqual(ReorgDetection.NoReorg)
+    t.expect(chainState->mergeResponse(page, ~knownHeight=105)).toEqual(ReorgDetection.NoReorg)
 
     // The fork starts at 100, so the hashes the first page stored for 100 and
     // 101 now describe blocks that no longer exist. Answering the search from
@@ -287,15 +291,18 @@ describe("Rollback against a real RPC server", () => {
     await mock.closeAsync()
   })
 
-  // A block whose selected fields the store already covers is not re-fetched,
+  // A block whose selected fields the buffer already covers is not re-fetched,
   // so the only thing the second range says about it is the `blockHash` of its
   // own logs. That is what has to catch a store row left behind by a dead fork.
   Async.it("detects a reorg on a block it served from the store", async t => {
     let state = {height: 110, forkFrom: 999}
     let mock = await startServer(state)
-    let (blockStore, transactionStore) = RpcSourcePins.makeStores()
-    let source = makeSource(~url=mock.url, ~blockStore, ~transactionStore)
-    let chainState = makeChainState(~source, ~knownHeight=state.height, ~blockStore)
+    let chainBuffer = TestChainBuffer.forChain(
+      ~onEventRegistrations=[registration],
+      ~addressStore=sourceAddressStore,
+    )
+    let source = makeSource(~url=mock.url, ~chainBuffer)
+    let chainState = makeChainState(~source, ~knownHeight=state.height, ~chainBuffer)
 
     // The source is told it is far below the head, where a page's blocks
     // aren't checked one by one and the store can serve them.
@@ -305,8 +312,7 @@ describe("Rollback against a real RPC server", () => {
       ~toBlock=104,
       ~knownHeight=sourceKnownHeight,
     )
-    let firstGuard =
-      chainState->ChainState.registerReorgGuard(~blockStore=page.blockStore, ~knownHeight=110)
+    let firstGuard = chainState->mergeResponse(page, ~knownHeight=110)
 
     // 102 and 103 are fully covered by the store, and below the checked head
     // blocks no other block is read either — yet both moved to the other fork.
@@ -339,10 +345,7 @@ describe("Rollback against a real RPC server", () => {
     t.expect((
       firstGuard,
       refetchedBlocks,
-      chainState->ChainState.registerReorgGuard(
-        ~blockStore=reorgedPage.blockStore,
-        ~knownHeight=110,
-      ),
+      chainState->mergeResponse(reorgedPage, ~knownHeight=110),
     )).toEqual((
       ReorgDetection.NoReorg,
       [],

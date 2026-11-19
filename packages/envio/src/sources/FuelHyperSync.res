@@ -1,12 +1,7 @@
 type logsQueryPage = {
-  items: EventStore.t,
-  rejectedLogData: array<FuelHyperSyncClient.EventItems.rejectedLogData>,
-  // Blocks referenced by `items`, one per height.
+  page: BufferPage.t,
   nextBlock: int,
   archiveHeight: int,
-  // Page store owning this page's raw blocks (built on the Rust side); its ids
-  // drive reorg detection when merged into the chain store.
-  blockStore: BlockStore.t,
 }
 
 module GetLogs = {
@@ -56,10 +51,7 @@ module GetLogs = {
       clientFilteredContracts,
     }
 
-    let (res, blockStore, items) = switch await client->FuelHyperSyncClient.getEventItems(
-      query,
-      addressSet,
-    ) {
+    let (res, page) = switch await client->FuelHyperSyncClient.getEventItems(query, addressSet) {
     | res => res
     | exception exn =>
       switch exn->extractMissingParams {
@@ -72,11 +64,9 @@ module GetLogs = {
       throw(Error(WrongInstance))
     }
     {
-      items,
-      rejectedLogData: res.rejectedLogData,
+      page,
       nextBlock: res.nextBlock,
       archiveHeight: res.archiveHeight->Option.getOr(0), // TODO: FIXME: Shouldn't have a default here
-      blockStore,
     }
   }
 }

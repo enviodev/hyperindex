@@ -73,12 +73,12 @@ let mapNativeFailureExn = exn => exn->Source.unpackNativeRequestFailure->mapNati
 // native envelope, which carries those same timings, so the caller records them
 // either way.
 let makeGetBlockHashes = (
-  ~query: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<Source.requestStat>)>,
+  ~query: (~blockNumbers: array<int>) => promise<(BufferPage.t, array<Source.requestStat>)>,
 ) =>
   async (~blockNumbers, ~logger as _) => {
     let (result, requestStats) = try {
-      let (blockStore, requestStats) = await query(~blockNumbers)
-      (Ok(blockStore), requestStats)
+      let (page, requestStats) = await query(~blockNumbers)
+      (Ok(page), requestStats)
     } catch {
     | exn =>
       let failure = exn->Source.unpackNativeRequestFailure
@@ -94,14 +94,10 @@ let reraiseIfRecoverable = exn =>
   }
 
 type itemsPage = {
-  items: EventStore.t,
+  page: BufferPage.t,
   nextBlock: int,
   archiveHeight: int,
   responseBlocks: int,
-  // Page store owning this page's raw transactions.
-  transactionStore: TransactionStore.t,
-  // Page store owning this page's raw blocks.
-  blockStore: BlockStore.t,
 }
 
 module GetItems = {
@@ -140,11 +136,9 @@ module GetItems = {
     ~client: HyperSyncClient.t,
     ~query: HyperSyncClient.Items.query,
     ~addressSet,
+    ~buffer,
   ): itemsPage => {
-    let (res, transactionStore, blockStore, items) = switch await client.getItems(
-      ~query,
-      ~addressSet,
-    ) {
+    let (res, page) = switch await client.getItems(~query, ~addressSet, ~buffer) {
     | res => res
     | exception exn =>
       reraiseIfRecoverable(exn)
@@ -159,14 +153,12 @@ module GetItems = {
     }
 
     {
-      items,
+      page,
       nextBlock: res.nextBlock,
       responseBlocks: res.responseBlocks,
       // None when the height is 0, or when the page was answered without a
       // request; 0 reports no height, which never lowers a known one.
       archiveHeight: res.archiveHeight->Option.getOr(0),
-      transactionStore,
-      blockStore,
     }
   }
 }

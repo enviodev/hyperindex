@@ -150,10 +150,10 @@ indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async () => {});
     | () => None
     | exception JsExn(error) => error->JsExn.message->Option.map(IndexerRunner.stripLogsLink)
     }
-    // The mock source's own registration on Gravatar is the second one.
+    // The mock source's own two registrations on Gravatar are the second and third.
     t.expect(error).toEqual(
       Some(
-        "Invalid configuration: Nothing to fetch on chain 1337. addresses=0, onEventRegistrations=2, normalRegistrations=2. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.",
+        "Invalid configuration: Nothing to fetch on chain 1337. addresses=0, onEventRegistrations=3, normalRegistrations=3. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.",
       ),
     )
   })

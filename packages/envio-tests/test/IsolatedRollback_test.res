@@ -262,7 +262,7 @@ let reorgAt = async (
     // The rollback's depth search re-fetches the scanned block hashes.
     await source.expectBlockHashLookup({
       blockNumbers: scanned->Array.map(((blockNumber, _)) => blockNumber),
-      reply: scanned->Array.map(((blockNumber, fate)): BlockStore.inputBlock => {
+      reply: scanned->Array.map(((blockNumber, fate)): BufferPage.observedBlock => {
         blockNumber,
         blockHash: switch fate {
         | #valid => `0x${blockNumber->Int.toString}`

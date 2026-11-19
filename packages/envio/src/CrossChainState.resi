@@ -34,7 +34,13 @@ let releaseRealtime: t => unit
 let isHoldingRealtime: t => bool
 let hasArrivedAtHead: t => bool
 let isReadyToEnterReorgThreshold: (t, ~batch: Batch.t) => bool
-let createBatch: (t, ~config: Config.t, ~frontier: Frontier.t, ~batchSizeTarget: int) => Batch.t
+let prebuildNextBatch: (t, ~batchSizeTarget: int) => unit
+let createBatch: (
+  t,
+  ~config: Config.t,
+  ~frontier: Frontier.t,
+  ~batchSizeTarget: int,
+) => promise<Batch.t>
 let enterReorgThreshold: t => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markCaughtUpIfSettled: t => unit

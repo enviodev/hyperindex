@@ -557,7 +557,7 @@ type svmInstructionEventConfig = {
 type onEventRegistration = {
   // Chain-scoped sequential index — the registration's position in the
   // chain's onEventRegistrations array, assigned when registration finishes
-  // (-1 until then). Native-routed items reference their registration by this
+  // (-1 until then). Native-matched items reference their registration by this
   // index across the napi boundary; sources resolve it before creating an item.
   index: int,
   eventConfig: eventConfig,
@@ -668,7 +668,7 @@ type onBlockRegistration = {
   endBlock: option<int>,
   interval: int,
   handler: onBlockArgs => promise<unit>,
-  // The selected block fields as the block store's bitmask, key included.
+  // The selected block fields as the blocks table's bitmask, key included.
   // `None` when the handler reads only the block's key, which needs nothing
   // from a source: its items are generated locally, block by block.
   blockFieldMask: option<float>,
@@ -696,7 +696,7 @@ type item =
       onBlockRegistration: onBlockRegistration,
       blockNumber: int,
       // The registration's selected fields: inline from a simulate source,
-      // otherwise written at batch prep from the chain's block store. Absent
+      // otherwise joined by the build from the chain buffer's blocks. Absent
       // for a registration that selects none.
       block?: eventBlock,
       // The chain produced no block here (an SVM skipped slot), so there is

@@ -1,6 +1,6 @@
 open Vitest
 
-describe("BlockStore field-code contract", () => {
+describe("Block field-code contract", () => {
   // The selection mask is built in ReScript from this array's order and decoded
   // in Rust by EvmBlockField ordinal, so a drift silently materialises the wrong
   // field. Pin both against the Rust ordering (the source of truth).

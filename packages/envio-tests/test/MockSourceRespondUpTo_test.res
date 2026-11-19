@@ -121,16 +121,12 @@ describe("MockSource.respondUpTo", () => {
           ({value}: IndexerRunner.metric) => value,
         ),
       )).toEqual((
+        // The partition's next query goes out before its own response's
+        // contractRegister runs, so the address registered at 50 is caught up
+        // by a partition of its own over the same range.
         [
-          (["0x0000000000000000000000000000000000000002"], 50, Bounded(100)),
-          (
-            [
-              "0x0000000000000000000000000000000000000001",
-              "0x0000000000000000000000000000000000000002",
-            ],
-            101,
-            Bounded(99800),
-          ),
+          (["0x0000000000000000000000000000000000000001"], 101, Bounded(99800)),
+          (["0x0000000000000000000000000000000000000002"], 50, Bounded(99800)),
         ],
         ["300"],
       ))

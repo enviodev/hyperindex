@@ -19,11 +19,14 @@ let makeProbeSources = (chainConfig: Config.chain, ~logger, ~lowercaseAddresses)
   let addressStore = AddressStore.make(~ecosystem=chainConfig.ecosystem, ~contracts=[])
   ChainSources.make(
     ~chainConfig,
-    ~onEventRegistrations=[],
     ~addressStore,
-    ~lowercaseAddresses,
-    ~blockStore=BlockStore.make(~ecosystem=chainConfig.ecosystem),
-    ~transactionStore=TransactionStore.make(~ecosystem=chainConfig.ecosystem),
+    ~chainBuffer=ChainBuffer.makeForChain(
+      ~ecosystem=chainConfig.ecosystem,
+      ~onEventRegistrations=[],
+      ~onBlockRegistrations=[],
+      ~shouldChecksum=!lowercaseAddresses,
+      ~addressStore,
+    ),
     ~logger,
     ~maxAddressesPerRequest=Env.maxAddrInPartition,
   )

@@ -64,11 +64,16 @@ let clearRollback: t => unit
 let invalidateInflight: t => unit
 let applyBatchProgress: (t, ~batch: Batch.t) => unit
 let isProcessing: t => bool
+let isRegisteringContracts: t => bool
 let beginProcessing: t => unit
 let endProcessing: t => unit
+let requestProcessing: t => unit
+// Whether processing was asked for while a batch was in flight, clearing it.
+let takeProcessingRequest: t => bool
 let markProcessingStalledOnFetch: t => unit
 let recordProcessedBatch: t => unit
-let createBatch: (t, ~batchSizeTarget: int) => Batch.t
+let createBatch: (t, ~batchSizeTarget: int) => promise<Batch.t>
+let prebuildNextBatch: t => unit
 let getSafeCheckpointIdByChain: t => array<(ChainId.t, option<Internal.checkpointId>)>
 
 // Accessors.

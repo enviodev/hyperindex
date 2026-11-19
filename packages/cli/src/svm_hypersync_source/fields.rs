@@ -157,7 +157,7 @@ pub const LOG: &[HandlerField] = &[
 ];
 
 /// Instruction handler fields do not add HyperSync columns of their own.
-/// Routing uses [`INSTRUCTION_REQUIRED`]; `accounts` / `accountArguments`
+/// Matching uses [`INSTRUCTION_REQUIRED`]; `accounts` / `accountArguments`
 /// add `account_arguments` when selected. `programId` / `data` / `path` /
 /// `isInner` are payload-only — already covered by the required query set.
 pub const INSTRUCTION: &[HandlerField] = &[
@@ -196,7 +196,7 @@ pub const TX_KEYS: &[&str] = &["slot", "transaction_index"];
 pub const ACTIVITY_KEYS: &[&str] = &["slot", "transaction_index", "account"];
 pub const LOG_KEYS: &[&str] = &["slot", "transaction_index", "instruction_address"];
 
-/// Always fetched for routing and join keys. Handler `fields.instruction`
+/// Always fetched for matching and join keys. Handler `fields.instruction`
 /// then decides which of `programId` / `data` / `path` / `isInner` land on
 /// the payload. HyperSync column is `instruction_address`; handler field is `path`.
 ///
@@ -276,11 +276,11 @@ pub fn block_extra_columns(selected: &[String]) -> Result<Vec<&'static str>> {
     extra_columns(BLOCK, selected)
 }
 
-/// The block columns filling the block store fields set in `mask`. The
+/// The block columns filling the block fields set in `mask`. The
 /// transaction counts are tallied from the transaction table, so they name no
 /// block column.
 pub fn block_mask_columns(mask: u64) -> Result<Vec<&'static str>> {
-    use crate::block_store::SvmBlockField;
+    use crate::chain_buffer::svm::SvmBlockField;
     use strum::VariantArray;
     let mask = mask & !SvmBlockField::TRANSACTION_COUNTS_MASK;
     let selected: Vec<String> = SvmBlockField::VARIANTS
@@ -321,8 +321,8 @@ mod tests {
     use strum::VariantArray;
 
     use super::*;
-    use crate::block_store::SvmBlockField;
-    use crate::transaction_store::SvmTxField;
+    use crate::chain_buffer::svm::SvmBlockField;
+    use crate::chain_buffer::svm::SvmTxField;
 
     fn names(table: &[HandlerField]) -> Vec<&'static str> {
         table.iter().map(|field| field.js_name).collect()
@@ -499,7 +499,7 @@ mod tests {
     }
 
     /// `EventConfigBuilder` validates block fields against `Svm.blockFields`,
-    /// whose positions are the block store's field codes, and rejects
+    /// whose positions are the block field codes, and rejects
     /// `Svm.slotOnlyBlockFields` on instructions.
     #[test]
     fn svm_res_block_fields_match_store_ordinals() {

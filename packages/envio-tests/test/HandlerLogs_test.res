@@ -414,7 +414,9 @@ describe("console in a handler", () => {
             }),
           },
         ])
-        await indexer.getBatchWritePromise()
+        // The contractRegister run holds block 5 back, so the first batch can
+        // be an empty one that only moves progress.
+        await indexer.waitUntilIdle()
         let eventFields = [
           ("chainId", JSON.Number(1.)),
           ("contract", JSON.String("Token")),

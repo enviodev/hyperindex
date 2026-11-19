@@ -1,58 +1,69 @@
 open Vitest
 
-describe("Block store reorg detection", () => {
+describe("Chain buffer reorg detection", () => {
   let scannedHashesFixture = [(1, "0x123"), (50, "0x456"), (300, "0x789"), (500, "0x5432")]
 
   let makePage = entries =>
-    BlockStore.fromJs(
-      entries->Array.map(((blockNumber, blockHash)): BlockStore.inputBlock => {
+    BufferPage.fromBlocks(
+      entries->Array.map(((blockNumber, blockHash)): BufferPage.observedBlock => {
         blockNumber,
         blockHash,
       }),
       ~ecosystem=Svm, // SVM stores hashes as raw strings, so short mock hashes work
     )
 
+  let merge = (store, page, ~fromBlock, ~reportOnly) =>
+    (store->ChainBuffer.mergePage(page, ~reorgThreshold=fromBlock, ~reportOnly)).mismatch
+
   let mock = entries => {
-    let store = BlockStore.make(~ecosystem=Svm)
-    switch store->BlockStore.merge(makePage(entries), ~fromBlock=0, ~reportOnly=false) {
-    | Null.Value(_) => JsError.throwWithMessage("Unexpected reorg detected in mock setup")
-    | Null.Null => ()
+    let store = TestChainBuffer.decodedBuffer(~onEventRegistrations=[], ~ecosystem=Svm)
+    switch store->merge(makePage(entries), ~fromBlock=0, ~reportOnly=false) {
+    | Some(_) => JsError.throwWithMessage("Unexpected reorg detected in mock setup")
+    | None => ()
     }
     store
   }
 
   let mergeNoReorg = (store, entries, ~fromBlock) => {
-    switch store->BlockStore.merge(makePage(entries), ~fromBlock, ~reportOnly=false) {
-    | Null.Value(_) => JsError.throwWithMessage("Unexpected reorg detected")
-    | Null.Null => store
+    switch store->merge(makePage(entries), ~fromBlock, ~reportOnly=false) {
+    | Some(_) => JsError.throwWithMessage("Unexpected reorg detected")
+    | None => store
     }
   }
+
+  let hashedBlockNumbers = (store, ~fromBlock, ~belowBlock) =>
+    (store->ChainBuffer.getBlockHashes(~fromBlock, ~belowBlock)).blockNumbers
+
+  // What a rollback to `target` does to the chain's blocks.
+  let rollback = (store, target) =>
+    store->ChainBuffer.removeBlocksInBlockRange(
+      ~fromBlock=target + 1,
+      ~toBlock=Int.Constants.maxValue,
+    )
 
   it("getHashedBlockNumbers applies the reorg threshold at read time", t => {
     let store = mock(scannedHashesFixture)
     t.expect(
-      store->BlockStore.getHashedBlockNumbers(~fromBlock=500 - 200, ~belowBlock=501),
+      store->hashedBlockNumbers(~fromBlock=500 - 200, ~belowBlock=501),
       ~message="Both 300 and 500 should be included in the threshold and below 501",
     ).toEqual([300, 500])
     t.expect(
-      store->BlockStore.getHashedBlockNumbers(~fromBlock=501 - 200, ~belowBlock=501),
+      store->hashedBlockNumbers(~fromBlock=501 - 200, ~belowBlock=501),
       ~message="If chain progresses one more block, 300 is not included in the threshold anymore",
     ).toEqual([500])
     t.expect(
-      store->BlockStore.getHashedBlockNumbers(~fromBlock=499 - 200, ~belowBlock=500),
+      store->hashedBlockNumbers(~fromBlock=499 - 200, ~belowBlock=500),
       ~message="Returns blocks below 500 that are in threshold",
     ).toEqual([300])
     t.expect(
-      mock([
-        (300, "0x789"),
-        (50, "0x456"),
-        (500, "0x5432"),
-        (1, "0x123"),
-      ])->BlockStore.getHashedBlockNumbers(~fromBlock=500 - 200, ~belowBlock=501),
+      mock([(300, "0x789"), (50, "0x456"), (500, "0x5432"), (1, "0x123")])->hashedBlockNumbers(
+        ~fromBlock=500 - 200,
+        ~belowBlock=501,
+      ),
       ~message="The order of merged blocks doesn't matter",
     ).toEqual([300, 500])
     t.expect(
-      store->BlockStore.getHashedBlockNumbers(~fromBlock=500 - 450, ~belowBlock=501),
+      store->hashedBlockNumbers(~fromBlock=500 - 450, ~belowBlock=501),
       ~message="A wider threshold includes more blocks",
     ).toEqual([50, 300, 500])
   })
@@ -67,8 +78,8 @@ describe("Block store reorg detection", () => {
       ->mergeNoReorg([(300, "0x789"), (500, "0x5432")], ~fromBlock=0)
 
     t.expect({
-      "blockNumbers": store->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=501),
-      "hash300": store->BlockStore.getHash(300),
+      "blockNumbers": store->hashedBlockNumbers(~fromBlock=0, ~belowBlock=501),
+      "hash300": store->TestChainBuffer.blockHashAt(300),
     }).toEqual({
       "blockNumbers": [1, 50, 300, 500],
       "hash300": Null.Value("0x789"),
@@ -82,8 +93,8 @@ describe("Block store reorg detection", () => {
     // Nothing is dropped here - the store is trimmed on batch progress.
     let store = store->mergeNoReorg([(50, "0x50-different"), (400, "0x400")], ~fromBlock=300)
     t.expect({
-      "below": store->BlockStore.getHash(50),
-      "inThreshold": store->BlockStore.getHash(400),
+      "below": store->TestChainBuffer.blockHashAt(50),
+      "inThreshold": store->TestChainBuffer.blockHashAt(400),
     }).toEqual({
       "below": Null.Value("0x50-different"),
       "inThreshold": Null.Value("0x400"),
@@ -91,52 +102,52 @@ describe("Block store reorg detection", () => {
   })
 
   it("Detects a reorg when a received hash doesn't match the scanned block", t => {
-    let reorgDetected: BlockStore.hashMismatch = {
+    let reorgDetected: BufferPage.hashMismatch = {
       blockNumber: 10,
       storedHash: "0x10-invalid",
       receivedHash: "0x10",
     }
 
     t.expect(
-      mock([(10, "0x10-invalid")])->BlockStore.merge(
+      mock([(10, "0x10-invalid")])->merge(
         makePage([(10, "0x10")]),
         ~fromBlock=0,
         ~reportOnly=false,
       ),
-    ).toEqual(Null.Value(reorgDetected))
+    ).toEqual(Some(reorgDetected))
 
     // Rollback mode discards the page: the stored hash stays, so the same
     // mismatch re-reports until the store is rolled back.
     let store = mock([(10, "0x10-invalid")])
-    let _ = store->BlockStore.merge(makePage([(10, "0x10")]), ~fromBlock=0, ~reportOnly=false)
+    let _ = store->merge(makePage([(10, "0x10")]), ~fromBlock=0, ~reportOnly=false)
     t.expect(
-      store->BlockStore.getHash(10),
+      store->TestChainBuffer.blockHashAt(10),
       ~message="Rollback mode keeps the scanned hash for the rollback comparison",
     ).toEqual(Null.Value("0x10-invalid"))
 
     // Detect-only mode reports but still merges, so the next page with the
     // same hash no longer reports.
     let store = mock([(10, "0x10-invalid")])
+    t.expect(store->merge(makePage([(10, "0x10")]), ~fromBlock=0, ~reportOnly=true)).toEqual(
+      Some(reorgDetected),
+    )
+    t.expect(store->TestChainBuffer.blockHashAt(10)).toEqual(Null.Value("0x10"))
     t.expect(
-      store->BlockStore.merge(makePage([(10, "0x10")]), ~fromBlock=0, ~reportOnly=true),
-    ).toEqual(Null.Value(reorgDetected))
-    t.expect(store->BlockStore.getHash(10)).toEqual(Null.Value("0x10"))
-    t.expect(
-      store->BlockStore.merge(makePage([(10, "0x10")]), ~fromBlock=0, ~reportOnly=true),
+      store->merge(makePage([(10, "0x10")]), ~fromBlock=0, ~reportOnly=true),
       ~message="After the overwrite the same page merges cleanly",
-    ).toEqual(Null.Null)
+    ).toEqual(None)
   })
 
   it("Reports the lowest mismatching block of a page", t => {
     t.expect(
-      mock([(10, "0x10"), (11, "0x11"), (12, "0x12")])->BlockStore.merge(
+      mock([(10, "0x10"), (11, "0x11"), (12, "0x12")])->merge(
         makePage([(12, "0x12-different"), (11, "0x11-different")]),
         ~fromBlock=0,
         ~reportOnly=false,
       ),
     ).toEqual(
-      Null.Value({
-        BlockStore.blockNumber: 11,
+      Some({
+        BufferPage.blockNumber: 11,
         storedHash: "0x11",
         receivedHash: "0x11-different",
       }),
@@ -146,49 +157,47 @@ describe("Block store reorg detection", () => {
   it("Rejects a response containing the same block number with different hashes", t => {
     let conflictingPage = makePage([(10, "0x10"), (10, "0x10-different")])
     t.expect(
-      conflictingPage->BlockStore.responseConflict,
+      conflictingPage->BufferPage.responseConflict,
       ~message="The second observation of block 10 collides with the first one inside the same page",
     ).toEqual(
       Null.Value({
-        BlockStore.blockNumber: 10,
+        BufferPage.blockNumber: 10,
         storedHash: "0x10",
         receivedHash: "0x10-different",
       }),
     )
 
     t.expect(
-      makePage([(10, "0x10"), (10, "0x10")])->BlockStore.responseConflict,
+      makePage([(10, "0x10"), (10, "0x10")])->BufferPage.responseConflict,
       ~message="Duplicate block numbers with the same hash are accepted",
     ).toEqual(Null.Null)
   })
 
   it("rollback drops every hash above the valid block", t => {
     let store = mock(scannedHashesFixture)
-    store->BlockStore.rollback(499)
-    t.expect(store->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=1000)).toEqual([
-      1,
-      50,
-      300,
-    ])
+    store->rollback(499)
+    t.expect(store->hashedBlockNumbers(~fromBlock=0, ~belowBlock=1000)).toEqual([1, 50, 300])
     // The rolled-back range is refetched, so nothing above the target survives
     // to be compared against the disproved fork.
-    store->BlockStore.rollback(299)
+    store->rollback(299)
     t.expect({
-      "blockNumbers": store->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=1000),
-      "droppedHash": store->BlockStore.getHash(300),
+      "blockNumbers": store->hashedBlockNumbers(~fromBlock=0, ~belowBlock=1000),
+      "droppedHash": store->TestChainBuffer.blockHashAt(300),
     }).toEqual({
       "blockNumbers": [1, 50],
       "droppedHash": Null.Null,
     })
   })
 
-  it("prune keeps in-threshold hashes as hash-only rows", t => {
+  it("removing processed blocks below the reorg window keeps the window's", t => {
     let store = mock(scannedHashesFixture)
-    store->BlockStore.prune(500, ~keepHashesFrom=300)
+    // Progress at 500 with the window starting at 300: what a committed batch
+    // removes.
+    store->ChainBuffer.removeBlocksInBlockRange(~fromBlock=0, ~toBlock=299)
     t.expect({
-      "blockNumbers": store->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=1000),
-      "prunedHash": store->BlockStore.getHash(50),
-      "keptHash": store->BlockStore.getHash(300),
+      "blockNumbers": store->hashedBlockNumbers(~fromBlock=0, ~belowBlock=1000),
+      "prunedHash": store->TestChainBuffer.blockHashAt(50),
+      "keptHash": store->TestChainBuffer.blockHashAt(300),
     }).toEqual({
       "blockNumbers": [300, 500],
       "prunedHash": Null.Null,
@@ -199,7 +208,10 @@ describe("Block store reorg detection", () => {
   it("Correctly finds the latest valid scanned block", t => {
     let store = mock(scannedHashesFixture)
     let latestValid = pairs =>
-      store->BlockStore.latestValidBlockFromStore(makePage(pairs), pairs->Array.map(((n, _)) => n))
+      store->ChainBuffer.findLatestBlockWithMatchingHash(
+        makePage(pairs),
+        pairs->Array.map(((n, _)) => n),
+      )
 
     t.expect(
       latestValid([(1, "0x123"), (50, "0x456"), (300, "0x789differnt"), (500, "0x5432differnt")]),

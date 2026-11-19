@@ -1,10 +1,11 @@
 // Tests may sleep and time out on the real clock; the code they test may not.
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
+mod address_columns;
 mod address_store;
 mod block_hash_pagination;
 mod block_selection;
-mod block_store;
+mod chain_buffer;
 mod cli_args;
 mod clickhouse;
 mod client_filtered_contracts;
@@ -17,13 +18,10 @@ mod commands;
 pub mod config_parsing;
 pub mod constants;
 pub mod docker_env;
-mod event_store;
 mod evm;
 mod evm_hypersync_source;
 mod evm_rpc_source;
 pub mod executor;
-mod field_columns;
-mod field_table;
 mod fuel;
 mod fuel_hypersync_source;
 mod hbs_templating;
@@ -48,7 +46,6 @@ mod template_dirs;
 #[cfg(test)]
 mod test_servers;
 mod text_position;
-mod transaction_store;
 mod ts_loader;
 mod tui;
 mod type_schema;
