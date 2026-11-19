@@ -26,18 +26,16 @@ use hypersync_solana_net_types::field_selection::SolanaFieldSelection;
 use hypersync_solana_net_types::query::SolanaQuery;
 
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
-use crate::block_selection::BlockRegistrations;
 use crate::chain_buffer::matching_svm::SvmMatcher;
 use crate::chain_buffer::page::{Page, PageData};
 use crate::chain_buffer::svm::{
     push_block, push_instruction, push_transaction, InstructionRow, InstructionView, SvmBlockField,
     SvmTransactionCounts,
 };
-use crate::chain_buffer::{ChainBuffer, Ecosystem, Shared};
+use crate::chain_buffer::{ChainBuffer, Ecosystem, Shared, SvmRegistrations};
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
 use config::SvmClientConfig;
 use query::SvmQuery;
-use selection::SelectionBuilder;
 
 /// The marker the client leaves in the error chain on a 429. It exposes no
 /// typed variant for a rate limit — the 429 is folded into an `anyhow` context
@@ -115,11 +113,10 @@ impl SvmHyperSyncClient {
 #[napi]
 pub struct SvmHyperSyncClient {
     inner: Arc<hypersync_client_solana::Client>,
-    selection_builder: SelectionBuilder,
+    chain: Arc<Shared>,
     /// The chain's registrations, matched against what a query returns so a
     /// page keeps only the instructions some registration takes.
-    chain: Arc<Shared>,
-    block_registrations: BlockRegistrations,
+    svm: Arc<SvmRegistrations>,
 }
 
 #[napi]
@@ -131,21 +128,14 @@ impl SvmHyperSyncClient {
         buffer: &ChainBuffer,
     ) -> napi::Result<SvmHyperSyncClient> {
         let chain = buffer.shared();
-        let selection_builder = SelectionBuilder::from_programs(
-            &chain.svm().map_err(map_err)?.programs,
-            &chain.store.read().unwrap(),
-        )
-        .context("build selection builder")
-        .map_err(map_err)?;
+        let svm = chain.svm().map_err(map_err)?;
         let inner = hypersync_client_solana::Client::new_with_agent(cfg.into(), user_agent)
             .context("build solana client")
             .map_err(map_err)?;
         Ok(SvmHyperSyncClient {
             inner: Arc::new(inner),
-            selection_builder,
-            block_registrations: BlockRegistrations::new(&chain.fetched_block_handlers())
-                .map_err(map_err)?,
             chain,
+            svm,
         })
     }
 
@@ -210,12 +200,14 @@ impl SvmHyperSyncClient {
     #[napi]
     pub async fn get_items(&self, params: ItemsQuery) -> napi::Result<(ItemsResponse, Page)> {
         let built = self
-            .selection_builder
+            .svm
+            .selection
             .build(&params.on_event_registration_indexes)
             .map_err(map_err)?;
         let selects_instructions = !params.on_event_registration_indexes.is_empty();
         let block_query = self
-            .block_registrations
+            .chain
+            .schedule
             .plan(
                 &params.on_block_registration_indexes,
                 params.from_slot,
@@ -322,7 +314,7 @@ impl SvmHyperSyncClient {
         }
 
         let handler_slots = block_selection.blocks_run_on(from_slot..resp.next_slot);
-        let matcher = &self.chain.svm().map_err(map_err)?.matcher;
+        let matcher = &self.svm.matcher;
         let page = tokio::task::block_in_place(|| {
             build_page(
                 &mut resp,
@@ -791,9 +783,10 @@ mod tests {
         response: &mut simple::SolanaResponse,
     ) -> PageData {
         let builder =
-            SelectionBuilder::from_programs(programs, &store.handle().read().unwrap()).unwrap();
+            selection::SelectionBuilder::from_programs(programs, &store.handle().read().unwrap())
+                .unwrap();
         let built = builder.build(&builder.registration_indexes()).unwrap();
-        let matcher = SvmMatcher::new(programs, ContractRegisters::default(), store).unwrap();
+        let matcher = SvmMatcher::new(&builder, ContractRegisters::default(), store).unwrap();
         build_page(response, &built, &matcher, &[], None).unwrap()
     }
 

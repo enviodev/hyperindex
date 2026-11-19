@@ -17,13 +17,13 @@ mod logs;
 mod responses;
 
 use crate::address_store::AddressSet;
-use crate::block_selection::{BlockRegistrations, BlockSelection};
+use crate::block_selection::BlockSelection;
 use crate::chain_buffer::evm::{log_column, LogView};
 use crate::chain_buffer::page::{Page, PageData};
 use crate::chain_buffer::table::make_key;
-use crate::chain_buffer::{ChainBuffer, Ecosystem, Shared};
+use crate::chain_buffer::{ChainBuffer, Ecosystem, EvmRegistrations, Shared};
 use crate::evm_hypersync_source::query::BlockField;
-use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
+use crate::evm_hypersync_source::selection::BuiltLogSelection;
 use crate::logger::{BoundLogger, Level, Logger};
 use crate::request_stats::RequestStat;
 use classify::{
@@ -287,7 +287,7 @@ pub struct BlockHashResult {
 pub struct EvmRpcClient {
     inner: Arc<JsonRpcClient>,
     chain: Arc<Shared>,
-    selection_builder: SelectionBuilder,
+    evm: Arc<EvmRegistrations>,
     sync_config: SyncConfig,
     max_addresses_per_request: usize,
     logger: BoundLogger,
@@ -306,7 +306,6 @@ pub struct EvmRpcClient {
     /// chain buffer rather than refetched.
     block_read: BlockRead,
     chain_tx_mask: u64,
-    block_registrations: BlockRegistrations,
     /// Whether the provider has been seen refusing reads by block hash, which
     /// is said once per source rather than on every block.
     warned_block_hash_refusal: AtomicBool,
@@ -379,10 +378,8 @@ impl EvmRpcClient {
         )
         .map_err(map_err)?;
         let chain = buffer.shared();
-        let event_registrations = &chain.evm().map_err(map_err)?.inputs;
-        let selection_builder = SelectionBuilder::from_registrations(event_registrations)
-            .context("build selection builder")
-            .map_err(map_err)?;
+        let evm = chain.evm().map_err(map_err)?;
+        let event_registrations = &evm.inputs;
         // 0.0 would collapse every shrink to the floor of 1 block and 1.0 would
         // never shrink at all, so both ends are excluded (this also rejects NaN).
         if !(cfg.backoff_multiplicative > 0.0 && cfg.backoff_multiplicative < 1.0) {
@@ -428,10 +425,8 @@ impl EvmRpcClient {
                 });
         Ok(EvmRpcClient {
             inner: Arc::new(inner),
-            block_registrations: BlockRegistrations::new(&chain.fetched_block_handlers())
-                .map_err(map_err)?,
             chain,
-            selection_builder,
+            evm: evm.clone(),
             sync_config,
             max_addresses_per_request,
             logger: logger.bind(bound_fields_json),
@@ -550,7 +545,8 @@ impl EvmRpcClient {
             .suggested_interval(&params.partition_id, &self.sync_config);
         let interval_end = (from_block + suggested_interval - 1).min(to_block_ceiling);
         let block_selection = self
-            .block_registrations
+            .chain
+            .schedule
             .select(
                 &params.on_block_registration_indexes,
                 from_block,
@@ -562,7 +558,8 @@ impl EvmRpcClient {
         // answers without a request up to the next block a handler runs on.
         if params.on_event_registration_indexes.is_empty() && block_selection.is_empty() {
             let next_handler_block = self
-                .block_registrations
+                .chain
+                .schedule
                 .select(
                     &params.on_block_registration_indexes,
                     from_block,
@@ -592,7 +589,8 @@ impl EvmRpcClient {
             params.client_filtered_contracts.unwrap_or_default(),
         );
         let built = self
-            .selection_builder
+            .evm
+            .selection
             .build(
                 &params.on_event_registration_indexes,
                 address_set,
@@ -722,7 +720,7 @@ impl EvmRpcClient {
         let headers = headers?;
         self.recheck_head_blocks(query, &checked_blocks, &headers, &mut logs)
             .await?;
-        let matched = Self::match_logs(logs.into_iter().flatten().collect(), self.chain.clone())
+        let matched = Self::match_logs(logs.into_iter().flatten().collect(), self.evm.clone())
             .await
             .map_err(PageError::Logs)?;
 
@@ -889,7 +887,8 @@ impl EvmRpcClient {
         selection: &BuiltLogSelection,
     ) -> Result<Vec<RawLog>, RpcError> {
         logs::request_selection_logs(&self.inner, &self.logger, blocks, selection, |origin| {
-            self.selection_builder
+            self.evm
+                .selection
                 .build_by_address(origin, query.address_set, |contract_names| {
                     query
                         .address_set
@@ -1063,11 +1062,11 @@ impl EvmRpcClient {
 
     async fn match_logs(
         raw_logs: Vec<RawLog>,
-        chain: Arc<Shared>,
+        evm: Arc<EvmRegistrations>,
     ) -> Result<Vec<MatchedLog>, RpcError> {
         // Many logs, each a few compares; keep them off the libuv thread.
         tokio::task::spawn_blocking(move || {
-            let matcher = &chain.evm()?.matcher;
+            let matcher = &evm.matcher;
             let store = matcher.read_store();
             let mut matched = Vec::new();
             for raw in raw_logs {
@@ -1075,7 +1074,7 @@ impl EvmRpcClient {
                 let (mut registrations, mut registers) = (Vec::new(), false);
                 matcher.for_each_match(&log.view(), &store, |registration| {
                     registrations.push(registration.index);
-                    registers |= chain.has_contract_register(registration.index);
+                    registers |= matcher.contract_registers.has(registration.index);
                 });
                 log.registrations = registrations;
                 log.registers = registers;

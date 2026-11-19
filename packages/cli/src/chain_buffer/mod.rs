@@ -18,7 +18,7 @@ pub(crate) mod svm;
 pub(crate) mod table;
 pub(crate) mod walk;
 
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::Result;
 use napi::bindgen_prelude::ArrayBuffer;
@@ -26,9 +26,12 @@ use napi::Env;
 use napi_derive::napi;
 use strum::VariantArray;
 
-use crate::address_store::{AddressStore, StoreInner};
+use crate::address_store::AddressStore;
+use crate::evm_hypersync_source::selection as evm_selection;
 use crate::evm_hypersync_source::types::OnEventRegistrationInput;
+use crate::fuel_hypersync_source::selection as fuel_selection;
 use crate::fuel_hypersync_source::selection::FuelOnEventRegistrationInput;
+use crate::svm_hypersync_source::selection as svm_selection;
 use crate::svm_hypersync_source::selection::SvmProgramInput;
 use decoded::DecodedEvents;
 use deliver::{BuiltItems, Columns};
@@ -125,24 +128,25 @@ impl Ecosystem {
 
 pub(crate) struct EvmRegistrations {
     pub(crate) inputs: Vec<OnEventRegistrationInput>,
+    pub(crate) selection: evm_selection::SelectionBuilder,
     pub(crate) matcher: matching::EvmMatcher,
     pub(crate) decoder: decode::evm::EvmDecoder,
 }
 
 pub(crate) struct SvmRegistrations {
-    pub(crate) programs: Vec<SvmProgramInput>,
+    pub(crate) selection: svm_selection::SelectionBuilder,
     pub(crate) matcher: matching_svm::SvmMatcher,
 }
 
 pub(crate) struct FuelRegistrations {
-    pub(crate) inputs: Vec<FuelOnEventRegistrationInput>,
+    pub(crate) selection: fuel_selection::SelectionBuilder,
     pub(crate) matcher: matching_fuel::FuelMatcher,
 }
 
 pub(crate) enum Registrations {
-    Evm(EvmRegistrations),
-    Svm(SvmRegistrations),
-    Fuel(FuelRegistrations),
+    Evm(Arc<EvmRegistrations>),
+    Svm(Arc<SvmRegistrations>),
+    Fuel(Arc<FuelRegistrations>),
 }
 
 impl Registrations {
@@ -153,31 +157,45 @@ impl Registrations {
         address_store: &AddressStore,
     ) -> Result<Self> {
         Ok(match input {
-            RegistrationsInput::Evm { registrations } => Registrations::Evm(EvmRegistrations {
-                matcher: matching::EvmMatcher::new(
-                    &registrations,
-                    contract_registers.clone(),
-                    address_store,
-                )?,
-                decoder: decode::evm::EvmDecoder::new(&registrations, should_checksum)?,
-                inputs: registrations,
-            }),
-            RegistrationsInput::Svm { programs } => Registrations::Svm(SvmRegistrations {
-                matcher: matching_svm::SvmMatcher::new(
+            RegistrationsInput::Evm { registrations } => {
+                Registrations::Evm(Arc::new(EvmRegistrations {
+                    selection: evm_selection::SelectionBuilder::from_registrations(&registrations)?,
+                    matcher: matching::EvmMatcher::new(
+                        &registrations,
+                        contract_registers.clone(),
+                        address_store,
+                    )?,
+                    decoder: decode::evm::EvmDecoder::new(&registrations, should_checksum)?,
+                    inputs: registrations,
+                }))
+            }
+            RegistrationsInput::Svm { programs } => {
+                let selection = svm_selection::SelectionBuilder::from_programs(
                     &programs,
-                    contract_registers.clone(),
-                    address_store,
-                )?,
-                programs,
-            }),
-            RegistrationsInput::Fuel { registrations } => Registrations::Fuel(FuelRegistrations {
-                matcher: matching_fuel::FuelMatcher::new(
-                    &registrations,
-                    contract_registers.clone(),
-                    address_store,
-                )?,
-                inputs: registrations,
-            }),
+                    &address_store.handle().read().unwrap(),
+                )?;
+                Registrations::Svm(Arc::new(SvmRegistrations {
+                    matcher: matching_svm::SvmMatcher::new(
+                        &selection,
+                        contract_registers.clone(),
+                        address_store,
+                    )?,
+                    selection,
+                }))
+            }
+            RegistrationsInput::Fuel { registrations } => {
+                Registrations::Fuel(Arc::new(FuelRegistrations {
+                    selection: fuel_selection::SelectionBuilder::from_registrations(
+                        &registrations,
+                        &address_store.handle().read().unwrap(),
+                    )?,
+                    matcher: matching_fuel::FuelMatcher::new(
+                        &registrations,
+                        contract_registers.clone(),
+                        address_store,
+                    )?,
+                }))
+            }
         })
     }
 
@@ -195,11 +213,7 @@ impl Registrations {
 pub(crate) struct Shared {
     pub(crate) ecosystem: Ecosystem,
     pub(crate) should_checksum: bool,
-    pub(crate) store: Arc<RwLock<StoreInner>>,
     pub(crate) registrations: Registrations,
-    /// Every block handler; the ones selecting fields are what sources fetch
-    /// blocks for.
-    pub(crate) block_handlers: Vec<BlockHandlerInput>,
     pub(crate) schedule: Schedule,
     /// By event registration index.
     transaction_masks: Vec<u64>,
@@ -208,32 +222,23 @@ pub(crate) struct Shared {
 }
 
 impl Shared {
-    /// The block handlers selecting fields, whose blocks sources fetch.
-    pub(crate) fn fetched_block_handlers(&self) -> Vec<BlockHandlerInput> {
-        self.block_handlers
-            .iter()
-            .filter(|handler| handler.block_field_mask.is_some())
-            .cloned()
-            .collect()
-    }
-
-    pub(crate) fn evm(&self) -> Result<&EvmRegistrations> {
+    pub(crate) fn evm(&self) -> Result<Arc<EvmRegistrations>> {
         match &self.registrations {
-            Registrations::Evm(evm) => Ok(evm),
+            Registrations::Evm(evm) => Ok(evm.clone()),
             _ => anyhow::bail!("the chain buffer holds no EVM registrations"),
         }
     }
 
-    pub(crate) fn svm(&self) -> Result<&SvmRegistrations> {
+    pub(crate) fn svm(&self) -> Result<Arc<SvmRegistrations>> {
         match &self.registrations {
-            Registrations::Svm(svm) => Ok(svm),
+            Registrations::Svm(svm) => Ok(svm.clone()),
             _ => anyhow::bail!("the chain buffer holds no SVM registrations"),
         }
     }
 
-    pub(crate) fn fuel(&self) -> Result<&FuelRegistrations> {
+    pub(crate) fn fuel(&self) -> Result<Arc<FuelRegistrations>> {
         match &self.registrations {
-            Registrations::Fuel(fuel) => Ok(fuel),
+            Registrations::Fuel(fuel) => Ok(fuel.clone()),
             _ => anyhow::bail!("the chain buffer holds no Fuel registrations"),
         }
     }
@@ -448,10 +453,8 @@ impl ChainBuffer {
             shared: Arc::new(Shared {
                 ecosystem,
                 should_checksum: config.should_checksum,
-                store: address_store.handle(),
                 registrations,
                 schedule: Schedule::new(&config.block_handlers).map_err(to_napi)?,
-                block_handlers: config.block_handlers,
                 transaction_masks: config.transaction_masks.iter().map(|m| *m as u64).collect(),
                 event_block_masks: config.event_block_masks.iter().map(|m| *m as u64).collect(),
                 contract_registers,

@@ -1,21 +1,10 @@
-use std::collections::HashMap;
 use std::ops::Range;
 
 use anyhow::{Context, Result};
 
-use crate::chain_buffer::schedule::{BlockHandler, BlockHandlerInput};
+use crate::chain_buffer::schedule::{BlockHandler, Schedule};
 
-pub(crate) struct BlockRegistrations(HashMap<i64, BlockHandler>);
-
-impl BlockRegistrations {
-    pub(crate) fn new(inputs: &[BlockHandlerInput]) -> Result<Self> {
-        let mut registrations = HashMap::new();
-        for input in inputs {
-            registrations.insert(input.index, BlockHandler::new(input)?);
-        }
-        Ok(BlockRegistrations(registrations))
-    }
-
+impl Schedule {
     /// The query's handlers that run on a block of `[from_block, to_block]`
     /// (`to_block` unbounded when absent): one ended or not yet started has
     /// nothing to fetch.
@@ -27,9 +16,12 @@ impl BlockRegistrations {
     ) -> Result<BlockSelection> {
         let mut registrations = Vec::new();
         for index in indexes {
-            let registration = self.0.get(index).with_context(|| {
-                format!("Unknown block handler index {index} in query selection")
-            })?;
+            let registration = u32::try_from(*index)
+                .ok()
+                .and_then(|index| self.handler(index))
+                .with_context(|| {
+                    format!("Unknown block handler index {index} in query selection")
+                })?;
             if registration
                 .first_from(from_block)
                 .is_some_and(|first| to_block.is_none_or(|to| first <= to))
@@ -247,6 +239,7 @@ impl BlockSelection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain_buffer::schedule::BlockHandlerInput;
 
     fn input(
         index: i64,
@@ -269,7 +262,7 @@ mod tests {
         to_block: Option<u64>,
     ) -> BlockSelection {
         let indexes: Vec<i64> = inputs.iter().map(|i| i.index).collect();
-        BlockRegistrations::new(inputs)
+        Schedule::new(inputs)
             .unwrap()
             .select(&indexes, from_block, to_block)
             .unwrap()
@@ -341,7 +334,7 @@ mod tests {
         held: &[u64],
     ) -> BlockQuery {
         let indexes: Vec<i64> = inputs.iter().map(|i| i.index).collect();
-        BlockRegistrations::new(inputs)
+        Schedule::new(inputs)
             .unwrap()
             .plan(
                 &indexes,
@@ -498,6 +491,6 @@ mod tests {
 
     #[test]
     fn rejects_an_interval_that_matches_nothing() {
-        assert!(BlockRegistrations::new(&[input(0, 0, None, 0)]).is_err());
+        assert!(Schedule::new(&[input(0, 0, None, 0)]).is_err());
     }
 }

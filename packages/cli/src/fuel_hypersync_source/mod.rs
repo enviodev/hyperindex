@@ -11,19 +11,18 @@ use crate::address_store::{AddressSet, StoreInner};
 use crate::chain_buffer::fuel::{push_block, push_receipt, ReceiptInput, ReceiptView};
 use crate::chain_buffer::matching_fuel::FuelMatcher;
 use crate::chain_buffer::page::{Page, PageData};
-use crate::chain_buffer::{ChainBuffer, Ecosystem, Shared};
+use crate::chain_buffer::{ChainBuffer, Ecosystem, FuelRegistrations};
 use crate::hex::decode_prefixed;
 use config::ClientConfig;
 use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
-use selection::{BuiltSelection, RegistrationKind, SelectionBuilder};
+use selection::{BuiltSelection, RegistrationKind};
 use types::{convert_response, Block, ConvertError, RawReceipt};
 
 #[napi]
 pub struct FuelHyperSyncClient {
     inner: hyperfuel_client::Client,
-    selection_builder: SelectionBuilder,
-    chain: Arc<Shared>,
+    fuel: Arc<FuelRegistrations>,
 }
 
 #[napi]
@@ -34,23 +33,13 @@ impl FuelHyperSyncClient {
         user_agent: String,
         buffer: &ChainBuffer,
     ) -> napi::Result<FuelHyperSyncClient> {
-        let chain = buffer.shared();
-        let selection_builder = SelectionBuilder::from_registrations(
-            &chain.fuel().map_err(map_err)?.inputs,
-            &chain.store.read().unwrap(),
-        )
-        .context("build selection builder")
-        .map_err(map_err)?;
+        let fuel = buffer.shared().fuel().map_err(map_err)?;
         let client_config: hyperfuel_client::ClientConfig =
             cfg.try_into().context("build config").map_err(map_err)?;
         let inner = hyperfuel_client::Client::new_with_agent(client_config, user_agent)
             .context("build client")
             .map_err(map_err)?;
-        Ok(FuelHyperSyncClient {
-            inner,
-            selection_builder,
-            chain,
-        })
+        Ok(FuelHyperSyncClient { inner, fuel })
     }
 
     #[napi]
@@ -73,7 +62,8 @@ impl FuelHyperSyncClient {
             params.client_filtered_contracts.clone().unwrap_or_default(),
         );
         let built = self
-            .selection_builder
+            .fuel
+            .selection
             .build(&params.registration_indexes, address_set, &client_filtered)
             .map_err(map_err)?;
 
@@ -87,7 +77,7 @@ impl FuelHyperSyncClient {
             .map_err(|e| request_err("Failed to get data from HyperFuel", e))?;
         let raw = convert_response(res).map_err(convert_error_to_napi)?;
         let page = tokio::task::block_in_place(|| {
-            let matcher = &self.chain.fuel()?.matcher;
+            let matcher = &self.fuel.matcher;
             let store = matcher.read_store();
             build_page(&raw.receipts, &raw.blocks, matcher, &store)
         })

@@ -6,13 +6,12 @@ use napi_derive::napi;
 
 use crate::address_store::AddressSet;
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
-use crate::block_selection::BlockRegistrations;
 use crate::chain_buffer::{
     self,
     evm::LogView,
     matching::EvmMatcher,
     page::{Page, PageData},
-    ChainBuffer, Ecosystem, Shared,
+    ChainBuffer, Ecosystem, EvmRegistrations, Shared,
 };
 use crate::evm_rpc_source;
 use crate::request_stats::{rate_limited_err, RequestStat};
@@ -25,7 +24,7 @@ pub(crate) mod types;
 
 use config::ClientConfig;
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
-use selection::{BuiltLogSelection, SelectionBuilder};
+use selection::BuiltLogSelection;
 use types::{map_i64, RollbackGuard};
 
 static LOGGER_INIT: Once = Once::new();
@@ -54,8 +53,7 @@ fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
 pub struct EvmHyperSyncClient {
     inner: hypersync_client::Client,
     chain: Arc<Shared>,
-    selection_builder: SelectionBuilder,
-    block_registrations: BlockRegistrations,
+    evm: Arc<EvmRegistrations>,
 }
 
 impl EvmHyperSyncClient {
@@ -86,23 +84,13 @@ impl EvmHyperSyncClient {
     ) -> napi::Result<EvmHyperSyncClient> {
         init_logger(cfg.log_level.as_deref());
         let chain = buffer.shared();
-        let block_registrations =
-            BlockRegistrations::new(&chain.fetched_block_handlers()).map_err(map_err)?;
-        let selection_builder =
-            SelectionBuilder::from_registrations(&chain.evm().map_err(map_err)?.inputs)
-                .context("build selection builder")
-                .map_err(map_err)?;
+        let evm = chain.evm().map_err(map_err)?;
 
         let inner = hypersync_client::Client::new_with_agent(cfg.into(), user_agent)
             .context("build client")
             .map_err(map_err)?;
 
-        Ok(EvmHyperSyncClient {
-            inner,
-            chain,
-            selection_builder,
-            block_registrations,
-        })
+        Ok(EvmHyperSyncClient { inner, chain, evm })
     }
 
     #[napi]
@@ -170,7 +158,8 @@ impl EvmHyperSyncClient {
         );
         let selects_logs = !params.on_event_registration_indexes.is_empty();
         let built = self
-            .selection_builder
+            .evm
+            .selection
             .build(
                 &params.on_event_registration_indexes,
                 address_set,
@@ -178,7 +167,8 @@ impl EvmHyperSyncClient {
             )
             .map_err(map_err)?;
         let block_query = self
-            .block_registrations
+            .chain
+            .schedule
             .plan(
                 &params.on_block_registration_indexes,
                 params.from_block,
@@ -280,7 +270,7 @@ impl EvmHyperSyncClient {
         // The range the page covered: `include_all_blocks` leaves no gaps in it.
         let handler_blocks =
             block_selection.blocks_run_on(block_query.from_block..(next_block as u64));
-        let matcher = &self.chain.evm().map_err(map_err)?.matcher;
+        let matcher = &self.evm.matcher;
         let mut page = tokio::task::block_in_place(|| {
             process_response(
                 response.data.blocks,

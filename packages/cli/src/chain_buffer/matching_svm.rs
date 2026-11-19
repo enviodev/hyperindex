@@ -10,7 +10,7 @@ use super::matching::{ContractRegisters, RowMatch};
 use super::svm::InstructionView;
 use crate::address_store::{AddressStore, StoreInner};
 use crate::svm_hypersync_source::selection::{
-    Instruction, Registration, SelectedInstruction, SelectionBuilder, SvmProgramInput,
+    Instruction, Registration, SelectedInstruction, SelectionBuilder,
 };
 
 pub(crate) struct SvmMatcher {
@@ -22,20 +22,16 @@ pub(crate) struct SvmMatcher {
 
 impl SvmMatcher {
     pub(crate) fn new(
-        programs: &[SvmProgramInput],
+        selection: &SelectionBuilder,
         contract_registers: ContractRegisters,
         address_store: &AddressStore,
     ) -> Result<Self> {
-        let store = address_store.handle();
-        let instructions = {
-            let inner = store.read().unwrap();
-            let builder = SelectionBuilder::from_programs(programs, &inner)?;
-            builder.build(&builder.registration_indexes())?.instructions
-        };
         Ok(SvmMatcher {
-            instructions,
+            instructions: selection
+                .build(&selection.registration_indexes())?
+                .instructions,
             contract_registers,
-            store,
+            store: address_store.handle(),
         })
     }
 
