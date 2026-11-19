@@ -29,7 +29,7 @@ type t = {
 let calculateTargetBufferSize = () =>
   switch Env.targetBufferSize {
   | Some(size) => size
-  | None => 200_000
+  | None => 300_000
   }
 
 let make = (
