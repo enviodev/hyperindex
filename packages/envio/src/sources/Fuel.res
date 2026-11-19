@@ -38,7 +38,6 @@ let make = (): Ecosystem.t => {
   name: Fuel,
   blockNumberName: "height",
   blockTimestampName: "time",
-  blockHashName: "id",
   onBlockFields: None,
   onBlockMethodName: "onBlock",
   contractNoun: "contract",

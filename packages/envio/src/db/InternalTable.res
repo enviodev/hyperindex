@@ -69,23 +69,6 @@ module Checkpoints = {
 }
 
 module RawEvents = {
-  type t = Internal.rawEvent
-
-  let schema = S.schema((s): t => {
-    chain_id: s.matches(ChainId.schema),
-    event_id: s.matches(S.bigint),
-    event_name: s.matches(S.string),
-    contract_name: s.matches(S.string),
-    block_number: s.matches(S.int),
-    log_index: s.matches(S.int),
-    src_address: s.matches(Address.schema),
-    block_hash: s.matches(S.string),
-    block_timestamp: s.matches(S.int),
-    block_fields: s.matches(S.json(~validate=false)),
-    transaction_fields: s.matches(S.json(~validate=false)),
-    params: s.matches(S.json(~validate=false)),
-  })
-
   let table = mkTable(
     "raw_events",
     ~fields=[

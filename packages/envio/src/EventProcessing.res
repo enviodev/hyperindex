@@ -159,13 +159,6 @@ let registerProcessEventBatchMetrics = (
   indexerState->IndexerState.recordBatchDurations(~loadDuration, ~handlerDuration)
 }
 
-type logPartitionInfo = {
-  batchSize: int,
-  firstItemTimestamp: option<int>,
-  firstItemBlockNumber?: int,
-  lastItemBlockNumber?: int,
-}
-
 let processEventBatch = async (~batch: Batch.t, ~runtime: HandlerRuntime.t) => {
   let indexerState = runtime.params.indexerState
   runtime->HandlerRuntime.refreshChains

@@ -592,7 +592,7 @@ describe("Automatic getWhere indexes", () => {
       // The automatic index is the indexer's own, so finalizing must leave it be.
       // The backfill is chunked into a query per range; the chain only reaches
       // the head once every one of them is answered.
-      await source.respondEmptyUpTo(1000)
+      await source.respondUpTo(1000)
       await indexer.waitUntilReady()
 
       t.expect(await readyAtByChainId(indexer)).toEqual([(ChainId.fromInt(1337), true)])

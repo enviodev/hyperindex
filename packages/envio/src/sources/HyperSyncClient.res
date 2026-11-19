@@ -122,19 +122,10 @@ module QueryTypes = {
   type topic2 = topicFilter
   type topic3 = topicFilter
   type topicSelection = (topic0, topic1, topic2, topic3)
-  let makeTopicSelection = (~topic0=[], ~topic1=[], ~topic2=[], ~topic3=[]) => (
-    topic0,
-    topic1,
-    topic2,
-    topic3,
-  )
-
   type logFilter = {
     address?: array<Address.t>,
     topics: topicSelection,
   }
-
-  let makeLogSelection = (~address, ~topics) => {address, topics}
 
   type transactionFilter = {
     from?: array<Address.t>,

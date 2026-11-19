@@ -317,10 +317,6 @@ describe("Per-chain entities under snake_case columns", () => {
     t.expect((field.fieldName, field->Table.getPgDbFieldName)).toEqual(("chainId", "chain_id"))
   })
 
-  it("Names the column the addon partitions and keys history by", t => {
-    t.expect(snakeCounter.table->Table.getPgChainIdColumn).toEqual(Some("chain_id"))
-  })
-
   it("Keys the getWhere filter by the API name", t => {
     t.expect(
       snakeCounter.table

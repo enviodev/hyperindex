@@ -103,7 +103,6 @@ type addon = {
 @module("node:url") external fileURLToPath: string => string = "fileURLToPath"
 @val external importMetaUrl: string = "import.meta.url"
 @module("node:path") external pathDirname: string => string = "dirname"
-@module("node:path") @variadic external pathResolve: array<string> => string = "resolve"
 @module("node:fs") external existsSync: string => bool = "existsSync"
 @module("node:child_process")
 external execSyncRaw: (string, {..}) => string = "execSync"

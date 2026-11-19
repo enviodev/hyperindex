@@ -75,7 +75,6 @@ let make = (): Ecosystem.t => {
   name: Evm,
   blockNumberName: "number",
   blockTimestampName: "timestamp",
-  blockHashName: "hash",
   onBlockFields: Some({fields: blockFields, keyField: "number", mask: eventBlockFieldMask}),
   onBlockMethodName: "onBlock",
   contractNoun: "contract",

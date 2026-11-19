@@ -45,14 +45,12 @@ external isDeepStrictEqual: (JSON.t, JSON.t) => bool = "isDeepStrictEqual"
 
 type rpcRequest = {
   sequence: int,
-  httpMethod: string,
   url: string,
   method: string,
   params: JSON.t,
   id: JSON.t,
   jsonrpc: string,
   headers: dict<headerValue>,
-  rawBody: string,
 }
 
 type rec reply =
@@ -98,7 +96,6 @@ type t = {
   // Kept for compatibility and ad-hoc inspection. Scenario tests should use
   // `transcript`, whose entries are already parsed and matched.
   requests: array<string>,
-  requestHeaders: array<dict<headerValue>>,
   transcript: unit => array<transcriptEntry>,
   verify: unit => verification,
   verifyOrThrow: unit => unit,
@@ -142,14 +139,12 @@ let parseRequest = (~sequence, ~req, ~rawBody): result<rpcRequest, string> => {
         | (Some(method), Some(params), Some(id), Some("2.0")) =>
           Ok({
             sequence,
-            httpMethod: req->reqMethod,
             url: req->reqUrl,
             method,
             params,
             id,
             jsonrpc: "2.0",
             headers: req->reqHeaders,
-            rawBody,
           })
         | (_, _, _, Some(version)) => Error(`Expected jsonrpc "2.0", received "${version}"`)
         | _ => Error("JSON-RPC request must contain method, params, id, and jsonrpc")
@@ -266,7 +261,6 @@ let verificationMessage = (~name, {failures, pending}: verification) => {
 let startInternal = (~name, ~calls: array<expectedCall>, ~legacyHandler=?, ~port=0) =>
   Promise.make((resolve, reject) => {
     let requests = []
-    let requestHeaders = []
     let transcript = []
     let failures = []
     let sequence = ref(0)
@@ -287,7 +281,6 @@ let startInternal = (~name, ~calls: array<expectedCall>, ~legacyHandler=?, ~port
         () => {
           sequence := sequence.contents + 1
           requests->Array.push(data.contents)->ignore
-          requestHeaders->Array.push(req->reqHeaders)->ignore
 
           switch legacyHandler {
           | Some(handler) => {
@@ -380,7 +373,6 @@ let startInternal = (~name, ~calls: array<expectedCall>, ~legacyHandler=?, ~port
       resolve({
         url: `http://127.0.0.1:${(server->address).port->Int.toString}`,
         requests,
-        requestHeaders,
         transcript: () => transcript->Utils.Array.copy,
         verify,
         verifyOrThrow,

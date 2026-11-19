@@ -169,7 +169,7 @@ Mock source for chain 1 at the failure:
           let mock = source(1)
           mock.resolveGetHeightOrThrow(300)
           await mock.expectNewHeightCalls(1)
-          await mock.respondEmptyUpTo(300)
+          await mock.respondUpTo(300)
         },
       ),
     )
