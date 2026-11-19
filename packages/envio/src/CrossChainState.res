@@ -409,7 +409,7 @@ let checkAndFetch = async (
   // A chain with no density signal probes blind, so it only gets a bounded
   // slice of the pool — one unknown chain shouldn't hold the whole budget
   // while it takes its first measurements. It is handed one admission unit,
-  // though a partition with no response yet reserves a whole page from it.
+  // of which each probe reserves up to a page.
   let coldChainBudget = minimumAdmissionBudget
 
   let prioritizedChainStates = crossChainState->priorityOrder
@@ -474,22 +474,20 @@ let checkAndFetch = async (
               acc +. query.itemsEst->Int.toFloat
             )
 
+          let partitions = Dict.make()
+          queries->Array.forEach((query: FetchState.query) =>
+            partitions->Dict.set(
+              query.partitionId,
+              {
+                "fromBlock": query.fromBlock,
+                "targetBlock": query.toBlock,
+                "targetEvents": query.itemsEst,
+              },
+            )
+          )
           cs
           ->ChainState.logger
-          ->Logger.trace(
-            "Started querying",
-            ~params={
-              "queries": queries->Array.map((query: FetchState.query) =>
-                {
-                  "partitionId": query.partitionId,
-                  "fromBlock": query.fromBlock,
-                  "toBlock": query.toBlock,
-                  "isChunk": query.isChunk,
-                  "reservedItems": query.itemsEst,
-                }
-              ),
-            },
-          )
+          ->Logger.trace("Started querying", ~params={"partitions": partitions})
 
           actionByChain->ChainId.Dict.set(chainId, FetchState.Ready(queries))
           // Mark the queries in flight and reserve their size against the

@@ -261,7 +261,7 @@ describe("A passing scenario body", () => {
               "level": JSON.String("trace"),
               "msg": JSON.String("Started querying"),
               "chainId": JSON.Number(1.),
-              "queries": JSON.parseOrThrow(`[{"partitionId":"0","fromBlock":1,"toBlock":100,"isChunk":false,"reservedItems":5000}]`),
+              "partitions": JSON.parseOrThrow(`{"0":{"fromBlock":1,"targetBlock":100,"targetEvents":5000}}`),
             },
           ),
         )

@@ -181,8 +181,15 @@ describe("FetchState query budget over the indexer loop", () => {
       // chain still has no density: its probe goes out once the first lands.
       await mock.expectItemsQueries([{partitionId: "1", fromBlock: 1, reply: LeavePending}])
       t.expect(indexer->QueryReservations.startedTicks).toEqual([
-        [{QueryReservations.partitionId: "0", fromBlock: 1, reservedItems: 1000}],
-        [{partitionId: "1", fromBlock: 1, reservedItems: 1000}],
+        [
+          {
+            QueryReservations.partitionId: "0",
+            fromBlock: 1,
+            targetBlock: None,
+            reservedItems: 1000,
+          },
+        ],
+        [{partitionId: "1", fromBlock: 1, targetBlock: None, reservedItems: 1000}],
       ])
     },
   )

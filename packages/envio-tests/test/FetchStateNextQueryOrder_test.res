@@ -44,7 +44,7 @@ type queryShape = {
   addresses: array<string>,
 }
 
-// The pending queries, each probe with the buffer items it reserved.
+// The pending queries, each open-ended probe with the buffer items it reserved.
 let pendingShapes = (source: MockSource.t, ~indexer: IndexerRunner.t) =>
   source.pendingItemsQueries->Array.map(query => {
     partitionId: query.partitionId,
@@ -210,14 +210,14 @@ describe("FetchState next query order", () => {
             partitionId: "2",
             fromBlock: 7,
             toBlock: Bounded(11),
-            reservedItems: Some(20000),
+            reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000003"],
           },
           {
             partitionId: "3",
             fromBlock: 5,
             toBlock: Bounded(11),
-            reservedItems: Some(20000),
+            reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000004"],
           },
         ],
@@ -227,28 +227,28 @@ describe("FetchState next query order", () => {
             partitionId: "3",
             fromBlock: 11,
             toBlock: Bounded(11),
-            reservedItems: Some(5000),
+            reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000004"],
           },
           {
             partitionId: "2",
             fromBlock: 11,
             toBlock: Bounded(11),
-            reservedItems: Some(5000),
+            reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000003"],
           },
           {
             partitionId: "1",
             fromBlock: 11,
             toBlock: Bounded(11),
-            reservedItems: Some(5000),
+            reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000002"],
           },
           {
             partitionId: "0",
             fromBlock: 11,
             toBlock: Bounded(11),
-            reservedItems: Some(5000),
+            reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000001"],
           },
         ],
