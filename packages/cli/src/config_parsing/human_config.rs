@@ -794,6 +794,14 @@ pub mod evm {
         pub initial_block_interval: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
+            description = "Maximum simultaneous HTTP requests for this RPC entry, shared by \
+                           all of its fetch partitions and request methods. Must be greater \
+                           than zero. Defaults to 100 when omitted. This is a concurrency \
+                           limit, not a requests-per-second limit."
+        )]
+        pub max_concurrent_requests: Option<std::num::NonZeroU32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
             description = "After an RPC error, how much to scale back the number of blocks \
                            requested at once"
         )]
@@ -1851,6 +1859,34 @@ mod tests {
     use pretty_assertions::assert_eq;
     use schemars::{schema_for, Schema};
     use std::path::PathBuf;
+
+    #[test]
+    fn evm_rpc_concurrency_round_trips() {
+        for limit in [1, 4, 100] {
+            let yaml = format!("url: http://localhost:8545\nmax_concurrent_requests: {limit}\n");
+            let rpc: super::evm::Rpc = serde_yaml::from_str(&yaml).unwrap();
+            let serialized = serde_json::to_value(rpc).unwrap();
+            assert_eq!(serialized["max_concurrent_requests"], limit);
+        }
+    }
+
+    #[test]
+    fn evm_rpc_concurrency_is_optional() {
+        let rpc: super::evm::Rpc = serde_yaml::from_str("url: http://localhost:8545\n").unwrap();
+        assert!(serde_json::to_value(rpc)
+            .unwrap()
+            .get("max_concurrent_requests")
+            .is_none());
+    }
+
+    #[test]
+    fn evm_rpc_concurrency_rejects_non_positive_or_fractional_limits() {
+        for limit in ["0", "-1", "1.5", "4294967296"] {
+            let yaml = format!("url: http://localhost:8545\nmax_concurrent_requests: {limit}\n");
+            let error = serde_yaml::from_str::<super::evm::Rpc>(&yaml).unwrap_err();
+            assert!(!error.to_string().contains("unknown field"));
+        }
+    }
 
     #[test]
     fn test_evm_config_schema() {

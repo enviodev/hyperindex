@@ -294,6 +294,8 @@ struct RpcConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     initial_block_interval: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    max_concurrent_requests: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     backoff_multiplicative: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     acceleration_additive: Option<u32>,
@@ -531,6 +533,9 @@ impl SystemConfig {
                                 ws: rpc.ws.clone(),
                                 headers: rpc.headers.clone(),
                                 initial_block_interval: rpc.initial_block_interval,
+                                max_concurrent_requests: rpc
+                                    .max_concurrent_requests
+                                    .map(std::num::NonZeroU32::get),
                                 backoff_multiplicative: rpc.backoff_multiplicative,
                                 acceleration_additive: rpc.acceleration_additive,
                                 interval_ceiling: rpc.interval_ceiling,

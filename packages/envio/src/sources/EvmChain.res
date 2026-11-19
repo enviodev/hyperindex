@@ -4,6 +4,7 @@ type rpc = {
   syncConfig?: Config.sourceSyncOptions,
   ws?: string,
   headers?: dict<string>,
+  maxConcurrentRequests?: int,
 }
 
 let getSyncConfig = (
@@ -71,7 +72,7 @@ let makeSources = (
     ]
   | _ => []
   }
-  rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws, ?headers}) => {
+  rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws, ?headers, ?maxConcurrentRequests}) => {
     let source = RpcSource.make({
       chainId,
       sourceFor,
@@ -85,6 +86,7 @@ let makeSources = (
       transactionStore,
       ?ws,
       ?headers,
+      ?maxConcurrentRequests,
       maxAddressesPerRequest,
       logger,
     })
