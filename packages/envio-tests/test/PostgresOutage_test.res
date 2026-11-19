@@ -110,6 +110,11 @@ let retriedOperations = (indexer: IndexerRunner.t) =>
   ->Set.values
   ->Array.fromIterator
 
+// Other test files share the server, each in a schema of its own, so a lock
+// wait counts only when its statement names this run's schema.
+let lockWaitersOf = (indexer: IndexerRunner.t) =>
+  `FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%"${indexer.pgSchema}"%'`
+
 // Cuts the batch's COMMIT and holds it back until the batch, looked for and not
 // found, is written again and waits on the held transaction's rows. Releasing
 // the returned gate lets the COMMIT reach the server, or with `~deliver=false`
@@ -130,7 +135,7 @@ let holdCommitUntilRewriteBlocks = async (
       let waiting =
         (
           await sql->StorageClient.queryForTests(
-            "SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE wait_event_type = 'Lock'",
+            `SELECT count(*)::int AS waiting ${indexer->lockWaitersOf}`,
           )
         )->Array.map(row => row->Dict.getUnsafe("waiting")->(Utils.magic: unknown => int))
       switch waiting {
@@ -598,7 +603,7 @@ describe("Postgres going away mid-run", () => {
       await indexer.usePostgresSql(async sql => {
         (
           await sql->StorageClient.queryForTests(
-            "SELECT pg_cancel_backend(pid) AS cancelled FROM pg_stat_activity WHERE wait_event_type = 'Lock'",
+            `SELECT pg_cancel_backend(pid) AS cancelled ${indexer->lockWaitersOf}`,
           )
         )->Array.forEach(
           row =>
