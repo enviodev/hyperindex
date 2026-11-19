@@ -703,7 +703,11 @@ let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
   // budget to the cold-chain cap, so it's used as-is.
   | _ => chainTargetItems
   }
-  cs.fetchState->FetchState.getNextQuery(~chainTargetBlock, ~chainTargetItems)
+  cs.fetchState->FetchState.getNextQuery(
+    ~chainTargetBlock,
+    ~chainTargetItems,
+    ~chainDensity=?cs->effectiveDensity,
+  )
 }
 
 // Run a fetch tick for this chain against its sources, feeding the owned fetch

@@ -1010,6 +1010,7 @@ let executeQuery = async (
   ~knownHeight,
   ~isRealtime,
   ~reorgableFrom,
+  ~isStale,
 ) => {
   // Read when the manager actually runs out of sources, not on the way in: the
   // reason is recorded by the failure that disabled the last one.
@@ -1027,7 +1028,9 @@ let executeQuery = async (
   let responseRef = ref(None)
   let retryRef = ref(0)
 
-  while responseRef.contents->Option.isNone {
+  // A rollback or a stop while the query waited out a backoff leaves nobody to
+  // take its response, so further attempts would only load the source.
+  while responseRef.contents->Option.isNone && !isStale() {
     // Select the best source at the start of every iteration
     let sourceState = switch sourceManager->getNextSource(
       ~isRealtime,
@@ -1217,7 +1220,7 @@ let executeQuery = async (
     }
   }
 
-  responseRef.contents->Option.getUnsafe
+  responseRef.contents
 }
 
 let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isRealtime: bool) => {

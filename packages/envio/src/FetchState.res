@@ -152,8 +152,8 @@ type query = {
   toBlock: option<int>,
   isChunk: bool,
   // Density × the query's block range for a known-density partition, the
-  // query's budget share for a probe of known density, and a page for a probe
-  // of unknown density. This is the unit the chain's per-tick
+  // query's budget share for a probe, and a page for a probe on a chain where
+  // no density is known yet. This is the unit the chain's per-tick
   // budget is reserved/consumed in and that sizes every query.
   itemsEst: int,
   selection: selection,
@@ -1866,8 +1866,8 @@ let maxInFlightChunksPerPartition = 12
 // per-partition cap alone would admit thousands of concurrent queries.
 let maxChainConcurrency = Env.maxChainConcurrency
 
-// What a probe of unknown density reserves until a response on the chain
-// carries more items than this.
+// What a probe reserves on a chain with no density yet, until a response on
+// the chain carries more items than this.
 let initialPageItems = 5000
 
 // Chunk spans grow by this factor over the smallest recently observed source
@@ -2093,6 +2093,7 @@ let pushForwardCandidates = (
   ~chainTargetBlock: int,
   ~freshBudget: float,
   ~largestPageItems: int,
+  ~chainDensity: option<float>,
 ) => {
   // Even share of the fresh budget across the partitions actually fetching
   // this tick (not every partition — so budget isn't stranded on ones below
@@ -2155,16 +2156,20 @@ let pushForwardCandidates = (
         created := created.contents + 1
       }
     | _ =>
-      // A probe asks for no row limit, so one of unknown density may come
-      // back a full page however small its share: it reserves a page. One of
-      // known density is sized by the events its range to the target is
-      // expected to hold — rangeTargetDensity × (chainTargetBlock − fromBlock +
-      // 1), split across the partitions fetching this tick. With no range to
-      // the target it falls back to an even share of the fresh budget, so
-      // caught-up partitions still probe.
-      let itemsEst = switch p.eventDensity {
-      | None => largestPageItems
-      | Some(_) if rangeToTarget > 0 =>
+      // A probe asks for no row limit, so where nothing is known yet, neither
+      // its own density nor the chain's, it may come back a full page however
+      // small its share: it reserves a page. Otherwise it is sized by the
+      // events its range to the target is expected to hold —
+      // rangeTargetDensity × (chainTargetBlock − fromBlock + 1), split across
+      // the partitions fetching this tick — even before its own first
+      // response: after a restart every partition is unknown again while the
+      // chain's budget is sized from its density, and pages would let one
+      // probe out per round trip. With no range to the target it falls back
+      // to an even share of the fresh budget, so caught-up partitions still
+      // probe.
+      let itemsEst = switch (p.eventDensity, chainDensity) {
+      | (None, None) => largestPageItems
+      | _ if rangeToTarget > 0 =>
         Pervasives.max(
           1,
           Math.round(
@@ -2173,7 +2178,7 @@ let pushForwardCandidates = (
             inRangeCount->Int.toFloat,
           )->Float.toInt,
         )
-      | Some(_) => Pervasives.max(1, Math.round(probeShare)->Float.toInt)
+      | _ => Pervasives.max(1, Math.round(probeShare)->Float.toInt)
       }
       candidates
       ->Array.push({
@@ -2293,14 +2298,16 @@ let headFetchTarget = ({knownHeight, blockLag} as fetchState: t) =>
 // A partition with source-capacity history and a positive density generates
 // density-sized chunks toward the target. Any other partition (no signal, no
 // capacity history, or a density-0 estimate) generates one open-ended probe.
-// One of known density reserves the events its range to the target is
-// expected to hold — rangeTargetDensity × (chainTargetBlock − fromBlock + 1) /
-// inRangeCount — and one of unknown density a page, so the budget admits as
-// many cold probes as it holds pages.
+// It reserves the events its range to the target is expected to hold —
+// rangeTargetDensity × (chainTargetBlock − fromBlock + 1) / inRangeCount —
+// unless neither it nor the chain has a density yet: then it reserves a page,
+// so a fresh chain's budget admits as many probes as it holds pages.
 let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock} as fetchState: t,
   ~chainTargetBlock: int,
   ~chainTargetItems: float,
+  // Items/block across the whole chain, when the chain has measured it.
+  ~chainDensity=?,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
@@ -2461,6 +2468,7 @@ let getNextQuery = (
       ~chainTargetBlock,
       ~freshBudget,
       ~largestPageItems=fetchState.largestPageItems,
+      ~chainDensity,
     )
 
     acceptCandidates(

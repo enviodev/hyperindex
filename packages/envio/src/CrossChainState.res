@@ -474,20 +474,22 @@ let checkAndFetch = async (
               acc +. query.itemsEst->Int.toFloat
             )
 
-          let partitions = Dict.make()
-          queries->Array.forEach((query: FetchState.query) =>
-            partitions->Dict.set(
-              query.partitionId,
-              {
-                "fromBlock": query.fromBlock,
-                "targetBlock": query.toBlock,
-                "targetEvents": query.itemsEst,
-              },
-            )
-          )
           cs
           ->ChainState.logger
-          ->Logger.trace("Started querying", ~params={"partitions": partitions})
+          ->Logger.trace(
+            "Started querying",
+            ~params={
+              "queries": queries->Array.map((query: FetchState.query) =>
+                {
+                  "partitionId": query.partitionId,
+                  "fromBlock": query.fromBlock,
+                  "toBlock": query.toBlock,
+                  "isChunk": query.isChunk,
+                  "reservedItems": query.itemsEst,
+                }
+              ),
+            },
+          )
 
           actionByChain->ChainId.Dict.set(chainId, FetchState.Ready(queries))
           // Mark the queries in flight and reserve their size against the

@@ -90,7 +90,8 @@ let executeQuery: (
   ~knownHeight: int,
   ~isRealtime: bool,
   ~reorgableFrom: option<int>,
-) => promise<Source.blockRangeFetchResponse>
+  ~isStale: unit => bool,
+) => promise<option<Source.blockRangeFetchResponse>>
 
 let makeGetHeightRetryInterval: (
   ~initialRetryInterval: int,

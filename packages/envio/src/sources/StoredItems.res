@@ -241,7 +241,9 @@ type fieldsToRead = {
         ->(Utils.magic: int => EventStore.format) {
         | EvmLog =>
           EvmEventItem.toInternalItem(
-            ~logIndex=logIndexes->numberAt(row)->Float.toInt,
+            // Not Float.toInt: its `| 0` wraps a log index above 2^31 - 1,
+            // which some providers emit, into a negative one.
+            ~logIndex=logIndexes->numberAt(row)->(Utils.magic: float => int),
             ~srcAddress=srcAddresses->valueAt(row),
             ~blockNumber=blockNumbers->numberAt(row)->Float.toInt,
             ~transactionIndex=transactionIndexes->numberAt(row)->Float.toInt,

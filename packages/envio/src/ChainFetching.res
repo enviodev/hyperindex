@@ -347,21 +347,25 @@ let fetchChain = async (
           // rejects: dispatch spins a side-chain off it that would otherwise
           // become an unhandled rejection.
           try {
-            let response = await sourceManager->SourceManager.executeQuery(
+            switch await sourceManager->SourceManager.executeQuery(
               ~query,
               ~knownHeight=chainState->ChainState.knownHeight,
               ~isRealtime,
               ~reorgableFrom=chainState->ChainState.reorgableFrom(~isRealtime),
-            )
-            await onQueryResponse(
-              state,
-              {chainId, response, query},
-              ~runtime,
-              ~stateId,
-              ~scheduleFetch,
-              ~scheduleProcessing,
-              ~scheduleRollback,
-            )
+              ~isStale=() => state->IndexerState.isStale(~stateId),
+            ) {
+            | Some(response) =>
+              await onQueryResponse(
+                state,
+                {chainId, response, query},
+                ~runtime,
+                ~stateId,
+                ~scheduleFetch,
+                ~scheduleProcessing,
+                ~scheduleRollback,
+              )
+            | None => ()
+            }
           } catch {
           | exn =>
             IndexerState.errorExit(
