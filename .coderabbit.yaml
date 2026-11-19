@@ -5,7 +5,9 @@ reviews:
   auto_review:
     # Review only PRs labeled `coderabbit`. build_and_verify adds it once a PR
     # passes `authorize`, so fork PRs wait for the fork-ci approval.
-    enabled: false
+    # `enabled: false` would review only when the label is added, never the
+    # pushes after it.
+    enabled: true
     labels: ["coderabbit"]
 chat:
   # Otherwise anyone could comment `@coderabbitai review` and skip the label.
