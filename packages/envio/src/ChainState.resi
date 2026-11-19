@@ -16,30 +16,6 @@ let seedConfigAddresses: (
   ~contractMapping: ContractMapping.t,
 ) => unit
 
-let make: (
-  ~chainConfig: Config.chain,
-  ~fetchState: FetchState.t,
-  ~chainBuffer: ChainBuffer.t,
-  ~onEventRegistrations: array<Internal.onEventRegistration>=?,
-  ~onBlockRegistrations: array<Internal.onBlockRegistration>=?,
-  ~addressStore: AddressStore.t,
-  ~sourceManager: SourceManager.t,
-  ~committedProgressBlockNumber: int,
-  ~committedProgressBlockTime: option<int>=?,
-  ~safeCheckpointTracking: option<SafeCheckpointTracking.t>=?,
-  ~shouldRollbackOnReorg: bool,
-  ~maxReorgDepth: int,
-  ~isInReorgThreshold: bool=?,
-  ~numEventsProcessed: float=?,
-  ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
-  ~isProgressAtHead: bool=?,
-  ~chainDensity: option<float>=?,
-  ~shouldChecksum: bool=?,
-  ~reorgThresholdReadyTolerance: int=?,
-  ~perChainEntities: array<Internal.entityConfig>=?,
-  ~logger: Logger.t,
-) => t
-
 let makeFromDbState: (
   Config.chain,
   ~resumedChainState: Persistence.initialChainState,
@@ -76,7 +52,6 @@ let committedProgressBlockTime: t => option<int>
 let numEventsProcessed: t => float
 let pendingBudget: t => float
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
-let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 
 // Metric counters, rendered by Metrics at scrape time.
 let recordBlockRangeFetch: (
@@ -97,14 +72,11 @@ let drainAddressesForWrite: (
   ~checkpointBlockNumbers: array<int>,
 ) => array<AddressStore.drainedAddress>
 let hasAddressesToWrite: t => bool
-let bufferSize: t => int
 let bufferReadyCount: t => int
-let chainDensity: t => option<float>
 let effectiveDensity: t => option<float>
 let hasReadyItem: t => bool
 
 // Fetch control.
-let targetBlock: (t, ~chainTargetItems: float) => int
 let blockAtProgress: (t, ~progress: float) => int
 let frontierProgress: t => float
 let getNextQuery: (t, ~chainTargetItems: float, ~maxTargetBlock: int=?) => FetchState.nextQuery

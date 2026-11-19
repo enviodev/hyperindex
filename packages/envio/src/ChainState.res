@@ -145,23 +145,22 @@ let make = (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
   ~chainBuffer: ChainBuffer.t,
-  ~onEventRegistrations=[],
-  ~onBlockRegistrations=[],
+  ~onEventRegistrations,
+  ~onBlockRegistrations,
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
-  ~committedProgressBlockTime=None,
-  ~safeCheckpointTracking=None,
+  ~committedProgressBlockTime,
+  ~safeCheckpointTracking,
   ~shouldRollbackOnReorg,
   ~maxReorgDepth,
-  ~isInReorgThreshold=false,
-  ~numEventsProcessed=0.,
-  ~timestampCaughtUpToHeadOrEndblock=None,
-  ~isProgressAtHead=false,
-  ~chainDensity=None,
-  ~shouldChecksum=false,
-  ~reorgThresholdReadyTolerance=100,
-  ~perChainEntities: array<Internal.entityConfig>=[],
+  ~isInReorgThreshold,
+  ~numEventsProcessed,
+  ~timestampCaughtUpToHeadOrEndblock,
+  ~chainDensity,
+  ~shouldChecksum,
+  ~reorgThresholdReadyTolerance,
+  ~perChainEntities: array<Internal.entityConfig>,
   ~logger: Logger.t,
 ): t => {
   validateOnEventRegistrations(~chainId=chainConfig.id, onEventRegistrations)
@@ -174,7 +173,7 @@ let make = (
     addressStore,
     sourceManager,
     chainConfig,
-    isProgressAtHead,
+    isProgressAtHead: false,
     timestampCaughtUpToHeadOrEndblock,
     committedProgressBlockNumber,
     processingBlockNumber: committedProgressBlockNumber,
@@ -508,7 +507,6 @@ let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let committedProgressBlockTime = (cs: t) => cs.committedProgressBlockTime
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
 let pendingBudget = (cs: t) => cs.pendingBudget
-let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
 
 // --- Metric counters. ---
 
@@ -549,7 +547,6 @@ let bufferReadyCount = (cs: t) =>
     ~buffer=cs.chainBuffer,
     ~processingBlockNumber=cs.processingBlockNumber,
   )
-let chainDensity = (cs: t) => cs.chainDensity
 let hasReadyItem = (cs: t) =>
   cs.fetchState->FetchState.isActivelyIndexing(
     ~buffer=cs.chainBuffer,
