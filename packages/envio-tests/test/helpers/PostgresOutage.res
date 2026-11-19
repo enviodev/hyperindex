@@ -10,10 +10,10 @@ type t = {
   comeBack: unit => unit,
   // Cuts the connection that next sends a COMMIT, before the client hears
   // back. With `~deliver` the server gets the COMMIT and commits; without it the
-  // COMMIT is dropped and the server rolls back. `~deliverAfter` holds a
-  // delivered COMMIT back until the promise resolves, as a slow network would.
+  // COMMIT is dropped and the server rolls back. `~holdUntil` holds the
+  // transaction open until the promise resolves, as a slow network would.
   // Either way the client only sees its connection go.
-  cutNextCommit: (~deliver: bool, ~deliverAfter: promise<unit>=?) => unit,
+  cutNextCommit: (~deliver: bool, ~holdUntil: promise<unit>=?) => unit,
   close: unit => promise<unit>,
 }
 
@@ -45,15 +45,15 @@ let start: (
     upstream.on("close", () => client.destroy());
     client.on("data", (chunk) => {
       if (commitCut && chunk.includes(commitMessage)) {
-        const { deliver, deliverAfter } = commitCut;
+        const { deliver, holdUntil } = commitCut;
         commitCut = null;
         upstream.unpipe(client);
         // The upstream outlives the client here, so the COMMIT reaches the server.
         client.off("close", closeUpstream);
         client.destroy();
-        if (!deliver) upstream.destroy();
-        else if (deliverAfter) deliverAfter.then(() => upstream.end(chunk));
-        else upstream.end(chunk);
+        const settle = () => (deliver ? upstream.end(chunk) : upstream.destroy());
+        if (holdUntil) holdUntil.then(settle);
+        else settle();
         return;
       }
       upstream.write(chunk);
@@ -69,8 +69,8 @@ let start: (
     comeBack: () => {
       isDown = false;
     },
-    cutNextCommit: (deliver, deliverAfter) => {
-      commitCut = { deliver, deliverAfter };
+    cutNextCommit: (deliver, holdUntil) => {
+      commitCut = { deliver, holdUntil };
     },
     close: () =>
       new Promise((resolve) => {
