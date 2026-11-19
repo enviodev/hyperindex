@@ -313,6 +313,13 @@ let compositeIndexFieldSchema = S.schema(s =>
   }
 )
 
+let coveringIndexSchema = S.schema(s =>
+  {
+    "fields": s.matches(S.array(compositeIndexFieldSchema)),
+    "include": s.matches(S.array(S.string)),
+  }
+)
+
 let derivedFieldSchema = S.schema(s =>
   {
     "fieldName": s.matches(S.string),
@@ -381,6 +388,7 @@ let entityJsonSchema = S.schema(s =>
     "properties": s.matches(S.array(propertySchema)),
     "derivedFields": s.matches(S.option(S.array(derivedFieldSchema))),
     "compositeIndices": s.matches(S.option(S.array(S.array(compositeIndexFieldSchema)))),
+    "coveringIndices": s.matches(S.option(S.array(coveringIndexSchema))),
     "description": s.matches(S.option(S.string)),
   }
 )

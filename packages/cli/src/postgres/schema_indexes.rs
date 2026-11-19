@@ -13,6 +13,7 @@ fn single(table_name: &str, column: &str) -> IndexDefinition {
             name: column.to_string(),
             direction: Direction::Asc,
         }],
+        include: Vec::new(),
         method: BTREE.to_string(),
     }
 }
@@ -56,25 +57,23 @@ pub fn schema_indexes(schema: &Schema, partitions: Option<&[i64]>) -> Vec<IndexD
             .iter()
             .filter(|field| field.is_index)
             .map(|field| field.pg_column.clone())
-            .chain(
-                entity
-                    .composite_indexes
-                    .iter()
-                    .filter_map(|index| match index.as_slice() {
-                        [field] => column(&field.field),
-                        _ => None,
-                    }),
-            )
+            .chain(entity.composite_indexes.iter().filter_map(
+                |index| match index.fields.as_slice() {
+                    [field] if index.include.is_empty() => column(&field.field),
+                    _ => None,
+                },
+            ))
             .collect::<BTreeSet<_>>();
         all.extend(singles.iter().map(|column| single(&entity.name, column)));
         all.extend(
             entity
                 .composite_indexes
                 .iter()
-                .filter(|index| index.len() > 1)
+                .filter(|index| index.fields.len() > 1 || !index.include.is_empty())
                 .map(|index| IndexDefinition {
                     table_name: entity.name.clone(),
                     columns: index
+                        .fields
                         .iter()
                         .filter_map(|field| {
                             Some(IndexColumn {
@@ -82,6 +81,13 @@ pub fn schema_indexes(schema: &Schema, partitions: Option<&[i64]>) -> Vec<IndexD
                                 direction: field.direction,
                             })
                         })
+                        .collect(),
+                    include: index
+                        .include
+                        .iter()
+                        .filter_map(|field| column(field))
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
                         .collect(),
                     method: BTREE.to_string(),
                 }),
@@ -124,7 +130,7 @@ mod tests {
     use super::*;
     use crate::config_parsing::system_config::ChainIdMode;
     use crate::storage::schema::test_support::{entity, id};
-    use crate::storage::schema::{DerivedFrom, Field, FieldType, IndexField};
+    use crate::storage::schema::{CompositeIndex, DerivedFrom, Field, FieldType, IndexField};
     use crate::storage::types::Sequence;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
@@ -137,20 +143,26 @@ mod tests {
         balance.is_index = true;
         let mut account = entity("Account", vec![id(), owner_field, balance], Some("chainId"));
         account.composite_indexes = vec![
-            vec![IndexField {
-                field: "owner".to_string(),
-                direction: Direction::Desc,
-            }],
-            vec![
-                IndexField {
+            CompositeIndex {
+                fields: vec![IndexField {
                     field: "owner".to_string(),
-                    direction: Direction::Asc,
-                },
-                IndexField {
-                    field: "balance".to_string(),
                     direction: Direction::Desc,
-                },
-            ],
+                }],
+                include: Vec::new(),
+            },
+            CompositeIndex {
+                fields: vec![
+                    IndexField {
+                        field: "owner".to_string(),
+                        direction: Direction::Asc,
+                    },
+                    IndexField {
+                        field: "balance".to_string(),
+                        direction: Direction::Desc,
+                    },
+                ],
+                include: Vec::new(),
+            },
         ];
         let mut owner = entity("Owner", vec![id()], None);
         owner.index = 1;
@@ -299,6 +311,111 @@ type Child {{
         );
     }
 
+    /// `include:` carries columns in the index without keying on them. One key
+    /// column with included ones is its own index rather than the plain single
+    /// one, and a lone `id` is worth indexing again once it carries a payload
+    /// the primary key doesn't. The order the columns are included in changes
+    /// nothing about the index, so it is not part of what is built.
+    #[test]
+    fn an_index_directive_carries_the_columns_it_includes() {
+        let yaml = "name: entity-index-include\nchains:\n  - id: 1\n    start_block: 0\n";
+        let with = |index: &str| {
+            described(
+                yaml,
+                &format!(
+                    "type Token {index} {{
+  id: ID!
+  owner: String!
+  tokenId: Int!
+  balance: BigInt!
+  collection: Collection!
+}}
+type Collection {{
+  id: ID!
+}}"
+                ),
+            )
+        };
+        assert_eq!(
+            (
+                with("@index(fields: [\"owner\", [\"tokenId\", \"DESC\"]], include: [\"balance\"])"),
+                with("@index(fields: [\"owner\"], include: [\"tokenId\", \"collection\", \"balance\"])"),
+                with("@index(fields: [\"id\"], include: [\"owner\"])"),
+                with(
+                    "@index(fields: [\"owner\", \"tokenId\"]) @index(fields: [\"owner\", \
+                     \"tokenId\"], include: [\"balance\"])"
+                ),
+            ),
+            (
+                vec!["Token(owner, tokenId DESC) include (balance) using btree".to_string()],
+                vec![
+                    "Token(owner) include (balance, collection_id, tokenId) using btree"
+                        .to_string()
+                ],
+                vec!["Token(id) include (owner) using btree".to_string()],
+                vec![
+                    "Token(owner, tokenId) using btree".to_string(),
+                    "Token(owner, tokenId) include (balance) using btree".to_string(),
+                ],
+            )
+        );
+    }
+
+    /// The config is persisted and diffed against the running one on resume,
+    /// so a schema that includes nothing has to keep the JSON it always
+    /// produced, and one that does must not change the shape of the plain
+    /// composite indexes next to it.
+    #[test]
+    fn included_columns_reach_the_config_without_changing_what_was_already_there() {
+        let entity = |index: &str| {
+            let config = crate::config_parsing::system_config::SystemConfig::parse_yaml(
+                "name: entity-index-include\nchains:\n  - id: 1\n    start_block: 0\n",
+                Some(&format!(
+                    "type Token {index} {{
+  id: ID!
+  owner: String!
+  tokenId: Int!
+  balance: BigInt!
+}}"
+                )),
+                &std::collections::HashMap::new(),
+                &std::collections::HashMap::new(),
+                false,
+            )
+            .unwrap();
+            let json: serde_json::Value =
+                serde_json::from_str(&config.to_public_config_json(false).unwrap()).unwrap();
+            let token = &json["entities"][0];
+            (
+                token["compositeIndices"].clone(),
+                token["coveringIndices"].clone(),
+            )
+        };
+        let composite = serde_json::json!([[
+            {"fieldName": "owner", "direction": "Asc"},
+            {"fieldName": "tokenId", "direction": "Desc"},
+        ]]);
+        assert_eq!(
+            (
+                entity("@index(fields: [\"owner\", [\"tokenId\", \"DESC\"]])"),
+                entity(
+                    "@index(fields: [\"owner\", [\"tokenId\", \"DESC\"]]) @index(fields: \
+                     [\"owner\"], include: [\"tokenId\", \"balance\"])"
+                ),
+            ),
+            (
+                (composite.clone(), serde_json::Value::Null),
+                (
+                    composite,
+                    serde_json::json!([{
+                        "fields": [{"fieldName": "owner", "direction": "Asc"}],
+                        "include": ["balance", "tokenId"],
+                    }]),
+                ),
+            )
+        );
+    }
+
     /// https://github.com/enviodev/hyperindex/issues/1542
     ///
     /// The chain column envio appends to a per-chain entity is a column an
@@ -314,6 +431,44 @@ type Child {{
 }"
             ),
             vec!["Transfer(chainId, timestamp) using btree".to_string()]
+        );
+    }
+
+    /// A per-chain entity's covering index is built on each partition like any
+    /// other, and can carry the appended chain column.
+    #[test]
+    fn a_covering_index_is_built_per_partition_and_can_include_the_chain_column() {
+        let config = crate::config_parsing::system_config::SystemConfig::parse_yaml(
+            "name: per-chain\ndisable_default_cross_chain: true\nchains:\n  - id: 1\n    start_block: 0\n",
+            Some(
+                "type Transfer @index(fields: [\"timestamp\"], include: [\"chainId\", \"amount\"]) {
+  id: ID!
+  timestamp: Timestamp!
+  amount: BigInt!
+}",
+            ),
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            false,
+        )
+        .unwrap();
+        let schema =
+            Schema::from_config_json(&config.to_public_config_json(false).unwrap()).unwrap();
+        let described = |partitions: Option<&[i64]>| {
+            schema_indexes(&schema, partitions)
+                .iter()
+                .map(IndexDefinition::describe)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            (described(None), described(Some(&[1, 10]))),
+            (
+                vec!["Transfer(timestamp) include (amount, chainId) using btree".to_string()],
+                vec![
+                    "Transfer$1(timestamp) include (amount, chainId) using btree".to_string(),
+                    "Transfer$10(timestamp) include (amount, chainId) using btree".to_string(),
+                ],
+            )
         );
     }
 }

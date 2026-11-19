@@ -1,7 +1,8 @@
 //! What the indexer wants an index to be, and the DDL for it.
 //!
-//! A table, its ordered key columns with their directions, and an access
-//! method. That tuple is the index's identity; the name is derived from it
+//! A table, its ordered key columns with their directions, the columns it
+//! carries without keying on them, and an access method. That tuple is the
+//! index's identity; the name is derived from it
 //! rather than being part of it, so the catalog can always be matched on what
 //! an index actually covers.
 
@@ -19,6 +20,11 @@ pub struct IndexColumn {
 pub struct IndexDefinition {
     pub table_name: String,
     pub columns: Vec<IndexColumn>,
+    /// Columns stored in the index's leaf entries but never searched or
+    /// sorted by, so a query reading only them and the key is answered from
+    /// the index alone. Sorted: Postgres keeps no meaning in their order, and
+    /// two spellings of one set have to be one identity.
+    pub include: Vec<String>,
     pub method: String,
 }
 
@@ -74,8 +80,12 @@ impl IndexDefinition {
 
     /// The index's identity. Two definitions covering the same thing share it,
     /// which is how a list of them is deduped.
+    ///
+    /// The included columns are appended only when there are some: an index
+    /// without them has to keep the key, and with it the name, every deployed
+    /// schema already holds.
     pub fn key(&self) -> String {
-        format!(
+        let key = format!(
             "{}|{}|{}",
             self.table_name,
             self.method,
@@ -84,12 +94,22 @@ impl IndexDefinition {
                 .map(Self::column_key)
                 .collect::<Vec<_>>()
                 .join(",")
-        )
+        );
+        if self.include.is_empty() {
+            key
+        } else {
+            format!("{key}|include:{}", self.include.join(","))
+        }
     }
 
     pub fn describe(&self) -> String {
+        let include = if self.include.is_empty() {
+            String::new()
+        } else {
+            format!(" include ({})", self.include.join(", "))
+        };
         format!(
-            "{}({}) using {}",
+            "{}({}){include} using {}",
             self.table_name,
             self.columns
                 .iter()
@@ -166,8 +186,20 @@ impl IndexDefinition {
         } else {
             format!(" USING {}", self.method)
         };
+        let include = if self.include.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " INCLUDE ({})",
+                self.include
+                    .iter()
+                    .map(|column| format!("\"{column}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
         format!(
-            "CREATE INDEX \"{}\" ON \"{pg_schema}\".\"{}\"{using}({});",
+            "CREATE INDEX \"{}\" ON \"{pg_schema}\".\"{}\"{using}({}){include};",
             self.name(),
             self.table_name,
             self.columns_sql()
@@ -201,7 +233,15 @@ mod tests {
         IndexDefinition {
             table_name: table_name.to_string(),
             columns,
+            include: Vec::new(),
             method: method.to_string(),
+        }
+    }
+
+    fn including(definition: IndexDefinition, include: &[&str]) -> IndexDefinition {
+        IndexDefinition {
+            include: include.iter().map(|column| column.to_string()).collect(),
+            ..definition
         }
     }
 
@@ -280,6 +320,32 @@ mod tests {
             .map(|(_, key, name, create)| (key.to_string(), name.to_string(), create.to_string()))
             .collect::<Vec<_>>();
         assert_eq!(actual, expected);
+    }
+
+    /// The included columns are part of what the index is, so they are part of
+    /// its identity and its name, without disturbing either for an index that
+    /// has none.
+    #[test]
+    fn included_columns_make_another_identity_under_the_same_readable_name() {
+        let plain = definition("Token", vec![asc("owner"), desc("created_at")], BTREE);
+        let covering = including(plain.clone(), &["balance", "tokenId"]);
+        assert_eq!(
+            (
+                covering.key(),
+                covering.describe(),
+                covering.create_query("test_schema"),
+                plain.name(),
+                including(plain.clone(), &["balance"]).name(),
+            ),
+            (
+                "Token|btree|owner,created_at DESC|include:balance,tokenId".to_string(),
+                "Token(owner, created_at DESC) include (balance, tokenId) using btree"
+                    .to_string(),
+                "CREATE INDEX \"Token_owner_created_at_desc_8p0rq3huq3\" ON \"test_schema\".\"Token\"(\"owner\", \"created_at\" DESC) INCLUDE (\"balance\", \"tokenId\");".to_string(),
+                "Token_owner_created_at_desc_2baizzlj79".to_string(),
+                "Token_owner_created_at_desc_8wytdmk5to".to_string(),
+            )
+        );
     }
 
     /// The readable half is truncated; the identity hash is always kept whole.
