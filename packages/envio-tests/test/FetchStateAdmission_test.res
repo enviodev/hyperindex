@@ -1,9 +1,9 @@
 open Vitest
 
-// Ten chains with no density signal. Each cold chain probes with one admission
-// unit, a tenth of the 100-item pool, so with nine probes in flight exactly
-// one unit is left for the tenth.
-let chainIds = Array.fromInitializer(~length=10, index => index + 1)
+// Eleven chains with no density signal. Each cold chain probes with one
+// admission unit, a tenth of the 100-item pool, so with nine probes in flight
+// exactly one unit is left for the tenth, and none for the eleventh.
+let chainIds = Array.fromInitializer(~length=11, index => index + 1)
 
 let chainYaml = id =>
   `
@@ -32,22 +32,18 @@ chains:${chainIds->Array.map(chainYaml)->Array.join("")}
 
 describe("Admission into the shared buffer pool", () => {
   scenario->Scenario.it(
-    "admits a query with exactly one admission unit of the pool free",
+    "admits a query with exactly one admission unit of the pool free, and none once in-flight probes fill it",
     ~sources=chainIds->Array.map((chain): Scenario.sourceMock => {chain: chain}),
     ~targetBufferSize=100,
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       chainIds->Array.forEach(chain => source(chain).resolveGetHeightOrThrow(100_000))
-      for i in 0 to chainIds->Array.length - 1 {
-        await source(chainIds->Array.getUnsafe(i)).expectItemsQueries([
-          {fromBlock: 1, reply: LeavePending},
-        ])
-      }
+      await indexer.waitUntilIdle()
       t.expect(
         chainIds->Array.map(
           chain =>
             source(chain).pendingItemsQueries->Array.map(query => query->MockSource.itemsTarget),
         ),
-      ).toEqual(chainIds->Array.map(_ => [Some(10)]))
+      ).toEqual(chainIds->Array.map(chain => chain <= 10 ? [Some(10)] : []))
     },
   )
 })
