@@ -56,7 +56,9 @@ jobs:
   # .coderabbit.yaml reviews only PRs labeled `coderabbit`, so approving a
   # fork PR's CI is also what lets CodeRabbit review it.
   enable-coderabbit:
-    if: github.event_name == 'pull_request_target'
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      !contains(github.event.pull_request.labels.*.name, 'coderabbit')
     needs: authorize
     runs-on: ubuntu-latest
     timeout-minutes: 1

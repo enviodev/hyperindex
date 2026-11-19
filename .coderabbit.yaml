@@ -7,3 +7,6 @@ reviews:
     # passes `authorize`, so fork PRs wait for the fork-ci approval.
     enabled: false
     labels: ["coderabbit"]
+chat:
+  # Otherwise anyone could comment `@coderabbitai review` and skip the label.
+  allow_non_org_members: false
