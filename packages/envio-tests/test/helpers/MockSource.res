@@ -251,7 +251,6 @@ type pendingItemsQuery = {
 @get external reorgableFrom: pendingItemsQuery => option<int> = "reorgableFrom"
 // The item count the indexer asked the source to stop at, if any.
 @get external itemsTarget: pendingItemsQuery => option<int> = "itemsTarget"
-// The registrations the query fetches for.
 @get external selection: pendingItemsQuery => FetchState.selection = "selection"
 
 // A block the chain has, for the block handlers of the query's selection that
@@ -367,8 +366,6 @@ type t = {
   // the chain got to `blockNumber`. A query starting past `blockNumber` stays
   // pending. Only inside a scenario, which hands the mock its indexer.
   respondUpTo: (int, ~items: array<itemMock>=?) => promise<unit>,
-  // `respondUpTo` without items, for a test that just needs the chain somewhere.
-  respondEmptyUpTo: int => promise<unit>,
   // Helpers only: how `respondUpTo` waits for the indexer to settle, and reads
   // the block the settled chain has fetched and processed up to.
   attachIndexer: (
@@ -404,12 +401,9 @@ type t = {
   dropPendingCalls: unit => unit,
   // Height subscription mocking
   heightSubscriptionCalls: array<bool>,
-  // Closes performed by the consumer, as opposed to the ones this mock's own
-  // `unsubscribeHeightSubscription` simulates.
   heightSubscriptionCloseCalls: array<bool>,
   triggerHeightSubscription: int => unit,
   setHeightSubscriptionStatus: Source.heightSubscriptionStatus => unit,
-  unsubscribeHeightSubscription: unit => unit,
 }
 
 // The pending item queries that aren't in `seen`, in arrival order, added to
@@ -531,8 +525,6 @@ let make = (
   ~sourceFor=Source.Sync,
   ~pollingInterval=1000,
   ~isWildcard=false,
-  // The contract whose address partition the source's own registration joins.
-  // A contract without handlers that gets it has its addresses fetched.
   ~mockEventContract=?,
   // Pre-configures the standing height answer at construction time, before
   // the mock is handed to the indexer - needed for a call that happens during
@@ -602,14 +594,6 @@ let make = (
   let heightSubscriptionCallbacks: array<int => unit> = []
   let heightSubscriptionStatusCallbacks: array<Source.heightSubscriptionStatus => unit> = []
   let heightSubscriptionUnsubscribed = ref(false)
-  // Shared by the close function the subscription hands back and the test-facing
-  // unsubscribe, so a callback array added here cannot end up cleared by only
-  // one of them.
-  let teardownHeightSubscription = () => {
-    heightSubscriptionUnsubscribed := true
-    heightSubscriptionCallbacks->Utils.Array.clearInPlace
-    heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
-  }
   let state: mockSourceState = {
     onEventRegistrationRef: ref(None),
     chainRegistrationsRef: ref([]),
@@ -1123,7 +1107,6 @@ let make = (
     expectItemsQueries,
     repliedItemsQueries,
     respondUpTo,
-    respondEmptyUpTo: blockNumber => respondUpTo(blockNumber),
     attachIndexer: (~waitUntilIdle as wait, ~progressBlock as progress) => {
       waitUntilIdle := wait
       progressBlock := progress
@@ -1218,7 +1201,6 @@ let make = (
         heightSubscriptionStatusCallbacks->Array.forEach(callback => callback(status))
       }
     },
-    unsubscribeHeightSubscription: teardownHeightSubscription,
     source: {
       let source: Source.t = {
         name: "MockSource",
@@ -1363,7 +1345,9 @@ let make = (
               heightSubscriptionUnsubscribed := false
               () => {
                 heightSubscriptionCloseCalls->Array.push(true)->ignore
-                teardownHeightSubscription()
+                heightSubscriptionUnsubscribed := true
+                heightSubscriptionCallbacks->Utils.Array.clearInPlace
+                heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
               }
             },
           )

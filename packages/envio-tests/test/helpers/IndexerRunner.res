@@ -80,7 +80,6 @@ type rec t = {
   waitUntilReady: unit => promise<unit>,
   query: 'entity. string => promise<array<'entity>>,
   queryHistory: 'entity. string => promise<array<Change.t<'entity>>>,
-  queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
   // `envio_addresses` isn't an entity, so it has a read path of its own. The
   // stored key is rendered back here, the only place a test needs a string.
   queryAddresses: unit => promise<array<addressRow>>,
@@ -560,10 +559,17 @@ let run = async (
         let changes = items->S.parseOrThrow(
           S.array(
             S.union([
-              EntityHistory.makeSetUpdateSchema(
-                ~idSchema=entityConfig.table->Table.getIdSchema,
-                entityConfig->storedRowSchema,
-              ),
+              S.object((s): Change.t<Internal.entity> => {
+                s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.SET)
+                Change.Set({
+                  checkpointId: s.field(
+                    EntityHistory.checkpointIdFieldName,
+                    EntityHistory.unsafeCheckpointIdSchema,
+                  ),
+                  entityId: s.field(Table.idFieldName, entityConfig.table->Table.getIdSchema),
+                  entity: s.flatten(entityConfig->storedRowSchema),
+                })
+              }),
               S.object((s): Change.t<Internal.entity> => {
                 s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
                 Delete({
@@ -761,8 +767,6 @@ let run = async (
         queryEntity(config->entityConfigByName(name))->(
           Utils.magic: promise<array<unknown>> => promise<array<entity>>
         ),
-      queryRaw: (type entity, entityConfig: Internal.entityConfig) =>
-        queryEntity(entityConfig)->(Utils.magic: promise<array<unknown>> => promise<array<entity>>),
       queryAddresses: async () => {
         let rows =
           (

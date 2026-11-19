@@ -65,10 +65,10 @@ describe("A query in flight when a rollback lands", () => {
       await Scenario.resolveInitialHeight(~source=first, ~head=300)
       await Scenario.resolveInitialHeight(~source=second, ~head=300)
       // A chain enters its reorg threshold only once every chain reaches its own.
-      await first.respondEmptyUpTo(100)
-      await second.respondEmptyUpTo(100)
-      await first.respondEmptyUpTo(300)
-      await second.respondEmptyUpTo(300)
+      await first.respondUpTo(100)
+      await second.respondUpTo(100)
+      await first.respondUpTo(300)
+      await second.respondUpTo(300)
 
       second.resolveGetHeightOrThrow(301)
       await second.expectItemsQueries([{fromBlock: 301, retryCount: 0, reply: failWithBackoff}])

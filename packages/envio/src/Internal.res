@@ -197,33 +197,6 @@ let evmNullableBlockFields = Utils.Set.fromArray(
     ]: array<evmBlockField>
   ),
 )
-let evmNullableTransactionFields = Utils.Set.fromArray(
-  (
-    [
-      GasPrice,
-      V,
-      R,
-      S,
-      YParity,
-      MaxPriorityFeePerGas,
-      MaxFeePerGas,
-      MaxFeePerBlobGas,
-      BlobVersionedHashes,
-      ContractAddress,
-      Root,
-      Status,
-      L1Fee,
-      L1GasPrice,
-      L1GasUsed,
-      L1FeeScalar,
-      GasUsedForL1,
-      From,
-      To,
-      Type,
-    ]: array<evmTransactionField>
-  ),
-)
-
 type evmBlockInput = {
   number?: int,
   timestamp?: int,
@@ -338,12 +311,6 @@ external payloadBlockHolder: eventPayload => blockHolder = "%identity"
 
 @get external getPayloadParams: eventPayload => dict<unknown> = "params"
 
-type genericLoaderArgs<'event, 'context> = {
-  event: 'event,
-  context: 'context,
-}
-type genericLoader<'args, 'loaderReturn> = 'args => promise<'loaderReturn>
-
 type genericContractRegisterArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
@@ -360,14 +327,6 @@ type genericHandlerArgs<'event, 'context> = {
 }
 type genericHandler<'args> = 'args => promise<unit>
 
-type entityHandlerContext<'entity> = {
-  get: EntityId.t => promise<option<'entity>>,
-  getOrThrow: (EntityId.t, ~message: string=?) => promise<'entity>,
-  getOrCreate: 'entity => promise<'entity>,
-  set: 'entity => unit,
-  deleteUnsafe: EntityId.t => unit,
-}
-
 type chainInfo = {
   id: ChainId.t,
   // True once every chain has caught up to head/endBlock and entered real-time
@@ -377,7 +336,6 @@ type chainInfo = {
 
 type chains = dict<chainInfo>
 
-type loaderReturn
 type handlerContext = private {
   isPreload: bool,
   chain: chainInfo,
@@ -387,13 +345,6 @@ type handlerArgs = {
   context: handlerContext,
 }
 type handler = genericHandler<handlerArgs>
-
-type genericHandlerWithLoader<'loader, 'handler, 'where> = {
-  loader: 'loader,
-  handler: 'handler,
-  wildcard?: bool,
-  where?: 'where,
-}
 
 // Recursive tuple/struct component metadata emitted by the CLI when an event
 // param (or any nested field) is a Solidity struct. `name` is always non-empty —
@@ -509,11 +460,6 @@ type fuelEventConfig = {
   ...eventConfig,
   kind: fuelEventKind,
 }
-type fuelContractConfig = {
-  name: string,
-  events: array<fuelEventConfig>,
-}
-
 // A single topic position of a resolved `where`: any value, static
 // pre-encoded values (never empty), or a marker for "the currently registered
 // addresses of this contract", expanded to topic values when a source query is
@@ -559,12 +505,6 @@ type evmEventConfig = {
 // and SVM events always have `filterByAddresses=false`, so callers there pass
 // it through as `false`.
 let dependsOnAddresses = (~isWildcard, ~filterByAddresses) => !isWildcard || filterByAddresses
-
-type evmContractConfig = {
-  name: string,
-  abi: EvmTypes.Abi.t,
-  events: array<evmEventConfig>,
-}
 
 type svmAccountFilter = {
   position: int,
@@ -661,12 +601,6 @@ type svmOnEventRegistration = {
   accountFilters: array<svmAccountFilterGroup>,
   /** `None` matches both outer and inner (CPI-invoked) instructions. */
   isInner: option<bool>,
-}
-
-type svmProgramConfig = {
-  name: string,
-  programId: SvmTypes.Pubkey.t,
-  instructions: array<svmInstructionEventConfig>,
 }
 
 type indexingAddress = {
@@ -953,10 +887,6 @@ module EffectCache = {
 }
 
 let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)
-let cacheItemSchema = S.schema((s): effectCacheItem => {
-  id: s.matches(S.string),
-  output: s.matches(cacheOutputSchema),
-})
 let makeCacheTable = (~effectName, ~scope) => {
   Table.mkTable(
     EffectCache.toTableName(~effectName, ~scope),

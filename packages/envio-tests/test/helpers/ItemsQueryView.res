@@ -1,5 +1,3 @@
-// Pending item queries in the shape scenario tests assert on.
-
 // The queries by partition, each with its addresses in order.
 module Summary = {
   type t = {

@@ -24,8 +24,6 @@ let make = (~ecosystem: Ecosystem.name): t => {
 // the ecosystem's ordered field-name array (the bit index is the field code
 // shared with the Rust store, `EvmTxField`/`SvmTxField`).
 let makeMaskFn = FieldMask.makeMaskFn
-let orMask = FieldMask.orMask
-let fieldCodes = FieldMask.fieldCodes
 
 // Drain another store (a fetch-response page) into this one.
 @send external merge: (t, t) => unit = "merge"

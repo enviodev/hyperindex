@@ -218,8 +218,10 @@ let runOneWrite = async (state: IndexerState.t) => {
           | exception Persistence.CommitUncertain(message) =>
             mayHaveLanded := true
             throw(Persistence.ConnectionLost(message))
-          | exception Persistence.ConnectionLost(message) =>
-            throw(Persistence.ConnectionLost(message))
+          // Kept from the arm below, which would look for the batch over the
+          // connection that just went. The retry looks for it first only if an
+          // earlier attempt's COMMIT may have landed; otherwise it writes again.
+          | exception (Persistence.ConnectionLost(_) as exn) => throw(exn)
           // A COMMIT cut off on its way can reach the server after the batch
           // was looked for. Writing it again then waits on that transaction's
           // rows and collides with it on the checkpoint key once it commits,
