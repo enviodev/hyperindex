@@ -13,7 +13,6 @@ type t = {
   name: name,
   blockNumberName: string,
   blockTimestampName: string,
-  blockHashName: string,
   /** `None` where block handlers get the block's key alone (Fuel). */
   onBlockFields: option<onBlockFields>,
   /** Method name that the block handler is exposed under on the public

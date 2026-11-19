@@ -401,12 +401,9 @@ type t = {
   dropPendingCalls: unit => unit,
   // Height subscription mocking
   heightSubscriptionCalls: array<bool>,
-  // Closes performed by the consumer, as opposed to the ones this mock's own
-  // `unsubscribeHeightSubscription` simulates.
   heightSubscriptionCloseCalls: array<bool>,
   triggerHeightSubscription: int => unit,
   setHeightSubscriptionStatus: Source.heightSubscriptionStatus => unit,
-  unsubscribeHeightSubscription: unit => unit,
 }
 
 // The pending item queries that aren't in `seen`, in arrival order, added to
@@ -597,14 +594,6 @@ let make = (
   let heightSubscriptionCallbacks: array<int => unit> = []
   let heightSubscriptionStatusCallbacks: array<Source.heightSubscriptionStatus => unit> = []
   let heightSubscriptionUnsubscribed = ref(false)
-  // Shared by the close function the subscription hands back and the test-facing
-  // unsubscribe, so a callback array added here cannot end up cleared by only
-  // one of them.
-  let teardownHeightSubscription = () => {
-    heightSubscriptionUnsubscribed := true
-    heightSubscriptionCallbacks->Utils.Array.clearInPlace
-    heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
-  }
   let state: mockSourceState = {
     onEventRegistrationRef: ref(None),
     chainRegistrationsRef: ref([]),
@@ -1212,7 +1201,6 @@ let make = (
         heightSubscriptionStatusCallbacks->Array.forEach(callback => callback(status))
       }
     },
-    unsubscribeHeightSubscription: teardownHeightSubscription,
     source: {
       let source: Source.t = {
         name: "MockSource",
@@ -1357,7 +1345,9 @@ let make = (
               heightSubscriptionUnsubscribed := false
               () => {
                 heightSubscriptionCloseCalls->Array.push(true)->ignore
-                teardownHeightSubscription()
+                heightSubscriptionUnsubscribed := true
+                heightSubscriptionCallbacks->Utils.Array.clearInPlace
+                heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
               }
             },
           )
