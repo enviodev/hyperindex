@@ -8,8 +8,8 @@ let calculateTargetBufferSize: unit => int
 let make: (
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
-  ~targetBufferSize: int=?,
-  ~holdRealtime: bool=?,
+  ~targetBufferSize: int,
+  ~holdRealtime: bool,
 ) => t
 
 // Accessors.

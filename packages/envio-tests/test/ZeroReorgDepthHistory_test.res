@@ -178,7 +178,7 @@ describe("A chain with no reorg depth keeps no history", () => {
       await restarted.usePostgresSql(
         async _ => {
           let history: array<Change.t<counter>> = await restarted.queryHistory("Counter")
-          t.expect(history->Array.length).toBe(0)
+          t.expect(history).toEqual([])
         },
       )
     },

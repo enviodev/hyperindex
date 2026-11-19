@@ -51,8 +51,10 @@ describe("Readiness across chains", () => {
       await indexer.waitUntilIdle()
 
       t.expect(
-        (await indexer.queryChains())->Array.map(chain => (chain.id->ChainId.toInt, chain.readyAt)),
-      ).toEqual([(1, None), (2, None)])
+        (await indexer.queryChains())->Array.map(
+          chain => (chain.id->ChainId.toInt, chain.progressBlock, chain.readyAt),
+        ),
+      ).toEqual([(1, 100, None), (2, -1, None)])
     },
   )
 })
