@@ -224,6 +224,57 @@ describe("FetchState.getNextQuery partition scheduling", () => {
     ).toEqual([5000, 5000, 5000, 5000])
   })
 
+  // A page is the most items one response on the chain has carried, so once a
+  // response outgrows the seed, cold probes reserve that much instead.
+  it("reserves the largest response seen as the page for later cold probes", t => {
+    let fetchState = mockFetchState(
+      [
+        mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=0),
+        mockFullPartition(~partitionIndex=1, ~latestFetchedBlockNumber=0),
+      ],
+      ~knownHeight=1000,
+    )
+    let firstQuery = switch fetchState->FetchState.getNextQuery(
+      ~chainTargetBlock=1000,
+      ~chainTargetItems=5000.,
+    ) {
+    | Ready([query]) => query
+    | _ => JsError.throwWithMessage("expected one probe within a one-page budget")
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[firstQuery])
+    let largestPageItems = FetchState.initialPageItems + 1000
+    let afterLargePage = fetchState->TestFetchState.handleQueryResult(
+      ~query=firstQuery,
+      ~latestFetchedBlock=10,
+      ~page=TestEventStore.pageOf(
+        Array.fromInitializer(
+          ~length=largestPageItems,
+          logIndex => Internal.Event({
+            chainId: 0->ChainId.fromInt,
+            blockNumber: 5,
+            onEventRegistration: {"index": 0}->(
+              Utils.magic: {"index": int} => Internal.onEventRegistration
+            ),
+            logIndex,
+            transactionIndex: 0,
+            payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
+          }),
+        ),
+      ),
+    )
+    let coldProbes = switch afterLargePage->FetchState.getNextQuery(
+      ~chainTargetBlock=1000,
+      ~chainTargetItems=100_000.,
+    ) {
+    | Ready(queries) =>
+      queries
+      ->Array.filter(q => q.partitionId === "1")
+      ->Array.map(q => q.itemsEst)
+    | _ => []
+    }
+    t.expect(coldProbes).toEqual([largestPageItems])
+  })
+
   it("waits for a new block when every partition is at the known height", t => {
     t.expect(
       mockFetchState(

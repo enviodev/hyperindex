@@ -179,9 +179,9 @@ impl BlockRegistrations {
 /// one block costs less than reading every block up to it.
 const SPARSE_GAP: u64 = 1000;
 
-/// Handler runs a read of every block covers at most. Its range is the bound,
-/// not a block count sent to the server: a count would vary with each page,
-/// and the server caches a query under everything but its range.
+/// Handler runs a read of every block covers at most. The blocks they run on
+/// are known exactly, so the range ends the read where a block count sent to
+/// the server would only be checked between its batches and overshot.
 const PAGE_RUNS: u64 = 5000;
 
 pub(crate) struct BlockQuery {

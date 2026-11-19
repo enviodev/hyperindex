@@ -71,23 +71,33 @@ let withoutRange = (query: JSON.t) => {
 }
 
 describe("HyperSync query body", () => {
-  Async.it("stays the same across a sparse partition's probes", async t => {
-    let {hyperSync} = served->ServedEvmChain.servers
-    // The server stops short of the range each time, the way HyperSync does at
-    // its time or size limit, so both partitions query again.
-    [101, 201, 301, 401, 501, 601]->Array.forEach(
-      nextBlock => hyperSync->MockHyperSyncServer.pushResponse({nextBlock: nextBlock}),
-    )
-    await served->ServedEvmChain.run(scenario, async _ => ())
+  // The client runs with its production settings: capnp, caching on.
+  Async.it(
+    "stays the same across a sparse partition's probes, so only the first uploads it",
+    async t => {
+      let {hyperSync} = served->ServedEvmChain.servers
+      // The server stops short of the range each time, the way HyperSync does
+      // at its time or size limit, so both partitions query again.
+      [101, 201, 301, 401, 501, 601]->Array.forEach(
+        nextBlock => hyperSync->MockHyperSyncServer.pushResponse({nextBlock: nextBlock}),
+      )
+      await served->ServedEvmChain.run(scenario, async _ => ())
 
-    let bodies =
-      hyperSync
-      ->MockHyperSyncServer.takeQueries
-      ->Array.filter(selectsAnAddress)
-      ->Array.map(withoutRange)
-    t.expect((bodies->Array.length > 2, bodies)).toEqual((
-      true,
-      Array.make(~length=bodies->Array.length, bodies->Array.getUnsafe(0)),
-    ))
-  })
+      let bodies =
+        hyperSync
+        ->MockHyperSyncServer.takeQueries
+        ->Array.filter(selectsAnAddress)
+        ->Array.map(withoutRange)
+      let uploads =
+        hyperSync
+        ->MockHyperSyncServer.takeUploads
+        ->Array.filter(selectsAnAddress)
+        ->Array.map(withoutRange)
+      t.expect((bodies->Array.length > 2, bodies, uploads)).toEqual((
+        true,
+        Array.make(~length=bodies->Array.length, bodies->Array.getUnsafe(0)),
+        [bodies->Array.getUnsafe(0)],
+      ))
+    },
+  )
 })
