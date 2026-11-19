@@ -40,10 +40,15 @@ indexer.contractRegister({ contract: "Gravatar", event: "TestEvent" }, async ({ 
 `,
 )
 
-let registering = (~blockNumber, ~srcAddress=?, addresses: array<string>): MockSource.itemMock => {
+let registering = (
+  ~blockNumber,
+  ~logIndex=0,
+  ~srcAddress=?,
+  addresses: array<string>,
+): MockSource.itemMock => {
   event: "Gravatar.TestEvent",
   blockNumber,
-  logIndex: 0,
+  logIndex,
   ?srcAddress,
   params: dict{"addresses": addresses->(Utils.magic: array<string> => unknown)},
 }
@@ -67,9 +72,9 @@ let upTo = latestFetchedBlockNumber => MockSource.Respond({items: [], latestFetc
 
 // Every block below sits past the first query's 9800, inside the reorg
 // threshold, where a rollback can reach. Partition "0" holds the static
-// address with addresses 1 and 2 registered at blocks 9801 and 9802, fetched to
-// block 9810; partition "2" holds address 3, registered at block 9802 and
-// fetched to it.
+// address, fetched to block 9810; partition "1" holds addresses 1 and 2,
+// registered at blocks 9801 and 9802 and caught up to 9810; partition "2"
+// holds address 3, registered at block 9802 and fetched to it.
 let reachTwoPartitions = async (~indexer: IndexerRunner.t, ~sync: MockSource.t) => {
   sync.resolveGetHeightOrThrow(10_000)
   await sync.expectItemsQueries([{partitionId: "0", toBlock: Bounded(9800), reply: upTo(9800)}])
@@ -86,19 +91,22 @@ let reachTwoPartitions = async (~indexer: IndexerRunner.t, ~sync: MockSource.t) 
       }),
     },
   ])
+  await indexer.waitUntilIdle()
   await sync.expectItemsQueries([
     {
       partitionId: "1",
       reply: Respond({
-        items: [registering(~blockNumber=9802, ~srcAddress=address1, [address3])],
+        items: [registering(~blockNumber=9802, ~logIndex=1, ~srcAddress=address1, [address3])],
         latestFetchedBlockNumber: 9810,
       }),
     },
     {partitionId: "0", reply: LeavePending},
   ])
+  await indexer.waitUntilIdle()
   await sync.expectItemsQueries([
     {partitionId: "2", reply: upTo(9802)},
     {partitionId: "0", reply: LeavePending},
+    {partitionId: "1", reply: LeavePending},
   ])
   await indexer.getBatchWritePromise()
   await sync.expectItemsQueries([
@@ -110,11 +118,12 @@ let reachTwoPartitions = async (~indexer: IndexerRunner.t, ~sync: MockSource.t) 
         prevRangeLastBlock: {blockNumber: 9810, blockHash: "0x9810a"},
       }),
     },
+    {partitionId: "1", reply: LeavePending},
     {partitionId: "2", reply: LeavePending},
   ])
 }
 
-let hashOf = (~blockNumber, ~validUpTo): BlockStore.inputBlock => {
+let hashOf = (~blockNumber, ~validUpTo): BufferPage.observedBlock => {
   blockNumber,
   blockHash: blockNumber <= validUpTo
     ? `0x${blockNumber->Int.toString}`
@@ -294,8 +303,8 @@ indexer.contractRegister(
         )
       t.expect((beforeReorg, afterRollback)).toEqual((
         [
-          {partitionId: "1", fromBlock: 9802, toBlock: Unbounded, addresses: [address2]},
           {partitionId: "0", fromBlock: 9811, toBlock: Unbounded, addresses: []},
+          {partitionId: "1", fromBlock: 9802, toBlock: Unbounded, addresses: [address2]},
         ],
         [{partitionId: "0", fromBlock: 9801, toBlock: Unbounded, addresses: []}],
       ))

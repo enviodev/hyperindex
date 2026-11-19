@@ -99,30 +99,30 @@ let makeHyperSyncSource = () =>
   EvmHyperSyncSource.make({
     chainId,
     endpointUrl: "https://eth.hypersync.xyz",
-    onEventRegistrations: [pairCreatedRegistration],
     apiToken: Some(testApiToken),
     clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
-    lowercaseAddresses: true,
     serializationFormat: Env.hypersyncClientSerializationFormat,
     enableQueryCaching: false,
     logLevel: Env.hypersyncLogLevel,
-    addressStore,
     logger: Logger.makeInMemory(),
+    chainBuffer: TestChainBuffer.forChain(
+      ~onEventRegistrations=[pairCreatedRegistration],
+      ~addressStore,
+    ),
   })
 
 let makeRpcSource = () =>
   RpcSource.make({
     url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
     chainId,
-    onEventRegistrations: [pairCreatedRegistration],
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({}),
-    lowercaseAddresses: true,
-    addressStore,
-    blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
-    transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
+    chainBuffer: TestChainBuffer.forChain(
+      ~onEventRegistrations=[pairCreatedRegistration],
+      ~addressStore,
+    ),
   })
 
 let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
@@ -151,8 +151,25 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
   }
 }
 
-let storedBlockNumbers = (blockStore: BlockStore.t) =>
-  blockStore->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=2147483647)
+// The response's rows and hashed blocks, read back from a buffer its page
+// merged into.
+type responseBlocks = {
+  rows: int,
+  blockNumbers: array<int>,
+  hashOf: int => Null.t<string>,
+}
+
+let readResponse = (response: Source.blockRangeFetchResponse) => {
+  let buffer = TestChainBuffer.decodedBuffer(~onEventRegistrations=[])
+  let {rowsKept} = buffer->ChainBuffer.mergePage(response.page, ~reorgThreshold=0, ~reportOnly=true)
+  {
+    rows: rowsKept,
+    blockNumbers: (
+      buffer->ChainBuffer.getBlockHashes(~fromBlock=0, ~belowBlock=2147483647)
+    ).blockNumbers,
+    hashOf: blockNumber => buffer->TestChainBuffer.blockHashAt(blockNumber),
+  }
+}
 
 describe("Source.blockHashes integration - empty range", () => {
   // Uniswap V2 Factory was deployed at block 10000835. Anything well below that
@@ -165,11 +182,11 @@ describe("Source.blockHashes integration - empty range", () => {
     {retry: 3},
     async t => {
       let source = makeHyperSyncSource()
-      let response = await source->invoke(~fromBlock, ~toBlock)
+      let response = (await source->invoke(~fromBlock, ~toBlock))->readResponse
 
       t.expect({
-        "parsedQueueItems": response.items->EventStore.length,
-        "blockNumbers": response.blockStore->storedBlockNumbers,
+        "parsedQueueItems": response.rows,
+        "blockNumbers": response.blockNumbers,
       }).toEqual({
         "parsedQueueItems": 0,
         // No items, no rollbackGuard at historical depth → nothing to harvest.
@@ -183,11 +200,11 @@ describe("Source.blockHashes integration - empty range", () => {
     {retry: 3},
     async t => {
       let source = makeRpcSource()
-      let response = await source->invoke(~fromBlock, ~toBlock)
+      let response = (await source->invoke(~fromBlock, ~toBlock))->readResponse
 
       t.expect({
-        "parsedQueueItems": response.items->EventStore.length,
-        "blockNumbers": response.blockStore->storedBlockNumbers,
+        "parsedQueueItems": response.rows,
+        "blockNumbers": response.blockNumbers,
       }).toEqual({
         "parsedQueueItems": 0,
         // https://github.com/enviodev/hyperindex/issues/1782
@@ -213,11 +230,12 @@ describe("Source.blockHashes integration - single-log range", () => {
     async t => {
       let source = makeHyperSyncSource()
       let response = await source->invoke(~fromBlock, ~toBlock)
+      let read = response->readResponse
 
       t.expect({
-        "parsedQueueItems": response.items->EventStore.length,
-        "blockNumbers": response.blockStore->storedBlockNumbers,
-        "blockHash": response.blockStore->BlockStore.getHash(fromBlock),
+        "parsedQueueItems": read.rows,
+        "blockNumbers": read.blockNumbers,
+        "blockHash": read.hashOf(fromBlock),
         "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
       }).toEqual({
         "parsedQueueItems": 1,
@@ -234,15 +252,16 @@ describe("Source.blockHashes integration - single-log range", () => {
     async t => {
       let source = makeRpcSource()
       let response = await source->invoke(~fromBlock, ~toBlock)
+      let read = response->readResponse
 
-      t.expect(response.items->EventStore.length).toBe(1)
+      t.expect(read.rows).toBe(1)
       t.expect(response.latestFetchedBlockNumber).toBe(toBlock)
 
       // toBlock entry comes from eth_getBlockByNumber; the log's block hash also
       // ends up in the page (and equals toBlock here since the range is one block).
       t.expect({
-        "toBlockHash": response.blockStore->BlockStore.getHash(toBlock),
-        "parentHash": response.blockStore->BlockStore.getHash(toBlock - 1),
+        "toBlockHash": read.hashOf(toBlock),
+        "parentHash": read.hashOf(toBlock - 1),
       }).toEqual({
         "toBlockHash": Null.Value(expectedBlockHash),
         "parentHash": Null.Value(expectedParentHash),

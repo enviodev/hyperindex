@@ -1,4 +1,4 @@
-//! Fills a page's block and transaction stores for the logs a query returned.
+//! Fills a page's blocks and transactions for the logs a query returned.
 //! `plan_blocks` and `plan_transactions` decide what that costs in requests.
 //!
 //! Whether a response is fetched is decided by what the page itself wants; how
@@ -32,9 +32,27 @@ use super::fields::{
 };
 use super::inflight::Inflight;
 use super::responses::{self, ResponseError};
-use crate::block_store::BlockStore;
+use crate::chain_buffer::evm::{push_block, push_transaction};
+use crate::chain_buffer::page::PageData;
+use crate::chain_buffer::Ecosystem;
 use crate::evm_hypersync_source::query::{BlockField, TransactionField};
-use crate::transaction_store::TransactionStore;
+
+/// What the chain already holds of each block and transaction, so a page
+/// asks only for what it lacks.
+pub(crate) trait Known: Sync {
+    fn has_block_fields(&self, block_number: u64, mask: u64) -> bool;
+    fn has_transaction_fields(&self, key: TxKey, mask: u64) -> bool;
+}
+
+impl Known for crate::chain_buffer::ChainBuffer {
+    fn has_block_fields(&self, block_number: u64, mask: u64) -> bool {
+        crate::chain_buffer::ChainBuffer::has_block_fields(self, block_number, mask)
+    }
+
+    fn has_transaction_fields(&self, key: TxKey, mask: u64) -> bool {
+        crate::chain_buffer::ChainBuffer::has_transaction_fields(self, key.0, key.1, mask)
+    }
+}
 
 /// What a shared read hands to every waiter. The failure rides inside the
 /// value so that every waiter receives it.
@@ -42,7 +60,7 @@ type Fetched = std::result::Result<Arc<Json>, Arc<RpcError>>;
 
 pub(crate) type Fetches = Inflight<FetchKey, Fetched>;
 
-/// A transaction's place in its block, which is how both stores key it.
+/// A transaction's place in its block, which is how the transactions table keys it.
 pub(crate) type TxKey = (u64, u32);
 
 /// One outstanding JSON-RPC read, as the deduplication map keys it. A hash is
@@ -172,7 +190,7 @@ pub(crate) fn collect_worst<T>(
     }
 }
 
-/// Block and transaction fields as store masks: what one registration selects,
+/// Block and transaction fields as table field masks: what one registration selects,
 /// unioned per referenced key into what a page wants, and over the whole chain
 /// into what a response is read for.
 #[derive(Clone, Copy, Default)]
@@ -199,7 +217,7 @@ struct ReferencedTransaction {
     hash: format::Hash,
 }
 
-/// The blocks and transactions a page's routed logs reference, with the fields
+/// The blocks and transactions a page's matched logs reference, with the fields
 /// their items selected unioned per key.
 #[derive(Default)]
 pub(crate) struct PageRefs {
@@ -257,17 +275,11 @@ pub(crate) struct EnrichRequest<'a> {
     /// Block responses already read for this page, by number.
     pub prefetched_blocks: &'a HashMap<u64, Arc<Json>>,
     pub refs: PageRefs,
-    pub known_blocks: &'a BlockStore,
-    pub known_transactions: &'a TransactionStore,
+    pub known: &'a dyn Known,
     /// What every block is decoded for, resolved once for the chain.
     pub block_read: &'a BlockRead,
     /// The union of every registration's transaction selection on this chain.
     pub chain_tx_mask: u64,
-}
-
-pub(crate) struct EnrichedPage {
-    pub blocks: BlockStore,
-    pub transactions: TransactionStore,
 }
 
 /// Read one JSON-RPC result, sharing an identical request already in flight.
@@ -345,19 +357,19 @@ pub(crate) async fn page(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
     request: EnrichRequest<'_>,
-) -> Result<EnrichedPage, EnrichError> {
+    page: &mut PageData,
+) -> Result<(), EnrichError> {
     let EnrichRequest {
         checked_blocks,
         prefetched_blocks,
         refs,
-        known_blocks,
-        known_transactions,
+        known,
         block_read,
         chain_tx_mask,
     } = request;
 
-    let block_numbers = plan_blocks(&refs, checked_blocks, known_blocks);
-    let tx_plan = plan_transactions(&refs, known_transactions, chain_tx_mask);
+    let block_numbers = plan_blocks(&refs, checked_blocks, known);
+    let tx_plan = plan_transactions(&refs, known, chain_tx_mask);
 
     // Both sides are awaited, then judged together. Taking whichever failed
     // first would make the verdict a race: an unservable selection on the block
@@ -386,9 +398,6 @@ pub(crate) async fn page(
         }
     };
 
-    let page_blocks = BlockStore::new_evm();
-    let page_transactions = TransactionStore::new_evm();
-
     // What the logs themselves observed of each block, which the fetched blocks
     // and the stored chain are then cross-validated against.
     let log_observations: Vec<Block> = refs
@@ -402,7 +411,7 @@ pub(crate) async fn page(
             })
         })
         .collect();
-    fill_block_page(&page_blocks, log_observations, block_read.covering, blocks);
+    fill_block_page(page, log_observations, block_read.covering, blocks);
 
     // Every referenced transaction gets its log-derived row even when nothing
     // was fetched for it, so `hash` and `transactionIndex` resolve from the
@@ -417,16 +426,30 @@ pub(crate) async fn page(
             ..Default::default()
         })
         .collect();
-    page_transactions.insert_evm_txs(log_rows);
-
+    add_transactions(page, &log_rows, LOG_TRANSACTION_FIELDS)?;
     for (covering, txs) in transactions {
-        page_transactions.insert_evm_txs_covering(txs, covering);
+        add_transactions(page, &txs, covering)?;
     }
+    Ok(())
+}
 
-    Ok(EnrichedPage {
-        blocks: page_blocks,
-        transactions: page_transactions,
-    })
+/// What a transaction row built from its log holds: its key and hash.
+const LOG_TRANSACTION_FIELDS: u64 = (1
+    << crate::chain_buffer::evm::EvmTxField::TransactionIndex as u32)
+    | (1 << crate::chain_buffer::evm::EvmTxField::Hash as u32);
+
+fn add_transactions(
+    page: &mut PageData,
+    transactions: &[Transaction],
+    fetched: u64,
+) -> Result<(), EnrichError> {
+    let mut rows = page.transactions.builder();
+    for transaction in transactions {
+        push_transaction(&mut rows, transaction, fetched)
+            .map_err(|error| EnrichError::Transient(format!("{error:#}")))?;
+    }
+    page.add_transactions(rows.finish());
+    Ok(())
 }
 
 /// Merge a plan's results into a page: the hash-only observations first, since
@@ -435,7 +458,7 @@ pub(crate) async fn page(
 /// observation — this response's own view of the block below, which
 /// cross-validates against the stored chain at no extra request.
 fn fill_block_page(
-    page: &BlockStore,
+    page: &mut PageData,
     mut observations: Vec<Block>,
     covering: u64,
     fetched: Vec<Block>,
@@ -451,13 +474,21 @@ fn fill_block_page(
             ..Default::default()
         })
     }));
-    page.insert_evm_blocks(observations);
-    page.insert_evm_blocks_covering(fetched, covering);
+    let mut rows = page.blocks.builder();
+    for block in &observations {
+        push_block(&mut rows, block, 0);
+    }
+    page.add_blocks(rows.finish());
+    let mut rows = page.blocks.builder();
+    for block in &fetched {
+        push_block(&mut rows, block, covering);
+    }
+    page.add_blocks(rows.finish());
 }
 
 /// What a page's blocks are decoded for: the chain's registrations, widened by
 /// the block handlers the page runs. One response carries the whole header, so
-/// every block of the page reads the same fields and merges into the store in a
+/// every block of the page reads the same fields and merges into the chain buffer in a
 /// single batch.
 pub(crate) struct BlockRead {
     pub covering: u64,
@@ -500,18 +531,18 @@ struct TxReadPlan {
 }
 
 /// Which blocks to read: every checked block, and each other referenced block
-/// the store was not already asked for everything this page needs of. The
+/// the chain buffer does not already hold everything this page needs of. The
 /// range's own boundaries get no read of their own: the checked blocks reach
 /// at least as deep as the reorg window, and nothing below it is compared.
 /// `checked` is ascending.
-fn plan_blocks(refs: &PageRefs, checked: &[u64], known: &BlockStore) -> Vec<u64> {
+fn plan_blocks(refs: &PageRefs, checked: &[u64], known: &dyn Known) -> Vec<u64> {
     let mut numbers = checked.to_vec();
     numbers.extend(
         refs.blocks
             .iter()
             .filter(|(number, block_ref)| {
                 checked.binary_search(number).is_err()
-                    && !known.covers(**number, block_ref.mask & !BLOCK_KEY_MASK)
+                    && !known.has_block_fields(**number, block_ref.mask & !BLOCK_KEY_MASK)
             })
             .map(|(&number, _)| number),
     );
@@ -527,11 +558,7 @@ fn plan_blocks(refs: &PageRefs, checked: &[u64], known: &BlockStore) -> Vec<u64>
 /// the chain selects that it happens to carry — but never for a field that
 /// would drag in a second response, which would turn a wider selection
 /// elsewhere into requests this page does not need.
-fn plan_transactions(
-    refs: &PageRefs,
-    known: &TransactionStore,
-    chain_mask: u64,
-) -> Vec<TxReadPlan> {
+fn plan_transactions(refs: &PageRefs, known: &dyn Known, chain_mask: u64) -> Vec<TxReadPlan> {
     #[derive(Default)]
     struct Group {
         wanted: u64,
@@ -541,7 +568,7 @@ fn plan_transactions(
     let mut by_reads: HashMap<ResponsesToRead, Group> = HashMap::new();
     for (&key, tx_ref) in &refs.transactions {
         let wanted = tx_ref.mask & !tx_mask_of(Carrier::Log);
-        if known.covers(key, wanted) {
+        if known.has_transaction_fields(key, wanted) {
             continue;
         }
         let reads = ResponsesToRead::for_mask(wanted);
@@ -581,12 +608,12 @@ pub(crate) async fn fetch_block_hashes(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
     block_numbers: &[u64],
-) -> Result<BlockStore, EnrichError> {
+) -> Result<PageData, EnrichError> {
     let read = BlockRead::observations_only();
     let blocks = fetch_blocks(client, fetches, &read, block_numbers, &HashMap::new()).await?;
 
-    let page = BlockStore::new_evm();
-    fill_block_page(&page, Vec::new(), read.covering, blocks);
+    let mut page = PageData::new(Ecosystem::Evm);
+    fill_block_page(&mut page, Vec::new(), read.covering, blocks);
     Ok(page)
 }
 
@@ -711,8 +738,61 @@ async fn read_opt(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block_store::EvmBlockField;
-    use crate::transaction_store::EvmTxField;
+    use crate::chain_buffer::evm::{EvmBlockField, EvmTxField};
+    use std::sync::Mutex;
+
+    /// What an earlier page left the chain holding, by the fields each row
+    /// was read for.
+    #[derive(Default)]
+    struct TestKnown {
+        blocks: Mutex<HashMap<u64, u64>>,
+        transactions: Mutex<HashMap<TxKey, u64>>,
+    }
+
+    impl TestKnown {
+        fn insert_evm_blocks_covering(&self, blocks: Vec<Block>, covering: u64) {
+            for block in blocks {
+                *self
+                    .blocks
+                    .lock()
+                    .unwrap()
+                    .entry(block.number.unwrap())
+                    .or_default() |= covering;
+            }
+        }
+
+        fn insert_evm_txs_covering(&self, transactions: Vec<Transaction>, covering: u64) {
+            for transaction in transactions {
+                let key = (
+                    u64::from(transaction.block_number.unwrap()),
+                    u64::from(transaction.transaction_index.unwrap()) as u32,
+                );
+                *self.transactions.lock().unwrap().entry(key).or_default() |= covering;
+            }
+        }
+    }
+
+    impl Known for TestKnown {
+        fn has_block_fields(&self, block_number: u64, mask: u64) -> bool {
+            mask == 0
+                || self
+                    .blocks
+                    .lock()
+                    .unwrap()
+                    .get(&block_number)
+                    .is_some_and(|covered| covered & mask == mask)
+        }
+
+        fn has_transaction_fields(&self, key: TxKey, mask: u64) -> bool {
+            mask == 0
+                || self
+                    .transactions
+                    .lock()
+                    .unwrap()
+                    .get(&key)
+                    .is_some_and(|covered| covered & mask == mask)
+        }
+    }
 
     fn hash(byte: u8) -> format::Hash {
         format::Hash::from([byte; 32])
@@ -763,7 +843,7 @@ mod tests {
         // The case several partitions scanning the same range hit: the first
         // fetched the block, and the rest must not fetch it again.
         let wanted = block_bit(EvmBlockField::GasUsed);
-        let known = BlockStore::new_evm();
+        let known = TestKnown::default();
         known.insert_evm_blocks_covering(
             vec![Block {
                 number: Some(50),
@@ -777,7 +857,7 @@ mod tests {
 
     #[test]
     fn a_block_covered_only_for_other_fields_is_still_read() {
-        let known = BlockStore::new_evm();
+        let known = TestKnown::default();
         known.insert_evm_blocks_covering(
             vec![Block {
                 number: Some(50),
@@ -794,7 +874,7 @@ mod tests {
     fn a_page_with_no_checked_blocks_and_no_wanted_fields_reads_nothing() {
         // Below the checked head blocks no reorg can reach the range, so its
         // boundaries are not worth a request.
-        let plan = plan_blocks(&PageRefs::default(), &[], &BlockStore::new_evm());
+        let plan = plan_blocks(&PageRefs::default(), &[], &TestKnown::default());
         assert_eq!(planned_numbers(&plan), Vec::<u64>::new());
     }
 
@@ -802,7 +882,7 @@ mod tests {
     fn a_checked_head_block_is_read_once_even_when_the_store_covers_it() {
         // A checked block is this range's reorg observation, so a stored answer
         // — which is some earlier response's view of it — will not do.
-        let known = BlockStore::new_evm();
+        let known = TestKnown::default();
         known.insert_evm_blocks_covering(
             vec![Block {
                 number: Some(58),
@@ -819,7 +899,7 @@ mod tests {
     fn a_block_no_item_wants_fields_from_is_not_read() {
         // Its hash still reaches the page as an observation off the log, which
         // is all reorg detection needs from it.
-        let plan = plan_blocks(&refs_for(50, 0, 0), &[], &BlockStore::new_evm());
+        let plan = plan_blocks(&refs_for(50, 0, 0), &[], &TestKnown::default());
         assert_eq!(planned_numbers(&plan), Vec::<u64>::new());
     }
 
@@ -827,7 +907,7 @@ mod tests {
     fn a_checked_block_an_item_wants_nothing_from_is_still_read() {
         // The item makes the block referenced but selects no field of it; it is
         // still checked, so its reorg observation is read.
-        let plan = plan_blocks(&refs_for(60, 0, 0), &[60], &BlockStore::new_evm());
+        let plan = plan_blocks(&refs_for(60, 0, 0), &[60], &TestKnown::default());
         assert_eq!(planned_numbers(&plan), vec![60]);
     }
 
@@ -838,14 +918,14 @@ mod tests {
             0,
             tx_bit(EvmTxField::Hash) | tx_bit(EvmTxField::TransactionIndex),
         );
-        let plan = plan_transactions(&refs, &TransactionStore::new_evm(), 0);
+        let plan = plan_transactions(&refs, &TestKnown::default(), 0);
         assert_eq!(planned_keys(&plan), Vec::<TxKey>::new());
     }
 
     #[test]
     fn a_transaction_the_store_already_covers_is_not_read_again() {
         let wanted = tx_bit(EvmTxField::Gas);
-        let known = TransactionStore::new_evm();
+        let known = TestKnown::default();
         known.insert_evm_txs_covering(
             vec![Transaction {
                 block_number: Some(50u64.into()),
@@ -863,7 +943,7 @@ mod tests {
         // `to` is null on a contract creation. Judged by stored values alone
         // the row would look unfetched and be requested on every later page.
         let wanted = tx_bit(EvmTxField::To);
-        let known = TransactionStore::new_evm();
+        let known = TestKnown::default();
         known.insert_evm_txs_covering(
             vec![Transaction {
                 block_number: Some(50u64.into()),
@@ -902,7 +982,7 @@ mod tests {
                 tx_mask: tx_bit(EvmTxField::Gas),
             },
         );
-        let plan = plan_transactions(&refs, &TransactionStore::new_evm(), tx_bit(EvmTxField::Gas));
+        let plan = plan_transactions(&refs, &TestKnown::default(), tx_bit(EvmTxField::Gas));
         assert_eq!(planned_keys(&plan), vec![(50, 1)]);
     }
 
@@ -950,7 +1030,7 @@ mod tests {
                 },
             );
         }
-        let mut sizes: Vec<usize> = plan_transactions(&refs, &TransactionStore::new_evm(), 0)
+        let mut sizes: Vec<usize> = plan_transactions(&refs, &TestKnown::default(), 0)
             .iter()
             .map(|group| group.entries.len())
             .collect();
@@ -983,7 +1063,7 @@ mod tests {
         let miner = block_bit(EvmBlockField::Miner);
         let gas_used = block_bit(EvmBlockField::GasUsed);
         let read = BlockRead::for_chain(miner | gas_used);
-        let known = BlockStore::new_evm();
+        let known = TestKnown::default();
         let first = plan_blocks(&refs_for(50, miner, 0), &[], &known);
         known.insert_evm_blocks_covering(
             vec![Block {
@@ -1009,7 +1089,7 @@ mod tests {
         let gas_used = tx_bit(EvmTxField::GasUsed);
         let plan = plan_transactions(
             &refs_for(50, 0, gas),
-            &TransactionStore::new_evm(),
+            &TestKnown::default(),
             gas | input | gas_used,
         );
         assert_eq!(
@@ -1033,7 +1113,7 @@ mod tests {
         // every field comes off the log still costs nothing.
         let plan = plan_transactions(
             &refs_for(50, 0, tx_bit(EvmTxField::Hash)),
-            &TransactionStore::new_evm(),
+            &TestKnown::default(),
             tx_bit(EvmTxField::Gas) | tx_bit(EvmTxField::GasUsed),
         );
         assert_eq!(planned_keys(&plan), Vec::<TxKey>::new());
@@ -1047,7 +1127,7 @@ mod tests {
         let gas = tx_bit(EvmTxField::Gas);
         let plan = plan_transactions(
             &refs_for(50, 0, gas),
-            &TransactionStore::new_evm(),
+            &TestKnown::default(),
             gas | TX_EAGER_EXCLUDED_MASK,
         );
         assert_eq!(
@@ -1062,7 +1142,7 @@ mod tests {
         let access_list = tx_bit(EvmTxField::AccessList);
         let plan = plan_transactions(
             &refs_for(50, 0, access_list),
-            &TransactionStore::new_evm(),
+            &TestKnown::default(),
             access_list,
         );
         assert_eq!(

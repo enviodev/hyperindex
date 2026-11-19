@@ -65,8 +65,9 @@ let make = (
   ~chainId: ChainId.t,
   ~addressStore: AddressStore.t,
   ~ecosystem: Ecosystem.name=Evm,
-  ~transactionStore: option<TransactionStore.t>=None,
-  ~blockStore: option<BlockStore.t>=None,
+  // Rows the items read from the buffer rather than carry: SVM transactions,
+  // their account activity, and slots. Handed over with the first response.
+  ~page: option<BufferPage.t>=None,
 ): Source.t => {
   let reportedHeight = max(endBlock, 1)
 
@@ -78,7 +79,7 @@ let make = (
     pollingInterval: 0,
     getBlockHashes: (~blockNumbers as _, ~logger as _) => {
       Promise.resolve({
-        Source.result: Ok(BlockStore.fromJs([], ~ecosystem)),
+        Source.result: Ok(BufferPage.empty(~ecosystem)),
         requestStats: [],
       })
     },
@@ -118,7 +119,7 @@ let make = (
 
       // A client-filtered contract is queried address-free, so this partition
       // holds none of its addresses and only the chain-wide store can answer
-      // for it — exactly the fallback every real source's router makes.
+      // for it, as matching does for every source.
       let isAddressAllowed = (address, ~contractName, ~blockNumber) =>
         switch selection.clientFilteredContracts {
         | Some(contractNames) if contractNames->Array.includes(contractName) =>
@@ -127,7 +128,7 @@ let make = (
         }
 
       // The registration's own start block, which the contract-wide address gate
-      // can't express. Every native router applies it while routing.
+      // can't express. Matching applies it for every other source.
       let hasStarted = (onEventRegistration: Internal.onEventRegistration, ~blockNumber) =>
         switch onEventRegistration.startBlock {
         | Some(startBlock) => blockNumber >= startBlock
@@ -196,21 +197,27 @@ let make = (
         }
       })
 
-      Promise.resolve({
-        Source.knownHeight: reportedHeight,
-        items: EventStore.fromJsItems(
-          parsedQueueItems->Array.concat(
-            selection.onBlockRegistrations->blockItems(
-              ~fromBlock,
-              ~toBlock=toBlockQueried,
-              ~getBlock,
-            ),
+      let responsePage = BufferPage.fromItems(
+        parsedQueueItems->Array.concat(
+          selection.onBlockRegistrations->blockItems(
+            ~fromBlock,
+            ~toBlock=toBlockQueried,
+            ~getBlock,
           ),
         ),
-        // EVM/Fuel keep transaction and block inline. SVM simulate returns a
-        // store page so materialize + activity attach run the same path as HyperSync.
-        transactionStore,
-        blockStore: blockStore->Option.getOr(BlockStore.fromJs([], ~ecosystem)),
+        ~blocks=[],
+        ~ecosystem,
+      )
+      // Appending moves the rows, so only the first response carries them.
+      switch page {
+      | Some(page) => responsePage->BufferPage.append(page)
+      | None => ()
+      }
+      Promise.resolve({
+        Source.knownHeight: reportedHeight,
+        // EVM/Fuel keep transaction and block inline. SVM simulate adds a
+        // page of them so the items read them as a HyperSync page's do.
+        page: responsePage,
         latestFetchedBlockNumber: toBlockQueried,
         stats: {
           totalTimeElapsed: 0.,

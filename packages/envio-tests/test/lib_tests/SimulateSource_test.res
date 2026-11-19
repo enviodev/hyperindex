@@ -84,9 +84,13 @@ let getItems = async (
   selection.onEventRegistrations->Array.forEach(registration =>
     onEventRegistrations->Array.setUnsafe(registration.index, registration)
   )
-  response.items
-  ->TestEventStore.takeAll(~context={chainId, onEventRegistrations, onBlockRegistrations: []})
-  ->Array.map(item => {
+
+  (
+    await response.page->TestChainBuffer.buildAll(
+      ~buffer=TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
+      ~context={chainId, onEventRegistrations, onBlockRegistrations: []},
+    )
+  )->Array.map(item => {
     let eventItem = item->Internal.castUnsafeEventItem
     (
       eventItem.onEventRegistration.index,

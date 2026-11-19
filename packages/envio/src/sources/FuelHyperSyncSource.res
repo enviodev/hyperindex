@@ -4,34 +4,20 @@ type options = {
   chainId: ChainId.t,
   endpointUrl: string,
   apiToken: option<string>,
-  // The chain's registrations, indexed by their sequential `index`.
-  onEventRegistrations: array<Internal.onEventRegistration>,
-  // The chain's address index; the client reads it while routing.
-  addressStore: AddressStore.t,
+  // The chain's compiled registrations, read by the client while matching.
+  chainBuffer: ChainBuffer.t,
   logger: Logger.t,
 }
 
-let make = (
-  {chainId, endpointUrl, apiToken, onEventRegistrations, addressStore, logger}: options,
-): t => {
+let make = ({chainId, endpointUrl, apiToken, chainBuffer, logger}: options): t => {
   let name = "HyperFuel"
 
   // Per source, so one rejected token is reported once rather than on every
   // height retry for the life of the process.
   let unauthorizedWarned = ref(false)
-  // Registration indexes already warned about undecodable LogData — a stale
-  // ABI rejects every receipt, so one line per event is enough.
-  let rejectedLogDataWarned = Utils.Set.make()
-
   let apiToken = apiToken->HyperSync.requireApiToken
 
-  let client = switch FuelHyperSyncClient.make(
-    {url: endpointUrl, apiToken},
-    ~eventRegistrations=FuelHyperSyncClient.Registration.fromOnEventRegistrations(
-      onEventRegistrations,
-    ),
-    ~addressStore,
-  ) {
+  let client = switch FuelHyperSyncClient.make({url: endpointUrl, apiToken}, ~chainBuffer) {
   | client => client
   | exception exn =>
     exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to instantiate the HyperFuel client")
@@ -47,7 +33,7 @@ let make = (
     ~selection: FetchState.selection,
     ~itemsTarget as _,
     ~retry,
-    ~logger,
+    ~logger as _,
   ) => {
     let totalTimeRef = Performance.now()
 
@@ -110,25 +96,6 @@ let make = (
     //In the query
     let heighestBlockQueried = pageUnsafe.nextBlock - 1
 
-    pageUnsafe.rejectedLogData->Array.forEach(rejected => {
-      if !(rejectedLogDataWarned->Utils.Set.has(rejected.onEventRegistrationIndex)) {
-        rejectedLogDataWarned->Utils.Set.add(rejected.onEventRegistrationIndex)->ignore
-        let eventConfig = (
-          onEventRegistrations->Array.getUnsafe(rejected.onEventRegistrationIndex)
-        ).eventConfig
-        logger->Logger.warn(
-          `Skipped ${eventConfig.contractName}.${eventConfig.name} LogData receipts whose data doesn't decode against the contract ABI. Check that the ABI matches the deployed contract.`,
-          ~params={
-            "blockNumber": rejected.blockHeight,
-            "logIndex": rejected.receiptIndex,
-            "txId": rejected.txId,
-            "dataLength": rejected.dataLength,
-            "skippedInPage": rejected.count,
-          },
-        )
-      }
-    })
-
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     let stats = {
@@ -137,12 +104,9 @@ let make = (
     }
 
     {
-      items: pageUnsafe.items,
-      // Fuel keeps transaction and block inline on the payload; the block store
-      // carries only the (height, id) rows that drive reorg detection (Fuel
-      // never rolls back, so it's detect-only logging).
-      transactionStore: None,
-      blockStore: pageUnsafe.blockStore,
+      // Fuel keeps the transaction inline on the item; the page's blocks drive
+      // reorg detection (Fuel never rolls back, so it's detect-only logging).
+      page: pageUnsafe.page,
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,

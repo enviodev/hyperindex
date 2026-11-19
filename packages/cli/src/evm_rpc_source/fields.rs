@@ -17,9 +17,9 @@ use hypersync_client::format::{self, Hex};
 use hypersync_client::simple_types::{Block, Transaction};
 use serde_json::Value as Json;
 
-use crate::block_store::EvmBlockField;
+use crate::chain_buffer::evm::EvmBlockField;
+use crate::chain_buffer::evm::EvmTxField;
 use crate::evm_hypersync_source::query::TransactionField;
-use crate::transaction_store::EvmTxField;
 
 /// Which JSON-RPC response carries a transaction field.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::VariantArray)]

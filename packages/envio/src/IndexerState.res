@@ -90,6 +90,9 @@ type t = {
   chainMetaThrottler: Throttler.t,
   // True while a batch is being processed; guards ProcessEventBatch re-entry.
   mutable isProcessing: bool,
+  // Processing was asked for while a batch was in flight. That batch was built
+  // before whatever asked, so the loop runs another round for it.
+  mutable isProcessingRequested: bool,
   // Whole-indexer view over every chain's runtime state plus the run-wide flags
   // derived from it. Mutated in place through CrossChainState.
   crossChainState: CrossChainState.t,
@@ -204,6 +207,7 @@ let make = (
     chainMetaDirty: false,
     chainMetaThrottler,
     isProcessing: false,
+    isProcessingRequested: false,
     crossChainState: CrossChainState.make(
       ~chainStates,
       ~isRealtime,
@@ -413,12 +417,15 @@ let getSafeCheckpointIdByChain = (state: t) =>
     ~committedFrontier=state.committedFrontier,
   )
 
-let createBatch = (state: t, ~batchSizeTarget: int): Batch.t =>
+let createBatch = (state: t, ~batchSizeTarget: int): promise<Batch.t> =>
   state.crossChainState->CrossChainState.createBatch(
     ~config=state.config,
     ~frontier=state.processedFrontier,
     ~batchSizeTarget,
   )
+
+let prebuildNextBatch = (state: t) =>
+  state.crossChainState->CrossChainState.prebuildNextBatch(~batchSizeTarget=state.config.batchSize)
 
 let enterReorgThreshold = (state: t) => state.crossChainState->CrossChainState.enterReorgThreshold
 
@@ -469,11 +476,23 @@ let applyBatchProgress = (state: t, ~batch: Batch.t) =>
 // Processing-loop mutex. Guards ProcessEventBatch re-entry so only one
 // processing loop runs at a time.
 let isProcessing = (state: t) => state.isProcessing
+// Whether some chain is running its contractRegister handlers.
+let isRegisteringContracts = (state: t) =>
+  state.crossChainState
+  ->CrossChainState.chainStates
+  ->Dict.valuesToArray
+  ->Array.some(ChainState.isRegisteringContracts)
 let beginProcessing = (state: t) => {
   state->settleStalledOnFetch
   state.isProcessing = true
 }
 let endProcessing = (state: t) => state.isProcessing = false
+let requestProcessing = (state: t) => state.isProcessingRequested = true
+let takeProcessingRequest = (state: t) => {
+  let isRequested = state.isProcessingRequested
+  state.isProcessingRequested = false
+  isRequested
+}
 
 // Start attributing idle time to fetch starvation. Called when the processing
 // loop exits with no work left; skipped when it exits for a reorg or shutdown,
@@ -916,7 +935,6 @@ let drainBatchRun = (state: t): Batch.t => {
     checkpointEventsProcessed,
     registeredAddresses,
     // Read already: a run is drained from batches that were processed.
-    fieldReads: [],
   }
 }
 

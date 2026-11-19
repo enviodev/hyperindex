@@ -315,11 +315,12 @@ describe("Near-head address-free reads", () => {
               "301-301 PairCreated,Transfer any capped",
               `301-301 Transfer ${pair1} ok`,
               `301-301 Transfer ${pair2} ok`,
-              // The contract registered in the block, caught up by its address.
-              `301-301 Transfer ${pair3} ok`,
               // Over the cap on two blocks: the range shrinks before anything
               // is asked by address.
               "301-302 PairCreated,Transfer any capped",
+              // The contract registered in the block, caught up by its address
+              // to the head known when its registration lands.
+              `301-302 Transfer ${pair3} ok`,
               // The next block is asked address-free again.
               "302-302 PairCreated,Transfer any ok",
             ],

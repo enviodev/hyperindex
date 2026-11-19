@@ -17,7 +17,9 @@ let rec startProcessing = async (
   ~scheduleFetch,
   ~scheduleRollback,
 ) => {
-  if !(state->IndexerState.isProcessing) && !(state->IndexerState.isStopped) {
+  if state->IndexerState.isProcessing {
+    state->IndexerState.requestProcessing
+  } else if !(state->IndexerState.isStopped) {
     state->IndexerState.beginProcessing
     // FIXME: Needed only for test determinism. The mocks resolve several fetch
     // responses synchronously in one tick; this yield lets them all land before
@@ -28,9 +30,10 @@ let rec startProcessing = async (
     await yieldTick()
     // Seeded true so the first batch always runs (it handles the caught-up exit
     // even when there's nothing to process, eg resuming fully-synced state).
-    // Keep looping only while the last batch actually processed something: an
-    // empty/idle batch records nothing, so the counter stays put and the loop
-    // exits, leaving producers (fetch, rollback) to re-kick it.
+    // Keep looping only while the last batch actually processed something or
+    // processing was asked for while it ran: an empty/idle batch records
+    // nothing, so the counter stays put and the loop exits, leaving producers
+    // (fetch, rollback, contractRegister) to re-kick it.
     let hasMoreWork = ref(true)
     while (
       hasMoreWork.contents &&
@@ -38,6 +41,7 @@ let rec startProcessing = async (
       !(state->IndexerState.isResolvingReorg)
     ) {
       let processedBatchesBefore = state->IndexerState.processedBatchesCount
+      state->IndexerState.takeProcessingRequest->ignore
       switch await processNextBatch(state, ~runtime, ~scheduleFetch) {
       | exception exn =>
         IndexerState.errorExit(
@@ -47,7 +51,10 @@ let rec startProcessing = async (
             ~msg=IndexerState.unexpectedErrorMsg,
           ),
         )
-      | () => hasMoreWork := state->IndexerState.processedBatchesCount > processedBatchesBefore
+      | () =>
+        hasMoreWork :=
+          state->IndexerState.processedBatchesCount > processedBatchesBefore ||
+            state->IndexerState.takeProcessingRequest
       }
     }
     state->IndexerState.endProcessing
@@ -81,9 +88,37 @@ and processNextBatch = async (state: IndexerState.t, ~runtime, ~scheduleFetch): 
   let isInReorgThresholdBeforeUpdate = state->IndexerState.isInReorgThreshold
   let isRealtimeBeforeUpdate = state->IndexerState.isRealtime
 
-  let batch =
-    state->IndexerState.createBatch(~batchSizeTarget=(state->IndexerState.config).batchSize)
+  let stateId = state->IndexerState.epoch
+  let batch = await state->IndexerState.createBatch(
+    ~batchSizeTarget=(state->IndexerState.config).batchSize,
+  )
 
+  // A rollback that started while the items were built has removed or replaced
+  // what they were built from, so the batch is dropped; the loop exit hands off
+  // to the rollback, or the next round builds again from the rolled-back
+  // position.
+  if !(state->IndexerState.isStale(~stateId)) {
+    await processBuiltBatch(
+      state,
+      ~batch,
+      ~runtime,
+      ~scheduleFetch,
+      ~isInReorgThresholdBeforeUpdate,
+      ~isRealtimeBeforeUpdate,
+    )
+  } else if !(state->IndexerState.isStopped) && !(state->IndexerState.isResolvingReorg) {
+    await processNextBatch(state, ~runtime, ~scheduleFetch)
+  }
+}
+
+and processBuiltBatch = async (
+  state: IndexerState.t,
+  ~batch: Batch.t,
+  ~runtime,
+  ~scheduleFetch,
+  ~isInReorgThresholdBeforeUpdate,
+  ~isRealtimeBeforeUpdate,
+) => {
   let progressedChainsById = batch.progressedChainsById
 
   let isBelowReorgThreshold =
@@ -133,6 +168,8 @@ and processNextBatch = async (state: IndexerState.t, ~runtime, ~scheduleFetch): 
     ->Utils.Dict.forEach(cs =>
       cs->ChainState.advanceAfterBatch(~batch, ~enteringReorgThreshold=shouldEnterReorgThreshold)
     )
+    // The next batch's items build while this one's handlers run.
+    state->IndexerState.prebuildNextBatch
     // Kick the next fetch round before awaiting the batch. A response that
     // lands mid-batch commits only fetch-frontier fields (buffer, knownHeight),
     // while applyBatchProgress below commits only progress fields, so the two

@@ -12,7 +12,6 @@ pub struct ClientConfig {
     pub retry_backoff_ms: Option<i64>,
     pub retry_base_ms: Option<i64>,
     pub retry_ceiling_ms: Option<i64>,
-    pub enable_checksum_addresses: Option<bool>,
     pub serialization_format: Option<SerializationFormat>,
     pub enable_query_caching: Option<bool>,
     /// Log level for the underlying Rust logger (e.g. "info", "debug", "trace",

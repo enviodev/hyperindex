@@ -24,12 +24,12 @@ let start = (state: IndexerState.t) => {
         ChainFetching.fetchChain(
           state,
           chainId,
-          ~runtime,
           ~action,
           ~stateId=state->IndexerState.epoch,
           ~scheduleFetch,
           ~scheduleProcessing,
           ~scheduleRollback,
+          ~scheduleContractRegister,
         )
       )
     )
@@ -37,9 +37,27 @@ let start = (state: IndexerState.t) => {
     launch(state, () =>
       BatchProcessing.startProcessing(state, ~runtime, ~scheduleFetch, ~scheduleRollback)
     )
+  // At most one run in flight per chain; a run drains the backlog and kicks
+  // fetching and processing after each pass.
+  and scheduleContractRegister = chainId =>
+    launch(state, () =>
+      ContractRegistration.drainChain(
+        state,
+        ~chainId,
+        ~runtime,
+        ~scheduleFetch,
+        ~scheduleProcessing,
+      )
+    )
   and scheduleRollback = () =>
     launch(state, () =>
-      Rollback.rollback(state, ~scheduleFetch, ~scheduleProcessing, ~scheduleRollback)
+      Rollback.rollback(
+        state,
+        ~scheduleFetch,
+        ~scheduleProcessing,
+        ~scheduleRollback,
+        ~scheduleContractRegister,
+      )
     )
 
   // Resuming already ready means the FinalizingIndexes phase is behind us and

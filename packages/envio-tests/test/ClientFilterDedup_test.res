@@ -72,20 +72,25 @@ describe("Client-side address filtering item dedup", () => {
         },
       ])
 
-      // The switch dragged the collapsed partition's frontier back below block 10,
-      // so a newly issued query re-queries a range covering block 10 — the
-      // overlap the dedup must absorb. It re-delivers the block-10 event;
-      // advance it to the head so the buffered block-10 event becomes
-      // processable. The re-delivered copy must be deduped.
+      // The addresses register after the response that carried them, so the
+      // collapsed partition starts at their registration block and re-queries
+      // block 10 — the overlap the dedup must absorb. It re-delivers the
+      // block-10 event; advance both partitions so the buffered block-10 event
+      // becomes processable. The re-delivered copy must be deduped.
       await sourceMock.expectItemsQueries([
         {
           partitionId: "1",
-          fromBlock: 1,
+          fromBlock: 10,
           toBlock: Bounded(800),
           reply: Respond({
             items: [{event: "Gravatar.TestEvent", blockNumber: 10, logIndex: 0}],
             latestFetchedBlockNumber: 200,
           }),
+        },
+        {
+          partitionId: "0",
+          fromBlock: 11,
+          reply: Respond({items: [], latestFetchedBlockNumber: 200}),
         },
       ])
       await indexer.getBatchWritePromise()

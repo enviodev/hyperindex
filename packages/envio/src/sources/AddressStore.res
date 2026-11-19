@@ -133,6 +133,8 @@ type contractAddressCount = {contractName: string, count: int}
 
 @send external contractCounts: t => array<contractAddressCount> = "contractCounts"
 @send external size: t => int = "size"
+// The bytes the registrations and their index hold.
+@send external heapBytes: t => float = "heapBytes"
 
 @send external isIndexedAt: (t, Address.t, string, int) => bool = "isIndexedAt"
 

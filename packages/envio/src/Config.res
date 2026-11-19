@@ -47,8 +47,7 @@ type sourceConfig =
       // simulated chain has one there.
       getBlock: int => option<Internal.eventBlock>,
       endBlock: int,
-      transactionStore?: TransactionStore.t,
-      blockStore?: BlockStore.t,
+      page?: BufferPage.t,
     })
   // For tests: pass custom sources directly
   | CustomSources(array<Source.t>)
@@ -1199,7 +1198,7 @@ let normalizeEvmAddress = (config: t, address: Address.t) =>
   )->Null.toOption
 
 // Canonicalize a user-provided address to the configured casing so it matches
-// addresses parsed from config.yaml during routing. HyperSync/RPC data arrives
+// addresses parsed from config.yaml during matching. HyperSync/RPC data arrives
 // already canonical; only user-land input (simulate srcAddress, contractRegister
 // add) can carry arbitrary casing and needs this before comparison.
 let normalizeUserAddress = (config: t, address: Address.t): Address.t =>

@@ -54,16 +54,19 @@ let makeClient = (~eventRegistrations) =>
     ~url="https://eth.hypersync.xyz",
     ~apiToken=testApiToken,
     ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
-    ~eventRegistrations,
-    ~enableChecksumAddresses=false,
-    ~addressStore,
+    ~chainBuffer=TestChainBuffer.forInputs(~evmRegistrations=eventRegistrations, ~addressStore),
   )
 
 let fromBlock = 23_500_000
 let toBlock = 23_500_004
 
-let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => {
-  let (res, _txStore, _blockStore, items) = await client.getItems(
+// The client keeps the logs some registration matches; a buffer decodes them.
+let runQuery = async (
+  ~client: HyperSyncClient.t,
+  ~registrationIndexes=[42],
+  ~eventRegistrations=[transferEventRegistration],
+) => {
+  let (res, page) = await client.getItems(
     ~query={
       fromBlock,
       toBlock: Some(toBlock),
@@ -73,8 +76,9 @@ let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => 
       clientFilteredContracts: None,
     },
     ~addressSet=usdcSet,
+    ~buffer=TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
   )
-  (res, items->TestEventStore.evmLogsOf(~registrationIndexes))
+  (res, await page->TestChainBuffer.evmLogsOf(~registrations=eventRegistrations, ~addressStore))
 }
 
 describe("HyperSync client getItems (live)", () => {
@@ -155,7 +159,11 @@ describe("HyperSync client getItems (live)", () => {
         transactionFields: [],
       }
       let client = makeClient(~eventRegistrations=[unrelatedEventRegistration])
-      let (_, eventItems) = await runQuery(~client, ~registrationIndexes=[0])
+      let (_, eventItems) = await runQuery(
+        ~client,
+        ~registrationIndexes=[0],
+        ~eventRegistrations=[unrelatedEventRegistration],
+      )
 
       t.expect(eventItems->Array.length).toEqual(0)
     },
@@ -168,9 +176,10 @@ describe("HyperSync client with corrupted token", () => {
       ~url="https://eth.hypersync.xyz",
       ~apiToken="this-is-a-corrupted-token",
       ~httpReqTimeoutMillis=5000,
-      ~eventRegistrations=[transferEventRegistration],
-      ~enableChecksumAddresses=false,
-      ~addressStore,
+      ~chainBuffer=TestChainBuffer.forInputs(
+        ~evmRegistrations=[transferEventRegistration],
+        ~addressStore,
+      ),
     )
 
   Async.it("getHeight doesn't validate the token", async t => {

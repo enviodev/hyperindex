@@ -74,65 +74,57 @@ let normalizeEvent = item =>
 
 // The page's reorg hashes as a stable (blockNumber, blockHash) list, ascending
 // and deduplicated by block number.
-let storedBlockHashes = (blockStore: BlockStore.t): array<ReorgDetection.blockData> =>
-  blockStore
-  ->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=2147483647)
-  ->Array.filterMap(blockNumber =>
-    switch blockStore->BlockStore.getHash(blockNumber) {
-    | Null.Value(blockHash) => Some({ReorgDetection.blockNumber, blockHash})
-    | Null.Null => None
-    }
-  )
-
-// A chain's pair of EVM stores, as `ChainState` builds them.
-let makeStores = () => (
-  BlockStore.make(~ecosystem=Ecosystem.Evm),
-  TransactionStore.make(~ecosystem=Ecosystem.Evm),
-)
-
-// Resolve a page's items the way the indexer does: both of its stores merge
-// into the chain's, and the take reads its items' transactions and blocks from
-// those. Production splits the two merges across `registerReorgGuard` and
-// `ChainFetching`, so keeping them in one place here is what stops a test
-// drifting from that order.
-let applyPage = async (
-  response: Source.blockRangeFetchResponse,
-  ~blockStore: BlockStore.t,
-  ~transactionStore: TransactionStore.t,
-  ~onEventRegistrations: array<Internal.onEventRegistration>,
-  ~shouldChecksum=false,
-) => {
-  blockStore->BlockStore.merge(response.blockStore, ~fromBlock=0, ~reportOnly=false)->ignore
-  switch response.transactionStore {
-  | Some(page) => transactionStore->TransactionStore.merge(page)
-  | None => ()
-  }
-  let (items, readFields) =
-    response.items->StoredItems.takeWithFields(
-      response.items->EventStore.length,
-      ~context={chainId: 1->ChainId.fromInt, onEventRegistrations, onBlockRegistrations: []},
-      ~fields={transactionStore, blockStore, shouldChecksum},
-    )
-  await readFields()
-  items
+let storedBlockHashes = (buffer: ChainBuffer.t): array<ReorgDetection.blockData> => {
+  let {blockNumbers, hashes} =
+    buffer->ChainBuffer.getBlockHashes(~fromBlock=0, ~belowBlock=2147483647)
+  blockNumbers->Array.mapWithIndex((blockNumber, index) => {
+    ReorgDetection.blockNumber,
+    blockHash: hashes->Array.getUnsafe(index),
+  })
 }
 
-// The page's own stores back `block` and `transaction`, so the pin resolves
-// them from the chain's stores once the page has been applied to them.
+// A chain's buffer, as `ChainState` builds it: the RPC source reads it to
+// leave out what it already holds, and the pages it returns merge into it.
+let makeBuffer = (
+  ~onEventRegistrations: array<Internal.onEventRegistration>,
+  ~addressStore,
+  ~shouldChecksum=false,
+) =>
+  ChainBuffer.makeForChain(
+    ~ecosystem=Evm,
+    ~onEventRegistrations,
+    ~onBlockRegistrations=[],
+    ~shouldChecksum,
+    ~addressStore,
+  )
+
+// Resolve a page's items the way the indexer does: the page merges into the
+// chain's buffer, and a build matches, decodes and joins its rows.
+let applyPage = async (
+  response: Source.blockRangeFetchResponse,
+  ~buffer: ChainBuffer.t,
+  ~onEventRegistrations: array<Internal.onEventRegistration>,
+) =>
+  await response.page->TestChainBuffer.buildAll(
+    ~buffer,
+    ~context={chainId: 1->ChainId.fromInt, onEventRegistrations, onBlockRegistrations: []},
+  )
+
+// The buffer backs `block` and `transaction`, so the pin resolves them once
+// the page has been merged into it.
 let normalizePage = async (
   response: Source.blockRangeFetchResponse,
-  ~blockStore: BlockStore.t,
-  ~transactionStore: TransactionStore.t,
+  ~buffer: ChainBuffer.t,
   ~onEventRegistrations,
 ): pinnedPage => {
-  let items = await response->applyPage(~blockStore, ~transactionStore, ~onEventRegistrations)
+  let items = await response->applyPage(~buffer, ~onEventRegistrations)
   {
     knownHeight: response.knownHeight,
     latestFetchedBlockNumber: response.latestFetchedBlockNumber,
     events: items->Array.map(normalizeEvent),
-    // Read from the merged store: merging moves the page's rows into it, so
-    // the page is empty by now.
-    blockHashes: blockStore->storedBlockHashes,
+    // Read from the buffer: merging moves the page's rows into it, so the
+    // page is empty by now.
+    blockHashes: buffer->storedBlockHashes,
     requestCounts: response.requestStats->countRequests,
   }
 }
@@ -169,13 +161,11 @@ let normalizeError = error =>
     })
   }
 
-// Each pin drives a single fetch, so the chain's stores start empty and the
-// page's own rows are all there is to materialise from.
-let capture = async (getPage, ~onEventRegistrations) => {
-  let (blockStore, transactionStore) = makeStores()
-  try Ok(
-    await (await getPage())->normalizePage(~blockStore, ~transactionStore, ~onEventRegistrations),
-  ) catch {
+// Each pin drives a single fetch, so the chain's buffer starts empty and the
+// page's own rows are all there is to build from.
+let capture = async (getPage, ~onEventRegistrations, ~addressStore, ~shouldChecksum=false) => {
+  let buffer = makeBuffer(~onEventRegistrations, ~addressStore, ~shouldChecksum)
+  try Ok(await (await getPage())->normalizePage(~buffer, ~onEventRegistrations)) catch {
   | Source.GetItemsError(error) => Error(error->normalizeError)
   | Source.SourceBehindHead({blockNumber}) => Error(BehindHead({blockNumber: blockNumber}))
   }

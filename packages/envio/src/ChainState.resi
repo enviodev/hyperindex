@@ -31,24 +31,21 @@ let makeFromDbState: (
 
 // Accessors.
 let logger: t => Logger.t
-let transactionStore: t => TransactionStore.t
-// The chain's registrations by the index stored rows carry.
+let chainBuffer: t => ChainBuffer.t
+// The chain's registrations by the index built items carry.
 let itemContext: t => StoredItems.context
-// Where a batch's items read their transactions and blocks from.
-let itemFields: t => StoredItems.fields
+// Where builds read from: the last block a batch has taken.
+let processingBlockNumber: t => int
+let fetchStateOf: t => FetchState.t
 let shouldChecksum: t => bool
 let entities: t => EntityTables.t
 let resetEntities: (t, ~perChainEntities: array<Internal.entityConfig>) => unit
 let sourceManager: t => SourceManager.t
 let chainConfig: t => Config.chain
 let shouldRollbackOnReorg: t => bool
-// Reorg-scan reads over the chain's block store, for the rollback flow.
+// Reorg-scan reads over the chain's buffered blocks, for the rollback flow.
 let getReorgThresholdBlockNumbersBelow: (t, ~blockNumber: int) => array<int>
-let getLatestValidScannedBlock: (
-  t,
-  ~blockStore: BlockStore.t,
-  ~blockNumbers: array<int>,
-) => option<int>
+let getLatestValidScannedBlock: (t, ~page: BufferPage.t, ~blockNumbers: array<int>) => option<int>
 let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
 let committedProgressBlockNumber: t => int
 let committedProgressBlockTime: t => option<int>
@@ -115,20 +112,31 @@ let isAtHeadWithoutEndBlock: t => bool
 let handleQueryResult: (
   t,
   ~query: FetchState.query,
-  ~page: EventStore.t,
-  ~newRegistrations: array<AddressStore.registration>,
+  ~itemsCount: int,
+  ~registeringBlockNumbers: array<int>,
   ~latestFetchedBlock: int,
   ~knownHeight: int,
 ) => unit
-// Merges the page's blocks into the chain's store as it checks them: the check
-// is the merge's own conflict report, so a page that passes is already applied.
-// Its transactions are a separate page, merged by the caller once this returns
-// no reorg.
-let registerReorgGuard: (
+let hasContractRegisterBacklog: t => bool
+let isRegisteringContracts: t => bool
+// Starts a contractRegister run, returning the backlog blocks it reads.
+let beginContractRegisterRun: t => array<int>
+let endContractRegisterRun: t => unit
+// Registers what a contractRegister run added, and takes the backlog blocks
+// it covered out of the backlog, unless a response brought them a registering
+// event meanwhile.
+let registerContracts: (
   t,
-  ~blockStore: BlockStore.t,
+  ~registrations: array<AddressStore.registration>,
+  ~builtBlockNumbers: array<int>,
+) => unit
+// Merges the response's page into the buffer unless a hash inside the reorg
+// threshold differs from the stored one (merged anyway in detect-only mode).
+let mergePage: (
+  t,
+  ~page: BufferPage.t,
   ~knownHeight: int,
-) => ReorgDetection.reorgResult
+) => (ReorgDetection.reorgResult, ChainBuffer.mergedPage)
 let prepareReorg: (t, ~eventsProcessedDiff: option<float>) => unit
 let resetPendingQueries: t => unit
 let updateKnownHeight: (t, ~knownHeight: int) => unit
@@ -138,6 +146,8 @@ let isInReorgThreshold: t => bool
 let reorgableFrom: (t, ~isRealtime: bool) => option<int>
 let shouldSaveHistory: t => bool
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
+// Starts building the next batch's items while the current batch runs.
+let prebuildItems: (t, ~targetItems: int) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markReady: (t, ~readyAt: Date.t) => unit
 // What a rollback's progress diff says about one chain: the block its surviving

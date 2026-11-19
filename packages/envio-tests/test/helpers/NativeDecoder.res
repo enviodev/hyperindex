@@ -4,18 +4,18 @@
 let mockAddress = "0x000000000000000000000000000000000000abcd"
 
 // Decodes logs through the production path: feed crafted logs to a mock
-// eth_getLogs endpoint and let EvmRpcClient route+decode them with the shared
-// DecoderCore. Returns only the routed items, each carrying its registration
-// id and flat decoded params.
+// eth_getLogs endpoint, let EvmRpcClient keep the ones some registration
+// matches, and build them from a chain buffer the way a batch does. Returns
+// one item per matching registration, carrying its id and flat decoded params.
 let decodeLogs = async (
   ~eventRegistrations: array<HyperSyncClient.Registration.input>,
   ~logs: array<(array<string>, string)>,
   // Contract that owns `mockAddress`, if any. Without one the emitter is
   // unregistered and only wildcard registrations route.
   ~ownedBy: option<string>=?,
-): array<TestEventStore.evmLog> => {
-  // logIndex must be unique per log within the block — the client dedups a
-  // page's items by (blockNumber, logIndex).
+): array<TestChainBuffer.evmLog> => {
+  // logIndex must be unique per log within the block — the buffer keys a log
+  // by (blockNumber, logIndex).
   let logJsons =
     logs->Array.mapWithIndex(((topics, data), i) => JSON.Object(
       Dict.fromArray([
@@ -71,14 +71,23 @@ let decodeLogs = async (
       }
       let client = EvmRpcClient.make(
         ~url=mock.url,
-        ~checksumAddresses=false,
         ~syncConfig=EvmChain.getSyncConfig({}),
-        ~eventRegistrations,
-        ~addressStore,
+        ~chainBuffer=TestChainBuffer.forInputs(~evmRegistrations=eventRegistrations, ~addressStore),
         ~maxAddressesPerRequest=Env.maxAddrInPartition,
         ~logger=Logger.makeInMemory(),
       )
-      let (_, _, _, items) = await client.getNextPage(
+      let knownBuffer = Core.getAddon().chainBuffer->ChainBuffer.make(
+        {
+          registrations: Evm({registrations: eventRegistrations}),
+          shouldChecksum: false,
+          contractRegisterIndexes: [],
+          blockHandlers: [],
+          transactionMasks: [],
+          eventBlockMasks: [],
+        },
+        addressStore,
+      )
+      let (_, page) = await client.getNextPage(
         {
           fromBlock: 0,
           toBlockCeiling: 0,
@@ -91,12 +100,9 @@ let decodeLogs = async (
           knownHeight: 1_000,
         },
         addressSet,
-        BlockStore.make(~ecosystem=Ecosystem.Evm),
-        TransactionStore.make(~ecosystem=Ecosystem.Evm),
+        knownBuffer,
       )
-      items->TestEventStore.evmLogsOf(
-        ~registrationIndexes=eventRegistrations->Array.map(reg => reg.index),
-      )
+      await page->TestChainBuffer.evmLogsOf(~registrations=eventRegistrations, ~addressStore)
     },
   )
 }

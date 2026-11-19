@@ -421,6 +421,8 @@ let resumedChains = (config: Config.t, ~resumed: array<Persistence.initialChainS
       concurrency: 0,
       partitionsCount: 0,
       bufferSize: 0,
+      bufferBytes: 0.,
+      addressStoreBytes: 0.,
       bufferBlockNumber: progressBlockNumber,
       idleSeconds: 0.,
       waitingForNewBlockSeconds: 0.,

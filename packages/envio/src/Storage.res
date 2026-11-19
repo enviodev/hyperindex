@@ -642,7 +642,7 @@ let make = (
       ),
       progress: batch.progressedChainsById->Utils.Dict.mapValuesToArray(chainAfterBatch =>
         progress({
-          chainId: chainAfterBatch.fetchState.chainId,
+          chainId: chainAfterBatch.chainId,
           progressBlockNumber: chainAfterBatch.progressBlockNumber,
           progressBlockTime: chainAfterBatch.progressBlockTime,
           sourceBlockNumber: chainAfterBatch.sourceBlockNumber,

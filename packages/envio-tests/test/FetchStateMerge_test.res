@@ -43,11 +43,16 @@ indexer.contractRegister({ contract: "Gravatar", event: "TestEvent" }, async ({ 
 `,
 )
 
-let registering = (~blockNumber, ~srcAddress=?, addresses: array<string>): MockSource.itemMock => {
+let registering = (
+  ~blockNumber,
+  ~logIndex=0,
+  ~srcAddress=?,
+  addresses: array<string>,
+): MockSource.itemMock => {
   event: "Gravatar.TestEvent",
   ?srcAddress,
   blockNumber,
-  logIndex: 0,
+  logIndex,
   params: dict{"addresses": addresses->(Utils.magic: array<string> => unknown)},
 }
 
@@ -88,6 +93,7 @@ describe("FetchState partition merging over the indexer loop", () => {
           }),
         },
       ])
+      await indexer.waitUntilIdle()
       await sync.expectItemsQueries([
         {partitionId: "0", reply: LeavePending},
         {partitionId: "1", reply: LeavePending},
@@ -98,14 +104,16 @@ describe("FetchState partition merging over the indexer loop", () => {
         {
           partitionId: "1",
           reply: Respond({
-            items: [registering(~blockNumber=2, ~srcAddress=address1, [address3])],
+            items: [registering(~blockNumber=2, ~logIndex=1, ~srcAddress=address1, [address3])],
             latestFetchedBlockNumber: 10,
           }),
         },
         {partitionId: "0", reply: LeavePending},
       ])
+      await indexer.waitUntilIdle()
       await sync.expectItemsQueries([
         {partitionId: "0", reply: LeavePending},
+        {partitionId: "1", reply: LeavePending},
         {partitionId: "2", reply: LeavePending},
       ])
       await indexer.advanceTime(1000)
@@ -113,16 +121,16 @@ describe("FetchState partition merging over the indexer loop", () => {
       t.expect((afterFirstRegistrations, sync->pendingShapes)).toEqual((
         [
           {
-            partitionId: "1",
-            fromBlock: 1,
-            toBlock: Bounded(10),
-            addresses: [address1, address2],
-          },
-          {
             partitionId: "0",
             fromBlock: 11,
             toBlock: Unbounded,
-            addresses: [staticAddress, address1, address2],
+            addresses: [staticAddress],
+          },
+          {
+            partitionId: "1",
+            fromBlock: 1,
+            toBlock: Unbounded,
+            addresses: [address1, address2],
           },
         ],
         [
@@ -130,7 +138,13 @@ describe("FetchState partition merging over the indexer loop", () => {
             partitionId: "0",
             fromBlock: 11,
             toBlock: Unbounded,
-            addresses: [staticAddress, address1, address2],
+            addresses: [staticAddress],
+          },
+          {
+            partitionId: "1",
+            fromBlock: 11,
+            toBlock: Unbounded,
+            addresses: [address1, address2],
           },
           {
             partitionId: "2",
@@ -147,7 +161,7 @@ describe("FetchState partition merging over the indexer loop", () => {
     "Gives a registration between a bounded partition's range its own partition rather than merging into it",
     ~sources=[{chain: 1337}],
     ~maxAddrInPartition=2,
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(10_000)
       await sync.expectItemsQueries([
@@ -159,6 +173,10 @@ describe("FetchState partition merging over the indexer loop", () => {
           }),
         },
       ])
+      // Partition 0's next query goes out before the contractRegister run
+      // registers address 1, so the address gets a catch-up partition, open
+      // while that query is.
+      await indexer.waitUntilIdle()
       await sync.expectItemsQueries([
         {partitionId: "0", reply: LeavePending},
         {partitionId: "1", reply: LeavePending},
@@ -175,6 +193,7 @@ describe("FetchState partition merging over the indexer loop", () => {
         },
         {partitionId: "0", reply: LeavePending},
       ])
+      await indexer.waitUntilIdle()
       await sync.expectItemsQueries([
         {partitionId: "0", reply: LeavePending},
         {partitionId: "1", reply: LeavePending},
@@ -184,16 +203,16 @@ describe("FetchState partition merging over the indexer loop", () => {
       t.expect((afterFirstRegistration, sync->pendingShapes)).toEqual((
         [
           {
-            partitionId: "1",
-            fromBlock: 100,
-            toBlock: Bounded(500),
-            addresses: [address1],
-          },
-          {
             partitionId: "0",
             fromBlock: 501,
             toBlock: Unbounded,
-            addresses: [staticAddress, address1],
+            addresses: [staticAddress],
+          },
+          {
+            partitionId: "1",
+            fromBlock: 100,
+            toBlock: Unbounded,
+            addresses: [address1],
           },
         ],
         [
@@ -201,19 +220,19 @@ describe("FetchState partition merging over the indexer loop", () => {
             partitionId: "0",
             fromBlock: 501,
             toBlock: Unbounded,
-            addresses: [staticAddress, address1],
+            addresses: [staticAddress],
+          },
+          {
+            partitionId: "1",
+            fromBlock: 401,
+            toBlock: Unbounded,
+            addresses: [address1],
           },
           {
             partitionId: "2",
             fromBlock: 200,
             toBlock: Unbounded,
             addresses: [address2],
-          },
-          {
-            partitionId: "1",
-            fromBlock: 401,
-            toBlock: Bounded(500),
-            addresses: [address1],
           },
         ],
       ))
@@ -306,8 +325,8 @@ indexer.contractRegister({ contract: "ContractA", event: "Registered" }, async (
         ],
         [
           {partitionId: "0", fromBlock: 0, toBlock: Unbounded, addresses: []},
-          {partitionId: "2", fromBlock: 2, toBlock: Unbounded, addresses: [address1]},
           {partitionId: "1", fromBlock: 11, toBlock: Unbounded, addresses: [contractAAddress]},
+          {partitionId: "2", fromBlock: 2, toBlock: Unbounded, addresses: [address1]},
         ],
       ))
     },

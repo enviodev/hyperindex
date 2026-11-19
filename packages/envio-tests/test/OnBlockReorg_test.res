@@ -82,7 +82,7 @@ let answerFromChain = async (
       source.resolveGetBlockHashes(
         requested
         ->Array.flat
-        ->Array.map((blockNumber): BlockStore.inputBlock => {
+        ->Array.map((blockNumber): BufferPage.observedBlock => {
           blockNumber,
           blockHash: blockNumber <= 100
             ? `0x${blockNumber->Int.toString}`

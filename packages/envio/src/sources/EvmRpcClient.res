@@ -59,14 +59,14 @@ type blockHashResult = {
 
 type t = {
   getHeight: unit => promise<(int, array<Source.requestStat>)>,
-  // The stores it returns are this page's own, for the caller to merge.
+  // Reads the chain's buffer to leave out what it already holds; the page it
+  // returns is this read's own, for the caller to merge.
   getNextPage: (
     nextPageParams,
     AddressSet.t,
-    BlockStore.t,
-    TransactionStore.t,
-  ) => promise<(nextPageResult, BlockStore.t, TransactionStore.t, EventStore.t)>,
-  getBlockHashes: array<int> => promise<(blockHashResult, BlockStore.t)>,
+    ChainBuffer.t,
+  ) => promise<(nextPageResult, BufferPage.t)>,
+  getBlockHashes: array<int> => promise<(blockHashResult, BufferPage.t)>,
   onReorg: unit => unit,
 }
 
@@ -74,23 +74,18 @@ type t = {
 external classNew: (
   Core.evmRpcClientCtor,
   cfg,
-  array<HyperSyncClient.Registration.input>,
-  array<BlockItem.registrationInput>,
-  ~checksumAddresses: bool,
-  ~addressStore: AddressStore.t,
+  // The chain's compiled registrations, block handlers and addresses.
+  BufferPage.buffer,
   Logger.native,
   array<string>,
 ) => t = "new"
 
 let make = (
   ~url,
-  ~checksumAddresses,
   ~syncConfig: Config.sourceSync,
   ~maxConcurrentRequests=?,
   ~headers=?,
-  ~eventRegistrations=[],
-  ~onBlockRegistrations=[],
-  ~addressStore,
+  ~chainBuffer,
   ~maxAddressesPerRequest,
   ~logger: Logger.t,
 ) =>
@@ -107,10 +102,7 @@ let make = (
       queryTimeoutMillis: syncConfig.queryTimeoutMillis,
       maxAddressesPerRequest,
     },
-    eventRegistrations,
-    onBlockRegistrations->BlockItem.toRegistrationInputs,
-    ~checksumAddresses,
-    ~addressStore,
+    chainBuffer,
     logger.output.native,
     logger.boundFieldsJson,
   )

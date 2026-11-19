@@ -40,8 +40,15 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
   // The native client validates that the token is a UUID before sending requests.
   let apiToken = "11111111-1111-1111-1111-111111111111"
 
-  // Height queries carry no selection, so an empty store is all the client needs.
-  let addressStore = AddressStore.make(~ecosystem=Ecosystem.Fuel, ~contracts=[])
+  // Height queries carry no selection, so a buffer with no registrations is all
+  // the client needs.
+  let chainBuffer = ChainBuffer.makeForChain(
+    ~ecosystem=Ecosystem.Fuel,
+    ~onEventRegistrations=[],
+    ~onBlockRegistrations=[],
+    ~shouldChecksum=false,
+    ~addressStore=AddressStore.make(~ecosystem=Ecosystem.Fuel, ~contracts=[]),
+  )
 
   Async.it("Requests height via the client with auth and user agent headers", async t => {
     let capturedHeaders = ref(None)
@@ -56,8 +63,7 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
           chainId,
           endpointUrl,
           apiToken: Some(apiToken),
-          onEventRegistrations: [],
-          addressStore,
+          chainBuffer,
           logger: Logger.makeInMemory(),
         })
         let {height} = await source.getHeightOrThrow()
@@ -83,8 +89,7 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
           chainId,
           endpointUrl: "http://127.0.0.1:1",
           apiToken: None,
-          onEventRegistrations: [],
-          addressStore,
+          chainBuffer,
           logger: Logger.makeInMemory(),
         })->ignore,
       `An Envio API token is required for using HyperSync as a data-source.
@@ -108,8 +113,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`,
           chainId,
           endpointUrl,
           apiToken: Some(apiToken),
-          onEventRegistrations: [],
-          addressStore,
+          chainBuffer,
           logger: Logger.makeInMemory(),
         })
         // Generous, so a slow debug build of the native client can't pass this by

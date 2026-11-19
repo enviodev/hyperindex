@@ -8,139 +8,46 @@ type partitionQueryResponse = {
   query: FetchState.query,
 }
 
-let contractRegisterIndexes = (context: StoredItems.context) =>
-  context.onEventRegistrations->Array.filterMap(registration =>
-    switch registration {
-    | {contractRegister: Some(_), index} => Some(index)
-    | _ => None
-    }
-  )
-
-let invokeContractRegister = (runtime: HandlerRuntime.t, item: Internal.item) => {
-  let contractRegister = switch (item->Internal.castUnsafeEventItem).onEventRegistration {
-  | {contractRegister: Some(contractRegister)} => contractRegister
-  | {contractRegister: None, eventConfig: {name: eventName}} =>
-    // Unexpected case, since we should pass only events with contract register to this function
-    JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
-  }
-  contractRegister({
-    event: item->Ecosystem.getItemEvent(~ecosystem=runtime->HandlerRuntime.ecosystem),
-    context: runtime.contractRegisterContext,
-  })
-}
-
-let runContractRegistersOrThrow = async (
-  ~itemsWithContractRegister: array<Internal.item>,
-  ~readFields: unit => promise<unit>,
-  ~runtime: HandlerRuntime.t,
-  ~chainState: ChainState.t,
-) => {
-  // contractRegister handlers can read event.transaction and event.block. The
-  // read is from the chain's stores, which this response's pages have been
-  // merged into by now.
-  await readFields()
-
-  // Every run of the response adds into the same registrations, in call order.
-  let registrations: array<AddressStore.registration> = []
-  let chainLogger = chainState->ChainState.logger
-  let ecosystem = runtime->HandlerRuntime.ecosystem
-
-  let _ = await itemsWithContractRegister
-  ->Array.map(async item => {
-    let run: RunScope.contractRegisterRun = {
-      item,
-      isResolved: false,
-      chainLogger,
-      ecosystem,
-      registrations,
-    }
-    let scope = RunScope.ContractRegister(run)
-    switch await RunScope.enter(scope, invokeContractRegister, runtime, item) {
-    | exception exn =>
-      scope->RunScope.resolve
-      exn->ErrorHandling.mkLogAndRaise(
-        ~msg="Event contractRegister failed, please fix the error to keep the indexer running smoothly",
-        ~logger=run->RunScope.contractRegisterLogger,
-      )
-    | () => scope->RunScope.resolve
-    }
-  })
-  ->Promise.all
-
-  registrations
-}
-
-let rec onQueryResponse = async (
+// Applies a response the moment its source returns it: the page joins the
+// buffer, the partition advances, and the blocks holding a registering event
+// join the contractRegister backlog. No user code runs here.
+let onQueryResponse = (
   state: IndexerState.t,
   {chainId, response, query}: partitionQueryResponse,
-  ~runtime,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
   ~scheduleRollback,
+  ~scheduleContractRegister,
 ) =>
-  if state->IndexerState.isStale(~stateId) {
-    ()
-  } else {
+  if !(state->IndexerState.isStale(~stateId)) {
     let chainState = state->IndexerState.getChainState(~chainId)
-    let {
-      items: page,
-      transactionStore,
-      blockStore,
-      latestFetchedBlockNumber,
-      stats,
-      knownHeight,
-    } = response
-    let numEvents = page->EventStore.length
+    let {page, latestFetchedBlockNumber, stats, knownHeight} = response
+    // Read before the merge, which moves the page's rows out.
+    let firstEventBlockNumber =
+      state->IndexerState.exitAfterFirstEventBlock
+        ? page->BufferPage.firstRowBlockNumber->Null.toOption
+        : None
+
+    let (reorgResult, merged) = chainState->ChainState.mergePage(~page, ~knownHeight)
 
     chainState->ChainState.recordBlockRangeFetch(
       ~totalTimeElapsed=stats.totalTimeElapsed,
-      ~numEvents,
+      ~numEvents=merged.rowsKept,
       ~blockRangeSize=latestFetchedBlockNumber - query.fromBlock + 1,
     )
-
-    let itemContext = chainState->ChainState.itemContext
-    // Taken from the page now, since the handlers run before the page merges
-    // into the chain's store. Their transactions and blocks are read from the
-    // chain's stores once this response's pages have merged into them.
-    let (itemsWithContractRegister, readFields) = switch itemContext->contractRegisterIndexes {
-    | [] => ([], () => Promise.resolve())
-    | registrationIndexes =>
-      page->StoredItems.eventsOfRegistrations(
-        registrationIndexes,
-        ~context=itemContext,
-        ~fields=chainState->ChainState.itemFields,
-      )
-    }
-    let numContractRegisterEvents = itemsWithContractRegister->Array.length
-    if numContractRegisterEvents === 0 {
-      chainState
-      ->ChainState.logger
-      ->Logger.trace(
-        "Finished querying",
-        ~params={
-          "partitionId": query.partitionId,
-          "fromBlock": query.fromBlock,
-          "toBlock": latestFetchedBlockNumber,
-          "numEvents": numEvents,
-        },
-      )
-    } else {
-      chainState
-      ->ChainState.logger
-      ->Logger.trace(
-        "Finished querying",
-        ~params={
-          "partitionId": query.partitionId,
-          "fromBlock": query.fromBlock,
-          "toBlock": latestFetchedBlockNumber,
-          "numEvents": numEvents,
-          "numContractRegisterEvents": numContractRegisterEvents,
-        },
-      )
-    }
-
-    let reorgResult = chainState->ChainState.registerReorgGuard(~blockStore, ~knownHeight)
+    chainState
+    ->ChainState.logger
+    ->Logger.trace(
+      "Finished querying",
+      ~params={
+        "partitionId": query.partitionId,
+        "fromBlock": query.fromBlock,
+        "toBlock": latestFetchedBlockNumber,
+        "numEvents": merged.rowsKept,
+        "numContractRegisterBlocks": merged.registeringBlockNumbers->Array.length,
+      },
+    )
 
     let rollbackWithReorgDetectedBlockNumber = switch reorgResult {
     | ReorgDetected({scannedBlock, receivedBlock}) => {
@@ -158,9 +65,9 @@ let rec onQueryResponse = async (
         )
         chainState->ChainState.recordReorgDetected(~blockNumber=scannedBlock.blockNumber)
 
-        // Must agree with the `reportOnly` flag registerReorgGuard passed to
-        // the merge: a discarded page (rollback mode) needs the rollback to
-        // actually happen, or the stale stored hash re-reports forever.
+        // Must agree with the `reportOnly` flag the merge was given: a page
+        // left out (rollback mode) needs the rollback to actually happen, or
+        // the stale stored hash re-reports forever.
         if chainState->ChainState.shouldRollbackOnReorg {
           Some(scannedBlock.blockNumber)
         } else {
@@ -195,94 +102,29 @@ let rec onQueryResponse = async (
       // Advances synchronously to FindingReorgDepth, so a concurrent rollback
       // kick (eg from the processing loop quiescing) collapses into this one.
       scheduleRollback()
-    // No rollback: either the guard found no reorg, or it found one and this
-    // chain only reports them. Either way the guard has merged the blocks, so
-    // the transactions follow. A source that reads the chain store to decide
-    // what to fetch leaves out what the store already holds, so its page alone
-    // does not cover its own items — only the merged store does, and contract
-    // registers read it below.
+    // No rollback: either no reorg, or one this chain only reports. Either way
+    // the page has merged.
     | None =>
-      switch transactionStore {
-      | Some(page) => chainState->ChainState.transactionStore->TransactionStore.merge(page)
+      chainState->ChainState.handleQueryResult(
+        ~query,
+        ~itemsCount=merged.rowsKept,
+        ~registeringBlockNumbers=merged.registeringBlockNumbers,
+        ~latestFetchedBlock=latestFetchedBlockNumber,
+        ~knownHeight,
+      )
+      // In auto-exit mode, set endBlock to the first event's block when events arrive.
+      switch firstEventBlockNumber {
+      | Some(blockNumber) => chainState->ChainState.setEndBlockToFirstEvent(~blockNumber)
       | None => ()
       }
-
-      // Over-fetched events (a merged partition returning an address before its
-      // effectiveStartBlock, a wildcard param referencing an address registered
-      // after the log's block, or a registration whose own start block is later
-      // than its contract's) are already dropped by the source's native gates,
-      // so everything in the page is indexable.
-
-      // Re-check staleness: contract registration is async, so the chain state
-      // may have rolled back by the time we apply the fetched items.
-      let proceed = (~newRegistrations) =>
-        if !(state->IndexerState.isStale(~stateId)) {
-          applyQueryResponse(
-            state,
-            ~chainId,
-            ~page,
-            ~newRegistrations,
-            ~knownHeight,
-            ~latestFetchedBlock=latestFetchedBlockNumber,
-            ~query,
-          )
-          ChainMetadata.stage(state)
-          scheduleFetch()
-          scheduleProcessing()
-        }
-
-      switch itemsWithContractRegister {
-      | [] => proceed(~newRegistrations=[])
-      | _ =>
-        switch await runContractRegistersOrThrow(
-          ~itemsWithContractRegister,
-          ~readFields,
-          ~runtime,
-          ~chainState,
-        ) {
-        | exception exn =>
-          IndexerState.errorExit(
-            state,
-            exn->ErrorHandling.make(~logger=chainState->ChainState.logger),
-          )
-        | newRegistrations => proceed(~newRegistrations)
-        }
+      ChainMetadata.stage(state)
+      scheduleFetch()
+      if merged.registeringBlockNumbers->Utils.Array.notEmpty {
+        scheduleContractRegister(chainId)
       }
+      scheduleProcessing()
     }
   }
-
-and applyQueryResponse = (
-  state: IndexerState.t,
-  ~chainId,
-  ~page,
-  ~newRegistrations,
-  ~knownHeight,
-  ~latestFetchedBlock,
-  ~query,
-) => {
-  let chainState = state->IndexerState.getChainState(~chainId)
-  // Read before the page merges into the chain's store, which empties it.
-  let firstEventBlockNumber =
-    state->IndexerState.exitAfterFirstEventBlock
-      ? page->EventStore.firstEventBlockNumber->Null.toOption
-      : None
-
-  chainState->ChainState.handleQueryResult(
-    ~query,
-    ~latestFetchedBlock,
-    ~page,
-    ~newRegistrations,
-    ~knownHeight,
-  )
-
-  // In auto-exit mode, set endBlock to the first event's block when events arrive.
-  if state->IndexerState.exitAfterFirstEventBlock {
-    switch firstEventBlockNumber {
-    | Some(blockNumber) => chainState->ChainState.setEndBlockToFirstEvent(~blockNumber)
-    | None => ()
-    }
-  }
-}
 
 let finishWaitingForNewBlock = (
   state: IndexerState.t,
@@ -307,12 +149,12 @@ let finishWaitingForNewBlock = (
 let fetchChain = async (
   state: IndexerState.t,
   chainId,
-  ~runtime,
   ~action,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
   ~scheduleRollback,
+  ~scheduleContractRegister,
 ) => {
   let chainState = state->IndexerState.getChainState(~chainId)
   if !(state->IndexerState.isResolvingReorg) && !(state->IndexerState.isStopped) {
@@ -355,14 +197,14 @@ let fetchChain = async (
               ~isStale=() => state->IndexerState.isStale(~stateId),
             ) {
             | Some(response) =>
-              await onQueryResponse(
+              onQueryResponse(
                 state,
                 {chainId, response, query},
-                ~runtime,
                 ~stateId,
                 ~scheduleFetch,
                 ~scheduleProcessing,
                 ~scheduleRollback,
+                ~scheduleContractRegister,
               )
             | None => ()
             }
