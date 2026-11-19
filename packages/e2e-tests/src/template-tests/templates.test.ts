@@ -220,3 +220,48 @@ function templateTest({ name, initArgs, hasTests }: TemplateConfig) {
 for (const template of TEMPLATES) {
   describe(`Template: '${template.name}'`, () => templateTest(template));
 }
+
+describe.each(TEMPLATES.filter(({ name }) =>
+  name === "evm-greeter" || name === "evm-contract-import-local"
+))("Existing environment: '$name'", ({ initArgs }) => {
+  it.each([
+    {
+      existing: "# local settings\nRPC_URL=https://example.invalid",
+      expected: "# local settings\nRPC_URL=https://example.invalid\nENVIO_API_TOKEN=\"provided-token\"\n",
+    },
+    {
+      existing: "ENVIO_API_TOKEN=\"existing-token\"\r\nKEEP_VALUE=unchanged\r\n",
+      expected: "ENVIO_API_TOKEN=\"existing-token\"\r\nKEEP_VALUE=unchanged\r\n",
+    },
+    {
+      existing: "ENVIO_API_TOKEN=\nKEEP_VALUE=unchanged\n",
+      expected: "ENVIO_API_TOKEN=\nKEEP_VALUE=unchanged\nENVIO_API_TOKEN=\"provided-token\"\n",
+    },
+    {
+      existing: "1FOO=bar\nKEEP_VALUE=unchanged\n",
+      expected: "1FOO=bar\nKEEP_VALUE=unchanged\nENVIO_API_TOKEN=\"provided-token\"\n",
+    },
+    {
+      existing: "1FOO=bar\nENVIO_API_TOKEN=\"existing-token\"\n",
+      expected: "1FOO=bar\nENVIO_API_TOKEN=\"existing-token\"\n",
+    },
+  ])("preserves existing settings ($existing)", async ({ existing, expected }) => {
+    // https://github.com/enviodev/hyperindex/issues/1035
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "envio-existing-env-"));
+    try {
+      fs.writeFileSync(path.join(projectDir, ".env"), existing);
+      const result = await runCommand(
+        config.envioCommand,
+        [...config.envioArgs, "init", "-n", "existing-env", "-d", projectDir,
+          "--api-token", "provided-token", ...initArgs],
+        { cwd: projectDir, timeout: config.timeouts.install }
+      );
+      expect({
+        exitCode: result.exitCode,
+        environment: fs.readFileSync(path.join(projectDir, ".env"), "utf-8"),
+      }).toEqual({ exitCode: 0, environment: expected });
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  }, config.timeouts.install + 30_000);
+});

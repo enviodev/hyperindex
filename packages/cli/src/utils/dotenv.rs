@@ -96,10 +96,17 @@ impl From<(ParseBufError, Option<PathBuf>)> for Error {
 /// `$VAR` / `${VAR}` substitutions still resolve against the process
 /// environment and earlier entries in the same file.
 pub fn from_path(path: impl AsRef<Path>) -> Result<EnvMap, Error> {
-    let path = path.as_ref();
+    load_from_path(path.as_ref(), false)
+}
+
+pub(crate) fn from_path_ignoring_invalid_lines(path: impl AsRef<Path>) -> Result<EnvMap, Error> {
+    load_from_path(path.as_ref(), true)
+}
+
+fn load_from_path(path: &Path, ignore_invalid_lines: bool) -> Result<EnvMap, Error> {
     let file = File::open(path).map_err(|e| Error::Io(e, Some(path.to_owned())))?;
     Iter::new(BufReader::new(file))
-        .load()
+        .load(ignore_invalid_lines)
         .map_err(|e| (e, Some(path.to_owned())).into())
 }
 
@@ -116,11 +123,14 @@ impl<B: BufRead> Iter<B> {
         }
     }
 
-    fn load(mut self) -> Result<EnvMap, ParseBufError> {
+    fn load(mut self, ignore_invalid_lines: bool) -> Result<EnvMap, ParseBufError> {
         self.remove_bom()?;
         let mut map = EnvMap::new();
         for item in self {
-            let (k, v) = item?;
+            let (k, v) = match item {
+                Err(ParseBufError::LineParse(_, _)) if ignore_invalid_lines => continue,
+                item => item?,
+            };
             map.insert(k, v);
         }
         Ok(map)
