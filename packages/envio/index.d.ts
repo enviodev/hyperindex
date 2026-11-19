@@ -1181,7 +1181,8 @@ export type EvmOnTransactionFilter = {
     /** 4-byte selectors the calldata starts with, e.g. `"0xa9059cbb"`. */
     readonly sighash?: readonly Hex[];
     /** `1` succeeded, `0` reverted. Absent runs on both: a reverted
-     * transaction is mined too. */
+     * transaction is mined too. Blocks from before Byzantium carry no
+     * status, so a `status` filter matches none of their transactions. */
     readonly status?: 0 | 1;
   };
 };
