@@ -111,14 +111,16 @@ let retriedOperations = (indexer: IndexerRunner.t) =>
   ->Array.fromIterator
 
 // Cuts the batch's COMMIT and holds it back until the batch, looked for and not
-// found, is written again and waits on the held transaction's rows.
-let landCommitAfterRewriteBlocks = async (
+// found, is written again and waits on the held transaction's rows. Then the
+// COMMIT reaches the server, or with `~deliver=false` never does.
+let settleHeldCommitOnceRewriteBlocks = async (
   indexer: IndexerRunner.t,
   ~outage: PostgresOutage.t,
   ~releaseHandler,
+  ~deliver,
 ) => {
   let commitArrives = MockSource.Gate.make()
-  outage.cutNextCommit(~deliver=true, ~deliverAfter=commitArrives.wait())
+  outage.cutNextCommit(~deliver, ~holdUntil=commitArrives.wait())
   releaseHandler()
   await indexer.advanceTime(0)
   await indexer.advanceTime(5_000)
@@ -513,7 +515,7 @@ describe("Postgres going away mid-run", () => {
       await source->replyWithOneTally(~handled, ~load=false)
       await indexer.advanceTime(1_000)
 
-      await indexer->landCommitAfterRewriteBlocks(~outage, ~releaseHandler)
+      await indexer->settleHeldCommitOnceRewriteBlocks(~outage, ~releaseHandler, ~deliver=true)
 
       let tallies: array<tally> = await indexer.query("Tally")
       t.expect((
@@ -522,6 +524,35 @@ describe("Postgres going away mid-run", () => {
         (await indexer.queryCheckpoints())->Array.map(({blockNumber}) => blockNumber),
         lateCommitErrors,
       )).toEqual(([{id: "1", count: 1.}], [50], [1, 50], []))
+    },
+  )
+
+  // The rewrite waits on the same rows, but the server rolls the held
+  // transaction back, so the rewrite is the one that stores the batch.
+  let droppedCommitErrors = []
+  scenario->Scenario.it(
+    "stores a batch once when its held COMMIT never reaches the server while the batch is written again",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~postgresPort=proxyPort,
+    ~onError=error => droppedCommitErrors->Array.push(error.msg)->ignore,
+    async (~t, ~indexer, ~source) => {
+      let outage = outageWithDatabaseUp()
+      let source = source(1337)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
+      let (handled, releaseHandler) = makeHeldHandler()
+      await source->replyWithOneTally(~handled, ~load=false)
+      await indexer.advanceTime(1_000)
+
+      await indexer->settleHeldCommitOnceRewriteBlocks(~outage, ~releaseHandler, ~deliver=false)
+
+      let tallies: array<tally> = await indexer.query("Tally")
+      t.expect((
+        tallies,
+        (await indexer.queryChains())->Array.map(chain => chain.progressBlock),
+        (await indexer.queryCheckpoints())->Array.map(({blockNumber}) => blockNumber),
+        indexer->retriedOperations,
+        droppedCommitErrors,
+      )).toEqual(([{id: "1", count: 1.}], [50], [1, 50], ["batch write"], []))
     },
   )
 
@@ -539,7 +570,7 @@ describe("Postgres going away mid-run", () => {
       await source->replyWithOneTally(~handled, ~load=false)
       await indexer.advanceTime(1_000)
 
-      await indexer->landCommitAfterRewriteBlocks(~outage, ~releaseHandler)
+      await indexer->settleHeldCommitOnceRewriteBlocks(~outage, ~releaseHandler, ~deliver=true)
       await source.expectItemsQueries([
         {
           fromBlock: 51,
