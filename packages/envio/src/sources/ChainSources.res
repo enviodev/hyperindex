@@ -19,12 +19,14 @@ let make = (
       let syncConfig = rpc.syncConfig
       let ws = rpc.ws
       let headers = rpc.headers
+      let maxConcurrentRequests = rpc.maxConcurrentRequests
       {
         url: rpc.url,
         sourceFor: rpc.sourceFor,
         ?syncConfig,
         ?ws,
         ?headers,
+        ?maxConcurrentRequests,
       }
     })
     EvmChain.makeSources(

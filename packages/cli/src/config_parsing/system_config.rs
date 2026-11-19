@@ -1638,6 +1638,7 @@ impl DataSource {
                 ws: None,
                 headers: None,
                 initial_block_interval: None,
+                max_concurrent_requests: None,
                 backoff_multiplicative: None,
                 acceleration_additive: None,
                 interval_ceiling: None,

@@ -17,6 +17,7 @@ type options = {
   transactionStore: TransactionStore.t,
   ws?: string,
   headers?: dict<string>,
+  maxConcurrentRequests?: int,
   // How many addresses one `eth_getLogs` may carry when an address-free query
   // the provider couldn't answer is read again by address.
   maxAddressesPerRequest: int,
@@ -37,6 +38,7 @@ let make = (
     transactionStore,
     ?ws,
     ?headers,
+    ?maxConcurrentRequests,
     maxAddressesPerRequest,
     logger,
   }: options,
@@ -58,6 +60,7 @@ let make = (
     ~checksumAddresses=!lowercaseAddresses,
     ~syncConfig,
     ~headers?,
+    ~maxConcurrentRequests?,
     ~addressStore,
     ~maxAddressesPerRequest,
     ~logger,

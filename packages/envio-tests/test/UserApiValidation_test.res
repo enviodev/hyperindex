@@ -113,6 +113,7 @@ chains:
             syncConfig: None,
             ws: None,
             headers: None,
+            maxConcurrentRequests: None,
           },
         ],
       }),

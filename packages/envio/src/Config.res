@@ -24,6 +24,7 @@ type evmRpcConfig = {
   syncConfig: option<sourceSyncOptions>,
   ws: option<string>,
   headers: option<dict<string>>,
+  maxConcurrentRequests: option<int>,
 }
 
 // Unboxed so the runtime value is exactly what the public config JSON holds -
@@ -167,6 +168,7 @@ let rpcConfigSchema = S.schema(s =>
     "for": s.matches(rpcSourceForSchema),
     "ws": s.matches(S.option(S.string)),
     "headers": s.matches(S.option(S.dict(S.string))),
+    "maxConcurrentRequests": s.matches(S.option(S.int)),
     "initialBlockInterval": s.matches(S.option(S.int)),
     "backoffMultiplicative": s.matches(S.option(S.float)),
     "accelerationAdditive": s.matches(S.option(S.int)),
@@ -1051,6 +1053,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             syncConfig,
             ws: rpcConfig["ws"],
             headers: rpcConfig["headers"],
+            maxConcurrentRequests: rpcConfig["maxConcurrentRequests"],
           }
         })
       EvmSourceConfig({hypersync: publicChainConfig["hypersync"], rpcs})

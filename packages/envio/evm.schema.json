@@ -559,6 +559,15 @@
           "format": "uint32",
           "minimum": 0
         },
+        "max_concurrent_requests": {
+          "description": "Maximum simultaneous HTTP requests for this RPC entry, shared by all of its fetch partitions and request methods. Must be greater than zero. Defaults to 100 when omitted. This is a concurrency limit, not a requests-per-second limit.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        },
         "backoff_multiplicative": {
           "description": "After an RPC error, how much to scale back the number of blocks requested at once",
           "type": [
