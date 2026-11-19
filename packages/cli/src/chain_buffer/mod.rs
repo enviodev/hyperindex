@@ -616,38 +616,52 @@ impl ChainBuffer {
         ) as u32
     }
 
-    /// The block of the event row `row_offset` rows past the first one at or
-    /// above `from_block`.
+    /// The block of the row `row_offset` rows past the first one at or above
+    /// `from_block`, counting the rows `count_items_in_block_range` counts.
     #[napi]
     pub fn get_block_number_of_row_at(&self, from_block: i64, row_offset: u32) -> Option<i64> {
         let from = block(from_block);
         let tables = self.tables();
-        if tables.decoded.len() == 0 {
+        let counts_transactions = !self.shared.transactions.is_empty();
+        if tables.decoded.len() == 0 && !counts_transactions {
             return tables
                 .events
                 .block_number_of_row_at(from, row_offset as usize)
                 .map(|block| block as i64);
         }
-        let mut events = tables
-            .events
-            .rows_in_block_range(from, LAST_BLOCK)
-            .map(|row| row.block_number())
-            .peekable();
         let decoded = tables.decoded.copy_range(from, LAST_BLOCK);
-        let mut decoded = decoded.iter().map(|event| event.block_number).peekable();
-        let mut remaining = row_offset;
-        loop {
-            let next = match (events.peek(), decoded.peek()) {
-                (Some(a), Some(b)) if a <= b => events.next(),
-                (Some(_), Some(_)) | (None, Some(_)) => decoded.next(),
-                (Some(_), None) => events.next(),
-                (None, None) => return None,
-            };
-            if remaining == 0 {
-                return next.map(|block| block as i64);
-            }
-            remaining -= 1;
+        let mut streams: Vec<Box<dyn Iterator<Item = u64> + '_>> = vec![
+            Box::new(
+                tables
+                    .events
+                    .rows_in_block_range(from, LAST_BLOCK)
+                    .map(|row| row.block_number()),
+            ),
+            Box::new(decoded.iter().map(|event| event.block_number)),
+        ];
+        if counts_transactions {
+            streams.push(Box::new(
+                tables
+                    .transactions
+                    .rows_in_block_range(from, LAST_BLOCK)
+                    .map(|row| row.block_number()),
+            ));
         }
+        let mut streams: Vec<_> = streams.into_iter().map(Iterator::peekable).collect();
+        for _ in 0..row_offset {
+            let lowest = streams
+                .iter_mut()
+                .filter_map(|stream| stream.peek().copied())
+                .min()?;
+            streams
+                .iter_mut()
+                .find_map(|stream| stream.next_if_eq(&lowest))?;
+        }
+        streams
+            .iter_mut()
+            .filter_map(|stream| stream.peek().copied())
+            .min()
+            .map(|block| block as i64)
     }
 
     /// The bytes the buffer's tables hold.
@@ -658,11 +672,17 @@ impl ChainBuffer {
             as f64
     }
 
-    /// Every stored event row.
+    /// Every stored event row, and transaction row when transaction handlers
+    /// run on them.
     #[napi]
     pub fn row_count(&self) -> u32 {
         let tables = self.tables();
-        (tables.events.len() + tables.decoded.len()) as u32
+        let transactions = if self.shared.transactions.is_empty() {
+            0
+        } else {
+            tables.transactions.len()
+        };
+        (tables.events.len() + tables.decoded.len() + transactions) as u32
     }
 
     /// Every stored hash of blocks `[from_block, below_block)`, ascending.
