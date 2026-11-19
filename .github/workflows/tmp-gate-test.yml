@@ -21,31 +21,12 @@ jobs:
     if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'coderabbit')
     needs: authorize
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 4
     permissions:
       pull-requests: write
     steps:
-      - uses: actions/github-script@v8
-        with:
-          script: |
-            await github.rest.issues.addLabels({
-              ...context.repo,
-              issue_number: context.payload.pull_request.number,
-              labels: ["coderabbit"],
-            });
-  authorize-rejected:
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    steps:
-      - run: exit 1
-  enable-coderabbit-after-rejection:
-    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'coderabbit')
-    needs: authorize-rejected
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    permissions:
-      pull-requests: write
-    steps:
+      - name: Separate the label from the push by 2 minutes
+        run: sleep 120
       - uses: actions/github-script@v8
         with:
           script: |
