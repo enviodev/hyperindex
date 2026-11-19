@@ -278,9 +278,18 @@ type blockMock = {
   blockFields?: dict<unknown>,
 }
 
+// A transaction the chain has, holding the fields given, for the transaction
+// handlers of the query's selection whose filter matches it.
+type transactionMock = {
+  blockNumber: int,
+  transactionIndex: int,
+  fields: dict<unknown>,
+}
+
 type itemsResponse = {
   items: array<itemMock>,
   blocks?: array<blockMock>,
+  transactions?: array<transactionMock>,
   // Defaults to the query's toBlock, or its fromBlock when unbounded.
   latestFetchedBlockNumber?: int,
   latestFetchedBlockHash?: string,
@@ -853,9 +862,32 @@ let make = (
     // from, so those blocks carry a hash and a timestamp too. Without them the
     // store only ever learns the range's seam and end, and reorg detection
     // never sees the blocks events landed on.
+    let transactions = response.transactions->Option.getOr([])
+    let appendTransactions = page => {
+      if transactions->Utils.Array.notEmpty {
+        page->BufferPage.append(
+          BufferPage.fromEvmJs(
+            ~transactions=transactions->Array.map(({blockNumber, transactionIndex, fields}) => {
+              let row = fields->SimulateItems.toRpcObject
+              row->Dict.set("blockNumber", JSON.String(`0x${blockNumber->Int.toString(~radix=16)}`))
+              row->Dict.set(
+                "transactionIndex",
+                JSON.String(`0x${transactionIndex->Int.toString(~radix=16)}`),
+              )
+              row
+            }),
+            ~blocks=[],
+          ),
+        )
+      }
+      page
+    }
     Array.concat(
-      items->Array.map(item => item.blockNumber),
-      blocks->Array.map(block => block.blockNumber),
+      Array.concat(
+        items->Array.map(item => item.blockNumber),
+        blocks->Array.map(block => block.blockNumber),
+      ),
+      transactions->Array.map(transaction => transaction.blockNumber),
     )->Array.forEach(blockNumber => {
       if !(observedBlocks->Array.some(b => b.blockNumber === blockNumber)) {
         observedBlocks->Array.push({
@@ -867,67 +899,69 @@ let make = (
     })
     {
       knownHeight: response.knownHeight->Option.getOr(knownHeight),
-      page: BufferPage.fromItems(
-        ~blocks=observedBlocks,
-        ~ecosystem=Evm,
-        items
-        ->Array.flatMap(item => {
-          let registrations = switch item.event {
-          | None =>
-            let {plain, registering} =
-              state.onEventRegistrationRef.contents->Option.getOrThrow(
-                ~message="MockSource on-event registration was not installed before resolving items",
-              )
-            [item.contractRegister->Option.isSome ? registering : plain]
-          | Some(event) =>
-            let name = (registration: Internal.onEventRegistration) =>
-              `${registration.eventConfig.contractName}.${registration.eventConfig.name}`
-            // Like a real source, one item per handler registered for the event.
-            switch state.chainRegistrationsRef.contents->Array.filter(registration =>
-              registration->name === event
+      page: appendTransactions(
+        BufferPage.fromItems(
+          ~blocks=observedBlocks,
+          ~ecosystem=Evm,
+          items
+          ->Array.flatMap(item => {
+            let registrations = switch item.event {
+            | None =>
+              let {plain, registering} =
+                state.onEventRegistrationRef.contents->Option.getOrThrow(
+                  ~message="MockSource on-event registration was not installed before resolving items",
+                )
+              [item.contractRegister->Option.isSome ? registering : plain]
+            | Some(event) =>
+              let name = (registration: Internal.onEventRegistration) =>
+                `${registration.eventConfig.contractName}.${registration.eventConfig.name}`
+              // Like a real source, one item per handler registered for the event.
+              switch state.chainRegistrationsRef.contents->Array.filter(registration =>
+                registration->name === event
+              ) {
+              | [] =>
+                JsError.throwWithMessage(
+                  `An item names event "${event}", but chain ${chainId->ChainId.toString} has no handler registered for it. Registered: ${state.chainRegistrationsRef.contents
+                    ->Array.map(registration => `"${registration->name}"`)
+                    ->Utils.Set.fromArray
+                    ->Utils.Set.toArray
+                    ->Array.join(", ")}`,
+                )
+              | registrations => registrations
+              }
+            }
+            switch registrations->Array.filter(registration =>
+              item->isFetchedFor(registration, ~selection, ~addressSet)
             ) {
             | [] =>
-              JsError.throwWithMessage(
-                `An item names event "${event}", but chain ${chainId->ChainId.toString} has no handler registered for it. Registered: ${state.chainRegistrationsRef.contents
-                  ->Array.map(registration => `"${registration->name}"`)
-                  ->Utils.Set.fromArray
-                  ->Utils.Set.toArray
-                  ->Array.join(", ")}`,
+              droppedItems
+              ->Array.push(
+                `block ${item.blockNumber->Int.toString} log ${item.logIndex->Int.toString} from ${item.srcAddress->Option.getOr(
+                    "",
+                  )} by partition ${partitionId} at ${fromBlock->Int.toString}..${latestFetchedBlockNumber->Int.toString}`,
               )
-            | registrations => registrations
+              ->ignore
+              []
+            | fetched =>
+              fetched->Array.map(onEventRegistration => makeEventItem(item, onEventRegistration))
             }
-          }
-          switch registrations->Array.filter(registration =>
-            item->isFetchedFor(registration, ~selection, ~addressSet)
-          ) {
-          | [] =>
-            droppedItems
-            ->Array.push(
-              `block ${item.blockNumber->Int.toString} log ${item.logIndex->Int.toString} from ${item.srcAddress->Option.getOr(
-                  "",
-                )} by partition ${partitionId} at ${fromBlock->Int.toString}..${latestFetchedBlockNumber->Int.toString}`,
-            )
-            ->ignore
-            []
-          | fetched =>
-            fetched->Array.map(onEventRegistration => makeEventItem(item, onEventRegistration))
-          }
-        })
-        ->Array.concat(
-          blocks->Array.flatMap(({blockNumber, ?blockFields}) =>
-            selection.onBlockRegistrations
-            ->Array.filter(reg => reg->BlockItem.runsOn(~blockNumber, ~chainStartBlock=0))
-            ->Array.map(onBlockRegistration => Internal.Block({
-              onBlockRegistration,
-              blockNumber,
-              block: Dict.fromArray([
-                ("number", blockNumber->(Utils.magic: int => unknown)),
-                ("timestamp", blockNumber->(Utils.magic: int => unknown)),
-                ("hash", mockBlockHash(blockNumber)->(Utils.magic: string => unknown)),
-              ])
-              ->Dict.assign(blockFields->Option.getOr(Dict.make()))
-              ->(Utils.magic: dict<unknown> => Internal.eventBlock),
-            }))
+          })
+          ->Array.concat(
+            blocks->Array.flatMap(({blockNumber, ?blockFields}) =>
+              selection.onBlockRegistrations
+              ->Array.filter(reg => reg->BlockItem.runsOn(~blockNumber, ~chainStartBlock=0))
+              ->Array.map(onBlockRegistration => Internal.Block({
+                onBlockRegistration,
+                blockNumber,
+                block: Dict.fromArray([
+                  ("number", blockNumber->(Utils.magic: int => unknown)),
+                  ("timestamp", blockNumber->(Utils.magic: int => unknown)),
+                  ("hash", mockBlockHash(blockNumber)->(Utils.magic: string => unknown)),
+                ])
+                ->Dict.assign(blockFields->Option.getOr(Dict.make()))
+                ->(Utils.magic: dict<unknown> => Internal.eventBlock),
+              }))
+            ),
           ),
         ),
       ),
