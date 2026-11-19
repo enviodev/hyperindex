@@ -329,7 +329,8 @@ let servers = served =>
 // config.yaml `chains:` entries fetching from the served HyperSync or RPC
 // server, each stopping at the served height. `contracts` is the `contracts:`
 // list every chain gets, indented to sit under it.
-let chainsYaml = (served, ~hyperSync, ~rpc, ~contracts) => {
+// `rpcOptions` are more `rpc:` keys, indented to sit under it.
+let chainsYaml = (served, ~hyperSync, ~rpc, ~contracts, ~rpcOptions="") => {
   let chain = (id, source) =>
     `
   - id: ${id->Int.toString}
@@ -351,7 +352,7 @@ let chainsYaml = (served, ~hyperSync, ~rpc, ~contracts) => {
         `
     rpc:
       url: ${url(served.rpcPort)}
-      for: sync`,
+      for: sync${rpcOptions}`,
       )
     ),
   )->Array.join("")
