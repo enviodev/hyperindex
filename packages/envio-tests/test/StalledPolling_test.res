@@ -60,12 +60,12 @@ describe("Polling-stall loophole", () => {
       await source.expectNewHeightCallsAtLeast(1)
 
       // The bug this pins is polling stopping altogether. Busy-polling would ask
-      // on every tick; throttled polling asks once at the wait's start and then
-      // once per 10ms reduced interval. Every poll is answered the moment it
-      // arrives, so the count is how often the loop asks.
+      // on every tick; throttled polling asks once at the wait's start, counted
+      // above, and then once per 10ms reduced interval. Every poll is answered
+      // the moment it arrives, so the count is how often the loop asks.
       source.setAutoHeight(300)
       await indexer.advanceTime(50)
-      await source.expectNewHeightCalls(6)
+      await source.expectNewHeightCalls(5)
       release.contents()
     },
   )

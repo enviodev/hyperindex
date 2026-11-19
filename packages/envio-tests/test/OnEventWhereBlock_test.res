@@ -14,42 +14,50 @@ let soon = "0x3333333333333333333333333333333333333333"
 let zero = "0x0000000000000000000000000000000000000000"
 let outsider = "0x000000000000000000000000000000000000dEaD"
 
-type event = {name: string, sighash: string, address: string}
+// Each event's logs take their own log index, so two events in one block
+// don't share a log position.
+type event = {name: string, sighash: string, address: string, logIndex: int}
 
 let static = {
   name: "Static",
   sighash: "0xcf6d5253269e13032ad5e3cc518913c37ed71f3d5d2b8334e176c2ea0a96af52",
   address: ledger,
+  logIndex: 0,
 }
 let perChain = {
   name: "PerChain",
   sighash: "0x9dff82e5101127e74c9e48cec1c76c0d18e1b2af135b069d30c2f1a16131a48a",
   address: ledger,
+  logIndex: 0,
 }
 let open_ = {
   name: "Open",
   sighash: "0xece7583a70a505ef0e36d4dec768f5ae597713e09c26011022599ee01abdabfc",
   address: ledger,
+  logIndex: 0,
 }
 let always = {
   name: "Always",
   sighash: "0xd8062f9b8d90ae36b59249acf691b04dd2967ab16c5dfb881bd2f6aba14b02ff",
   address: ledger,
+  logIndex: 0,
 }
 let early = {
   name: "Early",
   sighash: "0xd91467e777ae3b608b5096ea5d6b7e69078a182cc787b0fcd44df70c4ebc60c2",
   address: late,
+  logIndex: 0,
 }
 let lifted = {
   name: "Lifted",
   sighash: "0x0293e04328bfa0d1c198a6a93bbf46f21a382540b8a4f33aefbef702d1aaccee",
   address: soon,
+  logIndex: 1,
 }
 
 let log = (event, ~blockNumber, ~from=zero): ServedEvmChain.log => {
   blockNumber,
-  logIndex: 0,
+  logIndex: event.logIndex,
   address: event.address,
   topics: [event.sighash, from->ServedEvmChain.addressTopic],
 }
@@ -167,7 +175,10 @@ let expectedRows = eventBlocks =>
     chainId
     ->eventBlocks
     ->Array.flatMap(((event, blocks)) =>
-      blocks->Array.map(blockNumber => ServedEvmChain.routed(~chainId, ~blockNumber, event.name))
+      blocks->Array.map(
+        blockNumber =>
+          ServedEvmChain.routed(~chainId, ~blockNumber, ~logIndex=event.logIndex, event.name),
+      )
     )
   )
   ->ServedEvmChain.sorted
