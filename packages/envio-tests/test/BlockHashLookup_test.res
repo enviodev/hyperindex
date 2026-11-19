@@ -68,7 +68,7 @@ let awaitLookup = (mock, ~count) =>
     ~message=`block-hash lookup #${count->Int.toString}`,
   )
 
-let block200: array<BlockStore.inputBlock> = [
+let block200: array<BufferPage.observedBlock> = [
   {blockNumber: 200, blockHash: "0x200", blockTimestamp: 200},
 ]
 

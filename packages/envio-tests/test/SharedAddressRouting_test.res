@@ -73,23 +73,24 @@ let makeSource = (~url) => {
   let source = EvmHyperSyncSource.make({
     chainId: 1->ChainId.fromInt,
     endpointUrl: url,
-    onEventRegistrations: onEventRegistrations()->(
-      Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
-    ),
     apiToken: Some(MockHyperSyncServer.apiToken),
     clientTimeoutMillis: 10_000,
-    lowercaseAddresses: true,
     serializationFormat: Json,
     enableQueryCaching: false,
     logLevel: #error,
-    addressStore,
     logger: Logger.makeInMemory(),
+    chainBuffer: TestChainBuffer.forChain(
+      ~onEventRegistrations=onEventRegistrations()->(
+        Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
+      ),
+      ~addressStore,
+    ),
   })
   let addressSet =
     addressStore
     ->AddressStore.makeSet(~contractName="Token")
     ->AddressSet.merge(addressStore->AddressStore.makeSet(~contractName="Vault"))
-  (source, addressSet)
+  (source, addressSet, addressStore)
 }
 
 let fetch = (source: Source.t, ~addressSet) =>
@@ -147,7 +148,7 @@ describe("An address indexed by two contracts", () => {
     let queries = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressSet, _) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse(page)
         let _ = await source->fetch(~addressSet)
         server->MockHyperSyncServer.takeQueries
@@ -183,15 +184,12 @@ describe("An address indexed by two contracts", () => {
     let items = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressSet, addressStore) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse(page)
-        let page = await source->fetch(~addressSet)
-        page.items->TestEventStore.takeAll(
-          ~context={
-            chainId: 1->ChainId.fromInt,
-            onEventRegistrations: onEventRegistrations(),
-            onBlockRegistrations: [],
-          },
+        let response = await source->fetch(~addressSet)
+        await response.page->TestChainBuffer.itemsOf(
+          ~onEventRegistrations=onEventRegistrations(),
+          ~addressStore,
         )
       },
     )

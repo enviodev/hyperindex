@@ -132,12 +132,6 @@ let getPgDbFieldName = field =>
   | None => field->getApiFieldName
   }
 
-let getClickHouseDbFieldName = field =>
-  switch field.clickhouseDbName {
-  | Some(dbName) => dbName
-  | None => field->getApiFieldName
-  }
-
 let getPgFieldName = fieldOrDerived =>
   switch fieldOrDerived {
   | Field(field) => field->getPgDbFieldName
@@ -205,22 +199,6 @@ let mkTable = (tableName, ~compositeIndexes=[], ~fields, ~description=?) => {
   entityIdToKey: entityIdToKeyFor(fields),
 }
 
-let getFields = table =>
-  table.fields->Array.filterMap(field =>
-    switch field {
-    | Field(field) => Some(field)
-    | DerivedFrom(_) => None
-    }
-  )
-
-let getNonDefaultFields = table =>
-  table.fields->Array.filterMap(field =>
-    switch field {
-    | Field(field) if field.defaultValue->Option.isNone => Some(field)
-    | _ => None
-    }
-  )
-
 let getLinkedEntityFields = table =>
   table.fields->Array.filterMap(field =>
     switch field {
@@ -250,7 +228,6 @@ let getChainIdField = (table): option<field> =>
   )
 
 // None for a cross-chain entity, whose rows no single chain owns.
-let getPgChainIdColumn = table => table->getChainIdField->Option.map(getPgDbFieldName)
 
 let getFieldByName = (table, fieldName) =>
   table.fields->Array.find(field => field->getUserDefinedFieldName === fieldName)

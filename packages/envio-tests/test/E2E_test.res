@@ -312,7 +312,7 @@ describe("E2E tests", () => {
           }),
         },
       ])
-      await indexer.getBatchWritePromise()
+      await indexer.waitUntilIdle()
 
       t.expect(await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>)).toEqual([
         {id: "1", value: "value-2"},
@@ -1476,7 +1476,7 @@ describe("E2E tests", () => {
   )
 
   partitionScenario->Scenario.it(
-    "Partitions too far apart fetch separately, then merge once they are in range",
+    "Partitions too far apart fetch separately, then fold together at the head",
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
@@ -1487,7 +1487,6 @@ describe("E2E tests", () => {
         sourceMock.pendingItemsQueries
         ->Array.find(query => query.fromBlock === fromBlock)
         ->Option.map(query => query.partitionId)
-      let holdsBothDynamicContracts = query => query->MockSource.addresses->Array.length === 2
 
       sourceMock.resolveGetHeightOrThrow(100_000)
 
@@ -1546,38 +1545,28 @@ describe("E2E tests", () => {
         ~message="each dynamic contract fetches from its own registration block, in its own partition",
       ).toEqual((true, true))
 
-      // DC2 catches up to the config partition's frontier, which is all it may
-      // fetch. Its partition stays separate while DC1 is still more than
-      // tooFarBlockRange behind it.
+      // Each partition reaches the reorg threshold on its own: a partition with
+      // a query in flight can't merge, and each always has one until it is
+      // done. Near the head they fold into the single address-free partition.
       await sourceMock.expectItemsQueries([
-        {fromBlock: 25100, toBlock: Bounded(25100), reply: Respond({items: []})},
+        {fromBlock: 25100, reply: Respond({items: [], latestFetchedBlockNumber: 99800})},
+        {fromBlock: 5000, reply: Respond({items: [], latestFetchedBlockNumber: 99800})},
+        {fromBlock: 25101, reply: Respond({items: [], latestFetchedBlockNumber: 99800})},
       ])
-
-      // DC1 catches up to block 12500. DC2's merge block is now within
-      // tooFarBlockRange of it, so the two dynamic-contract partitions merge
-      // into one that carries both addresses.
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 5000, reply: Respond({items: [], latestFetchedBlockNumber: 12500})},
-      ])
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 12501, reply: LeavePending},
-        {where: holdsBothDynamicContracts, reply: LeavePending},
-      ])
-
-      let merged =
-        sourceMock.pendingItemsQueries
-        ->Array.filter(holdsBothDynamicContracts)
-        ->Array.map(query => query.partitionId)
-        ->Utils.Set.fromArray
-        ->Utils.Set.toArray
+      // The chain's first height, then the wait for a new one at the threshold.
+      await sourceMock.expectNewHeightCalls(2)
+      sourceMock.resolveGetHeightOrThrow(100_100)
+      await sourceMock.expectItemsQueries([{fromBlock: 99801, reply: LeavePending}])
       t.expect(
-        (
-          merged->Array.length,
-          merged->Array.get(0) != dc1Partition,
-          merged->Array.get(0) != dc2Partition,
+        sourceMock.pendingItemsQueries->Array.map(
+          query => (
+            query.partitionId != dc1Partition->Option.getUnsafe &&
+              query.partitionId != dc2Partition->Option.getUnsafe,
+            query->MockSource.addresses->Array.length,
+          ),
         ),
-        ~message="the merge produces a single new partition, not a reuse of either input",
-      ).toEqual((1, true, true))
+        ~message="the partitions fold into a single new address-free partition",
+      ).toEqual([(true, 0)])
     },
   )
 

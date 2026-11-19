@@ -15,7 +15,6 @@ type t = {
   resumeInitialStateCalls: array<bool>,
   resolveLoadInitialState: Persistence.initialState => unit,
   loadOrThrowCalls: array<{"filter": dict<dict<unknown>>, "tableName": string}>,
-  dumpEffectCacheCalls: ref<int>,
   storage: Persistence.storage,
 }
 
@@ -48,7 +47,6 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
   let holdingResolveFns = []
   let initializeResolveFns = []
   let loadOrThrowCalls = []
-  let dumpEffectCacheCalls = ref(0)
   let resumeInitialStateCalls = []
   let resumeInitialStateResolveFns = []
 
@@ -56,7 +54,6 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
     holdingCalls,
     initializeCalls,
     loadOrThrowCalls,
-    dumpEffectCacheCalls,
     resumeInitialStateCalls,
     resolveLoadInitialState: (initialState: Persistence.initialState) => {
       resumeInitialStateResolveFns->Array.forEach(resolve => resolve(initialState))
@@ -99,10 +96,7 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
           resumeInitialStateResolveFns->Array.push(resolve)->ignore
         })
       }),
-      dumpEffectCache: implement(#dumpEffectCache, () => {
-        dumpEffectCacheCalls := dumpEffectCacheCalls.contents + 1
-        Promise.resolve()
-      }),
+      dumpEffectCache: implement(#dumpEffectCache, () => Promise.resolve()),
       loadOrThrow: (~filter, ~table: Table.table) => {
         implementBody(#loadOrThrow, () => {
           loadOrThrowCalls

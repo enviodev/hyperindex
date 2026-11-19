@@ -6,7 +6,7 @@ type t = {
   method: string,
   seconds: float,
   // Blocks the backend returned for this request, before any client-side
-  // routing drops them. Absent for methods whose responses aren't measured in
+  // matching drops them. Absent for methods whose responses aren't measured in
   // blocks, so a zero always means the request came back empty.
   responseBlocks?: int,
 }

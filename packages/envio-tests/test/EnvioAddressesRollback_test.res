@@ -96,12 +96,14 @@ describe("A rollback of an address registration", () => {
       await indexer.getBatchWritePromise()
       await source.expectItemsQueries([
         // The chain starts within 200 blocks of the head it can fetch, so the
-        // registered contract is read address-free, from its config address's
-        // start block.
+        // registered contract is read address-free. Its address registers after
+        // the config partition passed block 100, so a catch-up reads it from
+        // the registration block up to there.
         {
-          partitionId: "2",
-          fromBlock: 1,
-          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+          partitionId: "3",
+          fromBlock: 50,
+          toBlock: Bounded(100),
+          reply: Respond({items: []}),
         },
         {
           // The partition the config's addresses are fetched in.
@@ -118,12 +120,12 @@ describe("A rollback of an address registration", () => {
       await indexer.getBatchWritePromise()
       await source.expectItemsQueries([
         {
-          partitionId: "2",
+          partitionId: "3",
           fromBlock: 101,
           reply: Respond({items: [], latestFetchedBlockNumber: 300}),
         },
         {
-          partitionId: "3",
+          partitionId: "4",
           fromBlock: 101,
           reply: Respond({items: [], latestFetchedBlockNumber: 300}),
         },
@@ -161,9 +163,10 @@ describe("An address registered again for the same contract", () => {
       await indexer.getBatchWritePromise()
       await source.expectItemsQueries([
         {
-          partitionId: "2",
-          fromBlock: 1,
-          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+          partitionId: "3",
+          fromBlock: 50,
+          toBlock: Bounded(100),
+          reply: Respond({items: []}),
         },
         {
           partitionId: "0",
@@ -177,7 +180,7 @@ describe("An address registered again for the same contract", () => {
       await indexer.getBatchWritePromise()
       await source.expectItemsQueries([
         {
-          partitionId: "2",
+          partitionId: "3",
           fromBlock: 101,
           reply: Respond({items: [], latestFetchedBlockNumber: 300}),
         },

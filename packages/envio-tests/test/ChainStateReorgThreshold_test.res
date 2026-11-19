@@ -30,28 +30,29 @@ describe("ChainState reorg threshold", () => {
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=3,
-      ~maxOnBlockBufferSize=10000,
       ~chainId=baseChainConfig.id,
       ~knownHeight=0,
     )
-    let blockStore = BlockStore.make(~ecosystem=Svm)
-    let seedPage = BlockStore.fromJs(
-      scannedHashes->Array.map(((blockNumber, blockHash)): BlockStore.inputBlock => {
+    let chainBuffer = TestChainBuffer.decodedBuffer(~onEventRegistrations=[], ~ecosystem=Svm)
+    let seedPage = BufferPage.fromBlocks(
+      scannedHashes->Array.map(((blockNumber, blockHash)): BufferPage.observedBlock => {
         blockNumber,
         blockHash,
       }),
       ~ecosystem=Svm,
     )
-    switch blockStore->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false) {
-    | Null.Value(_) => JsError.throwWithMessage("Unexpected reorg detected in test setup")
-    | Null.Null => ()
+    switch (
+      chainBuffer->ChainBuffer.mergePage(seedPage, ~reorgThreshold=0, ~reportOnly=false)
+    ).mismatch {
+    | Some(_) => JsError.throwWithMessage("Unexpected reorg detected in test setup")
+    | None => ()
     }
     let fetchState = {...base, FetchState.knownHeight}
     let mockSource = MockSource.make([], ~chainId=1)
     let cs = ChainState.make(
       ~chainConfig=baseChainConfig,
       ~fetchState,
-      ~eventStore=base->TestFetchState.eventStoreOf,
+      ~chainBuffer,
       ~addressStore,
       ~sourceManager=SourceManager.make(
         ~logger=Logger.makeInMemory(),
@@ -61,7 +62,6 @@ describe("ChainState reorg threshold", () => {
       ~shouldRollbackOnReorg=true,
       ~maxReorgDepth,
       ~committedProgressBlockNumber=-1,
-      ~blockStore,
       ~logger=Logger.makeInMemory(),
     )
     (cs, fetchState)
@@ -91,16 +91,18 @@ describe("ChainState reorg threshold", () => {
     })
   })
 
-  it("registerReorgGuard compares hashes only at or above knownHeight - maxReorgDepth", t => {
+  it("mergePage compares hashes only at or above knownHeight - maxReorgDepth", t => {
     let registerConflictAt300 = (~knownHeight) => {
       let (cs, _) = makeChainState(~knownHeight=500, ~maxReorgDepth=200, ~scannedHashes)
-      cs->ChainState.registerReorgGuard(
-        ~blockStore=BlockStore.fromJs(
-          [{BlockStore.blockNumber: 300, blockHash: "0x300-different"}],
-          ~ecosystem=Svm,
-        ),
-        ~knownHeight,
-      )
+      let (reorgResult, _) =
+        cs->ChainState.mergePage(
+          ~page=BufferPage.fromBlocks(
+            [{BufferPage.blockNumber: 300, blockHash: "0x300-different"}],
+            ~ecosystem=Svm,
+          ),
+          ~knownHeight,
+        )
+      reorgResult
     }
 
     t.expect(
@@ -119,18 +121,18 @@ describe("ChainState reorg threshold", () => {
   })
 
   it("applyBatchProgress prunes processed blocks but keeps in-threshold hashes", t => {
-    let (cs, fetchState) = makeChainState(~knownHeight=500, ~maxReorgDepth=200, ~scannedHashes)
+    let (cs, _) = makeChainState(~knownHeight=500, ~maxReorgDepth=200, ~scannedHashes)
     let progressedChainsById = Dict.make()
     progressedChainsById->ChainId.Dict.set(
       baseChainConfig.id,
       (
         {
+          chainId: baseChainConfig.id,
           batchSize: 0,
           progressBlockNumber: 500,
           progressBlockTime: None,
           sourceBlockNumber: 500,
           totalEventsProcessed: 0.,
-          fetchState,
           isProgressAtHeadWhenBatchCreated: false,
         }: Batch.chainAfterBatch
       ),
@@ -147,15 +149,16 @@ describe("ChainState reorg threshold", () => {
       checkpointItemsCount: [],
       checkpointEventsProcessed: [],
       registeredAddresses: [],
-      fieldReads: [],
     }
 
     cs->ChainState.applyBatchProgress(~batch, ~blockTimestampName="timestamp")
 
     t.expect(
-      cs
-      ->ChainState.blockStore
-      ->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=1000),
+      (
+        cs
+        ->ChainState.chainBuffer
+        ->ChainBuffer.getBlockHashes(~fromBlock=0, ~belowBlock=1000)
+      ).blockNumbers,
       ~message="Processed blocks below knownHeight - maxReorgDepth lose their hashes; in-threshold ones stay",
     ).toEqual([300, 500])
   })

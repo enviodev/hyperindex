@@ -103,7 +103,7 @@ struct RegistrationSelection {
 /// Any other selection stays on its own: folding one that leaves topic0
 /// unconstrained would widen the fold to every log. Repeated topic0s and
 /// identical selections are deduplicated — several registrations may select
-/// the same signature now that routing fans one log out to all of them. Each
+/// the same signature now that matching fans one log out to all of them. Each
 /// selection keeps the tags of everything folded into it.
 fn compress<Tag>(
     selections: Vec<(MaterializedTopics, Tag)>,
@@ -190,7 +190,7 @@ impl SelectionBuilder {
     ) -> Result<BuiltSelection> {
         // Buckets: address-free selections pool together; address-bound ones
         // group per contract so one contract's query can't fetch a sibling's
-        // logs (routing never re-applies the sibling's filter). Wildcard
+        // logs (matching never re-applies the sibling's filter). Wildcard
         // events that filter an indexed param by registered addresses fold
         // the addresses into topics, so their query stays address-unbound.
         let mut no_address: Vec<(MaterializedTopics, (AddressFreeRole, i64))> = Vec::new();
@@ -235,7 +235,7 @@ impl SelectionBuilder {
             } else {
                 // Address-free: genuine wildcards, plus client-filtered contracts
                 // whose ContractAddresses markers materialize to match-any (empty
-                // address topics). Routing re-applies the address gate on the
+                // address topics). Matching re-applies the address gate on the
                 // returned items, against the store alone.
                 let role = if reg.depends_on_addresses {
                     AddressFreeRole::ClientFiltered
@@ -252,12 +252,9 @@ impl SelectionBuilder {
 
         let mut log_selections = address_free_selections(no_address);
 
-        // The set's per-contract slices carry both the address strings the
-        // filter needs and their padded topic forms, materialised once when the
-        // partition's set was first used rather than per query.
-        let cache = address_set.cache();
+        let rendered = address_set.render();
         for contract_name in ordered_contracts {
-            let slice = match cache.slice(contract_name) {
+            let slice = match rendered.slice(contract_name) {
                 Some(slice) if !slice.addresses.is_empty() => slice,
                 _ => continue,
             };
@@ -352,10 +349,6 @@ mod tests {
     const SIGHASH_A: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const SIGHASH_B: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const ADDR: &str = "0x1234567890abcdef1234567890abcdef12345678";
-    const ADDR_BYTES: [u8; 20] = [
-        0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd,
-        0xef, 0x12, 0x34, 0x56, 0x78,
-    ];
     const ADDR_TOPIC: &str = "0x0000000000000000000000001234567890abcdef1234567890abcdef12345678";
 
     fn reg(
@@ -433,19 +426,16 @@ mod tests {
         let (_store, set) = addresses(&[("C", &[ADDR])]);
         let built = builder.build(&[0, 1], &set, &Default::default()).unwrap();
         assert_eq!(
-            (built.log_selections, set.cache().owns(&ADDR_BYTES, 0),),
-            (
-                vec![BuiltLogSelection {
-                    emitters: listed(&[ADDR]),
-                    topics: vec![
-                        vec![SIGHASH_A.to_string(), SIGHASH_B.to_string()],
-                        vec![],
-                        vec![],
-                        vec![],
-                    ],
-                }],
-                true,
-            )
+            built.log_selections,
+            vec![BuiltLogSelection {
+                emitters: listed(&[ADDR]),
+                topics: vec![
+                    vec![SIGHASH_A.to_string(), SIGHASH_B.to_string()],
+                    vec![],
+                    vec![],
+                    vec![],
+                ],
+            }]
         );
     }
 

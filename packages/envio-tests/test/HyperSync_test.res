@@ -20,30 +20,32 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
         ~url="https://645749.hypersync.xyz",
         ~apiToken=testApiToken,
         ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
-        ~eventRegistrations=[
-          {
-            index: 0,
-            sighash: Some(transferSighash),
-            topicCount: 3,
-            eventName: "Transfer",
-            contractName: "ERC20",
-            isWildcard: true,
-            dependsOnAddresses: false,
-            startBlock: None,
-            params: [],
-            topicFilters: [
-              {
-                topic0: Some([transferSighash]),
-                topic1: Some([]),
-                topic2: Some([]),
-                topic3: Some([]),
-              },
-            ],
-            blockFields: [],
-            transactionFields: ["Hash"],
-          },
-        ],
-        ~addressStore,
+        ~chainBuffer=TestChainBuffer.forInputs(
+          ~addressStore,
+          ~evmRegistrations=[
+            {
+              index: 0,
+              sighash: Some(transferSighash),
+              topicCount: 3,
+              eventName: "Transfer",
+              contractName: "ERC20",
+              isWildcard: true,
+              dependsOnAddresses: false,
+              startBlock: None,
+              params: [],
+              topicFilters: [
+                {
+                  topic0: Some([transferSighash]),
+                  topic1: Some([]),
+                  topic2: Some([]),
+                  topic3: Some([]),
+                },
+              ],
+              blockFields: [],
+              transactionFields: ["Hash"],
+            },
+          ],
+        ),
       ),
       ~query={
         fromBlock: 12403138,
@@ -53,6 +55,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
         clientFilteredContracts: None,
       },
       ~addressSet=addressStore->AddressStore.emptySet,
+      ~buffer=TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     )
   })
 })

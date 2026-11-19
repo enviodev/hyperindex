@@ -24,6 +24,8 @@ type chainMetrics = {
   concurrency: int,
   partitionsCount: int,
   bufferSize: int,
+  bufferBytes: float,
+  addressStoreBytes: float,
   // Raw buffer block (may be -1), unlike the clamped latestFetchedBlockNumber.
   bufferBlockNumber: int,
   idleSeconds: float,
@@ -615,6 +617,20 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~kind="gauge",
     ~entries=chains,
     ~value=m => m.bufferSize->Int.toFloat,
+  )
+  b->series(
+    ~name="envio_indexing_buffer_bytes",
+    ~help="The memory the chain's buffer of fetched rows holds.",
+    ~kind="gauge",
+    ~entries=chains,
+    ~value=m => m.bufferBytes,
+  )
+  b->series(
+    ~name="envio_indexing_address_store_bytes",
+    ~help="The memory the chain's registered addresses and their index hold.",
+    ~kind="gauge",
+    ~entries=chains,
+    ~value=m => m.addressStoreBytes,
   )
   b->single(
     ~name="envio_indexing_target_buffer_size",

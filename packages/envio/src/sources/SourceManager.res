@@ -263,15 +263,15 @@ let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) 
   sourceManager->stopRateLimitTimeout
 }
 
-// A response is trusted only after its BlockStore has proved that it is
+// A response is trusted only after its page has proved that it is
 // internally coherent. `requiredBlockNumbers` is used by getBlockHashes to
 // reject a response that simply omitted one of the requested hashes.
-let validateResponseBlockStore = (
+let validateResponsePage = (
   ~method: string,
-  ~blockStore: BlockStore.t,
+  ~page: BufferPage.t,
   ~requiredBlockNumbers: array<int>=[],
 ) => {
-  switch blockStore->BlockStore.responseConflict->Null.toOption {
+  switch page->BufferPage.responseConflict->Null.toOption {
   | Some({blockNumber, storedHash, receivedHash}) =>
     throw(
       Source.InconsistentResponse({
@@ -283,7 +283,7 @@ let validateResponseBlockStore = (
       }),
     )
   | None =>
-    let missingBlockNumbers = blockStore->BlockStore.missingHashes(requiredBlockNumbers)
+    let missingBlockNumbers = page->BufferPage.missingHashes(requiredBlockNumbers)
     if missingBlockNumbers->Array.length > 0 {
       throw(
         Source.InconsistentResponse({
@@ -1081,7 +1081,7 @@ let executeQuery = async (
         ~logger,
       )
       sourceState->recordRequestStats(response.requestStats)
-      validateResponseBlockStore(~method="getItems", ~blockStore=response.blockStore)
+      validateResponsePage(~method="getItems", ~page=response.page)
       sourceState.lastFailedAt = None
 
       // The response carries a fresh height for exactly this source, so during a
@@ -1252,9 +1252,9 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       sourceState->recordRequestStats(res.requestStats)
       switch res.result {
       | Ok(data) =>
-        validateResponseBlockStore(
+        validateResponsePage(
           ~method="getBlockHashes",
-          ~blockStore=data,
+          ~page=data,
           ~requiredBlockNumbers=blockNumbers,
         )
         sourceState.lastFailedAt = None

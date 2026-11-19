@@ -351,7 +351,8 @@ fn not_cached() -> Result<Vec<u8>> {
 
 /// The page HyperSync would serve `query` from the chain's rows: the logs in
 /// `[from_block, to_block)` some log selection matches, with the blocks those
-/// logs belong to. The range ends at the server's height, as HyperSync's does.
+/// logs belong to, or every block of the range when the query includes all
+/// blocks. The range ends at the server's height, as HyperSync's does.
 fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
     let from_block = query.get("from_block").and_then(Value::as_u64).unwrap_or(0);
     let next_block = query
@@ -384,11 +385,20 @@ fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
                     .any(|selection| log_matches(log, selection))
         })
         .collect();
+    let include_all_blocks = query
+        .get("include_all_blocks")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let blocks: Vec<Value> = rows("blocks")
         .into_iter()
         .filter(|block| {
-            logs.iter()
-                .any(|log| number(log, "block_number") == number(block, "number"))
+            if include_all_blocks {
+                number(block, "number")
+                    .is_some_and(|block| block >= from_block && block < next_block)
+            } else {
+                logs.iter()
+                    .any(|log| number(log, "block_number") == number(block, "number"))
+            }
         })
         .collect();
 

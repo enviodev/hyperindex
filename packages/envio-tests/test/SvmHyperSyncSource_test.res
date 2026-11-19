@@ -71,10 +71,9 @@ let mockItem: SvmHyperSyncClient.Items.item = {
 
 // The real Rust client returns its routed items as a page; the mock's is empty,
 // and this test only checks the source hands it on untouched.
-let mockPage = EventStore.make()
+let mockPage = BufferPage.empty(~ecosystem=Svm)
 
 let capturedQueries: array<SvmHyperSyncClient.Items.query> = []
-let capturedPrograms: array<array<SvmHyperSyncClient.Registration.program>> = []
 
 // The chain's address index; created outside the mock-addon window below so it
 // loads the real native addon.
@@ -94,17 +93,12 @@ let makeMockClient = (): SvmHyperSyncClient.t => {
   getHeight: () => Promise.resolve(slot + 1000),
   getBlockHashes: (~blockNumbers as _) =>
     JsError.throwWithMessage("getBlockHashes should not be used in these tests"),
-  getItems: (~query, ~addressSet as _) => {
+  getItems: (~query) => {
     capturedQueries->Array.push(query)
-    // The real Rust client builds the stores from raw transactions/blocks; the
-    // mock returns empty pages (materialisation is covered by the Rust unit
+    // The real Rust client builds the page from raw transactions/blocks; the
+    // mock returns an empty one (materialisation is covered by the Rust unit
     // tests).
-    Promise.resolve((
-      {SvmHyperSyncClient.Items.nextSlot: slot + 1},
-      TransactionStore.make(~ecosystem=Ecosystem.Svm),
-      BlockStore.make(~ecosystem=Ecosystem.Svm),
-      mockPage,
-    ))
+    Promise.resolve(({SvmHyperSyncClient.Items.nextSlot: slot + 1}, mockPage))
   },
 }
 
@@ -119,20 +113,13 @@ let makeSource = (
   ~endpointUrl="https://solana.hypersync.xyz",
   ~apiToken=Some("test-token"),
 ) => {
+  let chainBuffer = TestChainBuffer.forChain(~ecosystem=Svm, ~onEventRegistrations, ~addressStore)
   let prevAddon = Core.addonRef.contents
   Core.addonRef :=
     Some(
       {
         "SvmHyperSyncClient": {
-          "fromConfig": (
-            _: SvmHyperSyncClient.cfg,
-            _: string,
-            programs: array<SvmHyperSyncClient.Registration.program>,
-            _: AddressStore.t,
-          ) => {
-            capturedPrograms->Array.push(programs)
-            client
-          },
+          "fromConfig": (_: SvmHyperSyncClient.cfg, _: string, _: ChainBuffer.t) => client,
         },
       }->(Utils.magic: {..} => Core.addon),
     )
@@ -140,9 +127,8 @@ let makeSource = (
     chainId,
     endpointUrl,
     apiToken,
-    onEventRegistrations,
     clientTimeoutMillis: 10_000,
-    addressStore,
+    chainBuffer,
   }) catch {
   | exn =>
     Core.addonRef := prevAddon
@@ -208,7 +194,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
 
     t.expect({
       "item": item,
-      "forwardsClientPage": response.items === mockPage,
+      "forwardsClientPage": response.page === mockPage,
       "query": capturedQueries->Array.getUnsafe(0),
     }).toEqual({
       "forwardsClientPage": true,
@@ -230,7 +216,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           toSlot: Some(slot + 10),
           onEventRegistrationIndexes: [0],
           onBlockRegistrationIndexes: [],
-          clientFilteredContracts: None,
         }: SvmHyperSyncClient.Items.query
       ),
     })
@@ -242,14 +227,11 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   it("groups registrations under their program and instruction", t => {
     let swap = makeEventConfig()
     let other = {...makeEventConfig(), name: "UpdateMetadataAccountV2", discriminator: Some("0x0f")}
-    let _ = makeSource(
-      ~onEventRegistrations=[
-        makeReg(~eventConfig=swap, ~index=0),
-        makeReg(~eventConfig=other, ~index=1),
-        makeReg(~eventConfig=swap, ~index=2),
-      ],
-    )
-    let programs = capturedPrograms->Array.getUnsafe(capturedPrograms->Array.length - 1)
+    let programs = SvmHyperSyncClient.Registration.fromOnEventRegistrations([
+      makeReg(~eventConfig=swap, ~index=0),
+      makeReg(~eventConfig=other, ~index=1),
+      makeReg(~eventConfig=swap, ~index=2),
+    ])
     let registration = index => {
       SvmHyperSyncClient.Registration.index,
       isWildcard: false,
@@ -301,11 +283,10 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     let where = Some(
       {"isInner": false, "accounts": {"mint": [metaplexProgramId]}}->(Utils.magic: 'a => JSON.t),
     )
-    let _ = makeSource(~onEventRegistrations=[makeReg(~eventConfig, ~where)])
     let program =
-      capturedPrograms
-      ->Array.getUnsafe(capturedPrograms->Array.length - 1)
-      ->Array.getUnsafe(0)
+      SvmHyperSyncClient.Registration.fromOnEventRegistrations([
+        makeReg(~eventConfig, ~where),
+      ])->Array.getUnsafe(0)
     let instruction = program.instructions->Array.getUnsafe(0)
     let input = instruction.registrations->Array.getUnsafe(0)
     t.expect({

@@ -137,7 +137,7 @@ describe("Per-chain entities against Postgres", () => {
         source137.expectItemsQueries([{fromBlock: 1, reply: Respond({items: [bump(10n)]})}]),
       ))
       await indexer.getBatchWritePromise()
-      let _ = await Promise.all2((source1.respondEmptyUpTo(300), source137.respondEmptyUpTo(300)))
+      let _ = await Promise.all2((source1.respondUpTo(300), source137.respondUpTo(300)))
       await indexer.waitUntilIdle()
 
       let counters: array<counter> = await indexer.query("Counter")
@@ -323,7 +323,7 @@ describe("Chain-scoped reads and deletes", () => {
         },
       ])
       await indexer.getBatchWritePromise()
-      await source137.respondEmptyUpTo(300)
+      await source137.respondUpTo(300)
       await indexer.waitUntilIdle()
 
       let remaining: array<counter> = await indexer.query("Counter")
@@ -502,7 +502,7 @@ describe("Per-chain entities with renamed columns", () => {
         },
       ])
       await indexer.getBatchWritePromise()
-      let _ = await Promise.all2((source1.respondEmptyUpTo(300), source137.respondEmptyUpTo(300)))
+      let _ = await Promise.all2((source1.respondUpTo(300), source137.respondUpTo(300)))
       await indexer.waitUntilIdle()
 
       // Rows are keyed by the API field name whatever the column is called.
@@ -568,7 +568,7 @@ describe("Effect scope under the disabled default", () => {
         {fromBlock: 1, reply: Respond({items: [callEffect(~block=6)]})},
       ])
       await indexer.getBatchWritePromise()
-      let _ = await Promise.all2((source1.respondEmptyUpTo(300), source137.respondEmptyUpTo(300)))
+      let _ = await Promise.all2((source1.respondUpTo(300), source137.respondUpTo(300)))
       await indexer.waitUntilIdle()
 
       let cache1 = await indexer.queryEffectCache(unscoped, ~scope=Chain(1->ChainId.fromInt))

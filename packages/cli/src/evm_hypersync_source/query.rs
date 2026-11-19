@@ -3,7 +3,7 @@ use hypersync_client::{format::Hex, net_types};
 use napi::bindgen_prelude::Either;
 use napi_derive::napi;
 
-use crate::block_store::EvmBlockField;
+use crate::chain_buffer::evm::EvmBlockField;
 
 /// Filter for selecting logs based on address and topics
 #[napi(object)]

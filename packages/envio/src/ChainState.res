@@ -2,15 +2,26 @@
 // the type is opaque in the interface so callers can read fields but can only
 // change them through the sanctioned mutators.
 
+// What a build of `[fromBlock, maxBlock]` for `targetItems` returns: the items
+// and the last block they cover.
+type builtItems = (array<Internal.item>, option<int>)
+
+type prebuiltItems = {
+  fromBlock: int,
+  maxBlock: int,
+  targetItems: int,
+  items: promise<builtItems>,
+}
+
 type t = {
   logger: Logger.t,
   mutable fetchState: FetchState.t,
-  // The chain's fetched items in processing order, kept in Rust until a batch
-  // takes them. Every fetch-state transition that adds, generates or drops rows
-  // is handed this store.
-  eventStore: EventStore.t,
-  // The chain's registrations, by the index stored rows carry, which turn a
-  // row back into the item a handler receives.
+  // The chain's fetched rows, their transactions and blocks, kept in Rust from
+  // the merge of a response until the chain removes them: transaction data
+  // once a batch commits, blocks once they leave the reorg window.
+  chainBuffer: ChainBuffer.t,
+  // The chain's registrations, by the index built items carry, which turn an
+  // item back into what a handler receives.
   itemContext: StoredItems.context,
   // The chain-wide address index, kept in Rust. Not `mutable`: registration and
   // rollback mutate it in place, so the handle is stable across fetchState
@@ -21,10 +32,8 @@ type t = {
   mutable isProgressAtHead: bool,
   mutable timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   mutable committedProgressBlockNumber: int,
-  // Progress of the batch currently being processed. The buffer is consumed at
-  // batch creation (see advanceAfterBatch), so this runs ahead of
-  // committedProgressBlockNumber until the batch commits - it's the true lower
-  // boundary of the remaining buffer's block span.
+  // Where builds read from: the last block a batch has taken. It runs ahead of
+  // committedProgressBlockNumber while that batch is processed.
   mutable processingBlockNumber: int,
   mutable numEventsProcessed: float,
   // Running sum of in-flight queries' itemsEst, kept here so the
@@ -48,17 +57,15 @@ type t = {
   maxReorgDepth: int,
   // One-way: past it, everything the chain writes can still be rolled back.
   mutable isInReorgThreshold: bool,
-  // How this chain spells the addresses materialised out of its stores, from
-  // `lowercaseAddresses`. The stores hold raw bytes; the spelling is decided
-  // where they are read.
+  // While a contractRegister run is in flight, the backlog blocks responses
+  // have brought registering events for since it started: those go back to
+  // the backlog even if the run covered them, since it didn't read the new
+  // events.
+  mutable contractRegisterRun: option<Utils.Set.t<int>>,
+  // Items built ahead for the next batch while the current one runs.
+  mutable prebuilt: option<prebuiltItems>,
+  // How this chain spells addresses, from `lowercaseAddresses`.
   shouldChecksum: bool,
-  // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
-  // transactionIndex). Fetch responses merge their page in; entries are pruned
-  // as the chain progresses and dropped above the target on rollback.
-  transactionStore: TransactionStore.t,
-  // Holds this chain's blocks (kept in Rust) keyed by block number. Same merge /
-  // prune / rollback lifecycle as the transaction store.
-  blockStore: BlockStore.t,
   reorgThresholdReadyTolerance: int,
   // --- Per-chain metric counters, rendered by Metrics at scrape time.
   // Floats: cumulative counters outgrow int32. ---
@@ -137,7 +144,7 @@ let validateOnEventRegistrations = (
 let make = (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
-  ~eventStore: EventStore.t,
+  ~chainBuffer: ChainBuffer.t,
   ~onEventRegistrations=[],
   ~onBlockRegistrations=[],
   ~addressStore: AddressStore.t,
@@ -151,9 +158,7 @@ let make = (
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
-  ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Evm),
   ~chainDensity=None,
-  ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm),
   ~shouldChecksum=false,
   ~reorgThresholdReadyTolerance=100,
   ~perChainEntities: array<Internal.entityConfig>=[],
@@ -164,7 +169,7 @@ let make = (
     logger,
     entities: EntityTables.make(perChainEntities),
     fetchState,
-    eventStore,
+    chainBuffer,
     itemContext: {chainId: chainConfig.id, onEventRegistrations, onBlockRegistrations},
     addressStore,
     sourceManager,
@@ -180,8 +185,8 @@ let make = (
     shouldRollbackOnReorg,
     maxReorgDepth,
     isInReorgThreshold,
-    transactionStore,
-    blockStore,
+    contractRegisterRun: None,
+    prebuilt: None,
     shouldChecksum,
     reorgThresholdReadyTolerance,
     blockRangeFetchSeconds: 0.,
@@ -301,17 +306,14 @@ let makeInternal = (
     ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractMapping),
   )
 
-  let eventStore = EventStore.make()
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
     ~addressStore,
-    ~eventStore,
     ~addressRows,
     ~progressBlockNumber,
     ~startBlock,
     ~endBlock,
     ~onEventRegistrations,
-    ~maxOnBlockBufferSize=2 * config.batchSize,
     ~knownHeight,
     ~chainId=chainConfig.id,
     ~onNotice=notice => logger->logFetchStateNotice(notice),
@@ -350,19 +352,20 @@ let makeInternal = (
     }
   })
 
-  // Before the sources, which are constructed holding them.
-  let blockStore = BlockStore.make(~ecosystem=config.ecosystem.name)
-  let transactionStore = TransactionStore.make(~ecosystem=config.ecosystem.name)
+  // Before the sources, which take their compiled registrations from it.
+  let chainBuffer = ChainBuffer.makeForChain(
+    ~ecosystem=config.ecosystem.name,
+    ~onEventRegistrations,
+    ~onBlockRegistrations,
+    ~shouldChecksum=!lowercaseAddresses,
+    ~addressStore,
+  )
 
   // Create sources lazily here - this is where API token validation happens
   let sources = ChainSources.make(
     ~chainConfig,
-    ~onEventRegistrations,
-    ~onBlockRegistrations,
     ~addressStore,
-    ~lowercaseAddresses,
-    ~blockStore,
-    ~transactionStore,
+    ~chainBuffer,
     ~logger,
     ~maxAddressesPerRequest=config.maxAddrInPartition,
   )
@@ -370,15 +373,15 @@ let makeInternal = (
   // Seed the stored reorg checkpoints (hash-only rows) so detection resumes
   // against the hashes scanned before the restart.
   if chainReorgCheckpoints->Utils.Array.notEmpty {
-    let seedPage = BlockStore.fromJs(
-      chainReorgCheckpoints->Array.map((cp): BlockStore.inputBlock => {
+    let seedPage = BufferPage.fromBlocks(
+      chainReorgCheckpoints->Array.map((cp): BufferPage.observedBlock => {
         blockNumber: cp.blockNumber,
         blockHash: cp.blockHash,
       }),
       ~ecosystem=config.ecosystem.name,
     )
-    blockStore
-    ->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false)
+    chainBuffer
+    ->ChainBuffer.mergePage(seedPage, ~reorgThreshold=0, ~reportOnly=false)
     ->ignore
   }
 
@@ -393,7 +396,7 @@ let makeInternal = (
   make(
     ~chainConfig,
     ~fetchState,
-    ~eventStore,
+    ~chainBuffer,
     ~onEventRegistrations,
     ~onBlockRegistrations,
     ~addressStore,
@@ -411,9 +414,7 @@ let makeInternal = (
     ~perChainEntities=config.userEntities->EntityTables.perChain,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
-    ~transactionStore,
     ~chainDensity,
-    ~blockStore,
     ~shouldChecksum=!lowercaseAddresses,
     ~reorgThresholdReadyTolerance=config.reorgThresholdReadyTolerance,
     ~logger,
@@ -474,14 +475,10 @@ let makeFromDbState = (
 // --- Read accessors. ---
 
 let logger = (cs: t) => cs.logger
-let blockStore = (cs: t) => cs.blockStore
-let transactionStore = (cs: t) => cs.transactionStore
+let chainBuffer = (cs: t) => cs.chainBuffer
 let itemContext = (cs: t) => cs.itemContext
-let itemFields = (cs: t): StoredItems.fields => {
-  transactionStore: cs.transactionStore,
-  blockStore: cs.blockStore,
-  shouldChecksum: cs.shouldChecksum,
-}
+let processingBlockNumber = (cs: t) => cs.processingBlockNumber
+let fetchStateOf = (cs: t) => cs.fetchState
 let shouldChecksum = (cs: t) => cs.shouldChecksum
 let entities = (cs: t) => cs.entities
 
@@ -491,18 +488,20 @@ let resetEntities = (cs: t, ~perChainEntities) => cs.entities = EntityTables.mak
 let sourceManager = (cs: t) => cs.sourceManager
 let chainConfig = (cs: t) => cs.chainConfig
 let shouldRollbackOnReorg = (cs: t) => cs.shouldRollbackOnReorg
-// Reorg-scan reads over the block store, for the rollback flow: the scanned
+// Reorg-scan reads over the buffer's blocks, for the rollback flow: the scanned
 // block numbers still inside the reorg threshold, and the highest of them whose
 // re-fetched hash still matches.
 let getReorgThresholdBlockNumbersBelow = (cs: t, ~blockNumber) =>
-  cs.blockStore->BlockStore.getHashedBlockNumbers(
-    ~fromBlock=Pervasives.max(cs.fetchState.knownHeight - cs.maxReorgDepth, 0),
-    ~belowBlock=blockNumber,
-  )
+  (
+    cs.chainBuffer->ChainBuffer.getBlockHashes(
+      ~fromBlock=Pervasives.max(cs.fetchState.knownHeight - cs.maxReorgDepth, 0),
+      ~belowBlock=blockNumber,
+    )
+  ).blockNumbers
 
-let getLatestValidScannedBlock = (cs: t, ~blockStore: BlockStore.t, ~blockNumbers: array<int>) =>
-  cs.blockStore
-  ->BlockStore.latestValidBlockFromStore(blockStore, blockNumbers)
+let getLatestValidScannedBlock = (cs: t, ~page: BufferPage.t, ~blockNumbers: array<int>) =>
+  cs.chainBuffer
+  ->ChainBuffer.findLatestBlockWithMatchingHash(page, blockNumbers)
   ->Null.toOption
 let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
 let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
@@ -544,13 +543,22 @@ let contractAddresses = (cs: t, ~contractName) =>
 let drainAddressesForWrite = (cs: t, ~toBlockInclusive, ~checkpointBlockNumbers) =>
   cs.addressStore->AddressStore.drainForWrite(toBlockInclusive, checkpointBlockNumbers)
 let hasAddressesToWrite = (cs: t) => cs.addressStore->AddressStore.pendingCount > 0
-let bufferSize = (cs: t) => cs.eventStore->EventStore.length
+let bufferSize = (cs: t) => cs.chainBuffer->ChainBuffer.rowCount
 let bufferReadyCount = (cs: t) =>
-  cs.fetchState->FetchState.bufferReadyCount(~eventStore=cs.eventStore)
+  cs.fetchState->FetchState.bufferReadyCount(
+    ~buffer=cs.chainBuffer,
+    ~processingBlockNumber=cs.processingBlockNumber,
+  )
 let chainDensity = (cs: t) => cs.chainDensity
 let hasReadyItem = (cs: t) =>
-  cs.fetchState->FetchState.isActivelyIndexing(~eventStore=cs.eventStore) &&
-    cs.fetchState->FetchState.hasReadyItem(~eventStore=cs.eventStore)
+  cs.fetchState->FetchState.isActivelyIndexing(
+    ~buffer=cs.chainBuffer,
+    ~processingBlockNumber=cs.processingBlockNumber,
+  ) &&
+    cs.fetchState->FetchState.hasReadyItem(
+      ~buffer=cs.chainBuffer,
+      ~processingBlockNumber=cs.processingBlockNumber,
+    )
 
 // Mark queries as in flight and reserve their estimated size against the shared
 // buffer budget in one step, so the counter stays in sync with the pending
@@ -594,7 +602,7 @@ let fetchCeiling = (cs: t) => {
 // to what fetching just found, unlike the processing EMA which only moves as
 // batches commit.
 let readyBufferDensity = (cs: t) => {
-  let readyCount = cs.fetchState->FetchState.bufferReadyCount(~eventStore=cs.eventStore)
+  let readyCount = cs->bufferReadyCount
   let span = cs.fetchState->FetchState.bufferBlockNumber - cs.processingBlockNumber
   if readyCount > 0 && span > 0 {
     Some(readyCount->Int.toFloat /. span->Int.toFloat)
@@ -704,6 +712,7 @@ let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
   | _ => chainTargetItems
   }
   cs.fetchState->FetchState.getNextQuery(
+    ~processingBlockNumber=cs.processingBlockNumber,
     ~chainTargetBlock,
     ~chainTargetItems,
     ~chainDensity=?cs->effectiveDensity,
@@ -835,7 +844,6 @@ let switchDynamicContractsToClientSideFilteringNearHead = (cs: t) =>
     cs.fetchState =
       cs.fetchState->FetchState.switchDynamicContractsToClientSideFiltering(
         ~addressStore=cs.addressStore,
-        ~eventStore=cs.eventStore,
       )
     if (
       cs.itemContext.onEventRegistrations->Array.some(registration =>
@@ -854,32 +862,38 @@ let switchDynamicContractsToClientSideFilteringNearHead = (cs: t) =>
 let handleQueryResult = (
   cs: t,
   ~query: FetchState.query,
-  ~page,
-  ~newRegistrations,
+  ~itemsCount,
+  ~registeringBlockNumbers,
   ~latestFetchedBlock: int,
   ~knownHeight,
 ) => {
-  let fs = switch newRegistrations {
-  | [] => cs.fetchState
-  | _ =>
-    cs.fetchState->FetchState.registerDynamicContracts(
-      ~addressStore=cs.addressStore,
-      ~eventStore=cs.eventStore,
-      ~onNotice=notice => cs.logger->logFetchStateNotice(notice),
-      // This response is applied below, after the addresses land. It was routed
-      // before they existed, so whatever it claims has to be inside the
-      // catch-up range - and an unbounded query can reach past the height that
-      // was known when it went out.
-      ~claimCeiling=Pervasives.max(knownHeight, latestFetchedBlock),
-      newRegistrations,
+  switch cs.contractRegisterRun {
+  | Some(readded) =>
+    registeringBlockNumbers->Array.forEach(block => readded->Utils.Set.add(block)->ignore)
+  | None => ()
+  }
+  let previousKnownHeight = cs.fetchState.knownHeight
+  // A source returns the blocks of the handlers its query selects, not their
+  // runs, so the runs are counted here: the density the next queries are
+  // priced by includes them.
+  let blockHandlerRuns = switch query.selection.onBlockRegistrations {
+  | [] => 0
+  | onBlockRegistrations =>
+    cs.chainBuffer->ChainBuffer.countBlockHandlerRunsInBlockRange(
+      ~fromBlock=query.fromBlock,
+      ~toBlock=latestFetchedBlock,
+      ~registrationIndexes=onBlockRegistrations->Array.map(registration => registration.index),
     )
   }
-
-  let previousKnownHeight = cs.fetchState.knownHeight
   cs.fetchState =
-    fs
-    ->FetchState.handleQueryResult(~eventStore=cs.eventStore, ~query, ~latestFetchedBlock, ~page)
-    ->FetchState.updateKnownHeight(~eventStore=cs.eventStore, ~knownHeight)
+    cs.fetchState
+    ->FetchState.handleQueryResult(
+      ~query,
+      ~latestFetchedBlock,
+      ~itemsCount=itemsCount + blockHandlerRuns,
+      ~registeringBlockNumbers,
+    )
+    ->FetchState.updateKnownHeight(~knownHeight)
 
   // The query is no longer in flight, so release its reservation.
   cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.itemsEst->Int.toFloat)
@@ -888,25 +902,76 @@ let handleQueryResult = (
   }
 }
 
-// Run reorg detection against a fetch response by merging its block-store page
-// into the chain store: hashes of blocks inside the reorg threshold are
-// compared on the way. On a mismatch with rollback enabled the page is
-// discarded (the stored hashes stay for the rollback comparison); in
-// detect-only mode the page still merges, so the overwritten hash doesn't
-// re-report on every response.
-let registerReorgGuard = (cs: t, ~blockStore, ~knownHeight): ReorgDetection.reorgResult => {
-  switch cs.blockStore->BlockStore.merge(
-    blockStore,
-    ~fromBlock=Pervasives.max(knownHeight - cs.maxReorgDepth, 0),
-    ~reportOnly=!cs.shouldRollbackOnReorg,
-  ) {
-  | Null.Null => NoReorg
-  | Null.Value({blockNumber, storedHash, receivedHash}) =>
+let hasContractRegisterBacklog = (cs: t) =>
+  cs.fetchState.contractRegisterBacklog->Utils.Array.notEmpty
+let isRegisteringContracts = (cs: t) => cs.contractRegisterRun !== None
+
+// Starts a contractRegister run, returning the backlog it reads.
+let beginContractRegisterRun = (cs: t) => {
+  cs.contractRegisterRun = Some(Utils.Set.make())
+  cs.fetchState.contractRegisterBacklog->Array.copy
+}
+
+let endContractRegisterRun = (cs: t) => cs.contractRegisterRun = None
+
+// Registers what a contractRegister run added, and takes the backlog blocks it
+// covered out of the backlog. A run comes out of no response, so a query can
+// claim no further than the chain has fetched or knows of.
+let registerContracts = (
+  cs: t,
+  ~registrations: array<AddressStore.registration>,
+  ~builtBlockNumbers: array<int>,
+) => {
+  let fetchState = switch registrations {
+  | [] => cs.fetchState
+  | _ =>
+    cs.fetchState->FetchState.registerDynamicContracts(
+      ~addressStore=cs.addressStore,
+      ~onNotice=notice => cs.logger->logFetchStateNotice(notice),
+      ~claimCeiling=Pervasives.max(
+        cs.fetchState.knownHeight,
+        cs.fetchState->FetchState.highestFetchedBlock,
+      ),
+      registrations,
+    )
+  }
+  let readded = cs.contractRegisterRun->Option.getOr(Utils.Set.make())
+  cs.fetchState =
+    fetchState->FetchState.popContractRegisterBacklog(
+      ~blocks=builtBlockNumbers->Array.filter(block => !(readded->Utils.Set.has(block))),
+    )
+  cs.logger->Logger.trace(
+    "Registered contracts",
+    ~params={
+      "registrations": registrations->Array.length,
+      "partitions": cs.fetchState->FetchState.partitionsCount,
+      "backlog": cs.fetchState.contractRegisterBacklog,
+      "addresses": cs.addressStore->AddressStore.size,
+    },
+  )
+}
+
+// The response's page joins the buffer, its block hashes checked against the
+// stored ones on the way: those of blocks inside the reorg threshold are
+// compared. On a mismatch with rollback enabled nothing of the page merges (the
+// stored hashes stay for the rollback comparison); in detect-only mode the page
+// still merges, so the overwritten hash doesn't re-report on every response.
+let mergePage = (cs: t, ~page, ~knownHeight) => {
+  let merged =
+    cs.chainBuffer->ChainBuffer.mergePage(
+      page,
+      ~reorgThreshold=Pervasives.max(knownHeight - cs.maxReorgDepth, 0),
+      ~reportOnly=!cs.shouldRollbackOnReorg,
+    )
+  let reorgResult: ReorgDetection.reorgResult = switch merged.mismatch {
+  | None => NoReorg
+  | Some({blockNumber, storedHash, receivedHash}) =>
     ReorgDetected({
       scannedBlock: {blockNumber, blockHash: storedHash},
       receivedBlock: {blockNumber, blockHash: receivedHash},
     })
   }
+  (reorgResult, merged)
 }
 
 // Prepare for a reorg rollback: restore the events-processed counter to its
@@ -922,8 +987,7 @@ let prepareReorg = (cs: t, ~eventsProcessedDiff) => {
 
 // A chain waiting at its head goes address-free before querying the new block.
 let updateKnownHeight = (cs: t, ~knownHeight) => {
-  cs.fetchState =
-    cs.fetchState->FetchState.updateKnownHeight(~eventStore=cs.eventStore, ~knownHeight)
+  cs.fetchState = cs.fetchState->FetchState.updateKnownHeight(~knownHeight)
   cs->switchDynamicContractsToClientSideFilteringNearHead
 }
 
@@ -939,11 +1003,7 @@ let setEndBlockToFirstEvent = (cs: t, ~blockNumber) =>
 // Shrink the fetch buffer by the configured blockLag on entering the reorg threshold.
 let enterReorgThreshold = (cs: t) => {
   cs.isInReorgThreshold = true
-  cs.fetchState =
-    cs.fetchState->FetchState.updateInternal(
-      ~eventStore=cs.eventStore,
-      ~blockLag=cs.chainConfig.blockLag,
-    )
+  cs.fetchState = cs.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
 }
 
 let isInReorgThreshold = (cs: t) => cs.isInReorgThreshold
@@ -1028,7 +1088,9 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   progressBlockTime: cs.committedProgressBlockTime,
   concurrency: cs.sourceManager->SourceManager.inFlightCount,
   partitionsCount: cs.fetchState->FetchState.partitionsCount,
-  bufferSize: cs.eventStore->EventStore.length,
+  bufferSize: cs->bufferSize,
+  bufferBytes: cs.chainBuffer->ChainBuffer.heapBytes,
+  addressStoreBytes: cs.addressStore->AddressStore.heapBytes,
   bufferBlockNumber: cs.fetchState->FetchState.bufferBlockNumber,
   idleSeconds: cs.sourceManager->SourceManager.idleSeconds,
   waitingForNewBlockSeconds: cs.sourceManager->SourceManager.waitingForNewBlockSeconds,
@@ -1045,13 +1107,55 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   rateLimitResetInMs: cs.sourceManager->SourceManager.getRateLimitResetInMs,
 }
 
+let buildItemsNow = (cs: t, ~fromBlock, ~maxBlock, ~targetItems): promise<builtItems> =>
+  cs.chainBuffer
+  ->ChainBuffer.buildHandlerItems(~fromBlock, ~maxBlock, ~targetItems)
+  ->Promise.thenResolve(built => (
+    built->StoredItems.read(~context=cs.itemContext),
+    built.lastBlock,
+  ))
+
+// The items built ahead when they answer this build: the same start and
+// target, read no further than `maxBlock`. Fewer blocks than the range allows
+// still make a whole batch, which ends where its items end.
+let buildItems = (cs: t, ~fromBlock, ~maxBlock, ~targetItems): promise<builtItems> => {
+  let prebuilt = cs.prebuilt
+  cs.prebuilt = None
+  switch prebuilt {
+  | Some(prebuilt)
+    if prebuilt.fromBlock === fromBlock &&
+    prebuilt.maxBlock <= maxBlock &&
+    prebuilt.targetItems === targetItems =>
+    prebuilt.items
+  | _ => cs->buildItemsNow(~fromBlock, ~maxBlock, ~targetItems)
+  }
+}
+
+// Starts building the next batch's items from the read position, for
+// `buildItems` to take up.
+let prebuildItems = (cs: t, ~targetItems) => {
+  let fromBlock = cs.processingBlockNumber + 1
+  let maxBlock = cs.fetchState->FetchState.bufferBlockNumber
+  cs.prebuilt = if (
+    cs.chainBuffer->ChainBuffer.countItemsInBlockRange(~fromBlock, ~toBlock=maxBlock) > 0
+  ) {
+    let items = cs->buildItemsNow(~fromBlock, ~maxBlock, ~targetItems)
+    // A build nobody takes up must not surface as an unhandled rejection; one
+    // that is taken up rejects for its taker.
+    items->Promise.catch(_ => Promise.resolve(([], None)))->ignore
+    Some({fromBlock, maxBlock, targetItems, items})
+  } else {
+    None
+  }
+}
+
 // Snapshot the inputs a batch build needs from this chain. The scanned
 // in-threshold block hashes are copied up front because the build reuses the
 // whole set; the block time comes as a lookup instead, since the key it needs -
 // the batch's own progress block - isn't known until the build computes it.
 let toChainBeforeBatch = (cs: t, ~isRealtime): Batch.chainBeforeBatch => {
   let {blockNumbers, hashes} =
-    cs.blockStore->BlockStore.getHashes(
+    cs.chainBuffer->ChainBuffer.getBlockHashes(
       ~fromBlock=Pervasives.max(cs.fetchState.knownHeight - cs.maxReorgDepth, 0),
       ~belowBlock=cs.fetchState.knownHeight + 1,
     )
@@ -1061,11 +1165,11 @@ let toChainBeforeBatch = (cs: t, ~isRealtime): Batch.chainBeforeBatch => {
   )
   {
     fetchState: cs.fetchState,
-    eventStore: cs.eventStore,
-    itemContext: cs.itemContext,
-    itemFields: cs->itemFields,
+    buffer: cs.chainBuffer,
+    buildItems: (~fromBlock, ~maxBlock, ~targetItems) =>
+      cs->buildItems(~fromBlock, ~maxBlock, ~targetItems),
     recordParse: milliseconds => cs->recordParse(~milliseconds),
-    progressBlockNumber: cs.committedProgressBlockNumber,
+    progressBlockNumber: cs.processingBlockNumber,
     totalEventsProcessed: cs.numEventsProcessed,
     sourceBlockNumber: cs.fetchState.knownHeight,
     scannedHashes: {blockNumbers, hashByBlockNumber},
@@ -1073,8 +1177,8 @@ let toChainBeforeBatch = (cs: t, ~isRealtime): Batch.chainBeforeBatch => {
     // covered every slot in its range, which is what a chain at the head asks
     // for.
     blockTimeAt: blockNumber =>
-      cs.blockStore
-      ->BlockStore.getTimestamp(blockNumber, ~allowSkippedSlot=isRealtime)
+      cs.chainBuffer
+      ->ChainBuffer.getBlockTimestamp(blockNumber, ~allowSkippedSlot=isRealtime)
       ->Null.toOption,
     shouldRollbackOnReorg: cs.shouldRollbackOnReorg,
     chainConfig: cs.chainConfig,
@@ -1088,40 +1192,34 @@ let toChainBeforeBatch = (cs: t, ~isRealtime): Batch.chainBeforeBatch => {
 // lag, so a chain waiting to enter it has fetched as far as it can.
 let isReadyToEnterReorgThreshold = (cs: t) =>
   cs.fetchState->FetchState.isReadyToEnterReorgThreshold(
-    ~eventStore=cs.eventStore,
+    ~buffer=cs.chainBuffer,
+    ~processingBlockNumber=cs.processingBlockNumber,
     ~tolerance=cs.reorgThresholdReadyTolerance,
   )
 
-let isReadyToEnterReorgThresholdAfterBatch = (cs: t, ~batch: Batch.t) => {
-  let fetchState = switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(
-    cs.fetchState.chainId,
-  ) {
-  | Some(chainAfterBatch) => chainAfterBatch.fetchState
-  | None => cs.fetchState
+let isReadyToEnterReorgThresholdAfterBatch = (cs: t, ~batch: Batch.t) =>
+  cs.fetchState->FetchState.isReadyToEnterReorgThreshold(
+    ~buffer=cs.chainBuffer,
+    ~processingBlockNumber=switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(
+      cs.fetchState.chainId,
+    ) {
+    | Some(chainAfterBatch) => chainAfterBatch.progressBlockNumber
+    | None => cs.processingBlockNumber
+    },
+    ~tolerance=cs.reorgThresholdReadyTolerance,
+  )
+
+// Moves the read position past the batch's items, and applies blockLag when
+// this batch also crosses into the reorg threshold.
+let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) => {
+  if enteringReorgThreshold {
+    cs.fetchState = cs.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
   }
-  fetchState->FetchState.isReadyToEnterReorgThreshold(
-    ~eventStore=cs.eventStore,
-    ~tolerance=cs.reorgThresholdReadyTolerance,
-  )
-}
-
-// Commit the post-batch fetch frontier for a chain that progressed in the batch,
-// applying blockLag when this batch also crosses into the reorg threshold.
-let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
   switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(cs.fetchState.chainId) {
-  | Some(chainAfterBatch) =>
-    cs.fetchState = enteringReorgThreshold
-      ? chainAfterBatch.fetchState->FetchState.updateInternal(
-          ~eventStore=cs.eventStore,
-          ~blockLag=cs.chainConfig.blockLag,
-        )
-      : chainAfterBatch.fetchState
-
-    // The batch's items just left the buffer, so the remaining buffer's span
-    // starts at the batch's progress.
-    cs.processingBlockNumber = chainAfterBatch.progressBlockNumber
+  | Some(chainAfterBatch) => cs.processingBlockNumber = chainAfterBatch.progressBlockNumber
   | None => ()
   }
+}
 
 // Commit a processed batch's progress for this chain (progress block, events
 // processed, head/safe-checkpoint tracking, first event block). Readiness is
@@ -1199,13 +1297,18 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
         chainAfterBatch.progressBlockNumber,
       )
       cs.numEventsProcessed = chainAfterBatch.totalEventsProcessed
-      // Processed blocks' transactions and blocks are no longer needed.
-      cs.transactionStore->TransactionStore.prune(chainAfterBatch.progressBlockNumber)
-      // Processed blocks' other fields are dropped, but hashes still inside the
-      // reorg threshold stay for reorg detection.
-      cs.blockStore->BlockStore.prune(
-        chainAfterBatch.progressBlockNumber,
-        ~keepHashesFrom=cs.fetchState.knownHeight - cs.maxReorgDepth,
+      // Processed blocks' rows are no longer needed. Their blocks stay while
+      // inside the reorg window, whose hashes reorg detection compares.
+      cs.chainBuffer->ChainBuffer.removeTransactionDataInBlockRange(
+        ~fromBlock=0,
+        ~toBlock=chainAfterBatch.progressBlockNumber,
+      )
+      cs.chainBuffer->ChainBuffer.removeBlocksInBlockRange(
+        ~fromBlock=0,
+        ~toBlock=Pervasives.min(
+          chainAfterBatch.progressBlockNumber,
+          cs.fetchState.knownHeight - cs.maxReorgDepth - 1,
+        ),
       )
       cs.isProgressAtHead = cs.isProgressAtHead || chainAfterBatch.isProgressAtHeadWhenBatchCreated
       switch cs.safeCheckpointTracking {
@@ -1250,8 +1353,8 @@ let rollbackCommittedProgress = (cs: t, blockNumber) =>
     // Exact block only: the rolled-back region is about to be refetched, and
     // the next batch re-establishes the time either way.
     cs.committedProgressBlockTime =
-      cs.blockStore
-      ->BlockStore.getTimestamp(blockNumber, ~allowSkippedSlot=false)
+      cs.chainBuffer
+      ->ChainBuffer.getBlockTimestamp(blockNumber, ~allowSkippedSlot=false)
       ->Null.toOption
   }
 
@@ -1266,14 +1369,24 @@ type rolledBackTo =
 // chain — the store is what decides which ones died, so the two halves of a
 // rollback can't disagree.
 let rollback = (cs: t, ~rolledBackTo: rolledBackTo): array<AddressRows.key> => {
+  cs.prebuilt = None
   let rollbackTo = targetBlockNumber => {
     let {fetchState, rolledBackAddresses} =
       cs.fetchState->FetchState.rollback(
         ~rolledBackAddressStore=cs.addressStore,
-        ~eventStore=cs.eventStore,
         ~targetBlockNumber,
       )
     cs.fetchState = fetchState
+    // Everything above the target is refetched. Keeping any block hash of it
+    // would compare the refetch against a fork the rollback already disproved.
+    cs.chainBuffer->ChainBuffer.removeTransactionDataInBlockRange(
+      ~fromBlock=targetBlockNumber + 1,
+      ~toBlock=Int.Constants.maxValue,
+    )
+    cs.chainBuffer->ChainBuffer.removeBlocksInBlockRange(
+      ~fromBlock=targetBlockNumber + 1,
+      ~toBlock=Int.Constants.maxValue,
+    )
     rolledBackAddresses->Array.map(({address, contractId}): AddressRows.key => {
       chainId: cs.chainConfig.id,
       address,
@@ -1301,8 +1414,6 @@ let rollback = (cs: t, ~rolledBackTo: rolledBackTo): array<AddressRows.key> => {
     | None => ()
     }
     let rolledBackAddresses = rollbackTo(newProgressBlockNumber)
-    cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
-    cs.blockStore->BlockStore.rollback(newProgressBlockNumber)
     cs->rollbackCommittedProgress(newProgressBlockNumber)
     cs.processingBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
@@ -1311,8 +1422,6 @@ let rollback = (cs: t, ~rolledBackTo: rolledBackTo): array<AddressRows.key> => {
     // Rewinds the stores too, not just progress: otherwise the stale block hash
     // survives and re-triggers the same reorg.
     let rolledBackAddresses = rollbackTo(forkBlock)
-    cs.transactionStore->TransactionStore.rollback(forkBlock)
-    cs.blockStore->BlockStore.rollback(forkBlock)
     cs->rollbackCommittedProgress(Pervasives.min(cs.committedProgressBlockNumber, forkBlock))
     cs.processingBlockNumber = Pervasives.min(cs.processingBlockNumber, forkBlock)
     rolledBackAddresses

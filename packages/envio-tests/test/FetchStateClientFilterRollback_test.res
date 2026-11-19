@@ -82,7 +82,7 @@ let catchUp = (~partitionId, fromBlock, toBlock) => {
 }
 
 let hashes = (blockNumbers, ~validUpTo) =>
-  blockNumbers->Array.map((blockNumber): BlockStore.inputBlock => {
+  blockNumbers->Array.map((blockNumber): BufferPage.observedBlock => {
     blockNumber,
     blockHash: blockNumber <= validUpTo
       ? `0x${blockNumber->Int.toString}`
@@ -93,7 +93,8 @@ let hashes = (blockNumbers, ~validUpTo) =>
 // Partition 0 registers two dynamic Gravatar addresses at block 3, crossing
 // the threshold of 1, so address-free partition 2 fetches Gravatar. Both reach
 // the reorg window at 500, where partition 2 fetches to 650 and registers
-// address 3 at 620: catch-up partition 3 fetches it over [620, 650].
+// address 3 at 620: catch-up partition 3 fetches it from 620, open-ended while
+// partition 2's query from 651, out before the registration, is.
 let registerInReorgWindow = async (sourceMock: MockSource.t) => {
   sourceMock.resolveGetHeightOrThrow(2000)
   await sourceMock.expectItemsQueries([
@@ -107,7 +108,7 @@ let registerInReorgWindow = async (sourceMock: MockSource.t) => {
     },
   ])
   await sourceMock.expectItemsQueries([
-    {partitionId: "2", fromBlock: 1, toBlock: Bounded(499), reply: Respond({items: []})},
+    {partitionId: "2", fromBlock: 3, toBlock: Bounded(499), reply: Respond({items: []})},
     {partitionId: "0", fromBlock: 6, toBlock: Bounded(499), reply: Respond({items: []})},
   ])
   await sourceMock.expectItemsQueries([
@@ -141,7 +142,7 @@ describe("FetchState client-side filtering across a rollback", () => {
       let sourceMock = source(1337)
       await sourceMock->registerInReorgWindow
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 620, toBlock: Bounded(650), reply: LeavePending},
+        {partitionId: "3", fromBlock: 620, reply: LeavePending},
         {partitionId: "2", fromBlock: 651, reply: reorgAbove650},
       ])
       await sourceMock.expectBlockHashLookup({
@@ -161,7 +162,7 @@ describe("FetchState client-side filtering across a rollback", () => {
       ).toEqual([
         // Dispatched before the rollback, and voided by it.
         nftFactory(500),
-        catchUp(~partitionId="3", 620, Bounded(650)),
+        catchUp(~partitionId="3", 620, Unbounded),
         nftFactory(500),
         catchUp(~partitionId="2", 620, Bounded(630)),
         addressFree(~partitionId="1", 631),
@@ -205,7 +206,7 @@ describe("FetchState client-side filtering across a rollback", () => {
       ).toEqual([
         // Dispatched before the rollback, and voided by it.
         nftFactory(500),
-        catchUp(~partitionId="3", 646, Bounded(650)),
+        catchUp(~partitionId="3", 646, Unbounded),
         nftFactory(500),
         addressFree(~partitionId="1", 641),
       ])

@@ -367,7 +367,7 @@ let answerBlockHashLookups = fuzz =>
     fuzz.source.resolveGetBlockHashes(
       fuzz.source.getBlockHashesCalls
       ->Array.flat
-      ->Array.map((blockNumber): BlockStore.inputBlock => {
+      ->Array.map((blockNumber): BufferPage.observedBlock => {
         blockNumber,
         blockHash: blockNumber <= fuzz.validUpTo
           ? `0x${blockNumber->Int.toString}`
@@ -414,6 +414,12 @@ let completeRollback = async (fuzz, ~seed) => {
   let rounds = ref(0)
   while !ready.contents && rounds.contents < 2000 {
     rounds := rounds.contents + 1
+
+    // No query goes out while the rollback is under way, so any pending now
+    // was asked of the orphaned chain.
+    if fuzz.indexer.isResolvingReorg() {
+      fuzz.source.pendingItemsQueries->Array.forEach(query => fuzz.stale->Set.add(query))
+    }
     fuzz->answerBlockHashLookups
     // Real time: the rollback reads and writes the database between lookups.
     await Utils.delay(1)

@@ -14,8 +14,6 @@ type res
 type handler = (req, res) => unit
 type middleware = (req, res, unit => unit) => unit
 
-@module("express") external jsonMiddleware: unit => middleware = "json"
-
 @send external use: (app, middleware) => unit = "use"
 @send external useFor: (app, string, middleware) => unit = "use"
 

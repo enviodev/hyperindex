@@ -74,34 +74,27 @@ let onBlockRegistrations = () => {
 
 let named = name => onBlockRegistrations()->Array.filter(reg => reg.name === name)
 
-let responseItems = (response: Source.blockRangeFetchResponse) =>
-  response.items->TestEventStore.takeAll(
-    ~context={
-      chainId: 1->ChainId.fromInt,
-      onEventRegistrations: [],
-      onBlockRegistrations: onBlockRegistrations(),
-    },
-  )
-
-// A response's items with their transactions and blocks, read from the given
-// stores the way a batch's take reads the chain's.
-let joinedItems = async (
+// The items a chain running `onBlockRegistrations` builds over the response's
+// range, its blocks joined in. Block handler items aren't in the page: a build
+// generates them from the handlers' schedule.
+let buildItems = async (
   response: Source.blockRangeFetchResponse,
-  ~transactionStore,
-  ~blockStore,
-  ~shouldChecksum,
+  ~onBlockRegistrations,
+  ~fromBlock=10,
 ) => {
-  let (items, readFields) = response.items->StoredItems.takeWithFields(
-    response.items->EventStore.length,
-    ~context={
-      chainId: 1->ChainId.fromInt,
-      onEventRegistrations: [],
-      onBlockRegistrations: onBlockRegistrations(),
-    },
-    ~fields={transactionStore, blockStore, shouldChecksum},
+  let buffer = ChainBuffer.makeForChain(
+    ~ecosystem=Evm,
+    ~onEventRegistrations=[],
+    ~onBlockRegistrations,
+    ~shouldChecksum=false,
+    ~addressStore=TestAddresses.storeOf(~contracts=[], ~addresses=[]),
   )
-  await readFields()
-  items
+  await response.page->TestChainBuffer.buildAll(
+    ~buffer,
+    ~context={chainId: 1->ChainId.fromInt, onEventRegistrations: [], onBlockRegistrations},
+    ~fromBlock,
+    ~maxBlock=response.latestFetchedBlockNumber,
+  )
 }
 
 let makeHyperSyncSource = (~url) => {
@@ -109,16 +102,17 @@ let makeHyperSyncSource = (~url) => {
   let source = EvmHyperSyncSource.make({
     chainId: 1->ChainId.fromInt,
     endpointUrl: url,
-    onEventRegistrations: [],
-    onBlockRegistrations: onBlockRegistrations(),
     apiToken: Some(MockHyperSyncServer.apiToken),
     clientTimeoutMillis: 10_000,
-    lowercaseAddresses: true,
     serializationFormat: Json,
     enableQueryCaching: false,
     logLevel: #error,
-    addressStore,
     logger: Logger.makeInMemory(),
+    chainBuffer: TestChainBuffer.forChain(
+      ~onEventRegistrations=[],
+      ~onBlockRegistrations=onBlockRegistrations(),
+      ~addressStore,
+    ),
   })
   (source, addressStore->AddressStore.emptySet)
 }
@@ -159,11 +153,7 @@ type blockView = {number: int, timestamp?: int, miner?: Address.t}
 
 // What a block handler runs with, once the page's blocks are joined in.
 let materializedBlocks = async (page: Source.blockRangeFetchResponse) => {
-  let items = await page->joinedItems(
-    ~transactionStore=TransactionStore.make(~ecosystem=Evm),
-    ~blockStore=page.blockStore,
-    ~shouldChecksum=false,
-  )
+  let items = await page->buildItems(~onBlockRegistrations=named("headers"))
   items->Array.map(item =>
     switch item {
     | Internal.Block({onBlockRegistration, blockNumber, ?block}) => (
@@ -181,8 +171,6 @@ let makeRpcSource = (~url) => {
   let source = RpcSource.make({
     url,
     chainId: 1->ChainId.fromInt,
-    onEventRegistrations: [],
-    onBlockRegistrations: onBlockRegistrations(),
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({
       initialBlockInterval: 100,
@@ -190,12 +178,13 @@ let makeRpcSource = (~url) => {
       backoffMillis: 1,
       queryTimeoutMillis: 1_000,
     }),
-    lowercaseAddresses: true,
-    addressStore,
-    blockStore: BlockStore.make(~ecosystem=Evm),
-    transactionStore: TransactionStore.make(~ecosystem=Evm),
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
+    chainBuffer: TestChainBuffer.forChain(
+      ~onEventRegistrations=[],
+      ~onBlockRegistrations=onBlockRegistrations(),
+      ~addressStore,
+    ),
   })
   (source, addressStore->AddressStore.emptySet)
 }
@@ -378,7 +367,7 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
   // request per handler block, so the page reads the one block and answers for
   // the gap up to the next.
   Async.it("reads a sparse handler's block alone and claims the gap after it", async t => {
-    let (queries, page) = await MockHyperSyncServer.withServer(
+    let (queries, page, items) = await MockHyperSyncServer.withServer(
       ~height=20_000,
       async server => {
         let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
@@ -389,14 +378,15 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
           ~toBlock=Some(20_000),
           ~knownHeight=20_000,
         )
-        (server->MockHyperSyncServer.takeQueries, page)
+        let items = await page->buildItems(~onBlockRegistrations=named("sparse"))
+        (server->MockHyperSyncServer.takeQueries, page, items)
       },
     )
 
     t.expect((
       queries,
       page.latestFetchedBlockNumber,
-      page->responseItems->Array.map(Internal.getItemBlockNumber),
+      items->Array.map(Internal.getItemBlockNumber),
     )).toEqual((
       [
         JSON.parseOrThrow(`{

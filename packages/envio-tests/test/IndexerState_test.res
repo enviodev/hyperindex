@@ -39,12 +39,12 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~addressStore,
       ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
       ~startBlock=0,
-      ~maxOnBlockBufferSize=5000,
       ~chainId=1->ChainId.fromInt,
       ~knownHeight=0,
     )
 
     let fetchState = ref(fetcherStateInit)
+    let chainBuffer = TestChainBuffer.decodedBuffer(~onEventRegistrations)
 
     let endTimestamp = getCurrentTimestamp()
     let startTimestamp = endTimestamp - runTime
@@ -94,11 +94,17 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
         fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
 
+        let merged =
+          chainBuffer->ChainBuffer.mergePage(
+            TestChainBuffer.pageOf([batchItem]),
+            ~reorgThreshold=0,
+            ~reportOnly=true,
+          )
         fetchState :=
           fetchState.contents->TestFetchState.handleQueryResult(
             ~query,
             ~latestFetchedBlock=currentBlockNumber.contents,
-            ~page=TestEventStore.pageOf([batchItem]),
+            ~itemsCount=merged.rowsKept,
           )
 
         numberOfMockEventsCreated := numberOfMockEventsCreated.contents + 1
@@ -121,7 +127,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let mockChainState = ChainState.make(
       ~chainConfig,
       ~fetchState=fetchState.contents,
-      ~eventStore=fetchState.contents->TestFetchState.eventStoreOf,
+      ~chainBuffer,
       ~addressStore,
       ~sourceManager=SourceManager.make(
         ~logger=Logger.makeInMemory(),
@@ -156,21 +162,23 @@ let getItemKey = (item: Internal.item) =>
   | Block({onBlockRegistration: {chainId}, blockNumber}) => (chainId, blockNumber, 0)
   }
 
-// Advance each chain's fetchState to its post-batch state, simulating the loop
-// committing a processed batch.
-let advanceChains = (state: IndexerState.t, ~batch) =>
+// Move each chain past the batch and commit it, the way the loop does once a
+// batch is processed. Committing is what removes the batch's rows.
+let advanceChains = (state: IndexerState.t, ~batch) => {
   state
   ->IndexerState.chainStates
   ->Utils.Dict.forEach(cs =>
     cs->ChainState.advanceAfterBatch(~batch, ~enteringReorgThreshold=false)
   )
+  state->IndexerState.applyBatchProgress(~batch)
+}
 
 describe("IndexerState", () => {
   //Test was previously popBlockBatchItems
   describe("createBatch", () => {
-    it(
+    Async.it(
       "when processing through many randomly generated events on different queues, the grouping and ordering is correct",
-      t => {
+      async t => {
         let (state, numberOfMockEventsCreated, _allEvents) = populateChainQueuesWithRandomEvents()
 
         let defaultFirstEvent = Internal.Event({
@@ -190,7 +198,7 @@ describe("IndexerState", () => {
         let allEventsRead = []
         let continue = ref(true)
         while continue.contents {
-          let batch = state->IndexerState.createBatch(~batchSizeTarget=10000)
+          let batch = await state->IndexerState.createBatch(~batchSizeTarget=10000)
           let {items, totalBatchSize} = batch
 
           // ensure that the events are ordered correctly
@@ -231,9 +239,9 @@ describe("IndexerState", () => {
     // applyBatchProgress must commit only progress fields and keep that
     // concurrently-advanced fetch frontier, otherwise the freshly fetched blocks
     // are silently dropped.
-    it(
+    Async.it(
       "applyBatchProgress keeps a fetchState that advanced during the batch",
-      t => {
+      async t => {
         let config = TestConfig.default
         let onEventRegistrations = [
           (EventRegistration.evmOnEventRegistration(
@@ -243,7 +251,7 @@ describe("IndexerState", () => {
           ) :> Internal.onEventRegistration),
         ]
 
-        let makeFetchState = (~chainId, ~eventBlocks) => {
+        let makeFetchState = (~chainId, ~eventBlocks, ~chainBuffer) => {
           let addresses = []
           let addressStore = TestAddresses.makeStore(~onEventRegistrations)
           let fetchState = ref(
@@ -255,9 +263,10 @@ describe("IndexerState", () => {
               ~addressStore,
               ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
               ~startBlock=0,
-              ~maxOnBlockBufferSize=5000,
               ~chainId,
-              ~knownHeight=0,
+              // A chain that knows no height holds its frontier below its start
+              // block, and the batch has to progress it.
+              ~knownHeight=1,
             ),
           )
           eventBlocks->Array.forEach(
@@ -275,23 +284,28 @@ describe("IndexerState", () => {
                 addresses: TestAddresses.setOf([]),
               }
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
+              let merged = chainBuffer->ChainBuffer.mergePage(
+                TestChainBuffer.pageOf([
+                  Internal.Event({
+                    chainId,
+                    blockNumber,
+                    logIndex: 0,
+                    transactionIndex: 0,
+                    // Carries an `index` so the buffer's dedup key resolves.
+                    onEventRegistration: {"index": 0}->(
+                      Utils.magic: {"index": int} => Internal.onEventRegistration
+                    ),
+                    payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
+                  }),
+                ]),
+                ~reorgThreshold=0,
+                ~reportOnly=true,
+              )
               fetchState :=
                 fetchState.contents->TestFetchState.handleQueryResult(
                   ~query,
                   ~latestFetchedBlock=blockNumber,
-                  ~page=TestEventStore.pageOf([
-                    Internal.Event({
-                      chainId,
-                      blockNumber,
-                      logIndex: 0,
-                      transactionIndex: 0,
-                      // Carries an `index` so the buffer's dedup key resolves.
-                      onEventRegistration: {"index": 0}->(
-                        Utils.magic: {"index": int} => Internal.onEventRegistration
-                      ),
-                      payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
-                    }),
-                  ]),
+                  ~itemsCount=merged.rowsKept,
                 )
             },
           )
@@ -305,11 +319,16 @@ describe("IndexerState", () => {
           ->Array.forEach(
             chainConfig => {
               let mockSource = MockSource.make([], ~chainId=1)
-              let (fetchState, addressStore) = makeFetchState(~chainId=chainConfig.id, ~eventBlocks)
+              let chainBuffer = TestChainBuffer.decodedBuffer(~onEventRegistrations)
+              let (fetchState, addressStore) = makeFetchState(
+                ~chainId=chainConfig.id,
+                ~eventBlocks,
+                ~chainBuffer,
+              )
               let chainState = ChainState.make(
                 ~chainConfig,
                 ~fetchState,
-                ~eventStore=fetchState->TestFetchState.eventStoreOf,
+                ~chainBuffer,
                 ~addressStore,
                 ~sourceManager=SourceManager.make(
                   ~logger=Logger.makeInMemory(),
@@ -336,7 +355,7 @@ describe("IndexerState", () => {
 
         // The batch is created while each chain has fetched up to block 5.
         let state = makeState(~eventBlocks=[5])
-        let batch = state->IndexerState.createBatch(~batchSizeTarget=10000)
+        let batch = await state->IndexerState.createBatch(~batchSizeTarget=10000)
 
         let chainId = config.chainMap->ChainMap.keys->Array.getUnsafe(0)
 
@@ -353,11 +372,8 @@ describe("IndexerState", () => {
           addresses: TestAddresses.setOf([]),
         }
         cs->ChainState.startFetchingQueries(~queries=[concurrentQuery])
-        cs->ChainState.handleQueryResult(
-          ~query=concurrentQuery,
-          ~newRegistrations=[],
-          ~latestFetchedBlock=15,
-          ~page=TestEventStore.pageOf([
+        let (_, merged) = cs->ChainState.mergePage(
+          ~page=TestChainBuffer.pageOf([
             Internal.Event({
               chainId,
               blockNumber: 15,
@@ -372,6 +388,13 @@ describe("IndexerState", () => {
           ]),
           ~knownHeight=cs->ChainState.knownHeight,
         )
+        cs->ChainState.handleQueryResult(
+          ~query=concurrentQuery,
+          ~itemsCount=merged.rowsKept,
+          ~registeringBlockNumbers=merged.registeringBlockNumbers,
+          ~latestFetchedBlock=15,
+          ~knownHeight=cs->ChainState.knownHeight,
+        )
 
         state->IndexerState.applyBatchProgress(~batch)
         let resultCs = state->IndexerState.getChainState(~chainId)
@@ -383,9 +406,9 @@ describe("IndexerState", () => {
         t.expect(
           {
             "committedProgressBlockNumber": resultCs->ChainState.committedProgressBlockNumber,
-            // The concurrent fetch buffered 2 events in the chain's store.
+            // The concurrent fetch buffered 2 events in the chain's buffer.
             "bufferSize": resultCs->ChainState.bufferSize,
-            // The store is the chain's either way, so only the frontier shows
+            // The buffer is the chain's either way, so only the frontier shows
             // whether the post-fetch fetch state was kept: the batch-time
             // snapshot would ask again from block 6.
             "nextQueryFromBlock": {

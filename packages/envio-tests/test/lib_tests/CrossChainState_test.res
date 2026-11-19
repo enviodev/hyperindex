@@ -13,8 +13,25 @@ let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
   payload: "Mock event in CrossChainState test"->(Utils.magic: string => Internal.eventPayload),
 })
 
-// A chain state with no partitions, so bufferBlockNumber is latestOnBlockBlockNumber
-// (the fetch frontier) and every derived value used by the scheduler is set directly.
+// A chain's buffer holding one event per entry of `bufferBlocks`.
+let bufferOf = bufferBlocks => {
+  let buffer = TestChainBuffer.decodedBuffer(~onEventRegistrations=[])
+  let _ =
+    buffer->ChainBuffer.mergePage(
+      TestChainBuffer.pageOf(
+        bufferBlocks->Array.mapWithIndex((blockNumber, logIndex) =>
+          mockEvent(~blockNumber, ~logIndex)
+        ),
+      ),
+      ~reorgThreshold=0,
+      ~reportOnly=true,
+    )
+  buffer
+}
+
+// A chain state with no partitions, so its frontier is the head, held at
+// `frontier` by a contractRegister backlog block right above it, and every
+// derived value used by the scheduler is set directly.
 let makeChainState = (
   ~chainId,
   ~knownHeight,
@@ -23,13 +40,13 @@ let makeChainState = (
   ~bufferBlocks=[],
   ~isProgressAtHead=false,
   ~onEventRegistrations=[],
+  ~committedProgressBlockNumber=-1,
 ) => {
   let addresses = []
   let addressStore = TestAddresses.makeStore(~onEventRegistrations)
   let base = TestFetchState.make(
     ~onNotice=ignore,
-    // An onBlock config (no address partition) satisfies "something to fetch"
-    // while keeping bufferBlockNumber tied to latestOnBlockBlockNumber.
+    // An onBlock config (no address partition) satisfies "something to fetch".
     ~onEventRegistrations,
     ~addressStore,
     ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
@@ -50,25 +67,21 @@ let makeChainState = (
     ~startBlock=0,
     ~endBlock=None,
     ~maxAddrInPartition=3,
-    ~maxOnBlockBufferSize=10000,
     ~chainId,
     ~knownHeight=0,
   )
   let fetchState = {
     ...base,
     knownHeight,
-    latestOnBlockBlockNumber: frontier,
     firstEventBlock: Some(firstEventBlock),
     clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
+    contractRegisterBacklog: frontier < knownHeight ? [frontier + 1] : [],
   }
-  let eventStore = TestEventStore.pageOf(
-    bufferBlocks->Array.mapWithIndex((blockNumber, logIndex) => mockEvent(~blockNumber, ~logIndex)),
-  )
   let mockSource = MockSource.make([], ~chainId=1)
   ChainState.make(
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
-    ~eventStore,
+    ~chainBuffer=bufferOf(bufferBlocks),
     ~onEventRegistrations,
     ~addressStore,
     ~sourceManager=SourceManager.make(
@@ -78,7 +91,7 @@ let makeChainState = (
     ),
     ~maxReorgDepth=200,
     ~shouldRollbackOnReorg=false,
-    ~committedProgressBlockNumber=-1,
+    ~committedProgressBlockNumber,
     ~isProgressAtHead,
     ~logger=Logger.makeInMemory(),
   )
@@ -133,8 +146,6 @@ let makeFetchingChainState = (
     startBlock: 0,
     endBlock,
     normalSelection,
-    latestOnBlockBlockNumber: latestFetchedBlock,
-    maxOnBlockBufferSize: 10000,
     chainId,
     blockLag,
     blockThrottle: 0,
@@ -142,15 +153,13 @@ let makeFetchingChainState = (
     knownHeight,
     firstEventBlock,
     clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
+    contractRegisterBacklog: [],
   }
-  let eventStore = TestEventStore.pageOf(
-    bufferBlocks->Array.mapWithIndex((blockNumber, logIndex) => mockEvent(~blockNumber, ~logIndex)),
-  )
   let mockSource = MockSource.make([], ~chainId=1)
   ChainState.make(
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
-    ~eventStore,
+    ~chainBuffer=bufferOf(bufferBlocks),
     ~addressStore,
     ~sourceManager=SourceManager.make(
       ~logger=Logger.makeInMemory(),
@@ -178,7 +187,6 @@ let emptyBatch: Batch.t = {
   checkpointItemsCount: [],
   checkpointEventsProcessed: [],
   registeredAddresses: [],
-  fieldReads: [],
 }
 
 let makeCrossChainState = (~chainStatesList, ~isRealtime=false, ~targetBufferSize=100) => {
@@ -271,21 +279,23 @@ describe("CrossChainState fetch control", () => {
   })
 
   Async.it("checkAndFetch dispatches every chain that has work, skipping idle ones", async t => {
-    // Chains at head (onBlock-only, frontier == knownHeight) wait for a new
-    // block, so they're dispatched with that action. A chain whose buffer is
-    // already full of ready items (>= targetBufferSize) gets no budget, so it
-    // isn't dispatched.
+    // Chains at head (onBlock-only, frontier == knownHeight, block handlers
+    // processed up to it) wait for a new block, so they're dispatched with that
+    // action. A chain whose buffer is already full of ready items
+    // (>= targetBufferSize) gets no budget, so it isn't dispatched.
     let a = makeChainState(
       ~chainId=1->ChainId.fromInt,
       ~knownHeight=1000,
       ~frontier=1000,
       ~firstEventBlock=0,
+      ~committedProgressBlockNumber=1000,
     )
     let b = makeChainState(
       ~chainId=2->ChainId.fromInt,
       ~knownHeight=1000,
       ~frontier=1000,
       ~firstEventBlock=0,
+      ~committedProgressBlockNumber=1000,
     )
 
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~isRealtime=true)
@@ -484,8 +494,8 @@ describe("CrossChainState fetch control", () => {
       let releasedQuery = releasedQueries->Utils.Array.firstUnsafe
       first->ChainState.handleQueryResult(
         ~query=releasedQuery,
-        ~page=TestEventStore.pageOf([]),
-        ~newRegistrations=[],
+        ~itemsCount=0,
+        ~registeringBlockNumbers=[],
         ~latestFetchedBlock=1000,
         ~knownHeight=1000,
       )
@@ -549,8 +559,6 @@ describe("CrossChainState fetch control", () => {
       startBlock: 0,
       endBlock: Some(20),
       normalSelection,
-      latestOnBlockBlockNumber: 0,
-      maxOnBlockBufferSize: 10000,
       chainId: 1->ChainId.fromInt,
       blockLag: 0,
       blockThrottle: 0,
@@ -558,12 +566,13 @@ describe("CrossChainState fetch control", () => {
       knownHeight: 1000,
       firstEventBlock: Some(0),
       clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-    }->TestFetchState.pair(~eventStore=EventStore.make())
+      contractRegisterBacklog: [],
+    }
     let mockSource1 = MockSource.make([], ~chainId=1)
     let a = ChainState.make(
       ~chainConfig={...baseChainConfig, id: 1->ChainId.fromInt},
       ~fetchState=fetchState1,
-      ~eventStore=fetchState1->TestFetchState.eventStoreOf,
+      ~chainBuffer=bufferOf([]),
       ~addressStore=addressStore1,
       ~sourceManager=SourceManager.make(
         ~logger=Logger.makeInMemory(),
@@ -1112,12 +1121,12 @@ describe("ChainState density from the ready buffer", () => {
       1->ChainId.fromInt,
       (
         {
+          chainId: 1->ChainId.fromInt,
           batchSize: 5,
           progressBlockNumber: 100,
           progressBlockTime: None,
           sourceBlockNumber: 1_000_000,
           totalEventsProcessed: 5.,
-          fetchState: (cs->ChainState.toChainBeforeBatch(~isRealtime=false)).fetchState,
           isProgressAtHeadWhenBatchCreated: false,
         }: Batch.chainAfterBatch
       ),

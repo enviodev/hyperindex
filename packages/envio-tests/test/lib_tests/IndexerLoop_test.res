@@ -24,7 +24,6 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.toExn->throw, 
       ~addressStore,
       ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
       ~startBlock=0,
-      ~maxOnBlockBufferSize=5000,
       ~chainId=chainConfig.id,
       ~knownHeight=0,
     )
@@ -32,7 +31,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.toExn->throw, 
     let chainState = ChainState.make(
       ~chainConfig,
       ~fetchState,
-      ~eventStore=fetchState->TestFetchState.eventStoreOf,
+      ~chainBuffer=TestChainBuffer.decodedBuffer(~onEventRegistrations),
       ~addressStore,
       ~sourceManager=SourceManager.make(
         ~logger=Logger.makeInMemory(),

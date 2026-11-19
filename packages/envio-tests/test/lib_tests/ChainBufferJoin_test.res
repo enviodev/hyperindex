@@ -1,9 +1,9 @@
 open Vitest
 
-// A batch's take plans what each item reads from the chain's stores, and the
-// read gives the items their transactions and blocks. Items enter as simulate
-// items: a payload without a `transaction` or `block` of its own reads them
-// from the stores, one with them keeps its own.
+// A build joins each item to the transaction and block it reads from the
+// chain's buffer. Items enter as simulate items: a payload without a
+// `transaction` or `block` of its own reads them from the buffer, one with them
+// keeps its own.
 let chainId = 987->ChainId.fromInt
 
 let registration = (~index, ~transactionMask=0., ~blockMask=0.) =>
@@ -44,28 +44,18 @@ let makeItem = (
   }->(Utils.magic: {..} => Internal.item)
 }
 
-let takeJoined = async (
-  items,
-  ~registrations,
-  ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Evm),
-  ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm),
-) => {
-  let (taken, readFields) =
-    EventStore.fromJsItems(items)->StoredItems.takeWithFields(
-      items->Array.length,
-      ~context={chainId, onEventRegistrations: registrations, onBlockRegistrations: []},
-      ~fields={transactionStore, blockStore, shouldChecksum: false},
-    )
-  await readFields()
-  taken
-}
+let buildJoined = async (items, ~registrations, ~ecosystem=Ecosystem.Evm) =>
+  await TestChainBuffer.pageOf(items, ~ecosystem)->TestChainBuffer.buildAll(
+    ~buffer=TestChainBuffer.decodedBuffer(~onEventRegistrations=registrations, ~ecosystem),
+    ~context={chainId, onEventRegistrations: registrations, onBlockRegistrations: []},
+  )
 
 let rawTx = (item: Internal.item) =>
   (item->Internal.castUnsafeEventItem).payload->Internal.getPayloadTransaction
 let rawBlock = (item: Internal.item) =>
   (item->Internal.castUnsafeEventItem).payload->Internal.getPayloadBlock
 
-describe("A joined take", () => {
+describe("A build's joins", () => {
   // A transaction run (block and transaction index) and a block run (block
   // alone) can break at different items, so each is grouped on its own.
   Async.it(
@@ -77,7 +67,7 @@ describe("A joined take", () => {
           ((blockNumber, transactionIndex), logIndex) =>
             makeItem(~registration=selecting, ~blockNumber, ~logIndex, ~transactionIndex),
         )
-      let taken = await items->takeJoined(~registrations=[selecting])
+      let taken = await items->buildJoined(~registrations=[selecting])
       let at = Array.getUnsafe(taken, ...)
       t.expect({
         "txSharedAcrossSameTransaction": rawTx(at(0)) === rawTx(at(1)),
@@ -105,7 +95,7 @@ describe("A joined take", () => {
         ~inlineTransaction=%raw(`{"id": "0xfuel"}`),
         ~inlineBlock=%raw(`{"height": 1}`),
       ),
-    ]->takeJoined(~registrations=[selecting])
+    ]->buildJoined(~registrations=[selecting])
     t.expect((rawTx(taken->Array.getUnsafe(0)), rawBlock(taken->Array.getUnsafe(0)))).toEqual((
       %raw(`{"id": "0xfuel"}`),
       %raw(`{"height": 1}`),
@@ -121,7 +111,7 @@ describe("A joined take", () => {
       ->Array.mapWithIndex(
         (blockNumber, logIndex) => makeItem(~registration=selecting, ~blockNumber, ~logIndex),
       )
-      ->takeJoined(~registrations=[selecting])
+      ->buildJoined(~registrations=[selecting])
       t.expect(
         taken->Array.map(
           item =>
@@ -136,9 +126,9 @@ describe("A joined take", () => {
   Async.it("reads an SVM block by its slot", async t => {
     let mask = Svm.eventBlockFieldMask(Utils.Set.fromArray(["slot", "time", "hash"]))
     let selecting = registration(~index=0, ~blockMask=mask)
-    let taken = await [makeItem(~registration=selecting, ~blockNumber=5, ~logIndex=0)]->takeJoined(
+    let taken = await [makeItem(~registration=selecting, ~blockNumber=5, ~logIndex=0)]->buildJoined(
       ~registrations=[selecting],
-      ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Svm),
+      ~ecosystem=Ecosystem.Svm,
     )
     t.expect(
       rawBlock(taken->Array.getUnsafe(0))
@@ -147,13 +137,13 @@ describe("A joined take", () => {
     ).toEqual(Some({"slot": 5}))
   })
 
-  // Store-backed items always get a transaction object, matching the sources
+  // Buffer-backed items always get a transaction object, matching the sources
   // that carry it inline, even when no field of it is selected.
   Async.it("gives each item an empty transaction of its own when none is selected", async t => {
     let plain = registration(~index=0)
     let taken = await [1, 1]
     ->Array.mapWithIndex((_, logIndex) => makeItem(~registration=plain, ~blockNumber=1, ~logIndex))
-    ->takeJoined(~registrations=[plain])
+    ->buildJoined(~registrations=[plain])
     let at = Array.getUnsafe(taken, ...)
     t.expect((rawTx(at(0))->Nullable.toOption, rawTx(at(0)) === rawTx(at(1)))).toEqual((
       Some(%raw(`{}`)),
@@ -161,12 +151,12 @@ describe("A joined take", () => {
     ))
   })
 
-  // A field the store has no value for is left off the object, rather than
+  // A field the buffer has no value for is left off the object, rather than
   // set to `undefined`, as on the inline sources.
-  Async.it("leaves a field the store has no value for off the object", async t => {
+  Async.it("leaves a field the buffer has no value for off the object", async t => {
     let mask = Evm.eventTransactionFieldMask(Utils.Set.fromArray(["hash"]))
     let selecting = registration(~index=0, ~transactionMask=mask)
-    let taken = await [makeItem(~registration=selecting, ~blockNumber=1, ~logIndex=0)]->takeJoined(
+    let taken = await [makeItem(~registration=selecting, ~blockNumber=1, ~logIndex=0)]->buildJoined(
       ~registrations=[selecting],
     )
     t.expect(
@@ -187,7 +177,7 @@ describe("A joined take", () => {
       makeItem(~registration=first, ~blockNumber=1, ~logIndex=0, ~transactionIndex=1),
       makeItem(~registration=second, ~blockNumber=1, ~logIndex=1, ~transactionIndex=1),
       makeItem(~registration=none, ~blockNumber=1, ~logIndex=2, ~transactionIndex=2),
-    ]->takeJoined(~registrations=[first, second, none])
+    ]->buildJoined(~registrations=[first, second, none])
     let at = Array.getUnsafe(taken, ...)
     t.expect({
       "differentMasksSameTxShared": rawTx(at(0)) === rawTx(at(1)),

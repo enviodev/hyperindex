@@ -2,8 +2,6 @@ open Table
 
 module RowAction = {
   type t = SET | DELETE
-  let variants = [SET, DELETE]
-  let schema = S.enum(variants)
 }
 
 // Prefix with envio_ to avoid colleasions
@@ -21,28 +19,6 @@ let unsafeCheckpointIdSchema =
       },
     serializer: bigint => bigint->BigInt.toString,
   })
-
-// `chainIdTag` carries the (column, chain id) of a per-chain entity whose rows
-// all belong to one chain: the column is then a constant of the schema rather
-// than a field read off every entity.
-let makeSetUpdateSchema = (
-  ~idSchema: S.t<EntityId.t>,
-  ~chainIdTag: option<(string, ChainId.t)>=?,
-  entitySchema: S.t<'entity>,
-): S.t<Change.t<'entity>> => {
-  S.object(s => {
-    s.tag(changeFieldName, RowAction.SET)
-    switch chainIdTag {
-    | Some((column, chainId)) => s.tag(column, chainId)
-    | None => ()
-    }
-    Change.Set({
-      checkpointId: s.field(checkpointIdFieldName, unsafeCheckpointIdSchema),
-      entityId: s.field(Table.idFieldName, idSchema),
-      entity: s.flatten(entitySchema),
-    })
-  })
-}
 
 let historyTablePrefix = "envio_history_"
 // `$` can't occur in a GraphQL entity name, so it marks where a truncated name

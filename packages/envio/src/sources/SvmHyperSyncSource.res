@@ -4,45 +4,27 @@ type options = {
   chainId: ChainId.t,
   endpointUrl: string,
   apiToken: option<string>,
-  onEventRegistrations: array<Internal.svmOnEventRegistration>,
-  onBlockRegistrations?: array<Internal.onBlockRegistration>,
   clientTimeoutMillis: int,
-  // The chain's address index; the client reads it while routing.
-  addressStore: AddressStore.t,
+  // The chain's compiled registrations, read by the client while matching.
+  chainBuffer: ChainBuffer.t,
 }
 
-let make = (
-  {
-    chainId,
-    endpointUrl,
-    apiToken,
-    onEventRegistrations,
-    ?onBlockRegistrations,
-    clientTimeoutMillis,
-    addressStore,
-  }: options,
-): t => {
+let make = ({chainId, endpointUrl, apiToken, clientTimeoutMillis, chainBuffer}: options): t => {
   let name = "SvmHyperSync"
-  let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
 
   let apiToken = apiToken->HyperSync.requireApiToken
 
-  // The whole per-(instruction, chain) registration set crosses the boundary
-  // once at construction; the client derives instruction selections, field
-  // selections, Borsh decoders, and the routing index from it.
   let client = SvmHyperSyncClient.make(
     ~url=endpointUrl,
     ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~programs=SvmHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
-    ~onBlockRegistrations,
-    ~addressStore,
+    ~chainBuffer,
   )
 
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
-    ~addressSet,
+    ~addressSet as _,
     ~reorgableFrom,
     ~knownHeight,
     ~partitionId as _,
@@ -60,14 +42,10 @@ let make = (
       toSlot: selection->FetchState.sourceToBlock(~toBlock, ~knownHeight),
       onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
       onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
-      clientFilteredContracts: selection.clientFilteredContracts,
       ?reorgableFrom,
     }
 
-    let (resp, transactionStore, blockStore, items) = try await client.getItems(
-      ~query,
-      ~addressSet,
-    ) catch {
+    let (resp, page) = try await client.getItems(~query) catch {
     | exn =>
       // A rate limit or a replica behind the head is recoverable and has its own
       // backoff and failover, so it must not be buried in a generic retry.
@@ -97,12 +75,8 @@ let make = (
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     {
-      items,
-      // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
-      transactionStore: Some(transactionStore),
-      // Raw blocks kept in Rust; materialised onto the payload at batch prep.
-      // Their (slot, blockhash) pairs also drive reorg detection on merge.
-      blockStore,
+      // Its slots' (slot, blockhash) pairs also drive reorg detection on merge.
+      page,
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, pageFetchTime},
       knownHeight,

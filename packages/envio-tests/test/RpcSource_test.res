@@ -28,21 +28,20 @@ let makeSource = (
   ~addressStore=TestAddresses.makeStore(),
   ~syncConfig=EvmChain.getSyncConfig({}),
   ~lowercaseAddresses=false,
-  ~stores=?,
+  ~chainBuffer=TestChainBuffer.forChain(
+    ~onEventRegistrations,
+    ~addressStore,
+    ~shouldChecksum=!lowercaseAddresses,
+  ),
 ) => {
-  let (blockStore, transactionStore) = stores->Option.getOr(RpcSourcePins.makeStores())
   RpcSource.make({
     url,
     chainId,
-    onEventRegistrations,
     sourceFor: Sync,
     syncConfig,
-    lowercaseAddresses,
-    addressStore,
-    blockStore,
-    transactionStore,
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
+    chainBuffer,
   })
 }
 
@@ -142,7 +141,8 @@ describe("RpcSource - field selection end to end", () => {
     ~blockFieldNames=[],
     ~transactionFieldNames=[],
     ~lowercaseAddresses=true,
-    ~stores=?,
+    // One buffer across calls, as one chain's partitions share it.
+    ~buffer=ref(None),
   ) => {
     let registration = {
       ...EventRegistration.evmOnEventRegistration(
@@ -162,13 +162,25 @@ describe("RpcSource - field selection end to end", () => {
         },
       ],
     )
-    let (blockStore, transactionStore) = stores->Option.getOr(RpcSourcePins.makeStores())
+    // The spelling is the chain's, read where the buffer builds items —
+    // which is `ChainState.shouldChecksum` in production.
+    let chainBuffer = switch buffer.contents {
+    | Some(chainBuffer) => chainBuffer
+    | None =>
+      let chainBuffer = RpcSourcePins.makeBuffer(
+        ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
+        ~addressStore,
+        ~shouldChecksum=!lowercaseAddresses,
+      )
+      buffer := Some(chainBuffer)
+      chainBuffer
+    }
     let source = makeSource(
       ~url=mock.url,
       ~onEventRegistrations=[registration],
       ~addressStore,
       ~lowercaseAddresses,
-      ~stores=(blockStore, transactionStore),
+      ~chainBuffer,
     )
     let response = await source.getItemsOrThrow(
       ~reorgableFrom=None,
@@ -187,13 +199,9 @@ describe("RpcSource - field selection end to end", () => {
       ~retry=0,
       ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource field selection"}),
     )
-    // The spelling is the chain's, read where the stores are materialised —
-    // which is `ChainState.shouldChecksum` in production.
     let items = await response->RpcSourcePins.applyPage(
-      ~blockStore,
-      ~transactionStore,
+      ~buffer=chainBuffer,
       ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
-      ~shouldChecksum=!lowercaseAddresses,
     )
     items->Array.map(item =>
       switch item {
@@ -561,16 +569,16 @@ describe("RpcSource - field selection end to end", () => {
     ])
   })
 
-  // The reason the source consults the chain's stores at all: partitions are
+  // The reason the source consults the chain's buffer at all: partitions are
   // address slices, not range slices, so several of them scan the same blocks.
-  Async.it("Does not re-read a block or transaction the stores already cover", async t => {
-    let stores = RpcSourcePins.makeStores()
+  Async.it("Does not re-read a block or transaction the buffer already covers", async t => {
+    let buffer = ref(None)
     let first = await startProvider()
     let _ = await fetchPayloads(
       ~mock=first,
       ~blockFieldNames=[GasUsed],
       ~transactionFieldNames=[Gas],
-      ~stores,
+      ~buffer,
     )
     let firstCounts = (
       first->countMethod("eth_getBlockByNumber"),
@@ -578,13 +586,13 @@ describe("RpcSource - field selection end to end", () => {
     )
     first.close()
 
-    // A second partition over the same range, against the same stores.
+    // A second partition over the same range, against the same buffer.
     let second = await startProvider()
     let payloads = await fetchPayloads(
       ~mock=second,
       ~blockFieldNames=[GasUsed],
       ~transactionFieldNames=[Gas],
-      ~stores,
+      ~buffer,
     )
     let secondCounts = (
       second->countMethod("eth_getBlockByNumber"),
@@ -596,7 +604,7 @@ describe("RpcSource - field selection end to end", () => {
       (1, 1),
       // The block is at the head, so it is checked and still read fresh — it
       // is this range's reorg observation — but the transaction is served
-      // from the store.
+      // from the buffer.
       (1, 0),
       [Some({"gas": 21000n}->Obj.magic)],
     ))
@@ -605,13 +613,13 @@ describe("RpcSource - field selection end to end", () => {
   Async.it("Does not re-read a field whose value came back null", async t => {
     // `to` is null on a contract creation. Judged by stored values alone the
     // row would look unfetched and be requested again on every later page.
-    let stores = RpcSourcePins.makeStores()
+    let buffer = ref(None)
     let first = await startProvider()
-    let _ = await fetchPayloads(~mock=first, ~transactionFieldNames=[To], ~stores)
+    let _ = await fetchPayloads(~mock=first, ~transactionFieldNames=[To], ~buffer)
     first.close()
 
     let second = await startProvider()
-    let payloads = await fetchPayloads(~mock=second, ~transactionFieldNames=[To], ~stores)
+    let payloads = await fetchPayloads(~mock=second, ~transactionFieldNames=[To], ~buffer)
     let reread = second->countMethod("eth_getTransactionByHash")
     second.close()
 
@@ -1002,30 +1010,28 @@ describe("RpcSource - builds partition log selections end to end", () => {
         `address=null;topics=[["${sighash4}"],["${addressTopic}"]]`,
       ]->Array.toSorted(String.compare)
 
-    t.expect((filters, page.items->EventStore.length, page.latestFetchedBlockNumber)).toEqual((
-      expectedFilters,
-      0,
-      100,
-    ))
+    t.expect((
+      filters,
+      page.page->TestChainBuffer.pageRowCount,
+      page.latestFetchedBlockNumber,
+    )).toEqual((expectedFilters, 0, 100))
   })
 })
 
 describe("RpcSource - height subscription", () => {
   let makeSource = (~url, ~ws=?, ~pollingInterval=10) => {
-    let (blockStore, transactionStore) = RpcSourcePins.makeStores()
     RpcSource.make({
       url,
       chainId,
-      onEventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({pollingInterval: pollingInterval}),
-      lowercaseAddresses: false,
-      addressStore: TestAddresses.makeStore(),
-      blockStore,
-      transactionStore,
       ?ws,
       maxAddressesPerRequest: Env.maxAddrInPartition,
       logger: Logger.makeInMemory(),
+      chainBuffer: TestChainBuffer.forChain(
+        ~onEventRegistrations=[],
+        ~addressStore=TestAddresses.makeStore(),
+      ),
     })
   }
 

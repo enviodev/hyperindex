@@ -29,7 +29,7 @@ type t = {
 let calculateTargetBufferSize = () =>
   switch Env.targetBufferSize {
   | Some(size) => size
-  | None => 200_000
+  | None => 300_000
   }
 
 let make = (
@@ -148,7 +148,7 @@ let createBatch = (
   ~config: Config.t,
   ~frontier,
   ~batchSizeTarget: int,
-): Batch.t => {
+): promise<Batch.t> => {
   Batch.make(
     ~sequence=config.checkpointSequence,
     ~history=config->HistoryPolicy.decide(~shouldSaveHistory=crossChainState->shouldSaveHistory),
@@ -159,6 +159,22 @@ let createBatch = (
     ~batchSizeTarget,
   )
 }
+
+// Builds ahead the items of the chain the next batch starts with, for the
+// whole target, while the current batch runs.
+let prebuildNextBatch = (crossChainState: t, ~batchSizeTarget) =>
+  switch crossChainState.chainStates
+  ->Dict.valuesToArray
+  ->FetchState.sortForBatch(
+    ~fetchStateOf=ChainState.fetchStateOf,
+    ~bufferOf=ChainState.chainBuffer,
+    ~processingBlockNumberOf=ChainState.processingBlockNumber,
+    ~batchSizeTarget,
+  )
+  ->Array.get(0) {
+  | Some(chainState) => chainState->ChainState.prebuildItems(~targetItems=batchSizeTarget)
+  | None => ()
+  }
 
 // Enter the reorg threshold: shrink each chain's buffer by its configured
 // blockLag and flip the flag.

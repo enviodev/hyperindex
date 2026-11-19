@@ -11,11 +11,13 @@ use super::borsh_decoder::{parse_defined_types, ArgsSchema};
 use super::fields;
 use super::mod_helpers::hex_to_bytes;
 use super::types::required;
-use crate::address_store::{Emitter, StoreInner};
+use crate::address_store::StoreInner;
+use crate::chain_buffer::svm::InstructionView;
 use crate::config_parsing::human_config::svm::ArgDef;
 use crate::hex::to_hex;
+use crate::registration_start_block::has_started;
 
-/// One instruction call with the fields routing and item building read, lifted
+/// One instruction call with the fields matching and item building read, lifted
 /// out of the client's all-`Option` row once per instruction: base58 is
 /// rendered here rather than at every account comparison. Discriminator
 /// prefixes are sliced from `data` so the query does not fetch `d1`–`d8`.
@@ -69,12 +71,12 @@ pub struct SvmAccountFilterInput {
 }
 
 /// One `onInstruction`/`contractRegister` binding of a config instruction on a
-/// chain: the handler-specific routing state and what the fetch state queries
+/// chain: the handler-specific matching state and what the fetch state queries
 /// are built from.
 #[napi(object)]
 #[derive(Clone)]
 pub struct SvmOnEventRegistrationInput {
-    /// Chain-scoped sequential registration index; returned on every routed
+    /// Chain-scoped sequential registration index; returned on every matched
     /// item so JS resolves the registration by array index.
     pub index: i64,
     pub is_wildcard: bool,
@@ -121,7 +123,7 @@ pub struct SvmProgramInput {
     /// The config's program name.
     pub name: String,
     /// Base58 program id. Empty means the config carries no real program
-    /// (placeholder); such a program is never fetched or routed.
+    /// (placeholder); such a program is never fetched or matched.
     pub program_id: String,
     /// Program-level nominal-type registry (`BTreeMap<String, ArgType>` JSON).
     pub defined_types_json: Option<String>,
@@ -201,39 +203,28 @@ impl Registration {
         })
     }
 
-    /// Whether an instruction belongs to this registration, discriminator
-    /// aside: at or after the registration's own start block, an allowed
-    /// owner, the `isInner` constraint, and the registration's account filters
-    /// — the filters are re-applied here so an instruction fetched for a
-    /// sibling selection can't leak into a registration whose own filter
-    /// rejects it.
-    ///
-    /// Owner rules mirror EVM's: a wildcard registration accepts any program
-    /// address; a program-bound one needs the address to be in this partition's
-    /// set for its own contract (or, when the contract is client-filtered, only
-    /// in the store) and registered at or before the instruction's slot.
-    fn matches_scope(
+    /// Whether an instruction of `instruction` belongs to this registration,
+    /// discriminator aside: at or after the registration's own start block,
+    /// an emitting program the store holds for the contract at that slot
+    /// (any program for a wildcard), the `isInner` constraint, and the
+    /// registration's account filters.
+    pub(crate) fn matches_scope(
         &self,
         instruction: &Instruction,
-        instr: &InstructionCall,
-        address: &Emitter,
-        force_wildcard: bool,
+        call: &InstructionView,
         store: &StoreInner,
     ) -> bool {
-        address.matches_registration(
-            store,
-            instruction.contract_idx,
-            self.is_wildcard,
-            self.start_block,
-            force_wildcard,
-        ) && self
-            .is_inner
-            .is_none_or(|is_inner| is_inner == instr.is_inner)
+        let slot = call.slot as i64;
+        has_started(self.start_block, slot)
+            && (self.is_wildcard
+                || store.is_indexed_at(call.program_id.as_bytes(), instruction.contract_idx, slot))
+            && self
+                .is_inner
+                .is_none_or(|is_inner| is_inner == call.is_inner)
             && (self.account_filters.is_empty()
                 || self.account_filters.iter().any(|group| {
                     group.iter().all(|(position, values)| {
-                        instr
-                            .account_arguments
+                        call.accounts
                             .get(*position)
                             .is_some_and(|account| values.contains(account))
                     })
@@ -243,7 +234,6 @@ impl Registration {
 
 /// One config instruction of a program.
 pub(crate) struct Instruction {
-    pub contract_name: String,
     /// This program in the chain's address store, resolved once at
     /// construction so the per-instruction gate is an index compare.
     pub contract_idx: u32,
@@ -257,11 +247,11 @@ pub(crate) struct Instruction {
 }
 
 impl Instruction {
-    fn matches(&self, instr: &InstructionCall) -> bool {
-        self.program_id == instr.executing_account && instr.data.starts_with(&self.prefix)
+    pub(crate) fn matches(&self, call: &InstructionView) -> bool {
+        self.program_id == call.program_id && call.data.starts_with(&self.prefix)
     }
 
-    /// The longest `dN` the wire can filter on inside the prefix. Routing
+    /// The longest `dN` the wire can filter on inside the prefix. Matching
     /// compares the whole prefix, so a longer or odd-length prefix over-fetches
     /// by at most the bytes the wire cannot see.
     fn wire_prefix(&self) -> &[u8] {
@@ -349,10 +339,10 @@ pub(crate) struct BuiltSelection {
     pub account_activity_columns: Vec<&'static str>,
     /// Empty iff no registration selected any log field.
     pub log_columns: Vec<&'static str>,
-    /// Always at least the routing + always-on payload columns.
+    /// Always at least the matching + always-on payload columns.
     pub instruction_columns: Vec<&'static str>,
     /// The instructions the selection's registrations belong to, each with
-    /// those registrations, for routing.
+    /// those registrations, for matching.
     pub instructions: Vec<SelectedInstruction>,
 }
 
@@ -422,7 +412,6 @@ impl SelectionBuilder {
                     );
                 }
                 instructions.push(Arc::new(Instruction {
-                    contract_name: program.name.clone(),
                     contract_idx,
                     program_id: program.program_id.clone(),
                     prefix,
@@ -434,6 +423,13 @@ impl SelectionBuilder {
             instructions,
             registrations,
         })
+    }
+
+    /// Every registration's index, ascending.
+    pub(crate) fn registration_indexes(&self) -> Vec<i64> {
+        let mut indexes: Vec<i64> = self.registrations.keys().copied().collect();
+        indexes.sort_unstable();
+        indexes
     }
 
     pub(crate) fn build(&self, registration_indexes: &[i64]) -> Result<BuiltSelection> {
@@ -527,33 +523,6 @@ impl SelectionBuilder {
             instructions,
         })
     }
-}
-
-/// Routes an instruction call to every selected instruction whose prefix it
-/// carries — a program-wide one alongside a keyed one, or a 1-byte family
-/// alongside its 2-byte member — and within each to the registrations whose
-/// scope accepts it. Instructions no registration accepted are omitted.
-pub(crate) fn route_instruction<'a>(
-    instructions: &'a [SelectedInstruction],
-    instr: &InstructionCall,
-    address: &Emitter,
-    client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
-    store: &StoreInner,
-) -> Vec<(&'a Arc<Instruction>, Vec<&'a Arc<Registration>>)> {
-    instructions
-        .iter()
-        .filter(|selected| selected.instruction.matches(instr))
-        .filter_map(|selected| {
-            let instruction = &selected.instruction;
-            let force_wildcard = client_filtered.applies(&instruction.contract_name);
-            let registrations: Vec<&Arc<Registration>> = selected
-                .registrations
-                .iter()
-                .filter(|reg| reg.matches_scope(instruction, instr, address, force_wildcard, store))
-                .collect();
-            (!registrations.is_empty()).then_some((instruction, registrations))
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -679,28 +648,35 @@ mod tests {
 
     fn route_indexes(
         store: &AddressStore,
-        set: &AddressSet,
+        _set: &AddressSet,
         built: &BuiltSelection,
         instr: &InstructionCall,
     ) -> Vec<i64> {
         let address_store = store.handle();
         let address_store = address_store.read().unwrap();
-        let key = instr.executing_account.as_bytes();
-        let address = Emitter {
-            key,
-            owners: set.cache().owners_of(key),
-            block: instr.slot as i64,
+        let view = InstructionView {
+            slot: instr.slot,
+            transaction_index: instr.transaction_index,
+            path: 0,
+            program_id: &instr.executing_account,
+            accounts: instr.account_arguments.clone(),
+            data: &instr.data,
+            is_inner: instr.is_inner,
+            logs: None,
         };
-        route_instruction(
-            &built.instructions,
-            instr,
-            &address,
-            &Default::default(),
-            &address_store,
-        )
-        .iter()
-        .flat_map(|(_, registrations)| registrations.iter().map(|reg| reg.index))
-        .collect()
+        built
+            .instructions
+            .iter()
+            .filter(|selected| selected.instruction.matches(&view))
+            .flat_map(|selected| {
+                selected
+                    .registrations
+                    .iter()
+                    .filter(|reg| reg.matches_scope(&selected.instruction, &view, &address_store))
+                    .map(|reg| reg.index)
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     }
 
     type DnView = (Vec<String>, Vec<String>, Vec<String>, Vec<String>);
@@ -752,7 +728,7 @@ mod tests {
     }
 
     // Serum v3 dispatches on a version byte plus a 4-byte tag. The wire can
-    // filter on the first four of those five bytes; routing checks all five.
+    // filter on the first four of those five bytes; matching checks all five.
     #[test]
     fn a_prefix_the_wire_cannot_express_filters_on_its_longest_dn_and_routes_on_all_of_it() {
         let (store, set, built) =
@@ -1040,11 +1016,13 @@ mod tests {
             depends_on_addresses: true,
         }])
         .unwrap();
-        store.register_seed(vec![crate::address_store::AddressRegistration {
-            address: PROG_A.to_string(),
-            contract_name: "Owned".to_string(),
-            registration_block: 70,
-        }]);
+        store
+            .register_batch(vec![crate::address_store::AddressRegistration {
+                address: PROG_A.to_string(),
+                contract_name: "Owned".to_string(),
+                registration_block: 70,
+            }])
+            .unwrap();
         let set = set_of(&store, &["Owned"]);
         let built = SelectionBuilder::from_programs(
             std::slice::from_ref(&owned),

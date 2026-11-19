@@ -419,6 +419,9 @@ describe("FetchState query budget over the indexer loop", () => {
     },
   )
 
+  // A response is applied the moment it lands and the next fetch tick follows
+  // it, so the partition answering first probes before the other has answered:
+  // from the cold chain's slice, the other from what is left once it answers.
   let respondInOrder = (~denseFirst) =>
     async (
       ~t: Vitest.testContext,
@@ -444,14 +447,15 @@ describe("FetchState query budget over the indexer loop", () => {
         {partitionId: "0", fromBlock: 11, reply: LeavePending},
         {partitionId: "1", fromBlock: 11, reply: LeavePending},
       ])
+      let (first, second) = denseFirst ? ("0", "1") : ("1", "0")
       t.expect(mock->takeNewQueries(~indexer, ~seen=[])).toEqual([
-        probe(~partitionId="1", ~fromBlock=11, ~reservedItems=10_000),
-        probe(~partitionId="0", ~fromBlock=11, ~reservedItems=89_000),
+        probe(~partitionId=first, ~fromBlock=11, ~reservedItems=10_000),
+        probe(~partitionId=second, ~fromBlock=11, ~reservedItems=89_000),
       ])
     }
 
   scenario->Scenario.it(
-    "issues the same next queries when the dense partition's response lands first",
+    "probes from the cold slice for the response landing first, dense first",
     ~sources,
     ~maxAddrInPartition=1,
     ~targetBufferSize=100_000,
@@ -459,7 +463,7 @@ describe("FetchState query budget over the indexer loop", () => {
   )
 
   scenario->Scenario.it(
-    "issues the same next queries when the dense partition's response lands last",
+    "probes from the cold slice for the response landing first, dense last",
     ~sources,
     ~maxAddrInPartition=1,
     ~targetBufferSize=100_000,

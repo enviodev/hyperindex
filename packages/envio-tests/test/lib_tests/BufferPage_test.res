@@ -22,8 +22,8 @@ let eventWithPayload = (payload: dict<unknown>): Internal.item => Internal.Event
   payload: payload->(Utils.magic: dict<unknown> => Internal.eventPayload),
 })
 
-describe("EventStore.fromJsItems", () => {
-  it("keeps every kind of value a simulated payload holds", t => {
+describe("BufferPage.fromItems", () => {
+  Async.it("keeps every kind of value a simulated payload holds", async t => {
     let payload = dict{
       "zero": 0n->(Utils.magic: bigint => unknown),
       "negative": -5n->(Utils.magic: bigint => unknown),
@@ -37,13 +37,15 @@ describe("EventStore.fromJsItems", () => {
       "absent": %raw(`undefined`),
       "text": "0xabc"->(Utils.magic: string => unknown),
     }
-    let taken =
-      TestEventStore.pageOf([eventWithPayload(payload->Dict.copy)])->TestEventStore.takeAll(
-        ~context,
-      )
+    let taken = await TestChainBuffer.pageOf([
+      eventWithPayload(payload->Dict.copy),
+    ])->TestChainBuffer.buildAll(
+      ~buffer=TestChainBuffer.decodedBuffer(~onEventRegistrations=[registration]),
+      ~context,
+    )
 
     // A payload without its own transaction and block reads them from the
-    // chain's stores; with no field selected, each is an empty object.
+    // chain's buffer; with no field selected, each is an empty object.
     payload->Dict.set("transaction", %raw(`{}`))
     payload->Dict.set("block", %raw(`{}`))
     t.expect(taken).toEqual([eventWithPayload(payload)])
@@ -53,8 +55,8 @@ describe("EventStore.fromJsItems", () => {
     let withDate = dict{"at": Date.fromTime(0.)->(Utils.magic: Date.t => unknown)}
 
     t->toThrowErrorEqual(
-      () => TestEventStore.pageOf([eventWithPayload(withDate)]),
-      "a class instance (an object whose prototype isn't Object.prototype, such as a Date or Map) can't be stored as a JS value tape on JsItemInput.item",
+      () => TestChainBuffer.pageOf([eventWithPayload(withDate)]),
+      "a class instance (an object whose prototype isn't Object.prototype, such as a Date or Map) can't be stored as a JS value tape on DecodedEventInput.item",
     )
   })
 
@@ -66,8 +68,8 @@ describe("EventStore.fromJsItems", () => {
     }
 
     t->toThrowErrorEqual(
-      () => TestEventStore.pageOf([eventWithPayload(tooWide)]),
-      "a bigint wider than 256 bits can't be stored as a JS value tape on JsItemInput.item",
+      () => TestChainBuffer.pageOf([eventWithPayload(tooWide)]),
+      "a bigint wider than 256 bits can't be stored as a JS value tape on DecodedEventInput.item",
     )
   })
 })

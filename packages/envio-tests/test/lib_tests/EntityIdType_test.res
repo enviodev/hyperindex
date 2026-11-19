@@ -1,58 +1,5 @@
 open Vitest
 
-// A numeric-id entity referenced by a foreign key. The referenced entity's id
-// type (BigInt here) must flow to the foreign key column, and every id-typed
-// SQL statement must cast to the id column's Postgres type rather than text.
-let bigParentTable = Table.mkTable(
-  "BigParent",
-  ~fields=[Table.mkField("id", BigInt({}), ~isPrimaryKey=true, ~fieldSchema=Utils.BigInt.schema)],
-)
-
-let numericIdTable = Table.mkTable(
-  "NumericId",
-  ~fields=[
-    Table.mkField("id", Int32, ~isPrimaryKey=true, ~fieldSchema=S.int),
-    Table.mkField("value", String, ~fieldSchema=S.string),
-    // Foreign key to BigParent: adopts BigParent's BigInt id type, stored as
-    // the `parent_id` column.
-    Table.mkField(
-      "parent",
-      BigInt({}),
-      ~linkedEntity="BigParent",
-      ~fieldSchema=Utils.BigInt.schema,
-    ),
-  ],
-)
-
-describe("Non-string entity id support", () => {
-  it("serializes a history set update keeping the numeric id value", t => {
-    let entitySchema = S.object(
-      s =>
-        {
-          "id": s.field("id", S.int),
-          "value": s.field("value", S.string),
-        },
-    )->(Utils.magic: S.t<{"id": int, "value": string}> => S.t<Internal.entity>)
-
-    let setUpdateSchema = EntityHistory.makeSetUpdateSchema(
-      ~idSchema=numericIdTable->Table.getIdSchema,
-      entitySchema,
-    )
-
-    let json = Change.Set({
-      entityId: 123->EntityId.unsafeOfAny,
-      entity: {"id": 123, "value": "x"}->(
-        Utils.magic: {"id": int, "value": string} => Internal.entity
-      ),
-      checkpointId: 5n,
-    })->S.reverseConvertToJsonOrThrow(setUpdateSchema)
-
-    t.expect(json).toEqual(
-      %raw(`{"id": 123, "value": "x", "envio_checkpoint_id": "5", "envio_change": "SET"}`),
-    )
-  })
-})
-
 // End-to-end coverage through the in-process test indexer + Postgres: a schema
 // with Int!/BigInt! ids and foreign keys referencing them, driven by a real
 // handler, must round-trip the numeric values and delete by numeric id.

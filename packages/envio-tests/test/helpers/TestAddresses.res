@@ -139,7 +139,7 @@ let realSetOf = (store: AddressStore.t, wanted: array<Address.t>) => {
       acc->AddressSet.merge(store->AddressStore.makeSet(~contractName))
     )
   all
-  ->AddressSet.addressesForTest
+  ->AddressSet.addresses
   ->Array.reduceWithIndex(store->AddressStore.emptySet, (acc, address, idx) =>
     wanted->Array.includes(address)
       ? acc->AddressSet.merge(all->AddressSet.slice(~offset=idx, ~limit=Some(1)))
@@ -171,7 +171,7 @@ function makeFakeSet(unordered) {
   // Enumerable, so vitest compares two of these by the addresses they hold.
   var set = {addressList: entries.map(function (e) { return e.address })};
   var methods = {
-    addressesForTest: function () { return set.addressList },
+    addresses: function () { return set.addressList },
     size: function () { return entries.length },
     contractNames: function () {
       var names = [];

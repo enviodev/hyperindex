@@ -74,13 +74,17 @@ type rec t = {
   getBatchWritePromise: unit => promise<unit>,
   getRollbackReadyPromise: unit => promise<unit>,
   waitUntilIdle: unit => promise<unit>,
+  // A contractRegister run is in flight: its handlers run off the clock, and
+  // the registrations it makes reach fetching only once it ends.
+  isRegisteringContracts: unit => bool,
+  // A reorg rollback is under way: no chain dispatches a query until it ends.
+  isResolvingReorg: unit => bool,
   // Moves a virtual-time run's clock forward, firing every source timer due
   // on the way. Only a run on virtual time has a clock to move.
   advanceTime: int => promise<unit>,
   waitUntilReady: unit => promise<unit>,
   query: 'entity. string => promise<array<'entity>>,
   queryHistory: 'entity. string => promise<array<Change.t<'entity>>>,
-  queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
   // `envio_addresses` isn't an entity, so it has a read path of its own. The
   // stored key is rendered back here, the only place a test needs a string.
   queryAddresses: unit => promise<array<addressRow>>,
@@ -560,10 +564,17 @@ let run = async (
         let changes = items->S.parseOrThrow(
           S.array(
             S.union([
-              EntityHistory.makeSetUpdateSchema(
-                ~idSchema=entityConfig.table->Table.getIdSchema,
-                entityConfig->storedRowSchema,
-              ),
+              S.object((s): Change.t<Internal.entity> => {
+                s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.SET)
+                Change.Set({
+                  checkpointId: s.field(
+                    EntityHistory.checkpointIdFieldName,
+                    EntityHistory.unsafeCheckpointIdSchema,
+                  ),
+                  entityId: s.field(Table.idFieldName, entityConfig.table->Table.getIdSchema),
+                  entity: s.flatten(entityConfig->storedRowSchema),
+                })
+              }),
               S.object((s): Change.t<Internal.entity> => {
                 s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
                 Delete({
@@ -613,6 +624,7 @@ let run = async (
     // wait below adds what else it needs settled.
     let isQuiet = () =>
       !(state->IndexerState.isProcessing) &&
+      !(state->IndexerState.isRegisteringContracts) &&
       state->IndexerState.writeFiber->Option.isNone &&
       storageCallsInFlight.contents === 0
 
@@ -686,6 +698,8 @@ let run = async (
         })
       },
       waitUntilIdle,
+      isRegisteringContracts: () => state->IndexerState.isRegisteringContracts,
+      isResolvingReorg: () => state->IndexerState.isResolvingReorg,
       advanceTime: millis =>
         switch clock {
         | Some(clock) =>
@@ -761,8 +775,6 @@ let run = async (
         queryEntity(config->entityConfigByName(name))->(
           Utils.magic: promise<array<unknown>> => promise<array<entity>>
         ),
-      queryRaw: (type entity, entityConfig: Internal.entityConfig) =>
-        queryEntity(entityConfig)->(Utils.magic: promise<array<unknown>> => promise<array<entity>>),
       queryAddresses: async () => {
         let rows =
           (

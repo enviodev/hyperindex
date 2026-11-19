@@ -2,14 +2,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use napi::bindgen_prelude::Uint8Array;
 use napi_derive::napi;
 
 mod borsh_decoder;
 mod config;
 mod fields;
 mod query;
-mod selection;
+pub(crate) mod selection;
 mod transaction_counts;
 pub(crate) mod types;
 
@@ -26,45 +25,17 @@ use hypersync_client_solana::RateLimitInfo;
 use hypersync_solana_net_types::field_selection::SolanaFieldSelection;
 use hypersync_solana_net_types::query::SolanaQuery;
 
-use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
-use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
-use crate::block_store::{BlockStore, SvmBlockField, SvmTransactionCounts};
-use crate::event_store::{EventStore, Row, RowData};
-use crate::js_value::JsTape;
+use crate::chain_buffer::matching_svm::SvmMatcher;
+use crate::chain_buffer::page::{Page, PageData};
+use crate::chain_buffer::svm::{
+    push_block, push_instruction, push_transaction, InstructionRow, InstructionView, SvmBlockField,
+    SvmTransactionCounts,
+};
+use crate::chain_buffer::{ChainBuffer, Ecosystem, Shared, SvmRegistrations};
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
-use crate::transaction_store::TransactionStore;
 use config::SvmClientConfig;
 use query::SvmQuery;
-use selection::{route_instruction, SelectionBuilder, SvmProgramInput};
-
-/// Move the response's transactions and account activity into a
-/// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept in Rust so
-/// only the config-selected fields are materialised at batch prep; many
-/// instructions in one transaction collapse to a single stored row, and account
-/// activity lands in the store's companion table joined back by key at
-/// materialisation.
-///
-/// `keys` restricts what is stored to the transactions routed items reference;
-/// `None` stores the whole response (the raw `get` query, which builds no
-/// items).
-fn build_svm_store(
-    mut transactions: Vec<simple::Transaction>,
-    mut account_activity: Vec<simple::AccountActivity>,
-    keys: Option<&HashSet<(u64, u32)>>,
-) -> TransactionStore {
-    if let Some(keys) = keys {
-        let referenced = |slot: Option<u64>, index: Option<u32>| {
-            slot.zip(index).is_some_and(|key| keys.contains(&key))
-        };
-        transactions.retain(|tx| referenced(tx.slot, tx.transaction_index));
-        account_activity.retain(|row| referenced(row.slot, row.transaction_index));
-    }
-    let store = TransactionStore::new_svm();
-    store.insert_svm_txs(transactions);
-    store.insert_svm_account_activity(account_activity);
-    store
-}
 
 /// The marker the client leaves in the error chain on a 429. It exposes no
 /// typed variant for a rate limit — the 429 is folded into an `anyhow` context
@@ -142,11 +113,10 @@ impl SvmHyperSyncClient {
 #[napi]
 pub struct SvmHyperSyncClient {
     inner: Arc<hypersync_client_solana::Client>,
-    selection_builder: SelectionBuilder,
-    /// The chain's address index, shared with the fetch state. Read by the
-    /// per-instruction owner gate.
-    address_store: Arc<std::sync::RwLock<StoreInner>>,
-    block_registrations: BlockRegistrations,
+    chain: Arc<Shared>,
+    /// The chain's registrations, matched against what a query returns so a
+    /// page keeps only the instructions some registration takes.
+    svm: Arc<SvmRegistrations>,
 }
 
 #[napi]
@@ -155,25 +125,17 @@ impl SvmHyperSyncClient {
     pub fn from_config(
         cfg: SvmClientConfig,
         user_agent: String,
-        programs: Vec<SvmProgramInput>,
-        block_registrations: Vec<OnBlockRegistrationInput>,
-        address_store: &AddressStore,
+        buffer: &ChainBuffer,
     ) -> napi::Result<SvmHyperSyncClient> {
-        let handle = address_store.handle();
-        let selection_builder = {
-            let store = handle.read().unwrap();
-            SelectionBuilder::from_programs(&programs, &store)
-                .context("build selection builder")
-                .map_err(map_err)?
-        };
+        let chain = buffer.shared();
+        let svm = chain.svm().map_err(map_err)?;
         let inner = hypersync_client_solana::Client::new_with_agent(cfg.into(), user_agent)
             .context("build solana client")
             .map_err(map_err)?;
         Ok(SvmHyperSyncClient {
             inner: Arc::new(inner),
-            selection_builder,
-            address_store: handle,
-            block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
+            chain,
+            svm,
         })
     }
 
@@ -185,26 +147,25 @@ impl SvmHyperSyncClient {
             .map_err(map_err)
     }
 
-    /// Fetch the inclusive range spanning `block_numbers` into one response
-    /// store. Each advancing cursor proves its half-open range was processed;
-    /// missing block rows inside that coverage are skipped slots.
+    /// Fetch the inclusive range spanning `block_numbers` into one page. Each
+    /// advancing cursor proves its half-open range was processed; missing
+    /// block rows inside that coverage are skipped slots.
     #[napi]
     pub async fn get_block_hashes(
         &self,
         block_numbers: Vec<i64>,
-    ) -> napi::Result<(BlockStore, Vec<RequestStat>)> {
+    ) -> napi::Result<(Page, Vec<RequestStat>)> {
         let fields = query::FieldSelection {
             block: Some(vec!["slot".to_string(), "blockhash".to_string()]),
             ..Default::default()
         };
-        let aggregate = BlockStore::new_svm();
+        let aggregate = Page::from_data(PageData::new(Ecosystem::Svm));
         let request_stats = paginate_block_hashes(
             &block_numbers,
             &aggregate,
             "slot numbers",
             |request_from, to_slot_exclusive| {
                 let fields = fields.clone();
-                let aggregate = &aggregate;
                 async move {
                     let query = SvmQuery {
                         from_slot: request_from,
@@ -214,7 +175,7 @@ impl SvmHyperSyncClient {
                         ..Default::default()
                     };
                     let response = self.get_raw(query).await?;
-                    let (next, last_returned, store) =
+                    let (next, last_returned, mut page) =
                         block_hash_page(response).map_err(map_err)?;
                     // Each advancing cursor proves its half-open range was
                     // processed; block rows missing inside it are skipped slots.
@@ -222,14 +183,12 @@ impl SvmHyperSyncClient {
                     // the paginator, which reports it as a source behind the
                     // head rather than a malformed coverage range.
                     if next > request_from {
-                        aggregate
-                            .mark_svm_coverage(request_from, next.min(to_slot_exclusive))
-                            .map_err(map_err)?;
+                        page.add_covered(request_from as u64, next.min(to_slot_exclusive) as u64);
                     }
                     Ok(HashPage {
                         next,
                         last_returned,
-                        store,
+                        page,
                     })
                 }
             },
@@ -237,25 +196,25 @@ impl SvmHyperSyncClient {
         .await?;
         Ok((aggregate, request_stats))
     }
+
     #[napi]
-    pub async fn get_items(
-        &self,
-        params: ItemsQuery,
-        address_set: &AddressSet,
-    ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore, EventStore)> {
+    pub async fn get_items(&self, params: ItemsQuery) -> napi::Result<(ItemsResponse, Page)> {
         let built = self
-            .selection_builder
+            .svm
+            .selection
             .build(&params.on_event_registration_indexes)
             .map_err(map_err)?;
         let selects_instructions = !params.on_event_registration_indexes.is_empty();
         let block_query = self
-            .block_registrations
+            .chain
+            .schedule
             .plan(
                 &params.on_block_registration_indexes,
                 params.from_slot,
                 params.to_slot,
                 !selects_instructions,
                 params.reorgable_from,
+                |_, _| false,
             )
             .map_err(map_err)?;
         let block_selection = &block_query.selection;
@@ -264,9 +223,7 @@ impl SvmHyperSyncClient {
                 ItemsResponse {
                     next_slot: next_slot as i64,
                 },
-                TransactionStore::new_svm(),
-                BlockStore::new_svm(),
-                EventStore::empty(),
+                Page::from_data(PageData::new(Ecosystem::Svm)),
             ));
         }
         let from_slot = block_query.from_block;
@@ -278,7 +235,7 @@ impl SvmHyperSyncClient {
         let mut field_selection = SolanaFieldSelection {
             block: parse_columns(&block_columns).map_err(map_err)?,
             // Instructions are exempt from merge-mode "empty = no rows", so an
-            // empty list would fetch every column. Spell the routing set.
+            // empty list would fetch every column. Spell the matching set.
             instruction_call: parse_columns(&built.instruction_columns).map_err(map_err)?,
             ..Default::default()
         };
@@ -349,96 +306,24 @@ impl SvmHyperSyncClient {
             return Err(source_behind_head_err(params.from_slot));
         }
 
-        let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
-            params.client_filtered_contracts.unwrap_or_default(),
-        );
-        // Materialise the set's cache before taking the store guard: `cache()`
-        // lazily initialises by reading the same lock, and a writer queued
-        // between the two reads would deadlock the pair.
-        let set_cache = address_set.cache().clone();
-        // Route before filling the stores: an instruction that routes nowhere
-        // keeps neither its transaction nor its block.
-        let items = {
-            let store = self.address_store.read().unwrap();
-            build_event_items(
-                &resp.instruction_calls,
-                std::mem::take(&mut resp.logs),
+        let handler_slots = block_selection.blocks_run_on(from_slot..resp.next_slot);
+        let matcher = &self.svm.matcher;
+        let page = tokio::task::block_in_place(|| {
+            build_page(
+                &mut resp,
                 &built,
-                &set_cache,
-                &client_filtered,
-                &store,
+                matcher,
+                &handler_slots,
+                transaction_counts.as_ref(),
             )
-            .map_err(map_err)?
-        };
-
-        let referenced_transactions: HashSet<(u64, u32)> = items
-            .iter()
-            .filter_map(|item| {
-                Some((
-                    u64::try_from(item.slot).ok()?,
-                    u32::try_from(item.transaction_index).ok()?,
-                ))
-            })
-            .collect();
-        let mut referenced_slots: HashSet<u64> = referenced_transactions
-            .iter()
-            .map(|(slot, _)| *slot)
-            .collect();
-        // `include_all_blocks` returns every block of the covered range, so a
-        // slot missing from it was skipped and produced none.
-        let returned_slots: HashSet<u64> =
-            resp.blocks.iter().filter_map(|block| block.slot).collect();
-        let block_items: Vec<BlockItem> = block_selection
-            .route(from_slot..resp.next_slot)
-            .into_iter()
-            .map(|item| BlockItem {
-                skipped: !returned_slots.contains(&(item.block_number as u64)),
-                ..item
-            })
-            .collect();
-        referenced_slots.extend(
-            block_items
-                .iter()
-                .filter(|item| !item.skipped)
-                .map(|item| item.block_number as u64),
-        );
-
-        let store = build_svm_store(
-            std::mem::take(&mut resp.transactions),
-            std::mem::take(&mut resp.account_activity),
-            Some(&referenced_transactions),
-        );
-        let block_store = take_blocks(&mut resp, Some(&referenced_slots)).map_err(map_err)?;
-        if let Some(transaction_counts) = transaction_counts {
-            // A block the response holds no transaction of stored none.
-            let mut counts: Vec<(u64, SvmTransactionCounts)> = block_items
-                .iter()
-                .filter(|item| !item.skipped)
-                .map(|item| {
-                    let slot = item.block_number as u64;
-                    (
-                        slot,
-                        transaction_counts.get(&slot).copied().unwrap_or_default(),
-                    )
-                })
-                .collect();
-            counts.dedup_by_key(|(slot, _)| *slot);
-            block_store.insert_svm_transaction_counts(&counts);
-        }
-
+        })
+        .map_err(map_err)?;
         let response = ItemsResponse {
             next_slot: i64::try_from(block_query.fetched_until(resp.next_slot))
                 .context("next_slot overflow")
                 .map_err(map_err)?,
         };
-        let page = EventStore::from_rows(
-            items
-                .into_iter()
-                .map(EventItem::into_row)
-                .chain(block_items.into_iter().map(BlockItem::into_row))
-                .collect(),
-        );
-        Ok((response, store, block_store, page))
+        Ok((response, Page::from_data(page)))
     }
 }
 
@@ -451,8 +336,8 @@ struct CountedPage {
 
 /// Convert only the values needed by the block-hash paginator: the advancing
 /// cursor, the highest returned slot (the next page's overlap anchor), and the
-/// page store.
-fn block_hash_page(mut response: simple::SolanaResponse) -> Result<(i64, Option<i64>, BlockStore)> {
+/// page.
+fn block_hash_page(response: simple::SolanaResponse) -> Result<(i64, Option<i64>, PageData)> {
     let next_slot = i64::try_from(response.next_slot).context("convert next_slot")?;
     let last_slot = response
         .blocks
@@ -461,15 +346,18 @@ fn block_hash_page(mut response: simple::SolanaResponse) -> Result<(i64, Option<
         .try_fold(None, |acc: Option<i64>, slot| {
             slot.map(|s| Some(acc.map_or(s, |a: i64| a.max(s))))
         })?;
-    let block_store = BlockStore::new_svm();
-    block_store.insert_svm_blocks(std::mem::take(&mut response.blocks));
-    Ok((next_slot, last_slot, block_store))
+    let mut page = PageData::new(Ecosystem::Svm);
+    let mut rows = page.blocks.builder();
+    for block in &response.blocks {
+        push_block(&mut rows, block, None);
+    }
+    page.add_blocks(rows.finish());
+    Ok((next_slot, last_slot, page))
 }
 
 /// The whole per-query input for `get_items`: the slot range and what it
-/// selects from each table. The partition's addresses arrive separately, as the
-/// `AddressSet` handle. Instruction selections, field selection, and routing
-/// are all derived internally from the registrations passed at construction.
+/// selects from each table. Instruction selections and field selection are
+/// derived internally from the registrations passed at construction.
 #[napi(object)]
 pub struct ItemsQuery {
     pub from_slot: i64,
@@ -480,10 +368,6 @@ pub struct ItemsQuery {
     pub on_event_registration_indexes: Vec<i64>,
     /// The slot handlers selecting blocks, by index.
     pub on_block_registration_indexes: Vec<i64>,
-    /// Program names to fetch address-free even though their registrations
-    /// depend on addresses (client-side filtering). Absent or empty means every
-    /// address-dependent program is filtered server-side.
-    pub client_filtered_contracts: Option<Vec<String>>,
     /// Slots at or above this one can still be reorged on the chain. A
     /// page reaching them must link to the page before it for reorg
     /// detection, so it reads every slot of its range. Absent when the whole
@@ -491,218 +375,178 @@ pub struct ItemsQuery {
     pub reorgable_from: Option<i64>,
 }
 
-#[derive(Clone)]
-pub struct LogItem {
-    pub kind: Option<String>,
-    pub message: Option<String>,
-}
-
-/// One routed instruction. Its parent transaction and block are read from the
-/// per-chain stores when a batch takes it.
-pub struct EventItem {
-    /// The registration this instruction routed to, as passed to the client
-    /// constructor.
-    pub on_event_registration_index: i64,
-    pub slot: i64,
-    pub transaction_index: i64,
-    pub path: Vec<i64>,
-    pub program_id: String,
-    pub accounts: Vec<String>,
-    /// Raw instruction data; decoded params ride on `args` when the
-    /// registration selected them.
-    pub data: Uint8Array,
-    pub is_inner: bool,
-    /// Borsh-decoded args (wide integers as bigint); `Some` exactly when the
-    /// routed registration selected `args`. An
-    /// instruction its layout rejects never becomes an item at all.
-    pub args: Option<JsTape>,
-    /// Logs scoped to this instruction; `Some` only when the routed
-    /// registration selected `fields.log`.
-    pub logs: Option<Vec<LogItem>>,
-}
-
-impl EventItem {
-    /// The store row of this instruction, read back as the record
-    /// `SvmHyperSyncClient.Items.item` describes.
-    fn into_row(self) -> Row {
-        let logs = self.logs.map(|logs| {
-            let mut tape = JsTape::new();
-            tape.arr(logs.len());
-            for log in logs {
-                tape.obj(2);
-                tape.key("kind");
-                match &log.kind {
-                    Some(kind) => tape.str(kind),
-                    None => tape.undefined(),
-                }
-                tape.key("message");
-                match &log.message {
-                    Some(message) => tape.str(message),
-                    None => tape.undefined(),
-                }
-            }
-            tape
-        });
-        Row::event(
-            self.slot,
-            self.transaction_index,
-            Some(self.path),
-            self.on_event_registration_index,
-            RowData::SvmInstruction {
-                program_id: self.program_id,
-                accounts: self.accounts,
-                data: self.data.to_vec(),
-                is_inner: self.is_inner,
-                args: self.args,
-                logs,
-            },
-        )
-    }
-}
-
-/// What a page covered. Its items are in the `EventStore` returned beside it.
+/// What a page covered. Its rows are in the `Page` returned beside it.
 #[napi(object, object_from_js = false)]
 pub struct ItemsResponse {
     pub next_slot: i64,
 }
 
-fn project_logs(logs: &[LogItem], columns: &[&str]) -> Vec<LogItem> {
-    let want_kind = columns.contains(&"kind");
-    let want_message = columns.contains(&"message");
-    logs.iter()
-        .map(|log| LogItem {
-            kind: want_kind.then(|| log.kind.clone()).flatten(),
-            message: want_message.then(|| log.message.clone()).flatten(),
-        })
-        .collect()
-}
+type CallKey = (u64, u32, Vec<u32>);
 
-/// Fans each committed instruction call out to every selected instruction
-/// whose prefix it carries, and within each to the registrations it routes
-/// to. Logs group per (slot, transactionIndex, path) and attach only to items
-/// whose registration selected `fields.log`; logs without an instruction
-/// address attach to no instruction (rare; usually only system messages).
-/// Borsh decoding runs once per matched instruction from that instruction's
-/// declared layout. A layout that rejects the data drops every registration
-/// of that instruction for the call.
-fn build_event_items(
-    instruction_calls: &[simple::InstructionCall],
-    logs: Vec<simple::Log>,
+/// Builds the page: the instructions some registration matches now, the
+/// transactions they belong to with the accounts those touched, and the
+/// blocks of the range. A slot a kept instruction or a block handler reads
+/// keeps every field fetched; any other keeps slot, hash and time — the hash
+/// backs reorg detection, and the time tells a slot that produced a block
+/// from one the chain skipped. The program logs of a kept instruction ride
+/// on its row.
+fn build_page(
+    resp: &mut simple::SolanaResponse,
     built: &selection::BuiltSelection,
-    set_cache: &SetCache,
-    client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
-    address_store: &StoreInner,
-) -> Result<Vec<EventItem>> {
-    let mut logs_by_key: HashMap<(u64, u32, Vec<u32>), Vec<LogItem>> = HashMap::new();
-    if !built.log_columns.is_empty() {
-        for log in logs {
-            let (Some(slot), Some(transaction_index), Some(instruction_address)) =
+    matcher: &SvmMatcher,
+    handler_slots: &[u64],
+    transaction_counts: Option<&HashMap<u64, SvmTransactionCounts>>,
+) -> Result<PageData> {
+    let mut page = PageData::new(Ecosystem::Svm);
+    let reads_logs = !built.log_columns.is_empty();
+    let mut logs_by_call: HashMap<CallKey, Vec<(String, String)>> = HashMap::new();
+    if reads_logs {
+        for log in std::mem::take(&mut resp.logs) {
+            // Logs without an instruction address attach to no instruction.
+            let (Some(slot), Some(transaction_index), Some(path)) =
                 (log.slot, log.transaction_index, log.instruction_address)
             else {
                 continue;
             };
-            logs_by_key
-                .entry((slot, transaction_index, instruction_address))
+            logs_by_call
+                .entry((slot, transaction_index, path))
                 .or_default()
-                .push(LogItem {
-                    kind: Some(
-                        log.kind
-                            .map(|kind| kind.as_str().to_string())
-                            .unwrap_or_default(),
-                    ),
-                    message: Some(log.message.unwrap_or_default()),
-                });
+                .push((
+                    log.kind
+                        .map(|kind| kind.as_str().to_string())
+                        .unwrap_or_default(),
+                    log.message.unwrap_or_default(),
+                ));
         }
     }
 
-    let mut items: Vec<EventItem> = Vec::with_capacity(instruction_calls.len());
-    for raw in instruction_calls {
-        let instr = &selection::InstructionCall::try_from(raw)?;
-        // The query filters on `tx_success`, so a failed transaction's
-        // instructions shouldn't arrive at all; the guard keeps a store that
-        // ignores the predicate from leaking rolled-back state changes into a
-        // handler.
-        if !instr.tx_success {
-            continue;
-        }
-        let slot = i64::try_from(instr.slot).context("instruction.slot overflow")?;
-        let program_key = instr.executing_account.as_bytes();
-        let address = Emitter {
-            key: program_key,
-            owners: set_cache.owners_of(program_key),
-            block: slot,
-        };
-        let routed = route_instruction(
-            &built.instructions,
-            instr,
-            &address,
-            client_filtered,
-            address_store,
-        );
-        if routed.is_empty() {
-            continue;
-        }
-        // An instruction no log attaches to still gets an empty list: a
-        // registration that selected `fields.log` must always see an array.
-        let logs = if routed
-            .iter()
-            .flat_map(|(_, registrations)| registrations)
-            .any(|reg| !reg.log_columns.is_empty())
-        {
-            Some(
-                logs_by_key
+    let mut referenced_transactions: HashSet<(u64, u32)> = HashSet::new();
+    let mut registering_slots = Vec::new();
+    let mut rows = page.events.builder();
+    {
+        let store = matcher.read_store();
+        for raw in &resp.instruction_calls {
+            let call = selection::InstructionCall::try_from(raw)?;
+            // The query filters on `tx_success`, so a failed transaction's
+            // instructions shouldn't arrive at all; the guard keeps a store
+            // that ignores the predicate from leaking rolled-back state changes
+            // into a handler.
+            if !call.tx_success {
+                continue;
+            }
+            let view = InstructionView {
+                slot: call.slot,
+                transaction_index: call.transaction_index,
+                path: 0,
+                program_id: &call.executing_account,
+                accounts: call.account_arguments.clone(),
+                data: &call.data,
+                is_inner: call.is_inner,
+                logs: None,
+            };
+            let found = matcher.classify(&view, &store);
+            if !found.kept {
+                continue;
+            }
+            if found.registers {
+                registering_slots.push(call.slot);
+            }
+            referenced_transactions.insert((call.slot, call.transaction_index));
+            let logs = reads_logs.then(|| {
+                logs_by_call
                     .get(&(
-                        instr.slot,
-                        instr.transaction_index,
-                        instr.instruction_address.clone(),
+                        call.slot,
+                        call.transaction_index,
+                        call.instruction_address.clone(),
                     ))
                     .cloned()
-                    .unwrap_or_default(),
-            )
-        } else {
-            None
-        };
-        let fanned_out_from = items.len();
-        for (instruction, registrations) in routed {
-            let decoded = match instruction.args.as_ref() {
-                None => None,
-                Some(schema) => match schema.decode(&instr.data) {
-                    Some(args) => Some(args),
-                    // This layout rejected the data, so there is nothing
-                    // truthful to hand its handlers. Another instruction
-                    // matching the same call decodes on its own.
-                    None => continue,
+                    .unwrap_or_default()
+            });
+            push_instruction(
+                &mut rows,
+                &InstructionRow {
+                    slot: call.slot,
+                    transaction_index: call.transaction_index,
+                    path: &call.instruction_address,
+                    program_id: &call.executing_account,
+                    accounts: raw
+                        .account_arguments
+                        .is_some()
+                        .then_some(call.account_arguments.as_slice()),
+                    data: &call.data,
+                    is_inner: call.is_inner,
+                    logs: logs.as_deref(),
                 },
-            };
-            for reg in registrations {
-                items.push(EventItem {
-                    on_event_registration_index: reg.index,
-                    slot,
-                    transaction_index: i64::from(instr.transaction_index),
-                    path: instr
-                        .instruction_address
-                        .iter()
-                        .map(|&v| i64::from(v))
-                        .collect(),
-                    program_id: instr.executing_account.clone(),
-                    accounts: instr.account_arguments.clone(),
-                    data: instr.data.clone().into(),
-                    is_inner: instr.is_inner,
-                    args: decoded.as_ref().filter(|_| reg.selects_args).cloned(),
-                    logs: if !reg.log_columns.is_empty() {
-                        logs.as_deref()
-                            .map(|logs| project_logs(logs, &reg.log_columns))
-                    } else {
-                        None
-                    },
-                });
+            )?;
+        }
+    }
+    page.add_events(rows.finish());
+    page.add_registering_blocks(registering_slots);
+
+    let reads_activity = !built.account_activity_columns.is_empty();
+    let mut activities: HashMap<(u64, u32), Vec<&simple::AccountActivity>> = HashMap::new();
+    for row in &resp.account_activity {
+        if let (Some(slot), Some(index), Some(_)) = (row.slot, row.transaction_index, row.account) {
+            if referenced_transactions.contains(&(slot, index)) {
+                activities.entry((slot, index)).or_default().push(row);
             }
         }
-        // Item order within a call follows registration index whatever
-        // instruction each registration hangs off.
-        items[fanned_out_from..].sort_by_key(|item| item.on_event_registration_index);
     }
-    Ok(items)
+    let mut kept: HashSet<(u64, u32)> = HashSet::new();
+    let mut rows = page.transactions.builder();
+    for transaction in &resp.transactions {
+        let (Some(slot), Some(index)) = (transaction.slot, transaction.transaction_index) else {
+            continue;
+        };
+        if !referenced_transactions.contains(&(slot, index)) || !kept.insert((slot, index)) {
+            continue;
+        }
+        let touched = reads_activity.then(|| activities.remove(&(slot, index)).unwrap_or_default());
+        push_transaction(&mut rows, transaction, touched.as_deref())?;
+    }
+    // Account activity of a transaction the query read no other field of
+    // still needs a row to ride on.
+    for ((slot, index), touched) in activities {
+        if kept.contains(&(slot, index)) {
+            continue;
+        }
+        let bare = simple::Transaction {
+            slot: Some(slot),
+            transaction_index: Some(index),
+            ..Default::default()
+        };
+        push_transaction(&mut rows, &bare, Some(&touched))?;
+    }
+    page.add_transactions(rows.finish());
+
+    let mut referenced_slots: HashSet<u64> = referenced_transactions
+        .iter()
+        .map(|(slot, _)| *slot)
+        .collect();
+    referenced_slots.extend(handler_slots.iter().copied());
+    let mut rows = page.blocks.builder();
+    for block in &resp.blocks {
+        let slot = types::required(block.slot, "block.slot")?;
+        types::required(block.blockhash.as_ref(), "block.blockhash")?;
+        if referenced_slots.contains(&slot) {
+            // A handler counting transactions reads the slot's tally; a block
+            // the response holds no transaction of stored none.
+            let counts = transaction_counts
+                .filter(|_| handler_slots.binary_search(&slot).is_ok())
+                .map(|counts| counts.get(&slot).copied().unwrap_or_default());
+            push_block(&mut rows, block, counts);
+        } else {
+            let observed = simple::Block {
+                slot: block.slot,
+                blockhash: block.blockhash,
+                block_time: block.block_time,
+                ..Default::default()
+            };
+            push_block(&mut rows, &observed, None);
+        }
+    }
+    page.add_blocks(rows.finish());
+    Ok(page)
 }
 
 fn parse_columns<F>(columns: &[&str]) -> Result<Vec<F>>
@@ -718,46 +562,6 @@ where
         .collect()
 }
 
-/// Take the raw blocks out of the response, build the lean per-slot header
-/// from a borrow, then move the owned raw blocks into the store — avoiding a
-/// full raw-`Block` clone per block. slot/time/hash decode from the store like
-/// any other field, so every block an item reads needs a store entry.
-///
-/// `slots` restricts what is stored to the slots routed items reference;
-/// `None` stores every block (the raw `get` query, which builds no items).
-/// Every returned block must carry its slot and hash either way: reorg
-/// detection reads them whether an item landed there or not.
-fn take_blocks(
-    resp: &mut simple::SolanaResponse,
-    slots: Option<&HashSet<u64>>,
-) -> Result<BlockStore> {
-    let mut raw_blocks = std::mem::take(&mut resp.blocks);
-    for block in &raw_blocks {
-        types::required(block.slot, "block.slot")?;
-        types::required(block.blockhash.as_ref(), "block.blockhash")?;
-    }
-    if let Some(slots) = slots {
-        // Slots whose instructions were all dropped by client-side routing, and
-        // slots `include_all_blocks` returned that carried no instruction at
-        // all, keep slot, hash and time: the hash backs reorg detection, and
-        // the time is what tells a slot that produced a block apart from one
-        // the chain skipped.
-        for b in raw_blocks.iter_mut() {
-            if !b.slot.is_some_and(|slot| slots.contains(&slot)) {
-                *b = simple::Block {
-                    slot: b.slot,
-                    blockhash: b.blockhash.take(),
-                    block_time: b.block_time,
-                    ..Default::default()
-                };
-            }
-        }
-    }
-    let block_store = BlockStore::new_svm();
-    block_store.insert_svm_blocks(raw_blocks);
-    Ok(block_store)
-}
-
 pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {
     napi::Error::from_reason(format!("{:?}", e))
 }
@@ -765,49 +569,18 @@ pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::address_store::test_support::{set_of, svm_store};
+    use crate::address_store::test_support::svm_store;
+    use crate::address_store::AddressStore;
+    use crate::chain_buffer::matching::ContractRegisters;
+    use crate::chain_buffer::svm::{block_columns, transaction_columns, SvmTxField};
+    use crate::chain_buffer::table::make_key;
+    use crate::chain_buffer::walk::Item;
+    use crate::chain_buffer::{ChainBuffer, ChainBufferConfig};
     use crate::js_value::test_value::JsValue;
-    use query::{InstructionSelection, SvmQuery};
+    use query::InstructionSelection;
+    use selection::SvmProgramInput;
 
     const TOKEN_METADATA_PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
-
-    /// A real 32-byte base58 hash; the client's newtype rejects anything else.
-    const BLOCK_HASH: &str = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
-
-    /// A slot no routed instruction referenced still has to reach the store
-    /// with its time: that is how a slot that produced a block is told apart
-    /// from one the chain skipped, which has no time of its own.
-    #[test]
-    fn take_blocks_keeps_the_time_of_an_unreferenced_slot() {
-        let mut resp = simple::SolanaResponse {
-            blocks: vec![
-                simple::Block {
-                    slot: Some(42),
-                    blockhash: Some(BLOCK_HASH.parse().expect("hash")),
-                    block_time: Some(4200),
-                    ..Default::default()
-                },
-                simple::Block {
-                    slot: Some(43),
-                    blockhash: Some(BLOCK_HASH.parse().expect("hash")),
-                    block_time: Some(4300),
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        };
-        let referenced: HashSet<u64> = [42].into_iter().collect();
-
-        let store = take_blocks(&mut resp, Some(&referenced)).expect("take blocks");
-
-        assert_eq!(
-            (
-                store.get_timestamp(42, false),
-                store.get_timestamp(43, false)
-            ),
-            (Some(4200), Some(4300))
-        );
-    }
 
     /// Live test against `solana.hypersync.xyz`. Run with:
     ///     cargo test -p envio --lib svm_hypersync_source::tests -- --ignored --nocapture
@@ -820,9 +593,20 @@ mod tests {
                 ..Default::default()
             },
             "hyperindex-test".into(),
-            vec![],
-            vec![],
-            &svm_store(&[]),
+            &ChainBuffer::make(
+                crate::chain_buffer::ChainBufferConfig {
+                    registrations: crate::chain_buffer::RegistrationsInput::Svm {
+                        programs: vec![],
+                    },
+                    should_checksum: false,
+                    contract_register_indexes: vec![],
+                    block_handlers: vec![],
+                    transaction_masks: vec![],
+                    event_block_masks: vec![],
+                },
+                &svm_store(&[]),
+            )
+            .expect("build buffer"),
         )
         .expect("build client");
 
@@ -964,53 +748,66 @@ mod tests {
         }
     }
 
-    /// The store and set a real query carries: `TokenMetadata` (and `Other`,
-    /// when a test names it) holding the program id.
-    fn fixture(contract_names: &[&str]) -> (AddressStore, AddressSet) {
-        let entries: Vec<(&str, &[&str])> = contract_names
-            .iter()
-            .map(|name| {
-                let addresses: &[&str] = if *name == "TokenMetadata" {
+    /// A store holding the program id for `TokenMetadata`; every other named
+    /// program exists without addresses.
+    fn store_of(programs: &[SvmProgramInput]) -> AddressStore {
+        let mut entries: Vec<(&str, &[&str])> = Vec::new();
+        for program in programs {
+            if !entries.iter().any(|(name, _)| *name == program.name) {
+                let addresses: &[&str] = if program.name == "TokenMetadata" {
                     &[TOKEN_METADATA_PROGRAM]
                 } else {
                     &[]
                 };
-                (*name, addresses)
-            })
-            .collect();
-        let store = svm_store(&entries);
-        let set = set_of(&store, contract_names);
-        (store, set)
+                entries.push((program.name.as_str(), addresses));
+            }
+        }
+        svm_store(&entries)
     }
 
-    fn build(
+    /// The page a response becomes for a query selecting every registration.
+    fn page_of(
         store: &AddressStore,
         programs: &[SvmProgramInput],
-        indexes: &[i64],
-    ) -> selection::BuiltSelection {
-        SelectionBuilder::from_programs(programs, &store.handle().read().unwrap())
-            .unwrap()
-            .build(indexes)
-            .unwrap()
+        response: &mut simple::SolanaResponse,
+    ) -> PageData {
+        let builder =
+            selection::SelectionBuilder::from_programs(programs, &store.handle().read().unwrap())
+                .unwrap();
+        let built = builder.build(&builder.registration_indexes()).unwrap();
+        let matcher = SvmMatcher::new(&builder, ContractRegisters::default(), store).unwrap();
+        build_page(response, &built, &matcher, &[], None).unwrap()
     }
 
-    fn route(
-        store: &AddressStore,
-        set: &AddressSet,
-        instructions: &[simple::InstructionCall],
+    /// The items a response builds once its page is in a chain's buffer.
+    fn items_of(
+        programs: &[SvmProgramInput],
+        instructions: Vec<simple::InstructionCall>,
         logs: Vec<simple::Log>,
-        built: &selection::BuiltSelection,
-    ) -> Result<Vec<EventItem>> {
-        let address_store = store.handle();
-        let address_store = address_store.read().unwrap();
-        build_event_items(
-            instructions,
+    ) -> Vec<Item> {
+        let store = store_of(programs);
+        let mut response = simple::SolanaResponse {
+            instruction_calls: instructions,
             logs,
-            built,
-            set.cache(),
-            &Default::default(),
-            &address_store,
+            ..Default::default()
+        };
+        let page = page_of(&store, programs, &mut response);
+        let buffer = ChainBuffer::make(
+            ChainBufferConfig {
+                registrations: crate::chain_buffer::RegistrationsInput::Svm {
+                    programs: programs.to_vec(),
+                },
+                should_checksum: false,
+                contract_register_indexes: vec![],
+                block_handlers: vec![],
+                transaction_masks: vec![],
+                event_block_masks: vec![],
+            },
+            &store,
         )
+        .unwrap();
+        buffer.merge_page(&Page::from_data(page), 0, false);
+        buffer.build_items_for_test(0, 1000)
     }
 
     fn committed_instruction(data: &[u8]) -> simple::InstructionCall {
@@ -1027,14 +824,34 @@ mod tests {
         }
     }
 
-    fn decoded_args(items: &[EventItem]) -> Vec<(i64, Option<JsValue>)> {
+    /// `(transaction index, registration, args)` of each instruction item.
+    fn decoded_args(items: &[Item]) -> Vec<(u32, u32, Option<JsValue>)> {
         items
             .iter()
-            .map(|item| {
-                (
-                    item.on_event_registration_index,
-                    item.args.as_ref().map(JsValue::of),
-                )
+            .map(|item| match item {
+                Item::Svm {
+                    transaction_index,
+                    registration,
+                    args,
+                    ..
+                } => (
+                    *transaction_index,
+                    *registration,
+                    args.as_ref().map(JsValue::of),
+                ),
+                _ => panic!("expected an instruction item"),
+            })
+            .collect()
+    }
+
+    fn logs_of(items: &[Item]) -> Vec<(u32, Option<JsValue>)> {
+        items
+            .iter()
+            .map(|item| match item {
+                Item::Svm {
+                    registration, logs, ..
+                } => (*registration, logs.as_ref().map(JsValue::of)),
+                _ => panic!("expected an instruction item"),
             })
             .collect()
     }
@@ -1045,158 +862,81 @@ mod tests {
 
     const AMOUNT: &str = r#"[{"name":"amount","type":"u64"}]"#;
 
+    fn log(kind: Option<simple::LogKind>, message: &str, path: Option<Vec<u32>>) -> simple::Log {
+        simple::Log {
+            slot: Some(42),
+            transaction_index: Some(7),
+            instruction_address: path,
+            kind,
+            message: Some(message.to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn log_value(kind: Option<&str>, message: Option<&str>) -> JsValue {
+        JsValue::obj([
+            ("kind", kind.map_or(JsValue::Undefined, JsValue::str)),
+            ("message", message.map_or(JsValue::Undefined, JsValue::str)),
+        ])
+    }
+
     #[test]
     fn instructions_of_failed_transactions_are_dropped() {
-        let (store, set) = fixture(&["TokenMetadata"]);
-        let built = build(
-            &store,
-            &[program("TokenMetadata", vec![keyed(0, "0x21", false)])],
-            &[0],
-        );
         let committed = committed_instruction(&[0x21]);
         let mut uncommitted = committed_instruction(&[0x21]);
         uncommitted.tx_success = Some(false);
         uncommitted.transaction_index = Some(8);
-        let items = route(&store, &set, &[committed, uncommitted], vec![], &built).unwrap();
-        assert_eq!(
-            items
-                .iter()
-                .map(|i| (
-                    i.on_event_registration_index,
-                    i.transaction_index,
-                    i.data.to_vec()
-                ))
-                .collect::<Vec<_>>(),
-            vec![(0, 7, vec![0x21])]
+        let items = items_of(
+            &[program("TokenMetadata", vec![keyed(0, "0x21", false)])],
+            vec![committed, uncommitted],
+            vec![],
         );
+        assert_eq!(decoded_args(&items), vec![(7, 0, None)]);
     }
-
-    /// `(on_event_registration_index, logs as (kind, message))`
-    type RegistrationLogs = (i64, Option<Vec<(Option<String>, Option<String>)>>);
 
     #[test]
     fn logs_attach_only_to_opted_in_registrations() {
         // Two registrations fan out from the same instruction; only the
-        // `fields.log` one carries the instruction-scoped log.
-        let (store, set) = fixture(&["TokenMetadata", "Other"]);
-        let built = build(
-            &store,
+        // `fields.log` one carries the instruction-scoped log. A log without
+        // an instruction address attaches to no instruction.
+        let items = items_of(
             &[
                 program("TokenMetadata", vec![keyed(0, "0x21", true)]),
                 program("Other", vec![keyed(1, "0x21", false)]),
             ],
-            &[0, 1],
+            vec![committed_instruction(&[0x21])],
+            vec![
+                log(Some(simple::LogKind::Data), "hello", Some(vec![1])),
+                log(None, "unscoped", None),
+            ],
         );
-        let instr = committed_instruction(&[0x21]);
-        let log = simple::Log {
-            slot: Some(42),
-            transaction_index: Some(7),
-            instruction_address: Some(vec![1]),
-            kind: Some(simple::LogKind::Data),
-            message: Some("hello".to_string()),
-            ..Default::default()
-        };
-        let unscoped_log = simple::Log {
-            slot: Some(42),
-            transaction_index: Some(7),
-            instruction_address: None,
-            ..Default::default()
-        };
-        let items = route(&store, &set, &[instr], vec![log, unscoped_log], &built).unwrap();
-        let views: Vec<RegistrationLogs> = items
-            .iter()
-            .map(|i| {
-                (
-                    i.on_event_registration_index,
-                    i.logs.as_ref().map(|logs| {
-                        logs.iter()
-                            .map(|l| (l.kind.clone(), l.message.clone()))
-                            .collect()
-                    }),
-                )
-            })
-            .collect();
         assert_eq!(
-            views,
+            logs_of(&items),
             vec![
                 (
                     0,
-                    Some(vec![(Some("data".to_string()), Some("hello".to_string()))])
+                    Some(JsValue::Arr(vec![log_value(Some("data"), Some("hello"))]))
                 ),
                 (1, None),
             ]
         );
     }
 
-    // Ignored: this is the standing reproduction of a gap that is still open -
-    // there is no fix to assert yet, and the only key left to join on
-    // (program_id) attaches a log to every invocation of that program in the
-    // transaction, which is a semantic call the payload spec has to make.
-    #[test]
-    #[ignore = "logs of a null-instruction_address range never reach the instruction"]
-    fn logs_without_an_instruction_address_still_reach_the_instruction() {
-        // SQD/RPC-ingested ranges - which is what the head of Solana is served
-        // from - return log rows with a null `instruction_address`, so the
-        // (slot, transactionIndex, path) key matches nothing and the handler
-        // gets no logs at all. Verified against solana.hypersync.xyz: at slot
-        // ~441_370_000 not one log row carries the column.
-        let (store, set) = fixture(&["TokenMetadata"]);
-        let built = build(
-            &store,
-            &[program("TokenMetadata", vec![keyed(0, "0x21", true)])],
-            &[0],
-        );
-        let instr = committed_instruction(&[0x21]);
-        let log = simple::Log {
-            slot: Some(42),
-            transaction_index: Some(7),
-            instruction_address: None,
-            kind: Some(simple::LogKind::Log),
-            message: Some("Instruction: Swap".to_string()),
-            ..Default::default()
-        };
-        let items = route(&store, &set, &[instr], vec![log], &built).unwrap();
-        assert_eq!(
-            items[0].logs.as_ref().map(|logs| logs
-                .iter()
-                .map(|l| (l.kind.clone(), l.message.clone()))
-                .collect::<Vec<_>>()),
-            Some(vec![(
-                Some("log".to_string()),
-                Some("Instruction: Swap".to_string())
-            )])
-        );
-    }
-
     #[test]
     fn kind_only_log_selection_omits_message() {
-        let (store, set) = fixture(&["TokenMetadata"]);
         let mut kind_only = registration(0, false);
         kind_only.log_fields = vec!["kind".to_string()];
-        let built = build(
-            &store,
+        let items = items_of(
             &[program(
                 "TokenMetadata",
                 vec![instruction("I0", Some("0x21"), None, vec![kind_only])],
             )],
-            &[0],
+            vec![committed_instruction(&[0x21])],
+            vec![log(Some(simple::LogKind::Data), "hello", Some(vec![1]))],
         );
-        let instr = committed_instruction(&[0x21]);
-        let log = simple::Log {
-            slot: Some(42),
-            transaction_index: Some(7),
-            instruction_address: Some(vec![1]),
-            kind: Some(simple::LogKind::Data),
-            message: Some("hello".to_string()),
-            ..Default::default()
-        };
-        let items = route(&store, &set, &[instr], vec![log], &built).unwrap();
         assert_eq!(
-            items[0].logs.as_ref().map(|logs| logs
-                .iter()
-                .map(|l| (l.kind.clone(), l.message.clone()))
-                .collect::<Vec<_>>()),
-            Some(vec![(Some("data".to_string()), None)])
+            logs_of(&items),
+            vec![(0, Some(JsValue::Arr(vec![log_value(Some("data"), None)])))]
         );
     }
 
@@ -1205,9 +945,7 @@ mod tests {
         // Two registrations of one instruction: the payload omits `args` for
         // the one that never reads it, so it carries nothing rather than a
         // decoded-looking empty object.
-        let (store, set) = fixture(&["TokenMetadata"]);
-        let built = build(
-            &store,
+        let items = items_of(
             &[program(
                 "TokenMetadata",
                 vec![instruction(
@@ -1217,18 +955,26 @@ mod tests {
                     vec![reads_args(registration(0, false)), registration(1, false)],
                 )],
             )],
-            &[0, 1],
+            vec![committed_instruction(&[0x21, 1, 0, 0, 0, 0, 0, 0, 0])],
+            vec![],
         );
-        let instr = committed_instruction(&[0x21, 1, 0, 0, 0, 0, 0, 0, 0]);
-        let items = route(&store, &set, &[instr], vec![], &built).unwrap();
-        assert_eq!(decoded_args(&items), vec![(0, Some(amount(1))), (1, None)]);
+        assert_eq!(
+            decoded_args(&items),
+            vec![(7, 0, Some(amount(1))), (7, 1, None)]
+        );
     }
 
     #[test]
     fn a_declared_layout_filters_calls_even_when_args_are_unselected() {
-        let (store, set) = fixture(&["TokenMetadata"]);
-        let built = build(
-            &store,
+        let mut trailing = vec![0x21];
+        trailing.extend_from_slice(&1u64.to_le_bytes());
+        trailing.push(0);
+        let at = |index: u32, data: &[u8]| {
+            let mut call = committed_instruction(data);
+            call.transaction_index = Some(index);
+            call
+        };
+        let items = items_of(
             &[program(
                 "TokenMetadata",
                 vec![instruction(
@@ -1238,57 +984,25 @@ mod tests {
                     vec![registration(0, false)],
                 )],
             )],
-            &[0],
-        );
-        let mut trailing = vec![0x21];
-        trailing.extend_from_slice(&1u64.to_le_bytes());
-        trailing.push(0);
-        let items = route(
-            &store,
-            &set,
-            &[
-                committed_instruction(&[0x21]),
-                committed_instruction(&trailing),
-                committed_instruction(&[0x21, 1, 0, 0, 0, 0, 0, 0, 0]),
+            vec![
+                at(7, &[0x21]),
+                at(8, &trailing),
+                at(9, &[0x21, 1, 0, 0, 0, 0, 0, 0, 0]),
             ],
             vec![],
-            &built,
-        )
-        .unwrap();
-        assert_eq!(decoded_args(&items), vec![(0, None)]);
-    }
-
-    #[test]
-    fn selecting_args_on_an_instruction_without_a_layout_is_rejected() {
-        let (store, _set) = fixture(&["TokenMetadata"]);
-        let err = SelectionBuilder::from_programs(
-            &[program(
-                "TokenMetadata",
-                vec![instruction(
-                    "Bare",
-                    Some("0x21"),
-                    None,
-                    vec![reads_args(registration(0, false))],
-                )],
-            )],
-            &store.handle().read().unwrap(),
-        )
-        .err()
-        .unwrap();
-        assert!(
-            format!("{err:#}")
-                .contains("registration 0 selects `args` but instruction Bare declares none"),
-            "{err:#}"
         );
+        assert_eq!(decoded_args(&items), vec![(9, 0, None)]);
     }
 
     // SPL Memo shape: no discriminator, the whole data is the args. It fires
     // alongside a keyed instruction of the same program that also matches.
     #[test]
     fn a_program_wide_instruction_decodes_from_offset_zero_and_fans_out_with_keyed_ones() {
-        let (store, set) = fixture(&["TokenMetadata"]);
-        let built = build(
-            &store,
+        let mut any_data = 2u32.to_le_bytes().to_vec();
+        any_data.extend_from_slice(&[0x21, 0x01]);
+        let mut any_call = committed_instruction(&any_data);
+        any_call.transaction_index = Some(8);
+        let items = items_of(
             &[program(
                 "TokenMetadata",
                 vec![
@@ -1306,26 +1020,18 @@ mod tests {
                     ),
                 ],
             )],
-            &[0, 1],
-        );
-        let mut any_data = 2u32.to_le_bytes().to_vec();
-        any_data.extend_from_slice(&[0x21, 0x01]);
-        let items = route(
-            &store,
-            &set,
-            &[
+            vec![
                 committed_instruction(&[0x21, 1, 0, 0, 0, 0, 0, 0, 0]),
-                committed_instruction(&any_data),
+                any_call,
             ],
             vec![],
-            &built,
-        )
-        .unwrap();
+        );
         assert_eq!(
             decoded_args(&items),
             vec![
-                (0, Some(amount(1))),
+                (7, 0, Some(amount(1))),
                 (
+                    8,
                     1,
                     Some(JsValue::obj([("raw", JsValue::Bytes(vec![0x21, 0x01]))]))
                 ),
@@ -1338,9 +1044,11 @@ mod tests {
     // carrying a payload under the same prefix. Declaring no layout takes both.
     #[test]
     fn an_empty_layout_takes_only_the_calls_that_carry_no_payload() {
-        let (store, set) = fixture(&["TokenMetadata"]);
-        let built = build(
-            &store,
+        let mut with_amount = vec![0x09];
+        with_amount.extend_from_slice(&7u64.to_le_bytes());
+        let mut payload_call = committed_instruction(&with_amount);
+        payload_call.transaction_index = Some(8);
+        let items = items_of(
             &[program(
                 "TokenMetadata",
                 vec![
@@ -1359,27 +1067,15 @@ mod tests {
                     instruction("Every", Some("0x09"), None, vec![registration(2, false)]),
                 ],
             )],
-            &[0, 1, 2],
-        );
-        let mut with_amount = vec![0x09];
-        with_amount.extend_from_slice(&7u64.to_le_bytes());
-        let mut payload_call = committed_instruction(&with_amount);
-        payload_call.transaction_index = Some(8);
-        let items = route(
-            &store,
-            &set,
-            &[committed_instruction(&[0x09]), payload_call],
+            vec![committed_instruction(&[0x09]), payload_call],
             vec![],
-            &built,
-        )
-        .unwrap();
-
+        );
         // The bare call reaches `Bare` and `Every`; the payload call reaches
         // `WithAmount` and `Every`, never `Bare`.
         assert_eq!(
-            items
-                .iter()
-                .map(|item| (item.transaction_index, item.on_event_registration_index))
+            decoded_args(&items)
+                .into_iter()
+                .map(|(index, registration, _)| (index, registration))
                 .collect::<Vec<_>>(),
             vec![(7, 0), (7, 2), (8, 1), (8, 2)]
         );
@@ -1390,9 +1086,13 @@ mod tests {
     // under exactly the layout that fits it.
     #[test]
     fn instructions_sharing_a_prefix_each_decode_with_their_own_layout() {
-        let (store, set) = fixture(&["TokenMetadata"]);
-        let built = build(
-            &store,
+        let mut v1 = vec![0x09];
+        v1.extend_from_slice(&1u64.to_le_bytes());
+        let mut v2 = v1.clone();
+        v2.extend_from_slice(&2u64.to_le_bytes());
+        let mut v2_call = committed_instruction(&v2);
+        v2_call.transaction_index = Some(8);
+        let items = items_of(
             &[program(
                 "TokenMetadata",
                 vec![
@@ -1412,31 +1112,11 @@ mod tests {
                     instruction("Every", None, None, vec![registration(2, false)]),
                 ],
             )],
-            &[0, 1, 2],
-        );
-        let mut v1 = vec![0x09];
-        v1.extend_from_slice(&1u64.to_le_bytes());
-        let mut v2 = v1.clone();
-        v2.extend_from_slice(&2u64.to_le_bytes());
-        let mut v2_call = committed_instruction(&v2);
-        v2_call.transaction_index = Some(8);
-        let items = route(
-            &store,
-            &set,
-            &[committed_instruction(&v1), v2_call],
+            vec![committed_instruction(&v1), v2_call],
             vec![],
-            &built,
-        )
-        .unwrap();
+        );
         assert_eq!(
-            items
-                .iter()
-                .map(|item| (
-                    item.transaction_index,
-                    item.on_event_registration_index,
-                    item.args.as_ref().map(JsValue::of)
-                ))
-                .collect::<Vec<_>>(),
+            decoded_args(&items),
             vec![
                 (7, 0, Some(amount(1))),
                 (7, 2, None),
@@ -1452,8 +1132,6 @@ mod tests {
             ]
         );
     }
-
-    use crate::field_columns::test_support::{column, str_column};
 
     /// Deterministic 32-byte fixtures. The client hands pubkeys and hashes
     /// over as bytes, so a test value has to be a real key; `tag` keeps the
@@ -1480,190 +1158,198 @@ mod tests {
         simple::Hash(key(4, slot))
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn store_keeps_only_the_transactions_and_balances_items_reference() {
-        let tx = |slot, index| simple::Transaction {
+    fn block(slot: u64, time: i64) -> simple::Block {
+        simple::Block {
             slot: Some(slot),
-            transaction_index: Some(index),
-            fee_payer: Some(fee_payer(slot)),
+            blockhash: Some(blockhash(slot)),
+            block_time: Some(time),
+            block_height: Some(slot * 10),
             ..Default::default()
-        };
-        let balance = |slot, index| simple::AccountActivity {
-            slot: Some(slot),
-            transaction_index: Some(index),
-            account: Some(account(slot)),
-            mint: Some(mint(slot)),
-            ..Default::default()
-        };
-        // Only (42, 7) is routed; (43, 7) came back on the same page unreferenced.
-        let referenced: HashSet<(u64, u32)> = [(42u64, 7u32)].into_iter().collect();
-        let store = build_svm_store(
-            vec![tx(42, 7), tx(43, 7)],
-            vec![balance(42, 7), balance(43, 7)],
-            Some(&referenced),
-        );
-
-        let mask = ((1u64 << (crate::transaction_store::SvmTxField::FeePayer as u32))
-            | (1u64 << (crate::transaction_store::SvmTxField::AccountActivities as u32)))
-            as f64;
-        let cols = store
-            .materialize_columns(vec![42, 43], vec![7, 7], vec![mask, mask], false)
-            .await
-            .expect("materialize");
-
-        let mints: Vec<Option<Vec<Option<String>>>> = match column(&cols, "accountActivities") {
-            Some(crate::field_columns::Column::AccountActivities(rows)) => rows
-                .iter()
-                .map(|r| {
-                    r.as_ref().map(|v| {
-                        v.iter()
-                            .map(|a| a.token.as_ref().map(|t| t.mint.clone()))
-                            .collect()
-                    })
-                })
-                .collect(),
-            _ => panic!("expected an accountActivities column"),
-        };
-        assert_eq!(
-            (str_column(&cols, "feePayer"), mints),
-            (
-                vec![Some(fee_payer(42).to_string()), None],
-                vec![Some(vec![Some(mint(42).to_string())]), Some(vec![])],
-            )
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn native_only_activity_rows_are_kept() {
-        let activity = |account: u8, mint: Option<simple::Address>| simple::AccountActivity {
-            slot: Some(43),
-            transaction_index: Some(7),
-            account: Some(simple::Address([account; 32])),
-            pre_balance: Some(100),
-            post_balance: Some(90),
-            mint,
-            ..Default::default()
-        };
-        let store = build_svm_store(
-            vec![simple::Transaction {
-                slot: Some(43),
-                transaction_index: Some(7),
-                ..Default::default()
-            }],
-            vec![activity(1, None), activity(2, Some(mint(43)))],
-            None,
-        );
-        let mask =
-            (1u64 << (crate::transaction_store::SvmTxField::AccountActivities as u32)) as f64;
-        let cols = store
-            .materialize_columns(vec![43], vec![7], vec![mask], false)
-            .await
-            .expect("materialize");
-        match column(&cols, "accountActivities") {
-            Some(crate::field_columns::Column::AccountActivities(accounts)) => {
-                let views = accounts[0]
-                    .as_ref()
-                    .expect("selected row")
-                    .iter()
-                    .map(|a| (a.address.clone(), a.lamports.is_some(), a.token.is_some()))
-                    .collect::<Vec<_>>();
-                assert_eq!(
-                    views,
-                    vec![
-                        (simple::Address([1; 32]).to_string(), true, false),
-                        (simple::Address([2; 32]).to_string(), true, true),
-                    ]
-                );
-            }
-            _ => panic!("expected an accountActivities column"),
         }
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn no_key_set_stores_the_whole_response() {
-        // The raw `get` query builds no items, so it has no reference set to
-        // filter by and must keep everything.
-        let mut resp = simple::SolanaResponse {
-            blocks: vec![simple::Block {
-                slot: Some(43),
-                blockhash: Some(blockhash(43)),
-                ..Default::default()
-            }],
+    fn reads_activity(
+        mut registration: selection::SvmOnEventRegistrationInput,
+    ) -> selection::SvmOnEventRegistrationInput {
+        registration.transaction_fields = vec!["feePayer".to_string()];
+        registration.account_activity_fields = vec!["token.mint".to_string()];
+        registration
+    }
+
+    fn mask(fields: &[SvmTxField]) -> u64 {
+        fields
+            .iter()
+            .fold(0, |mask, field| mask | 1 << *field as u32)
+    }
+
+    #[test]
+    fn the_page_keeps_only_the_transactions_balances_and_blocks_its_instructions_reference() {
+        let programs = [program(
+            "TokenMetadata",
+            vec![instruction(
+                "I0",
+                Some("0x21"),
+                None,
+                vec![reads_activity(registration(0, false))],
+            )],
+        )];
+        let store = store_of(&programs);
+        let transaction = |slot| simple::Transaction {
+            slot: Some(slot),
+            transaction_index: Some(7),
+            fee_payer: Some(fee_payer(slot)),
             ..Default::default()
         };
-        let store = build_svm_store(
-            vec![simple::Transaction {
-                slot: Some(43),
+        let activity = |slot, index, account: simple::Address, mint: Option<simple::Address>| {
+            simple::AccountActivity {
+                slot: Some(slot),
                 transaction_index: Some(7),
-                fee_payer: Some(fee_payer(43)),
+                account_index: Some(index),
+                account: Some(account),
+                pre_balance: Some(100),
+                post_balance: Some(90),
+                mint,
                 ..Default::default()
-            }],
-            vec![],
-            None,
-        );
-        let block_store = take_blocks(&mut resp, None).expect("take blocks");
+            }
+        };
+        // Only (42, 7) carries a matched instruction; (43, 7) and slot 43 came
+        // back on the same response unreferenced.
+        let mut response = simple::SolanaResponse {
+            instruction_calls: vec![committed_instruction(&[0x21])],
+            transactions: vec![transaction(42), transaction(43)],
+            account_activity: vec![
+                activity(42, 1, simple::Address([9; 32]), Some(mint(42))),
+                activity(42, 0, account(42), None),
+                activity(43, 0, account(43), Some(mint(43))),
+            ],
+            blocks: vec![block(42, 4200), block(43, 4300)],
+            ..Default::default()
+        };
+        let page = page_of(&store, &programs, &mut response);
 
-        let txs = store
-            .materialize_columns(
-                vec![43],
-                vec![7],
-                vec![(1u64 << (crate::transaction_store::SvmTxField::FeePayer as u32)) as f64],
-                false,
-            )
-            .await
-            .expect("materialize transactions");
-        let blocks = block_store
-            .materialize_columns(
-                vec![43],
-                vec![(1u64 << (crate::block_store::SvmBlockField::Hash as u32)) as f64],
-                false,
-            )
-            .await
-            .expect("materialize blocks");
+        let transactions: Vec<_> = [42, 43]
+            .iter()
+            .map(|slot| page.transactions.find(make_key(*slot, 7), 0))
+            .collect();
+        let selected = mask(&[SvmTxField::FeePayer, SvmTxField::AccountActivities]);
+        let columns = transaction_columns(&transactions, &[7, 7], &[selected, selected]).unwrap();
+        let described: Vec<String> = columns
+            .columns
+            .iter()
+            .map(|(name, column)| match column {
+                crate::chain_buffer::deliver::Column::Str(values) => format!("{name} {values:?}"),
+                crate::chain_buffer::deliver::Column::AccountActivities(rows) => format!(
+                    "{name} {:?}",
+                    rows.iter()
+                        .map(|row| row.as_ref().map(|activities| activities
+                            .iter()
+                            .map(|a| (
+                                a.address.clone(),
+                                a.lamports.is_some(),
+                                a.token.as_ref().map(|t| t.mint.clone())
+                            ))
+                            .collect::<Vec<_>>()))
+                        .collect::<Vec<_>>()
+                ),
+                _ => name.to_string(),
+            })
+            .collect();
+
+        let blocks: Vec<_> = [42, 43]
+            .iter()
+            .map(|slot| page.blocks.find(make_key(*slot, 0), 0))
+            .collect();
+        let block_mask = (1 << SvmBlockField::Time as u32)
+            | (1 << SvmBlockField::Hash as u32)
+            | (1 << SvmBlockField::Height as u32);
+        let blocks = block_columns(&blocks, &[42, 43], &[block_mask, block_mask]).unwrap();
+        let blocks: Vec<String> = blocks
+            .columns
+            .iter()
+            .map(|(name, column)| match column {
+                crate::chain_buffer::deliver::Column::I64(values) => format!("{name} {values:?}"),
+                crate::chain_buffer::deliver::Column::Str(values) => format!("{name} {values:?}"),
+                _ => name.to_string(),
+            })
+            .collect();
 
         assert_eq!(
-            (str_column(&txs, "feePayer"), str_column(&blocks, "hash")),
+            (described, blocks),
             (
-                vec![Some(fee_payer(43).to_string())],
-                vec![Some(blockhash(43).to_string())],
+                vec![
+                    format!("feePayer {:?}", vec![Some(fee_payer(42).to_string()), None]),
+                    format!(
+                        "accountActivities {:?}",
+                        vec![
+                            Some(vec![
+                                (account(42).to_string(), true, None),
+                                (
+                                    simple::Address([9; 32]).to_string(),
+                                    true,
+                                    Some(mint(42).to_string())
+                                ),
+                            ]),
+                            Some(vec![]),
+                        ]
+                    ),
+                ],
+                vec![
+                    "time [Some(4200), Some(4300)]".to_string(),
+                    format!(
+                        "hash {:?}",
+                        vec![
+                            Some(blockhash(42).to_string()),
+                            Some(blockhash(43).to_string())
+                        ]
+                    ),
+                    // Slot 43 keeps only what reorg detection and skipped-slot
+                    // reads need of it.
+                    "height [Some(420), None]".to_string(),
+                ],
             )
         );
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn block_store_keeps_a_hash_only_row_for_unreferenced_slots() {
-        let mut resp = simple::SolanaResponse {
-            blocks: vec![
-                simple::Block {
-                    slot: Some(42),
-                    blockhash: Some(blockhash(42)),
-                    ..Default::default()
-                },
-                simple::Block {
-                    slot: Some(43),
-                    blockhash: Some(blockhash(43)),
-                    ..Default::default()
-                },
-            ],
+    #[test]
+    fn a_slot_handler_runs_without_a_block_on_a_slot_the_chain_skipped() {
+        let store = svm_store(&[]);
+        let buffer = ChainBuffer::make(
+            ChainBufferConfig {
+                registrations: crate::chain_buffer::RegistrationsInput::Svm { programs: vec![] },
+                should_checksum: false,
+                contract_register_indexes: vec![],
+                block_handlers: vec![crate::chain_buffer::schedule::BlockHandlerInput {
+                    index: 0,
+                    start_block: 10,
+                    end_block: None,
+                    interval: 1,
+                    block_field_mask: Some((1u64 << SvmBlockField::Hash as u32) as f64),
+                }],
+                transaction_masks: vec![],
+                event_block_masks: vec![],
+            },
+            &store,
+        )
+        .unwrap();
+        let (_, _, page) = block_hash_page(simple::SolanaResponse {
+            next_slot: 13,
+            blocks: vec![block(10, 100), block(12, 120)],
             ..Default::default()
-        };
-        let referenced: HashSet<u64> = [42u64].into_iter().collect();
-        let block_store = take_blocks(&mut resp, Some(&referenced)).expect("take blocks");
-
-        let mask = (1u64 << (crate::block_store::SvmBlockField::Hash as u32)) as f64;
-        let cols = block_store
-            .materialize_columns(vec![42, 43], vec![mask, mask], false)
-            .await
-            .expect("materialize");
-
-        // Slot 43's instructions were all dropped, but its block keeps a
-        // hash-only row so a fork on it can still be detected.
-        assert_eq!(
-            str_column(&cols, "hash"),
-            vec![
-                Some(blockhash(42).to_string()),
-                Some(blockhash(43).to_string()),
-            ]
-        );
+        })
+        .unwrap();
+        buffer.merge_page(&Page::from_data(page), 0, false);
+        let skipped: Vec<(u64, bool)> = buffer
+            .build_items_for_test(10, 12)
+            .iter()
+            .map(|item| match item {
+                Item::Block {
+                    block_number,
+                    skipped,
+                    ..
+                } => (block_number.to_owned(), skipped.to_owned()),
+                _ => panic!("expected a block item"),
+            })
+            .collect();
+        assert_eq!(skipped, vec![(10, false), (11, true), (12, false)]);
     }
 }

@@ -129,6 +129,8 @@ describe("FetchState block handlers", () => {
 
       await mock.expectNewHeightCalls(1)
       mock.resolveGetHeightOrThrow(150)
+      // Past the backfill, the chain at 150 waits for the next block.
+      await mock.expectNewHeightCalls(1)
       await indexer.waitUntilIdle()
       let atHead150: array<run> = await indexer.query("Run")
 

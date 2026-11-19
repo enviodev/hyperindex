@@ -48,7 +48,7 @@ describe("Reorgable range", () => {
       source.resolveGetHeightOrThrow(1000)
       await source.expectItemsQueries([{toBlock: Bounded(799), reply: LeavePending}])
       let backfill = pendingReorgableFrom()
-      await source.respondEmptyUpTo(799)
+      await source.respondUpTo(799)
       await indexer.getBatchWritePromise()
 
       // Inside the threshold, still catching up to the head at 1000, so the
@@ -106,7 +106,7 @@ describe("Reorgable range with the default reorg depth", () => {
       source.resolveGetHeightOrThrow(1000)
       await source.expectItemsQueries([{toBlock: Bounded(800), reply: LeavePending}])
       let backfill = pendingReorgableFrom()
-      await source.respondEmptyUpTo(800)
+      await source.respondUpTo(800)
       await indexer.getBatchWritePromise()
 
       await source.expectItemsQueries([{fromBlock: 801, reply: LeavePending}])

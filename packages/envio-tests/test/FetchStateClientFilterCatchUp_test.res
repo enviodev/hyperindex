@@ -94,8 +94,10 @@ let catchUp = (~partitionId="3", ~address=address(3), fromBlock, toBlock) => {
 }
 
 // Partition 0 registers two dynamic Gravatar addresses at block 3, crossing
-// the threshold of 1: address-free partition 2 fetches Gravatar from block 1,
-// while partition 0 keeps NftFactory's address from block 6.
+// the threshold of 1: address-free partition 2 fetches Gravatar from the
+// registration block, 3. Partition 0 had covered blocks 1 to 5 already, and its
+// query from block 6, out before the registration, still carries Gravatar's
+// config address.
 let collapseGravatar = async (sourceMock: MockSource.t, ~height=1000) => {
   sourceMock.resolveGetHeightOrThrow(height)
   await sourceMock.expectItemsQueries([
@@ -113,7 +115,7 @@ let collapseGravatar = async (sourceMock: MockSource.t, ~height=1000) => {
 let registerWhileAddressFreeQueryIsOpen = async (sourceMock: MockSource.t, ~registeredAt) => {
   await sourceMock->collapseGravatar
   await sourceMock.expectItemsQueries([
-    {partitionId: "2", fromBlock: 1, reply: upTo(50)},
+    {partitionId: "2", fromBlock: 3, reply: upTo(50)},
     {partitionId: "0", fromBlock: 6, reply: LeavePending},
   ])
   await sourceMock.expectItemsQueries([
@@ -137,9 +139,12 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       let handled = []
       await sourceMock->collapseGravatar
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 1, reply: upTo(~items=[registerAt(20, [address(3)])], 50)},
+        {partitionId: "2", fromBlock: 3, reply: upTo(~items=[registerAt(20, [address(3)])], 50)},
         {partitionId: "0", fromBlock: 6, reply: LeavePending},
       ])
+      // Partition 2's query from 51 goes out before the contractRegister run
+      // registers address 3, so the catch-up stays open while it is.
+      await indexer.waitUntilIdle()
       await sourceMock.expectItemsQueries([
         {partitionId: "3", reply: LeavePending},
         {partitionId: "2", reply: LeavePending},
@@ -150,25 +155,33 @@ describe("FetchState client-side filtering catch-up partitions", () => {
         {partitionId: "3", fromBlock: 20, reply: upTo(~items=[handled->eventAt(30)], 50)},
         {partitionId: "0", fromBlock: 6, reply: upTo(1000)},
       ])
+      // Both reach 100 together, leaving the catch-up nothing to cover.
+      await sourceMock.expectItemsQueries([
+        {partitionId: "2", fromBlock: 51, reply: upTo(100)},
+        {partitionId: "3", fromBlock: 51, reply: upTo(100)},
+      ])
       await indexer.waitUntilIdle()
 
       t.expect(
-        (withCatchUp, handled, sourceMock->pendingQueries),
-        ~message="the catch-up fetches only the new address up to block 50, and once there only partition 2 is left",
+        (withCatchUp, handled, sourceMock->nextQueries),
+        ~message="the catch-up fetches only the new address, and once level with partition 2 only partition 2 is left",
       ).toEqual((
         [
           {
             partitionId: "0",
             fromBlock: 6,
             toBlock: Unbounded,
-            addresses: ["0x00000000000000000000000000000000000000ff"],
+            addresses: [
+              "0x00000000000000000000000000000000000000ff",
+              "0x2b2f78c5bf6d9c12ee1225d5f374aa91204580c3",
+            ],
             clientFilteredContracts: None,
           },
-          catchUp(20, Bounded(50)),
           addressFree(51, Unbounded),
+          catchUp(20, Unbounded),
         ],
         [30],
-        [addressFree(51, Unbounded)],
+        [addressFree(101, Bounded(187))],
       ))
     },
   )
@@ -182,7 +195,7 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       let sourceMock = source(1337)
       await sourceMock->collapseGravatar
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 1, reply: upTo(~items=[registerAt(20, [address(3)])], 50)},
+        {partitionId: "2", fromBlock: 3, reply: upTo(~items=[registerAt(20, [address(3)])], 50)},
         {partitionId: "0", fromBlock: 6, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
@@ -203,8 +216,8 @@ describe("FetchState client-side filtering catch-up partitions", () => {
         ~message="address 4 starts its own catch-up at its block; partition 2 keeps its id",
       ).toEqual([
         addressFree(51, Unbounded),
+        catchUp(41, Unbounded),
         catchUp(~partitionId="4", ~address=address(4), 30, Unbounded),
-        catchUp(41, Bounded(50)),
       ])
     },
   )
@@ -299,7 +312,7 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       t.expect(
         (handled, sourceMock->nextQueries),
         ~message="the overlap both partitions fetched is processed once, and the catch-up is gone",
-      ).toEqual(([60], [addressFree(121, Bounded(210))]))
+      ).toEqual(([60], [addressFree(121, Bounded(207))]))
     },
   )
 
@@ -383,7 +396,7 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       t.expect(
         (handled, sourceMock->nextQueries),
         ~message="the catch-up's last response still lands, its event is processed once, and the catch-up asks nothing more",
-      ).toEqual(([85], [addressFree(201, Bounded(236))]))
+      ).toEqual(([85], [addressFree(201, Unbounded)]))
     },
   )
 
@@ -410,7 +423,7 @@ describe("FetchState client-side filtering catch-up partitions", () => {
   )
 
   scenario->Scenario.it(
-    "adds no catch-up for an address registered above an idle address-free partition",
+    "catches up an address registered past where an address-free query already went out",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
     ~maxAddrInPartition=10,
@@ -419,11 +432,12 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       // Partition 2 fetches to the head it knows, 50, and waits there.
       await sourceMock->collapseGravatar(~height=50)
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 1, reply: upTo(50)},
+        {partitionId: "2", fromBlock: 3, reply: upTo(50)},
         {partitionId: "0", fromBlock: 6, reply: LeavePending},
       ])
       // Partition 0's query comes back past that head, registering address 3
-      // at 60.
+      // at 60. Partition 2's query from 51 goes out before the contractRegister
+      // run registers it, so address 3 gets a catch-up of its own.
       await sourceMock.expectItemsQueries([
         {
           partitionId: "0",
@@ -438,10 +452,10 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       await sourceMock.expectItemsQueries([{partitionId: "2", fromBlock: 51, reply: LeavePending}])
       await indexer.waitUntilIdle()
 
-      t.expect(
-        sourceMock->pendingQueries,
-        ~message="partition 2 covers block 60 going forward on its own",
-      ).toEqual([addressFree(51, Unbounded)])
+      t.expect(sourceMock->pendingQueries).toEqual([
+        addressFree(51, Unbounded),
+        catchUp(60, Unbounded),
+      ])
     },
   )
 })

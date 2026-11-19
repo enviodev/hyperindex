@@ -556,7 +556,9 @@ describe("Catching up a contract registered at the head", () => {
         },
       ])
       await sync.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
-      await sync.expectNewHeightCalls(1)
+      // The first answers the initial height; the second is the wait at 100
+      // that starts before the contractRegister run adds partition "1".
+      await sync.expectNewHeightCalls(2)
       t.expect(
         (await indexer.metric("envio_source_known_height"))->Array.map(({value}) => value),
       ).toEqual(["105"])

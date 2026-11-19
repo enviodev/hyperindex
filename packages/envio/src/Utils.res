@@ -1,7 +1,6 @@
 @@directive("import packageJson from '../package.json' with { type: 'json' }")
 
 external magic: 'a => 'b = "%identity"
-@val external floatToInt: float => int = "Math.trunc"
 
 // Force a function to compile to a regular `function` instead of an arrow,
 // so `this` binds to the call-site receiver (needed for prototype getters,
@@ -72,31 +71,11 @@ module Error = {
 }
 
 module Option = {
-  let mapNone = (opt: option<'a>, val: 'b): option<'b> => {
-    switch opt {
-    | None => Some(val)
-    | Some(_) => None
-    }
-  }
-
   let catchToNone: (unit => 'a) => option<'a> = unsafeFunc => {
     try {
       unsafeFunc()->Some
     } catch {
     | _ => None
-    }
-  }
-
-  let flatten = opt =>
-    switch opt {
-    | None => None
-    | Some(opt) => opt
-    }
-
-  let getExn = (opt, message) => {
-    switch opt {
-    | None => JsError.throwWithMessage(message)
-    | Some(v) => v
     }
   }
 }
@@ -143,13 +122,6 @@ module Dict = {
     }
   }
 
-  let pushMany = (dict, key, values) => {
-    switch dict->dangerouslyGetNonOption(key) {
-    | Some(arr) => arr->Array.pushMany(values)
-    | None => dict->Dict.set(key, values)
-    }
-  }
-
   let merge: (dict<'a>, dict<'a>) => dict<'a> = %raw(`(dictA, dictB) => ({...dictA, ...dictB})`)
 
   // Keeps every key either dict has; `pick` decides a key both have.
@@ -161,26 +133,11 @@ module Dict = {
     return merged;
   }`)
 
-  @val
-  external mergeInPlace: (dict<'a>, dict<'a>) => dict<'a> = "Object.assign"
-
   // Use %raw to support for..in which is a ~10% faster than .forEach
   let mapValues: (dict<'a>, 'a => 'b) => dict<'b> = %raw(`(dict, f) => {
     var target = {}, i;
     for (i in dict) {
       target[i] = f(dict[i]);
-    }
-    return target;
-  }`)
-
-  // Use %raw to support for..in which is a ~10% faster than .forEach
-  let filterMapValues: (dict<'a>, 'a => option<'b>) => dict<'b> = %raw(`(dict, f) => {
-    var target = {}, i, v;
-    for (i in dict) {
-      v = f(dict[i]);
-      if (v !== undefined) {
-        target[i] = v;
-      }
     }
     return target;
   }`)
@@ -237,21 +194,6 @@ module Dict = {
     }
   `)
 
-  let unsafeDeleteUndefinedFieldsInPlace: 'a => unit = %raw(`(dict) => {
-      for (var key in dict) {
-        if (dict[key] === undefined) {
-          delete dict[key];
-        }
-      }
-    }
-  `)
-
-  let updateImmutable: (
-    dict<'a>,
-    string,
-    'a,
-  ) => dict<'a> = %raw(`(dict, key, value) => ({...dict, [key]: value})`)
-
   let shallowCopy: dict<'a> => dict<'a> = %raw(`(dict) => ({...dict})`)
 
   @set_index
@@ -281,8 +223,6 @@ type asyncIterator<'a>
 
 module Array = {
   include Array
-
-  let immutableEmpty: array<unknown> = []
 
   /** Render names for an error message: `"a", "b"`. */
   let quotedJoin = (names: array<string>) =>
@@ -333,30 +273,6 @@ module Array = {
   /**
   Creates a shallow copy of the array and sets the value at the given index
   */
-  let setIndexImmutable = (arr: array<'a>, index: int, value: 'a): array<'a> => {
-    let shallowCopy = arr->Array.copy
-    shallowCopy->Array.setUnsafe(index, value)
-    shallowCopy
-  }
-
-  let transposeResults = (results: array<result<'a, 'b>>): result<array<'a>, 'b> => {
-    let rec loop = (index: int, output: array<'a>): result<array<'a>, 'b> => {
-      if index >= Array.length(results) {
-        Ok(output)
-      } else {
-        switch results->Array.getUnsafe(index) {
-        | Ok(value) => {
-            output->Array.setUnsafe(index, value)
-            loop(index + 1, output)
-          }
-        | Error(_) as err => err->(magic: result<'a, 'b> => result<array<'a>, 'b>)
-        }
-      }
-    }
-
-    loop(0, jsArrayCreate(results->Array.length))
-  }
-
   /**
 Helper to check if a value exists in an array
 */
@@ -371,6 +287,36 @@ Helper to check if a value exists in an array
     | [] => false
     | _ => true
     }
+
+  // Both ascending and unique; so is the result.
+  let mergeSortedUnique = (a: array<int>, b: array<int>) => {
+    let merged = []
+    let i = ref(0)
+    let j = ref(0)
+    while i.contents < a->Array.length || j.contents < b->Array.length {
+      let next = switch (a->Array.get(i.contents), b->Array.get(j.contents)) {
+      | (Some(x), Some(y)) if x < y =>
+        i := i.contents + 1
+        x
+      | (Some(x), Some(y)) if x > y =>
+        j := j.contents + 1
+        y
+      | (Some(x), Some(_)) =>
+        i := i.contents + 1
+        j := j.contents + 1
+        x
+      | (Some(x), None) =>
+        i := i.contents + 1
+        x
+      | (None, Some(y)) =>
+        j := j.contents + 1
+        y
+      | (None, None) => JsError.throwWithMessage("unreachable")
+      }
+      merged->Array.push(next)
+    }
+    merged
+  }
 
   let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
     for i in 0 to arr->Array.length - 1 {
@@ -393,26 +339,9 @@ Helper to check if a value exists in an array
   }
 
   let last = (arr: array<'a>): option<'a> => arr->Array.get(arr->Array.length - 1)
-  let first = (arr: array<'a>): option<'a> => arr->Array.get(0)
 
   let lastUnsafe = (arr: array<'a>): 'a => arr->Array.getUnsafe(arr->Array.length - 1)
   let firstUnsafe = (arr: array<'a>): 'a => arr->Array.getUnsafe(0)
-
-  let findReverseWithIndex = (arr: array<'a>, fn: 'a => bool): option<('a, int)> => {
-    let rec loop = (index: int) => {
-      if index < 0 {
-        None
-      } else {
-        let item = arr->Array.getUnsafe(index)
-        if fn(item) {
-          Some((item, index))
-        } else {
-          loop(index - 1)
-        }
-      }
-    }
-    loop(arr->Array.length - 1)
-  }
 
   /**
   Interleaves an array with a separator
@@ -429,9 +358,6 @@ Helper to check if a value exists in an array
     })
     interleaved
   }
-
-  @send
-  external flatten: (array<array<'a>>, @as(1) _) => array<'a> = "flat"
 
   @send
   external copy: array<'a> => array<'a> = "slice"
@@ -499,16 +425,6 @@ module Url = {
   }
 }
 
-module Result = {
-  let forEach = (result, fn) => {
-    switch result {
-    | Ok(v) => fn(v)
-    | Error(_) => ()
-    }
-    result
-  }
-}
-
 /**
 Useful when an unsafe unwrap is needed on Result type
 and Error holds an exn. This is better than Result.getExn
@@ -558,8 +474,6 @@ module Bytes = {
 }
 
 module Schema = {
-  let variantTag = S.union([S.string, S.object(s => s.field("TAG", S.string))])
-
   // A ReScript `option` is `undefined` at runtime, so `S.null`'s serializer
   // treats only `undefined` as the empty case — a genuine `null`, which a JS
   // handler writes for a field it doesn't set, reaches the value serializer
@@ -611,12 +525,6 @@ module Schema = {
     ->(magic: S.t<JSON.t> => S.t<Date.t>)
     ->S.preprocess(_ => {serializer: date => date->magic->Date.toISOString})
 
-  // ClickHouse expects timestamps as numbers (milliseconds), not ISO strings
-  let clickHouseDate =
-    S.json(~validate=false)
-    ->(magic: S.t<JSON.t> => S.t<Date.t>)
-    ->S.preprocess(_ => {serializer: date => date->magic->Date.getTime})
-
   // When trying to serialize data to Json pg type, it will fail with
   // PostgresError: column "params" is of type json but expression is of type boolean
   // If there's bool or null on the root level. It works fine as object field values.
@@ -640,10 +548,6 @@ module Schema = {
       }
     })
   }
-}
-
-let getVariantsTags = variants => {
-  variants->Array.map(variant => variant->S.parseOrThrow(Schema.variantTag))
 }
 
 module Set = {
@@ -725,24 +629,6 @@ external entries: t<'value> => Js_iterator.t<('value, 'value)> = "entries"
   )
   @send
   external forEach: (t<'value>, 'value => unit) => unit = "forEach"
-
-  @ocaml.doc(
-    "Calls `callbackFn` once for each value present in the `Set` object, in insertion order."
-  )
-  @send
-  external forEachWithSet: (t<'value>, ('value, 'value, t<'value>) => unit) => unit = "forEach"
-}
-
-// Typed-key dictionary backed by Js.Dict. Keys must be @unboxed string variants.
-module Record = {
-  type t<'key, 'value>
-
-  external fromDict: dict<'value> => t<'key, 'value> = "%identity"
-  let fromArray: array<('key, 'value)> => t<'key, 'value> = pairs =>
-    pairs->(magic: array<('key, 'value)> => array<(string, 'value)>)->Dict.fromArray->fromDict
-
-  @get_index external getUnsafe: (t<'key, 'value>, 'key) => 'value = ""
-  @get_index external get: (t<'key, 'value>, 'key) => option<'value> = ""
 }
 
 module WeakMap = {
@@ -751,7 +637,6 @@ module WeakMap = {
   @new external make: unit => t<'k, 'v> = "WeakMap"
 
   @send external get: (t<'k, 'v>, 'k) => option<'v> = "get"
-  @send external unsafeGet: (t<'k, 'v>, 'k) => 'v = "get"
   @send external has: (t<'k, 'v>, 'k) => bool = "has"
   @send external set: (t<'k, 'v>, 'k, 'v) => t<'k, 'v> = "set"
 
@@ -775,7 +660,6 @@ module Map = {
   @new external make: unit => t<'k, 'v> = "Map"
 
   @send external get: (t<'k, 'v>, 'k) => option<'v> = "get"
-  @send external unsafeGet: (t<'k, 'v>, 'k) => 'v = "get"
   @send external has: (t<'k, 'v>, 'k) => bool = "has"
   @send external set: (t<'k, 'v>, 'k, 'v) => t<'k, 'v> = "set"
   @send external delete: (t<'k, 'v>, 'k) => bool = "delete"
@@ -940,12 +824,6 @@ module Promise = {
   // Drop a promise's resolved value. We can't use `Promise.ignore` for this
   // because that returns `unit`, not `promise<unit>`.
   external ignoreValue: promise<'a> => promise<unit> = "%identity"
-
-  // Escape hatches for awaiting non-promise values / producing fake promises
-  // in type-directed contexts. Used by a handful of bindings that need to
-  // interoperate with raw JS values.
-  external unsafe_async: 'a => promise<'a> = "%identity"
-  external unsafe_await: promise<'a> => 'a = "?await"
 }
 
 // `JSON.stringify` writes half a surrogate pair as a `\udXXX` escape, which no

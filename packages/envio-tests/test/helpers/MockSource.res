@@ -35,7 +35,7 @@ module Gate = {
 // EVM block hashes are the fixed 32-byte reorg comparison key, and the store
 // rejects anything narrower. Widen the short markers fixtures use, both on the
 // way into a mocked response and in assertions that compare against
-// `BlockStore.getHash` output (e.g. persisted reorg checkpoints).
+// `ChainBuffer.getBlockHash` output (e.g. persisted reorg checkpoints).
 let evmBlockHash = hex =>
   "0x" ++ hex->String.slice(~start=2, ~end=hex->String.length)->String.padStart(64, "0")
 
@@ -70,6 +70,7 @@ let makeMockSourceRegistration = (
   ~index,
   ~contractName,
   ~isWildcard,
+  ~registers,
 ): Internal.onEventRegistration => {
   let handler: Internal.handler = args => {
     let callbacks = args.event->(Utils.magic: Internal.event => mockSourceEvent)->callbacksOf
@@ -107,7 +108,7 @@ let makeMockSourceRegistration = (
         ~blockMaskFn=Evm.eventBlockFieldMask,
         ~transactionMaskFn=Evm.eventTransactionFieldMask,
       ),
-      sighash: Some(""),
+      sighash: Some("0x" ++ "0"->String.repeat(64)),
       topicCount: 1,
       paramsMetadata: [],
     }: Internal.evmEventConfig :> Internal.eventConfig),
@@ -116,7 +117,7 @@ let makeMockSourceRegistration = (
     dependsOnAddresses: !isWildcard,
     startBlock: None,
     handler,
-    contractRegister: Some(contractRegister),
+    contractRegister: registers ? Some(contractRegister) : None,
     fieldSelection: Internal.makeFieldSelection(
       ~blockFields=Utils.Set.make(),
       ~transactionFields=Utils.Set.make(),
@@ -127,7 +128,15 @@ let makeMockSourceRegistration = (
   }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
 }
 
-type mockSourceRegistrationRef = ref<option<Internal.onEventRegistration>>
+// Two of one contract: an item with a contractRegister callback is delivered
+// through the one that registers, so only its block waits on a
+// contractRegister run, as a real chain's registering events do.
+type mockSourceRegistrations = {
+  plain: Internal.onEventRegistration,
+  registering: Internal.onEventRegistration,
+}
+
+type mockSourceRegistrationRef = ref<option<mockSourceRegistrations>>
 // `isWildcard` decides whether the chain's mock registration depends on
 // addresses, and so whether its partition is an address partition or a wildcard
 // one — the two take different paths through a rollback.
@@ -190,15 +199,24 @@ let installMockSourceRegistrations = (
         registrationsByChainId->Dict.set(key, registrations)
         registrations
       }
-      let mockRegistration = makeMockSourceRegistration(
-        ~isWildcard=sourceStates->Array.some(state => state.isWildcard),
+      let isWildcard = sourceStates->Array.some(state => state.isWildcard)
+      let plain = makeMockSourceRegistration(
+        ~isWildcard,
         ~index=registrations.onEventRegistrations->Array.length,
         ~contractName,
+        ~registers=false,
+      )
+      let registering = makeMockSourceRegistration(
+        ~isWildcard,
+        ~index=registrations.onEventRegistrations->Array.length + 1,
+        ~contractName,
+        ~registers=true,
       )
       let chainRegistrations = registrations.onEventRegistrations->Array.copy
-      registrations.onEventRegistrations->Array.push(mockRegistration)->ignore
+      registrations.onEventRegistrations->Array.push(plain)->ignore
+      registrations.onEventRegistrations->Array.push(registering)->ignore
       sourceStates->Array.forEach(state => {
-        state.onEventRegistrationRef := Some(mockRegistration)
+        state.onEventRegistrationRef := Some({plain, registering})
         state.chainRegistrationsRef := chainRegistrations
       })
     | _ => ()
@@ -298,7 +316,7 @@ type expectedBlockHashLookup = {
   blockNumbers: array<int>,
   // Short hashes (`"0x200"`) are widened like a mocked items response's, so the
   // block's stored hash is `0x<blockNumber>` and anything else reads as re-orged.
-  reply: array<BlockStore.inputBlock>,
+  reply: array<BufferPage.observedBlock>,
 }
 
 type pendingItemsQueryControl = {
@@ -365,20 +383,19 @@ type t = {
   // the chain got to `blockNumber`. A query starting past `blockNumber` stays
   // pending. Only inside a scenario, which hands the mock its indexer.
   respondUpTo: (int, ~items: array<itemMock>=?) => promise<unit>,
-  // `respondUpTo` without items, for a test that just needs the chain somewhere.
-  respondEmptyUpTo: int => promise<unit>,
   // Helpers only: how `respondUpTo` waits for the indexer to settle, and reads
   // the block the settled chain has fetched and processed up to.
   attachIndexer: (
     ~waitUntilIdle: unit => promise<unit>,
     ~progressBlock: unit => promise<option<int>>,
+    ~isRegisteringContracts: unit => bool,
   ) => unit,
   // Empty-responds every pending query, up to its own toBlock unless
   // `~latestFetchedBlockNumber` says otherwise. Never waits, and throws with none.
   drainPendingItemsQueries: (~latestFetchedBlockNumber: int=?) => unit,
   getBlockHashesCalls: array<array<int>>,
   // Answers every block-hash lookup in flight, and throws when there is none.
-  resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
+  resolveGetBlockHashes: array<BufferPage.observedBlock> => unit,
   // Answers every block-hash lookup in flight with a failure the source
   // reported, and throws when there is none. `requestStats` are the requests
   // the failed lookup made, reported on the response as a native source does.
@@ -402,12 +419,9 @@ type t = {
   dropPendingCalls: unit => unit,
   // Height subscription mocking
   heightSubscriptionCalls: array<bool>,
-  // Closes performed by the consumer, as opposed to the ones this mock's own
-  // `unsubscribeHeightSubscription` simulates.
   heightSubscriptionCloseCalls: array<bool>,
   triggerHeightSubscription: int => unit,
   setHeightSubscriptionStatus: Source.heightSubscriptionStatus => unit,
-  unsubscribeHeightSubscription: unit => unit,
 }
 
 // The pending item queries that aren't in `seen`, in arrival order, added to
@@ -496,10 +510,10 @@ module Ledger = {
   @send external dropPendingCalls: t => array<int> = "dropPendingCalls"
 }
 
-let blockHashesResponse = (blocks: array<BlockStore.inputBlock>) => {
+let blockHashesResponse = (blocks: array<BufferPage.observedBlock>) => {
   Source.result: Ok(
-    BlockStore.fromJs(
-      blocks->Array.map((block): BlockStore.inputBlock => {
+    BufferPage.fromBlocks(
+      blocks->Array.map((block): BufferPage.observedBlock => {
         ...block,
         blockHash: ?(block.blockHash->Option.map(evmBlockHash)),
       }),
@@ -529,8 +543,6 @@ let make = (
   ~sourceFor=Source.Sync,
   ~pollingInterval=1000,
   ~isWildcard=false,
-  // The contract whose address partition the source's own registration joins.
-  // A contract without handlers that gets it has its addresses fetched.
   ~mockEventContract=?,
   // Pre-configures the standing height answer at construction time, before
   // the mock is handed to the indexer - needed for a call that happens during
@@ -600,14 +612,6 @@ let make = (
   let heightSubscriptionCallbacks: array<int => unit> = []
   let heightSubscriptionStatusCallbacks: array<Source.heightSubscriptionStatus => unit> = []
   let heightSubscriptionUnsubscribed = ref(false)
-  // Shared by the close function the subscription hands back and the test-facing
-  // unsubscribe, so a callback array added here cannot end up cleared by only
-  // one of them.
-  let teardownHeightSubscription = () => {
-    heightSubscriptionUnsubscribed := true
-    heightSubscriptionCallbacks->Utils.Array.clearInPlace
-    heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
-  }
   let state: mockSourceState = {
     onEventRegistrationRef: ref(None),
     chainRegistrationsRef: ref([]),
@@ -633,6 +637,7 @@ let make = (
   let quietMicrotasks = 20
   let arrivalGeneration = ref(0)
   let settling = ref(false)
+  let isRegisteringContracts = ref(() => false)
   let notifyArrival = () => {
     arrivalGeneration := arrivalGeneration.contents + 1
     if !settling.contents {
@@ -643,6 +648,11 @@ let make = (
             settle(~generation=arrivalGeneration.contents, ~quiet=0)
           } else if quiet < quietMicrotasks {
             settle(~generation, ~quiet=quiet + 1)
+          } else if isRegisteringContracts.contents() {
+            // Real time: a contractRegister run builds off the JS thread and
+            // runs handlers off the clock; the queries its registrations add
+            // belong to this burst.
+            let _ = setTimeout(() => settle(~generation=arrivalGeneration.contents, ~quiet=0), 1)
           } else {
             settling := false
             let listeners = arrivalListeners->Array.copy
@@ -807,7 +817,7 @@ let make = (
           blockNumber: latestFetchedBlockNumber,
           blockHash: evmBlockHash(latestFetchedBlockHash),
           blockTimestamp: latestFetchedBlockNumber,
-        }: BlockStore.inputBlock
+        }: BufferPage.observedBlock
       ),
     ]
     let prevEntry = switch response.prevRangeLastBlock {
@@ -817,7 +827,7 @@ let make = (
           {
             blockNumber: prevRangeLastBlock.blockNumber,
             blockHash: evmBlockHash(prevRangeLastBlock.blockHash),
-          }: BlockStore.inputBlock
+          }: BufferPage.observedBlock
         ),
       )
     | None =>
@@ -827,7 +837,7 @@ let make = (
             {
               blockNumber: fromBlock - 1,
               blockHash: mockBlockHash(fromBlock - 1),
-            }: BlockStore.inputBlock
+            }: BufferPage.observedBlock
           ),
         )
       } else {
@@ -854,22 +864,20 @@ let make = (
         })
       }
     })
-    let responseBlockStore = BlockStore.make(~ecosystem=Evm)
-    observedBlocks->Array.forEach(block => {
-      let page = BlockStore.fromJs([block], ~ecosystem=Evm)
-      responseBlockStore->BlockStore.appendPage(page)
-    })
     {
       knownHeight: response.knownHeight->Option.getOr(knownHeight),
-      items: EventStore.fromJsItems(
+      page: BufferPage.fromItems(
+        ~blocks=observedBlocks,
+        ~ecosystem=Evm,
         items
         ->Array.flatMap(item => {
           let registrations = switch item.event {
-          | None => [
+          | None =>
+            let {plain, registering} =
               state.onEventRegistrationRef.contents->Option.getOrThrow(
                 ~message="MockSource on-event registration was not installed before resolving items",
-              ),
-            ]
+              )
+            [item.contractRegister->Option.isSome ? registering : plain]
           | Some(event) =>
             let name = (registration: Internal.onEventRegistration) =>
               `${registration.eventConfig.contractName}.${registration.eventConfig.name}`
@@ -922,8 +930,6 @@ let make = (
           ),
         ),
       ),
-      transactionStore: None,
-      blockStore: responseBlockStore,
       latestFetchedBlockNumber,
       stats: {
         totalTimeElapsed: 0.,
@@ -1121,10 +1127,14 @@ let make = (
     expectItemsQueries,
     repliedItemsQueries,
     respondUpTo,
-    respondEmptyUpTo: blockNumber => respondUpTo(blockNumber),
-    attachIndexer: (~waitUntilIdle as wait, ~progressBlock as progress) => {
+    attachIndexer: (
+      ~waitUntilIdle as wait,
+      ~progressBlock as progress,
+      ~isRegisteringContracts as registering,
+    ) => {
       waitUntilIdle := wait
       progressBlock := progress
+      isRegisteringContracts := registering
     },
     drainPendingItemsQueries: (~latestFetchedBlockNumber=?) =>
       ledger
@@ -1216,7 +1226,6 @@ let make = (
         heightSubscriptionStatusCallbacks->Array.forEach(callback => callback(status))
       }
     },
-    unsubscribeHeightSubscription: teardownHeightSubscription,
     source: {
       let source: Source.t = {
         name: "MockSource",
@@ -1266,7 +1275,7 @@ let make = (
           ~retry,
           ~logger as _,
         ) => {
-          let addresses = addressSet->AddressSet.addressesForTest
+          let addresses = addressSet->AddressSet.addresses
           let id =
             ledger->Ledger.takeItemsQuery(
               partitionId,
@@ -1356,7 +1365,9 @@ let make = (
               heightSubscriptionUnsubscribed := false
               () => {
                 heightSubscriptionCloseCalls->Array.push(true)->ignore
-                teardownHeightSubscription()
+                heightSubscriptionUnsubscribed := true
+                heightSubscriptionCallbacks->Utils.Array.clearInPlace
+                heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
               }
             },
           )

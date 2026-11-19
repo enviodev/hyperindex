@@ -8,9 +8,8 @@ type evmHyperSyncClientCtor
 type evmRpcClientCtor
 type svmHyperSyncClientCtor
 type fuelHyperSyncClientCtor
-type transactionStoreCtor
-type blockStoreCtor
-type eventStoreCtor
+type chainBufferCtor
+type pageCtor
 type storageCtor
 type addressStoreCtor
 type tuiCtor
@@ -52,12 +51,10 @@ type addon = {
   svmHyperSyncClient: svmHyperSyncClientCtor,
   @as("FuelHyperSyncClient")
   fuelHyperSyncClient: fuelHyperSyncClientCtor,
-  @as("TransactionStore")
-  transactionStore: transactionStoreCtor,
-  @as("BlockStore")
-  blockStore: blockStoreCtor,
-  @as("EventStore")
-  eventStore: eventStoreCtor,
+  @as("ChainBuffer")
+  chainBuffer: chainBufferCtor,
+  @as("Page")
+  page: pageCtor,
   @as("AddressStore")
   addressStore: addressStoreCtor,
   @as("Storage")
@@ -106,7 +103,6 @@ type addon = {
 @module("node:url") external fileURLToPath: string => string = "fileURLToPath"
 @val external importMetaUrl: string = "import.meta.url"
 @module("node:path") external pathDirname: string => string = "dirname"
-@module("node:path") @variadic external pathResolve: array<string> => string = "resolve"
 @module("node:fs") external existsSync: string => bool = "existsSync"
 @module("node:child_process")
 external execSyncRaw: (string, {..}) => string = "execSync"
