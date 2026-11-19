@@ -834,6 +834,7 @@ let makeOnTransactionChainArg = (chainObj: unknown, ~chainConfig: Config.chain, 
     let contractArg = Utils.Object.createNullObject()
     contractArg
     ->Utils.Object.definePropertyWithValue("name", {enumerable: true, value: contract.name})
+    ->Utils.Object.definePropertyWithValue("abi", {enumerable: true, value: contract.abi})
     ->Utils.Object.defineProperty(
       "addresses",
       {
@@ -876,13 +877,13 @@ let parseTransactionFilterOrThrow = (
       fail(`Unknown field \`${key}\`. ${shape}`)
     }
   )
-  let values = (key, ~pattern, ~noun) =>
+  let values = (key, ~pattern, ~noun, ~nouns) =>
     switch inner->Dict.get(key) {
     | None => None
     | Some(value) if value === %raw(`undefined`) => None
     | Some(value) =>
       if !Array.isArray(value) {
-        fail(`\`${key}\` must be an array of ${noun}es.`)
+        fail(`\`${key}\` must be an array of ${nouns}.`)
       }
       let values = value->(Utils.magic: unknown => array<unknown>)
       if values->Utils.Array.isEmpty {
@@ -910,9 +911,24 @@ let parseTransactionFilterOrThrow = (
   | Some(_) => fail("`status` must be 0 (reverted) or 1 (succeeded).")
   }
   {
-    from: ?values("from", ~pattern=addressPattern, ~noun="20-byte hex address"),
-    to: ?values("to", ~pattern=addressPattern, ~noun="20-byte hex address"),
-    sighash: ?values("sighash", ~pattern=selectorPattern, ~noun="4-byte hex selector"),
+    from: ?values(
+      "from",
+      ~pattern=addressPattern,
+      ~noun="20-byte hex address",
+      ~nouns="20-byte hex addresses",
+    ),
+    to: ?values(
+      "to",
+      ~pattern=addressPattern,
+      ~noun="20-byte hex address",
+      ~nouns="20-byte hex addresses",
+    ),
+    sighash: ?values(
+      "sighash",
+      ~pattern=selectorPattern,
+      ~noun="4-byte hex selector",
+      ~nouns="4-byte hex selectors",
+    ),
     ?status,
   }
 }
@@ -981,7 +997,7 @@ let registerOnTransaction = (
         matchedAny := true
         if filter.from === None && filter.to === None && filter.sighash === None {
           let readsOverRpc = switch chainConfig.sourceConfig {
-          | EvmSourceConfig({rpcs}) => rpcs->Utils.Array.notEmpty
+          | EvmSourceConfig({rpcs}) => rpcs->Array.some(rpc => rpc.sourceFor === Sync)
           | _ => false
           }
           logger->Logger.warn(

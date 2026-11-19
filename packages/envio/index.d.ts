@@ -1196,9 +1196,14 @@ export type EvmOnTransactionFilter = {
 export type EvmOnTransactionWhereResult = boolean | EvmOnTransactionFilter;
 
 /** Argument passed to an EVM `indexer.onTransaction` `where` predicate. Filter
- * values are static: `chain.<Contract>.addresses` can't be read here. */
-export type EvmOnTransactionWhereArgs<Config extends IndexerConfigTypes = GlobalConfig> =
-  EvmOnBlockWhereArgs<Config>;
+ * values are static, so a contract's `addresses` can't be read here: list the
+ * addresses instead. */
+export type EvmOnTransactionWhereArgs<Config extends IndexerConfigTypes = GlobalConfig> = {
+  /** Configured chain being evaluated. Use `chain.id` to branch per chain. */
+  readonly chain: EvmChain<EvmChainIds<Config>> & {
+    readonly [K in EvmContractNames<Config>]: Omit<EvmContract<K>, "addresses">;
+  };
+};
 
 /** Carried by every transaction handler's transaction without being listed. */
 type EvmOnTransactionAlwaysSelectedTransactionField = "transactionIndex" | "hash" | "from" | "to";
@@ -2153,10 +2158,11 @@ type EvmSimulateItem<Config extends IndexerConfigTypes = GlobalConfig> =
  * matches it. Only the fields given are set, so a filter on a field left out
  * doesn't match. */
 type EvmSimulateTransaction = {
-  /** `transactionIndex` defaults to the block's next free index. */
+  /** `transactionIndex` defaults to the block's next free index, and `hash`
+   * to one made from the block number and that index. */
   transaction: Partial<EvmAllTransactionFields>;
   /** The transaction's block. Its number defaults to the previous item's. */
-  block?: { readonly number?: number } & Partial<EvmAllBlockFields>;
+  block?: Partial<EvmAllBlockFields>;
 };
 
 /** Simulate item type for Fuel ecosystem. */

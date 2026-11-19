@@ -89,7 +89,8 @@ rows are written for events only.
 
 Testing: simulate a transaction as `{ transaction: {...}, block: {...} }`. Only
 the fields given are set, so a filter on a field left out doesn't match.
-`transactionIndex` defaults to the block's next free index; an event's
+`transactionIndex` defaults to the block's next free index and `hash` to one
+made from the block number and that index; an event's
 `transaction.transactionIndex` (0 by default) places it among them.
 
 ```ts

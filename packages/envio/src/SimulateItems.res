@@ -407,11 +407,22 @@ let parse = (
         evmTransactionIndexes->Dict.set(blockKey, taken)
         taken
       }
-      let transactionIndex = switch transaction
-      ->Dict.get("transactionIndex")
-      ->Option.map(index => index->(Utils.magic: unknown => int)) {
-      | Some(index) => index
+      let transactionIndex = switch transaction->Dict.get("transactionIndex") {
       | None => taken->Array.reduce(0, (next, index) => Pervasives.max(next, index + 1))
+      | Some(index) if index === %raw(`undefined`) =>
+        taken->Array.reduce(0, (next, index) => Pervasives.max(next, index + 1))
+      | Some(index)
+        if typeof(index) === #number &&
+        Math.floor(index->(Utils.magic: unknown => float)) ===
+          index->(Utils.magic: unknown => float) &&
+        index->(Utils.magic: unknown => float) >= 0. =>
+        index->(Utils.magic: unknown => int)
+      | Some(index) =>
+        fail(
+          `transactionIndex must be a non-negative integer, got ${index
+            ->JSON.stringifyAny
+            ->Option.getOr("undefined")}`,
+        )
       }
       if taken->Array.includes(transactionIndex) {
         fail(
@@ -420,6 +431,20 @@ let parse = (
       }
       taken->Array.push(transactionIndex)->ignore
       transaction->Dict.set("transactionIndex", transactionIndex->(Utils.magic: int => unknown))
+
+      // A handler always reads the hash, so one left out is made from where
+      // the transaction sits.
+      if (
+        transaction->Dict.get("hash")->Option.isNone ||
+          transaction->Dict.getUnsafe("hash") === %raw(`undefined`)
+      ) {
+        transaction->Dict.set(
+          "hash",
+          `0x${blockNumber->Int.toString(~radix=16)->String.padStart(32, "0")}${transactionIndex
+            ->Int.toString(~radix=16)
+            ->String.padStart(32, "0")}`->(Utils.magic: string => unknown),
+        )
+      }
       let row = transaction->toRpcObject
       row->Dict.set("blockNumber", JSON.String("0x" ++ blockNumber->Int.toString(~radix=16)))
       evmTransactions->Array.push(row)->ignore
@@ -811,9 +836,25 @@ let parse = (
             blockKey
             ->Int.fromString
             ->Option.flatMap(getBlock)
-            ->Option.map(block =>
-              block->(Utils.magic: Internal.eventBlock => dict<unknown>)->toRpcObject
-            )
+            ->Option.map(block => {
+              let row = block->(Utils.magic: Internal.eventBlock => dict<unknown>)->toRpcObject
+
+              // A handler always reads the block's hash, which an event's
+              // block defaults to empty.
+              if row->Dict.get("hash")->Option.isNone {
+                row->Dict.set(
+                  "hash",
+                  JSON.String(
+                    `0x${blockKey
+                      ->Int.fromString
+                      ->Option.getOr(0)
+                      ->Int.toString(~radix=16)
+                      ->String.padStart(64, "0")}`,
+                  ),
+                )
+              }
+              row
+            })
           ),
         ),
       ),

@@ -29,6 +29,11 @@ type Call {
   name: String!
 }
 
+type Hashes {
+  id: ID!
+  blockHash: String!
+}
+
 type Sent {
   id: ID!
   value: BigInt!
@@ -99,6 +104,12 @@ indexer.onTransaction(
   { name: "throws", where: () => ({ transaction: { from: ["0x00000000000000000000000000000000000000ff"] } }) },
   async ({ context }) => {
     if (!context.isPreload) throw new Error("Error from a transaction handler");
+  },
+);
+indexer.onTransaction(
+  { name: "hashes", where: () => ({ transaction: { from: ["0x00000000000000000000000000000000000000dd"] } }) },
+  async ({ transaction, block, context }) => {
+    context.Hashes.set({ id: transaction.hash, blockHash: block.hash });
   },
 );
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) =>
@@ -199,6 +210,45 @@ describe("onTransaction under simulate", () => {
         }),
       )
       .rejects.toThrow("Error from a transaction handler");
+  });
+
+  // A handler always reads its transaction's and block's hashes, so a test
+  // leaving them out gets ones made from where the transaction sits.
+  it("fills the hashes a test leaves out", async (t) => {
+    const indexer = createTestIndexer();
+    const dave = "0x00000000000000000000000000000000000000dd";
+    await indexer.process({
+      chains: {
+        1: {
+          startBlock: 0,
+          endBlock: 5,
+          simulate: [
+            { transaction: { from: dave }, block: { number: 4 } },
+            { transaction: { from: dave, transactionIndex: 7 } },
+          ],
+        },
+      },
+    });
+    const word = (n: number) => n.toString(16).padStart(64, "0");
+    t.expect((await indexer.Hashes.getAll()).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: "0x" + word(4).slice(32) + word(0).slice(32), blockHash: "0x" + word(4) },
+      { id: "0x" + word(4).slice(32) + word(7).slice(32), blockHash: "0x" + word(4) },
+    ]);
+  });
+
+  it("refuses a transactionIndex that isn't a non-negative integer", async (t) => {
+    const indexer = createTestIndexer();
+    await t
+      .expect(
+        indexer.process({
+          chains: {
+            1: { startBlock: 0, endBlock: 5, simulate: [{ transaction: { from: alice, transactionIndex: -1 } }] },
+          },
+        }),
+      )
+      .rejects.toThrow(
+        "simulate: transaction at index 0 on chain 1: transactionIndex must be a non-negative integer, got -1",
+      );
   });
 
   it("refuses a transaction field it doesn't know", async (t) => {
