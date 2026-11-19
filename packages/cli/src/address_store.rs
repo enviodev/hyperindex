@@ -922,14 +922,17 @@ impl RenderedSet {
     }
 }
 
-/// A snapshot: the ids are fixed at construction, so a rollback that tombstones
-/// an entry leaves sets built before it still holding that id. Only
-/// `filter_by_registration_block` prunes those — everything else reports them,
-/// on purpose. A rollback rebuilds the fetch state's partitions from filtered
-/// sets straight after, and a stale set that outlives that still can't fetch a
-/// dead address: `is_indexed_at` answers `false` for it, so matching drops the
-/// items it would bring back. Pruning here instead would shift the offsets
-/// `start_block_groups` hands to `slice` mid-flight.
+/// A snapshot: the ids are fixed at construction, so a tombstoned entry stays
+/// in sets built before it died. Only `filter_by_registration_block` prunes
+/// those — everything else reports them, on purpose. Pruning here instead would
+/// shift the offsets `start_block_groups` hands to `slice` mid-flight.
+///
+/// A rollback rebuilds the fetch state's partitions from filtered sets straight
+/// after, and a stale set that outlives that still can't fetch a rolled-back
+/// address: `is_indexed_at` answers `false` for it, so matching drops the items
+/// it would bring back. An entry retired by an earlier registration is
+/// different: its address is live under the new entry, so a set holding the
+/// retired id still asks for it and matching keeps its items.
 #[napi]
 pub struct AddressSet {
     store: Arc<RwLock<StoreInner>>,
