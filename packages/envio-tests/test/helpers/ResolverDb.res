@@ -12,7 +12,7 @@ type connection = {
   username: string,
   password: string,
   database: string,
-  ssl: Postgres.sslOptions,
+  ssl: Sql.sslMode,
 }
 
 type poolOptions = {
@@ -53,7 +53,9 @@ type findOptions = {
 // `db.sql` is a tagged template, which ReScript has no syntax for.
 let taggedSelectOne: db => promise<array<{"n": int}>> = %raw("(db) => db.sql`SELECT 1::int AS n`")
 
-@send external transaction: (db, Postgres.sql => promise<'a>) => promise<'a> = "transaction"
+type tx
+@send external transaction: (db, tx => promise<'a>) => promise<'a> = "transaction"
+@send external txUnsafe: (tx, string) => promise<'rows> = "unsafe"
 @send external unsafe: (sqlFn, string, array<JSON.t>) => promise<'rows> = "unsafe"
 
 type chainHeight = {

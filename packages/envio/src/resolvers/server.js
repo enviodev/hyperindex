@@ -16,7 +16,6 @@ import {
   toActionResponse,
   toResolveRequest,
 } from "./hasuraAction.js";
-import { error as logError, warn as logWarn } from "../Logging.res.mjs";
 import { Resolvers as ResolversEnv } from "../Env.res.mjs";
 
 // Serve coerces arguments before dispatching, so a request is small by
@@ -113,6 +112,8 @@ export async function startResolverServer(options) {
     actionSecret,
     privateKeys = [],
   } = options;
+  const logWarn = options.onWarn ?? ((message) => console.warn(message));
+  const logError = options.onErrorLog ?? ((message) => console.error(message));
   const port = options.port ?? ResolversEnv.port();
   const host = options.host ?? "0.0.0.0";
 

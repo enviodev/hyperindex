@@ -19,7 +19,6 @@
 import postgres from "postgres";
 import { Db as DbEnv, Resolvers as ResolversEnv } from "../Env.res.mjs";
 import { ResolverError } from "./errors.js";
-import { warn as logWarn } from "../Logging.res.mjs";
 import {
   decodeChainHeights,
   decodeRows,
@@ -179,7 +178,7 @@ export function createResolverPool(options) {
     onnotice: () => {},
   });
 
-  const warn = typeof onWarn === "function" ? onWarn : logWarn;
+  const warn = typeof onWarn === "function" ? onWarn : (message) => console.warn(message);
   const gate = new Gate(poolSize);
   // Kept on the pool, not the handle: a handle is per request, so warning
   // there would repeat the same line for every request a wide resolver serves.

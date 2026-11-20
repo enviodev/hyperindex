@@ -68,8 +68,8 @@ let run = async args => {
       await Main.start(~logger)
     } else {
       switch (await Core.runCli(args))->Null.toOption {
-      // Rust-only command (codegen / init / stop / docker / metrics / help /
-      // version / scripts) — nothing for JS to do, exit cleanly.
+      // Rust-only command (init / stop / docker / metrics / help / version /
+      // scripts) — nothing for JS to do, exit cleanly.
       | None => ()
       | Some(json) =>
         switch decodeCommand(json->JSON.parseOrThrow) {
@@ -79,9 +79,12 @@ let run = async args => {
           applyEnv(env)
           // `envio dev` only — see ResolverProcess.startForDev. Deployed, the
           // resolvers are their own service and are never started from here.
+          // Imported on demand: the resolvers bring their own Postgres driver,
+          // which an indexer has no use for and must not load.
           let loaded = Config.load()
-          if loaded.isDev {
-            let _ = await ResolverProcess.startForDev(~config=loaded, ~projectRoot=cwd)
+          if loaded.isDev && loaded.resolvers->Option.isSome {
+            let startForDev = await import(ResolverProcess.startForDev)
+            let _ = await startForDev(~logger, ~config=loaded, ~projectRoot=cwd)
           }
           await Main.start(~logger, ~reset)
         | Migrate({reset, config}) =>
@@ -96,7 +99,11 @@ let run = async args => {
           applyEnv(env)
           switch mode {
           | "manifest" =>
-            await ResolverProcess.writeManifest(~config=Config.load(), ~projectRoot=cwd)
+            await (await import(ResolverProcess.writeManifest))(
+              ~logger,
+              ~config=Config.load(),
+              ~projectRoot=cwd,
+            )
           | "metadata" =>
             let handlerUrl = switch Env.Resolvers.publicUrl() {
             | Some(url) => url
@@ -105,7 +112,8 @@ let run = async args => {
                 "ENVIO_RESOLVERS_PUBLIC_URL is not set. It is the URL Hasura posts to and is baked into every action, so the metadata cannot be printed without it.",
               )
             }
-            let metadata = await ResolverProcess.metadataJson(
+            let metadata = await (await import(ResolverProcess.metadataJson))(
+              ~logger,
               ~config=Config.load(),
               ~projectRoot=cwd,
               ~handlerUrl,
@@ -114,11 +122,12 @@ let run = async args => {
             // than being buried in the log stream.
             Console.log(JSON.stringify(metadata, ~space=2))
           | "migrate" =>
-            let {applied, reasons} = await ResolverProcess.migrate(
+            let {applied, reasons} = await (await import(ResolverProcess.migrate))(
+              ~logger,
               ~config=Config.load(),
               ~projectRoot=cwd,
             )
-            Logging.info(
+            logger->Logger.info(
               applied
                 ? `Updated Hasura to match these resolvers: ${reasons->Array.join("; ")}`
                 : "Hasura already matches these resolvers; nothing to update",
@@ -126,8 +135,12 @@ let run = async args => {
           // Serving keeps the event loop alive on its own, so returning here
           // leaves the process running rather than exiting.
           | _ =>
-            let running = await ResolverProcess.serve(~config=Config.load(), ~projectRoot=cwd)
-            running->ResolverProcess.handleSignals
+            let running = await (await import(ResolverProcess.serve))(
+              ~logger,
+              ~config=Config.load(),
+              ~projectRoot=cwd,
+            )
+            running->(await import(ResolverProcess.handleSignals))(~logger)
           }
         }
       }

@@ -1,5 +1,7 @@
 open Vitest
 
+let logger = Logger.makeInMemory()
+
 // What `envio resolvers` does once Rust hands over: find the module named by
 // `resolvers:` in config.yaml, import it so its declarations register, and
 // then either write the artefacts the image carries or serve them.
@@ -132,7 +134,7 @@ beforeAll(() => {
 
 describe("envio resolvers", () => {
   Async.it("writes the manifest and the SDL the image carries", async t => {
-    await ResolverProcess.writeManifest(~config, ~projectRoot)
+    await ResolverProcess.writeManifest(~logger, ~config, ~projectRoot)
 
     let manifest =
       readFileSync(pathJoin([projectRoot, ".envio", "resolvers.json"]), "utf8")->JSON.parseOrThrow
@@ -187,7 +189,7 @@ extend type Query {
 
   Async.it("emits empty artefacts when the project declares none", async t => {
     let root = pathJoin([projectRoot, "empty"])
-    await ResolverProcess.writeManifest(~config=configWithoutResolvers, ~projectRoot=root)
+    await ResolverProcess.writeManifest(~logger, ~config=configWithoutResolvers, ~projectRoot=root)
 
     let manifest =
       readFileSync(pathJoin([root, ".envio", "resolvers.json"]), "utf8")->JSON.parseOrThrow
@@ -200,7 +202,7 @@ extend type Query {
   })
 
   Async.it("serves the declarations it just imported, and drains on shutdown", async t => {
-    let running = await ResolverProcess.serve(~config, ~projectRoot, ~envioInfo, ~port=0)
+    let running = await ResolverProcess.serve(~logger, ~config, ~projectRoot, ~envioInfo, ~port=0)
     let url = `http://127.0.0.1:${running.server.port->Int.toString}/resolve`
     let body = `{"field":"ping","args":{},"selection":{},"role":"public","requestId":"r"}`
 
@@ -232,7 +234,7 @@ extend type Query {
     let port = (taken->address).port
 
     let outcome = try {
-      let running = await ResolverProcess.serve(~config, ~projectRoot, ~envioInfo, ~port)
+      let running = await ResolverProcess.serve(~logger, ~config, ~projectRoot, ~envioInfo, ~port)
       await running.shutdown()
       "bound"
     } catch {
@@ -241,7 +243,7 @@ extend type Query {
 
     // Serving again on a free port still has to work: a failed bind must leave
     // nothing of the first attempt behind.
-    let after = await ResolverProcess.serve(~config, ~projectRoot, ~envioInfo, ~port=0)
+    let after = await ResolverProcess.serve(~logger, ~config, ~projectRoot, ~envioInfo, ~port=0)
     let answer = await postJson(
       `http://127.0.0.1:${after.server.port->Int.toString}/resolve`,
       `{"field":"ping","args":{},"selection":{},"role":"public","requestId":"r"}`,
@@ -263,7 +265,13 @@ extend type Query {
     processEnv->Dict.set("ENVIO_RESOLVERS_PUBLIC_URL", "http://127.0.0.1:9919/hasura-action")
 
     let outcome = try {
-      let running = await ResolverProcess.serve(~config, ~projectRoot, ~envioInfo, ~port=9919)
+      let running = await ResolverProcess.serve(
+        ~logger,
+        ~config,
+        ~projectRoot,
+        ~envioInfo,
+        ~port=9919,
+      )
       await running.shutdown()
       "served"
     } catch {
@@ -291,7 +299,7 @@ extend type Query {
       ~configYaml=configYaml->String.replace("src/Resolvers.ts", "src/NotThere.ts"),
     ).config
     let caught = try {
-      await ResolverProcess.writeManifest(~config=broken, ~projectRoot)
+      await ResolverProcess.writeManifest(~logger, ~config=broken, ~projectRoot)
       None
     } catch {
     | JsExn(e) => e->JsExn.message
@@ -319,7 +327,8 @@ extend type Query {
     "spawns `envio resolvers` as its own process rather than serving in-process",
     async t => {
       processEnv->Dict.set("ENVIO_RESOLVERS_PORT", "9917")
-      let dev = (await ResolverProcess.startForDev(~config, ~projectRoot))->Option.getOrThrow
+      let dev =
+        (await ResolverProcess.startForDev(~logger, ~config, ~projectRoot))->Option.getOrThrow
 
       let answeredWhileRunning = await getStatus("http://127.0.0.1:9917/healthz")
 
@@ -379,7 +388,7 @@ extend type Query {
     )
     processEnv->Dict.set("ENVIO_RESOLVERS_PORT", "9918")
 
-    let dev = (await ResolverProcess.startForDev(~config, ~projectRoot))->Option.getOrThrow
+    let dev = (await ResolverProcess.startForDev(~logger, ~config, ~projectRoot))->Option.getOrThrow
     // The child applies after it binds, so give it a moment past /healthz.
     let deadline = Date.now() +. 10_000.
     let rec waitForBulk = async () =>

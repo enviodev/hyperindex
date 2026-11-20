@@ -1,5 +1,7 @@
 open Vitest
 
+let logger = Logger.makeInMemory()
+
 // `envio resolvers` is the service Hasura posts to, so it is also what tells
 // Hasura the fields exist. Registering its own metadata on startup is what
 // keeps the schema Hasura publishes and the code answering it in one image:
@@ -156,7 +158,7 @@ describe("envio resolvers, as Hasura's handler", () => {
     processEnv->Dict.set("ENVIO_RESOLVERS_PUBLIC_URL", publicUrl)
     processEnv->Dict.set("ENVIO_RESOLVERS_METADATA_INTERVAL_MS", "40")
 
-    let running = await ResolverProcess.serve(~config, ~projectRoot, ~envioInfo, ~port=0)
+    let running = await ResolverProcess.serve(~logger, ~config, ~projectRoot, ~envioInfo, ~port=0)
     let appliedOnStartup = callsOfType("bulk")
 
     // The re-assert is a read that finds nothing to do, not a rewrite: the
@@ -238,7 +240,7 @@ describe("envio resolvers, as Hasura's handler", () => {
     processEnv->Dict.set("ENVIO_RESOLVERS_PUBLIC_URL", publicUrl)
     processEnv->Dict.set("ENVIO_RESOLVERS_METADATA_INTERVAL_MS", "40")
 
-    let running = await ResolverProcess.serve(~config, ~projectRoot, ~envioInfo, ~port=0)
+    let running = await ResolverProcess.serve(~logger, ~config, ~projectRoot, ~envioInfo, ~port=0)
     let servingAfterRefusal = await getStatus(
       `http://127.0.0.1:${running.server.port->Int.toString}/healthz`,
     )
@@ -267,7 +269,7 @@ describe("envio resolvers, as Hasura's handler", () => {
   Async.it("serves without touching Hasura when it was not told where one is", async t => {
     received := []
     clearHasuraEnv()
-    let running = await ResolverProcess.serve(~config, ~projectRoot, ~envioInfo, ~port=0)
+    let running = await ResolverProcess.serve(~logger, ~config, ~projectRoot, ~envioInfo, ~port=0)
     await running.shutdown()
     t.expect(received.contents->Array.length).toEqual(0)
   })
@@ -286,7 +288,7 @@ describe("envio resolvers, as Hasura's handler", () => {
     processEnv->Dict.set("HASURA_GRAPHQL_ADMIN_SECRET", "testing")
     processEnv->Dict.set("ENVIO_RESOLVERS_PUBLIC_URL", publicUrl)
 
-    let result = await ResolverProcess.migrate(~config, ~projectRoot)
+    let result = await ResolverProcess.migrate(~logger, ~config, ~projectRoot)
 
     // Nothing is listening on the resolver port: this reconciles Hasura, it
     // does not serve.
@@ -320,7 +322,7 @@ describe("envio resolvers, as Hasura's handler", () => {
     processEnv->Dict.set("ENVIO_RESOLVERS_PUBLIC_URL", publicUrl)
 
     let outcome = try {
-      let _ = await ResolverProcess.migrate(~config, ~projectRoot)
+      let _ = await ResolverProcess.migrate(~logger, ~config, ~projectRoot)
       "returned"
     } catch {
     | _ => "threw"
@@ -334,7 +336,7 @@ describe("envio resolvers, as Hasura's handler", () => {
   Async.it("refuses to migrate without somewhere to send it", async t => {
     clearHasuraEnv()
     let outcome = try {
-      let _ = await ResolverProcess.migrate(~config, ~projectRoot)
+      let _ = await ResolverProcess.migrate(~logger, ~config, ~projectRoot)
       "returned"
     } catch {
     | JsExn(e) =>
@@ -349,7 +351,12 @@ describe("envio resolvers, as Hasura's handler", () => {
   Async.it("prints the metadata for anyone applying it by hand", async t => {
     // `envio resolvers metadata`: the same JSON the service would POST, so a
     // deployment that applies metadata elsewhere is not guessing at its shape.
-    let metadata = await ResolverProcess.metadataJson(~config, ~projectRoot, ~handlerUrl=publicUrl)
+    let metadata = await ResolverProcess.metadataJson(
+      ~logger,
+      ~config,
+      ~projectRoot,
+      ~handlerUrl=publicUrl,
+    )
     t.expect(metadata).toEqual(
       %raw(`{
         customTypes: { scalars: [], enums: [], input_objects: [], objects: [] },

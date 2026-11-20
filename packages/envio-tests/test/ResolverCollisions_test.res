@@ -1,5 +1,7 @@
 open Vitest
 
+let logger = Logger.makeInMemory()
+
 // A custom resolver squatting a name envio-serve generates from schema.graphql
 // makes the schema ambiguous. Serve refuses to start on it, but by then the
 // user is reading a deployment log; the build is where they can act.
@@ -72,7 +74,7 @@ beforeAll(() => {
 describe("resolver name collisions", () => {
   Async.it("fails the build naming every generated name a declaration squats", async t => {
     let caught = try {
-      await ResolverProcess.writeManifest(~config, ~projectRoot)
+      await ResolverProcess.writeManifest(~logger, ~config, ~projectRoot)
       None
     } catch {
     | JsExn(e) => e->JsExn.message
