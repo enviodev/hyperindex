@@ -35,6 +35,7 @@ let throttlingAnswers = [
   _ => (429, "Too Many Requests"),
   _ => (429, "Too Many Requests"),
   // Throttling worded in the error alone, under HTTP 200.
+  request => (200, request->rpcError(~code=-32005, ~message="limit exceeded")),
   request => (200, request->rpcError(~code=-32005, ~message="project ID request rate exceeded")),
   request => (
     200,

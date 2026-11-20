@@ -244,6 +244,7 @@ mod tests {
                 message: "query returned more than 10000 results".to_string(),
             },
             RpcError::RateLimited {
+                code: Some(-32005),
                 message: "project ID request rate exceeded".to_string(),
                 retry_after_millis: None,
             },

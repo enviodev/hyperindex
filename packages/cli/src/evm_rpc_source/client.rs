@@ -21,9 +21,10 @@ pub enum RpcError {
         code: i64,
         message: String,
     },
-    /// The provider refused the request for how often it is being asked, which
-    /// says nothing about the request itself.
+    /// The provider refused the request for how often it is being asked.
     RateLimited {
+        /// The JSON-RPC code, when the refusal came as a JSON-RPC error.
+        code: Option<i64>,
         message: String,
         /// The provider's `Retry-After`, when it sent one in seconds.
         retry_after_millis: Option<u64>,
@@ -41,6 +42,11 @@ impl std::fmt::Display for RpcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RpcError::JsonRpc { code, message } => write!(f, "JSON-RPC error {code}: {message}"),
+            RpcError::RateLimited {
+                code: Some(code),
+                message,
+                ..
+            } => write!(f, "rate limited, JSON-RPC error {code}: {message}"),
             RpcError::RateLimited { message, .. } => write!(f, "rate limited: {message}"),
             RpcError::Timeout(err) | RpcError::MalformedResponse(err) | RpcError::Other(err) => {
                 write!(f, "{err:#}")
@@ -237,6 +243,7 @@ impl JsonRpcClient {
                 let snippet = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).into_owned();
                 if !status.is_success() && is_rate_limited(status.as_u16(), None, &snippet) {
                     return Err(RpcError::RateLimited {
+                        code: None,
                         message: format!("HTTP {status} for {method}: {snippet}"),
                         retry_after_millis,
                     });
@@ -257,6 +264,7 @@ impl JsonRpcClient {
         if let Some(error) = parsed.error {
             if is_rate_limited(status.as_u16(), Some(error.code), &error.message) {
                 return Err(RpcError::RateLimited {
+                    code: Some(error.code),
                     message: error.message,
                     retry_after_millis,
                 });

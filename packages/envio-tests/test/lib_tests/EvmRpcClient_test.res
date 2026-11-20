@@ -110,7 +110,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
       },
     )
 
-    t.expect(error).toEqual(Some("rate limited: rate limited"))
+    t.expect(error).toEqual(Some("rate limited, JSON-RPC error -32029: rate limited"))
   })
 
   Async.it("Reports HTTP status and body snippet for a non-JSON response", async t => {
@@ -637,6 +637,50 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       EvmRpcClient.Backoff,
       Some(`eth_getBlockByNumber took longer than ${queryTimeoutMillis->Int.toString}ms`),
     ))
+  })
+
+  // https://github.com/enviodev/hyperindex/issues/1669
+  Async.it("Waits as long as a provider throttling a read behind the logs asks", async t => {
+    let firstBlock = 100
+
+    let outcome = await MockRpcServer.withScenario(
+      ~name="throttled block read with Retry-After",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~reply=RpcResult(
+            JSON.parseOrThrow("[" ++ logsAcrossBlocks(~firstBlock, ~count=1) ++ "]"),
+          ),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~reply=RawHttp({
+            status: 429,
+            headers: dict{"Retry-After": "3"},
+            body: "Too Many Requests",
+          }),
+        ),
+      ],
+      async mock => {
+        let addressStore = makeAddressStore()
+        let client = makeClient(
+          ~url=mock.url,
+          ~eventRegistrations=[makeRegistration(~blockFields=["GasUsed"])],
+          ~addressStore,
+        )
+        let (result, _) = await client->callNextPage(
+          ~eventRegistrations=[makeRegistration(~blockFields=["GasUsed"])],
+          ~addressStore,
+          ~fromBlock=firstBlock,
+          ~toBlockCeiling=firstBlock + 9,
+          ~indexes=[3],
+          ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+        )
+        (result.kind, result.backoffMillis)
+      },
+    )
+
+    t.expect(outcome).toEqual((EvmRpcClient.Backoff, Some(3000)))
   })
 
   Async.it("Leaves the block range alone when a read behind the logs fails", async t => {

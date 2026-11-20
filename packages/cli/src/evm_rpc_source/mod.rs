@@ -643,6 +643,7 @@ impl EvmRpcClient {
             Err(PageError::Logs(RpcError::RateLimited {
                 message,
                 retry_after_millis,
+                ..
             })) => (
                 NextPageResult {
                     provider_message: Some(message),
@@ -831,8 +832,6 @@ impl EvmRpcClient {
         Ok(page)
     }
 
-    /// The provider's own reset when it gave one, the configured backoff
-    /// otherwise.
     fn rate_limit_backoff_millis(&self, retry_after_millis: Option<u64>) -> i64 {
         // ReScript reads this as a 32-bit int; the source manager caps the wait
         // far below that anyway.

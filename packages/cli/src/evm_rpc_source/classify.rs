@@ -37,8 +37,13 @@ static RESULT_CAP: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
+// A bare "limit exceeded" is geth's own throttling message, as BSC's public
+// endpoints send it under HTTP 200.
 static RATE_LIMITED: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)rate.?limit|too many requests|request rate|compute units|throughput").unwrap()
+    Regex::new(
+        r"(?i)rate.?limit|too many requests|request rate|compute units|throughput|^limit exceeded$",
+    )
+    .unwrap()
 });
 
 /// Whether a provider refused a request for how often it is asked rather than
@@ -280,6 +285,7 @@ mod tests {
         let refusals = [
             (429, Some(-32005), "limit exceeded"),
             (429, None, "Too Many Requests"),
+            (200, Some(-32005), "limit exceeded"),
             (200, Some(-32005), "project ID request rate exceeded"),
             (
                 200,
@@ -300,7 +306,7 @@ mod tests {
         ];
         assert_eq!(
             refusals.map(|(status, code, message)| is_rate_limited(status, code, message)),
-            [true, true, true, true, false, false, false, false, false]
+            [true, true, true, true, true, false, false, false, false, false]
         );
     }
 
