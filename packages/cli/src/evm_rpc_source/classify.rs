@@ -292,6 +292,8 @@ mod tests {
                 Some(429),
                 "Your app has exceeded its compute units per second capacity",
             ),
+            // The code alone, in wording the matcher doesn't know.
+            (200, Some(429), "Too many concurrent requests"),
             // Infura's result cap shares the throttling code.
             (200, Some(-32005), "query returned more than 10000 results"),
             // A range or result limit is about the request, whatever the status.
@@ -306,7 +308,7 @@ mod tests {
         ];
         assert_eq!(
             refusals.map(|(status, code, message)| is_rate_limited(status, code, message)),
-            [true, true, true, true, true, false, false, false, false, false]
+            [true, true, true, true, true, true, false, false, false, false, false]
         );
     }
 
