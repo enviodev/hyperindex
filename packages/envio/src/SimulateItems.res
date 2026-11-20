@@ -180,9 +180,21 @@ type rawSimulateItem
 @get external getTransaction: rawSimulateItem => option<dict<unknown>> = "transaction"
 
 // A simulated value as a JSON-RPC node spells it: quantities in hex, the one
-// decimal field as a number, and nothing for a value the test left empty.
-let toRpcValue = (value: unknown, ~key): option<JSON.t> =>
+// decimal field as a number, and nothing for a value the test left empty. A
+// block's nonce is 8 bytes of data rather than a quantity, so it keeps its
+// leading zeros.
+let toRpcValue = (value: unknown, ~key, ~isBlock): option<JSON.t> =>
   switch typeof(value) {
+  | #bigint if isBlock && key === "nonce" =>
+    Some(
+      JSON.String(
+        "0x" ++
+        value
+        ->(Utils.magic: unknown => bigint)
+        ->BigInt.toString(~radix=16)
+        ->String.padStart(16, "0"),
+      ),
+    )
   | #bigint =>
     Some(JSON.String("0x" ++ value->(Utils.magic: unknown => bigint)->BigInt.toString(~radix=16)))
   | #number if key === "l1FeeScalar" => Some(value->(Utils.magic: unknown => JSON.t))
@@ -200,10 +212,10 @@ let defaultTransactionHash = (~blockNumber, ~transactionIndex) =>
     ->Int.toString(~radix=16)
     ->String.padStart(32, "0")}`
 
-let toRpcObject = (fields: dict<unknown>) => {
+let toRpcObject = (fields: dict<unknown>, ~isBlock) => {
   let object = Dict.make()
   fields->Dict.forEachWithKey((value, key) =>
-    switch value->toRpcValue(~key) {
+    switch value->toRpcValue(~key, ~isBlock) {
     | Some(value) => object->Dict.set(key, value)
     | None => ()
     }
@@ -452,7 +464,7 @@ let parse = (
           defaultTransactionHash(~blockNumber, ~transactionIndex)->(Utils.magic: string => unknown),
         )
       }
-      let row = transaction->toRpcObject
+      let row = transaction->toRpcObject(~isBlock=false)
       row->Dict.set("blockNumber", JSON.String("0x" ++ blockNumber->Int.toString(~radix=16)))
       evmTransactions->Array.push(row)->ignore
       simulatedTransactions
@@ -849,7 +861,10 @@ let parse = (
             ->Int.fromString
             ->Option.flatMap(getBlock)
             ->Option.map(block => {
-              let row = block->(Utils.magic: Internal.eventBlock => dict<unknown>)->toRpcObject
+              let row =
+                block
+                ->(Utils.magic: Internal.eventBlock => dict<unknown>)
+                ->toRpcObject(~isBlock=true)
 
               // A handler always reads the block's hash, which an event's
               // block defaults to empty.

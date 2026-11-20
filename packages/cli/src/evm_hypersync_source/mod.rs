@@ -493,10 +493,20 @@ fn process_response(
         let mut rows = page.transactions.builder();
         for tx in transactions.iter().flatten() {
             // A row without its key backs no log; if a kept log wanted it, the
-            // coverage check below reports the transaction missing.
+            // coverage check below reports the transaction missing. A
+            // transaction selection returned it as one the handlers may run on,
+            // and nothing later would notice it dropped.
             let (Some(block_number), Some(transaction_index)) =
                 (tx.block_number, tx.transaction_index)
             else {
+                if transaction_matcher.is_some() {
+                    let name = if tx.block_number.is_none() {
+                        "blockNumber"
+                    } else {
+                        "transactionIndex"
+                    };
+                    push_unique(&mut missing, format!("transaction.{name}"));
+                }
                 continue;
             };
             let key = (u64::from(block_number), u64::from(transaction_index) as u32);

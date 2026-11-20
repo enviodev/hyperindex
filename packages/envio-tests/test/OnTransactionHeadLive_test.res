@@ -37,13 +37,21 @@ indexer.onTransaction(
 import { describe, it } from "vitest";
 import { createTestIndexer } from "envio";
 
+// The public node is load-balanced: a backend behind the one that answered
+// \`eth_blockNumber\` can still miss a block, or a request can be rate limited,
+// so a call without a result is asked again.
 const rpc = async (method: string, params: unknown[]) => {
-  const response = await fetch("https://ethereum-rpc.publicnode.com", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  return ((await response.json()) as { result: any }).result;
+  for (let attempt = 1; ; attempt++) {
+    const response = await fetch("https://ethereum-rpc.publicnode.com", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    }).catch(() => undefined);
+    const result = response?.ok ? ((await response.json()) as { result?: any }).result : undefined;
+    if (result != null) return result;
+    if (attempt === 10) throw new Error(\`\${method} returned no result after \${attempt} attempts\`);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
 };
 
 describe("onTransaction at the mainnet head", () => {

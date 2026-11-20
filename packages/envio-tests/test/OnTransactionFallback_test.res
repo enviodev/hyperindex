@@ -1,8 +1,10 @@
 open Vitest
 
-// A chain served by HyperSync with an RPC to fall back on. One transaction
-// page HyperSync can't answer whole goes to the RPC, and the pages around it
-// come back to HyperSync: every transaction still runs its handler once.
+// A chain served by HyperSync with an RPC to fall back on. A transaction page
+// HyperSync can't answer whole goes to the RPC, which reads the rest of that
+// query's range, and every transaction still runs its handler once. A page
+// missing a transaction's hash is one; so is a page holding a transaction
+// without its key, which would otherwise be dropped while the range moved on.
 
 let alice = "0x1111111111111111111111111111111111111111"
 let bob = "0x2222222222222222222222222222222222222222"
@@ -130,12 +132,24 @@ describe("onTransaction falling back from HyperSync to RPC", () => {
       async indexer => {
         let sent: array<sent> = await indexer.query("Sent")
         let rpcFullBlockReads =
-          (served->ServedEvmChain.servers).rpc.requests->Array.filter(
-            body => body->String.includes("eth_getBlockByNumber") && body->String.includes("true"),
+          (served->ServedEvmChain.servers).rpc.requests
+          ->Array.filterMap(
+            body =>
+              switch body
+              ->JSON.parseOrThrow
+              ->(Utils.magic: JSON.t => {"method": string, "params": array<JSON.t>}) {
+              | call if call["method"] === "eth_getBlockByNumber" =>
+                switch call["params"] {
+                | [JSON.String(number), JSON.Boolean(true)] => Some(number)
+                | _ => None
+                }
+              | _ => None
+              },
           )
+          ->Array.toSorted(String.compare)
         t.expect((
           sent->Array.toSorted((a, b) => String.compare(a.id, b.id)),
-          rpcFullBlockReads->Utils.Array.notEmpty,
+          rpcFullBlockReads,
           indexer.infoAndAboveLogs()
           ->Array.filter(({msg}) => msg->String.includes("runs on every transaction"))
           ->Array.map(({msg}) => msg),
@@ -147,11 +161,39 @@ describe("onTransaction falling back from HyperSync to RPC", () => {
               runs: 1,
             },
           ),
-          true,
+          ["0x3", "0x4", "0x5", "0x6"],
           [
             "`indexer.onTransaction(\"reverted\")` runs on every transaction of chain 1: its filter names no `from` or `to`.",
           ],
         ))
+      },
+    )
+  })
+
+  Async.it("treats a transaction without its key as a page it can't answer", async t => {
+    let hyperSync = (served->ServedEvmChain.servers).hyperSync
+    hyperSync->MockHyperSyncServer.pushResponse(
+      page(~fromBlock=1, ~toBlock=2, ~transaction=ServedEvmChain.hyperSyncTransaction),
+    )
+    hyperSync->MockHyperSyncServer.pushResponse(
+      page(
+        ~fromBlock=3,
+        ~toBlock=3,
+        ~transaction=transaction => {
+          let row =
+            transaction->ServedEvmChain.hyperSyncTransaction->JSON.Decode.object->Option.getOrThrow
+          row->Dict.delete("transaction_index")
+          JSON.Object(row)
+        },
+      ),
+    )
+    await served->ServedEvmChain.run(
+      scenario,
+      async indexer => {
+        let sent: array<sent> = await indexer.query("Sent")
+        t.expect(sent->Array.toSorted((a, b) => String.compare(a.id, b.id))).toEqual(
+          Array.fromInitializer(~length=height, index => {id: (index + 1)->Int.toString, runs: 1}),
+        )
       },
     )
   })

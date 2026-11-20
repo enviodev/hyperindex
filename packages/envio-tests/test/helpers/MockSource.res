@@ -871,7 +871,7 @@ let make = (
         page->BufferPage.append(
           BufferPage.fromEvmJs(
             ~transactions=transactions->Array.map(({blockNumber, transactionIndex, fields}) => {
-              let row = fields->SimulateItems.toRpcObject
+              let row = fields->SimulateItems.toRpcObject(~isBlock=false)
               row->Dict.set("blockNumber", JSON.String(`0x${blockNumber->Int.toString(~radix=16)}`))
               row->Dict.set(
                 "transactionIndex",
@@ -1084,7 +1084,13 @@ let make = (
             checked,
             isFailure: false,
             latestFetchedBlockNumber: ?response.latestFetchedBlockNumber,
-            itemBlockNumbers: response.items->Array.map(item => item.blockNumber),
+            itemBlockNumbers: response.items
+            ->Array.map(item => item.blockNumber)
+            ->Array.concat(
+              response.transactions
+              ->Option.getOr([])
+              ->Array.map(transaction => transaction.blockNumber),
+            ),
           }
         | Error(_) => {id: query->queryId, checked, isFailure: true, itemBlockNumbers: []}
         }

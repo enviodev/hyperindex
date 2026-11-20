@@ -34,6 +34,11 @@ type Hashes {
   blockHash: String!
 }
 
+type BlockNonce {
+  id: ID!
+  nonce: BigInt!
+}
+
 type Sent {
   id: ID!
   value: BigInt!
@@ -107,6 +112,16 @@ indexer.onTransaction(
     context.Hashes.set({ id: transaction.hash, blockHash: block.hash });
   },
 );
+indexer.onTransaction(
+  {
+    name: "block-nonces",
+    where: () => ({ transaction: { from: ["0x00000000000000000000000000000000000000cc"] } }),
+    fields: { block: ["nonce"] },
+  },
+  async ({ block, context }) => {
+    context.BlockNonce.set({ id: \`\${block.number}\`, nonce: block.nonce ?? -1n });
+  },
+);
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) =>
   record(context, \`Transfer \${event.block.number}/\${event.logIndex}\`),
 );
@@ -138,7 +153,9 @@ describe("onTransaction under simulate", () => {
             },
             // No status and no input given: the filters on them don't match.
             { transaction: { from: carol, to: bob, transactionIndex: 2 } },
-            // An event of the transaction at index 1.
+            { transaction: { from: carol, to: bob, transactionIndex: 1 } },
+            // An event of the transaction at index 1: it runs after that
+            // transaction's handlers and before the next one's.
             {
               contract: "Token",
               event: "Transfer",
@@ -162,6 +179,7 @@ describe("onTransaction under simulate", () => {
         "from-alice 3/0",
         "to-bob 3/0",
         "succeeded 3/0",
+        "to-bob 3/1",
         "Transfer 3/0",
         "to-bob 3/2",
         "from-alice 3/3",
@@ -170,6 +188,7 @@ describe("onTransaction under simulate", () => {
         "from-alice 3/0",
         "to-bob 3/0",
         "succeeded 3/0",
+        "to-bob 3/1",
         "Transfer 3/0",
         "to-bob 3/2",
         "from-alice 3/3",
@@ -226,6 +245,28 @@ describe("onTransaction under simulate", () => {
     t.expect((await indexer.Hashes.getAll()).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
       { id: "0x" + word(4).slice(32) + word(0).slice(32), blockHash: "0x" + word(4) },
       { id: "0x" + word(4).slice(32) + word(7).slice(32), blockHash: "0x" + word(4) },
+    ]);
+  });
+
+  // A block nonce is 8 bytes of data, which a test gives as a bigint.
+  it("reads back the block nonce a test gives", async (t) => {
+    const indexer = createTestIndexer();
+    const cc = "0x00000000000000000000000000000000000000cc";
+    await indexer.process({
+      chains: {
+        1: {
+          startBlock: 0,
+          endBlock: 5,
+          simulate: [
+            { transaction: { from: cc }, block: { number: 1, nonce: 0n } },
+            { transaction: { from: cc }, block: { number: 2, nonce: 42n } },
+          ],
+        },
+      },
+    });
+    t.expect((await indexer.BlockNonce.getAll()).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: "1", nonce: 0n },
+      { id: "2", nonce: 42n },
     ]);
   });
 

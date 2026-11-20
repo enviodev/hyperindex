@@ -117,7 +117,8 @@ describe("Hash", () => {
       () => {
         Utils.Hash.makeOrThrow(Utils.Set.fromArray(["1", "2"]))
       },
-     `Failed to get hash for Set. If you're using a custom Sury schema make it based on the string type with a decoder: const myTypeSchema = S.transform(S.string, undefined, (yourType) => yourType.toString())`)
+      `Failed to get hash for Set. If you're using a custom Sury schema make it based on the string type with a decoder: const myTypeSchema = S.transform(S.string, undefined, (yourType) => yourType.toString())`,
+    )
   })
 
   it("symbol", t => {

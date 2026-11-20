@@ -86,10 +86,12 @@ let whereOf = index => {
     ->(Utils.magic: Internal.onEventRegistration => Internal.svmOnEventRegistration)
   {
     "accountFilters": reg.accountFilters->Array.map(group =>
-      group->Array.map(filter => {
-        "position": filter.position,
-        "values": filter.values->SvmTypes.Pubkey.toStrings,
-      })
+      group->Array.map(filter =>
+        {
+          "position": filter.position,
+          "values": filter.values->SvmTypes.Pubkey.toStrings,
+        }
+      )
     ),
     "isInner": reg.isInner,
     "startBlock": reg.startBlock,
@@ -108,10 +110,7 @@ describe("SVM onInstruction where", () => {
   it("resolves named accounts to positions, accepting a single pubkey or a list", t => {
     t.expect(whereOf(1)).toEqual({
       "accountFilters": [
-        [
-          {"position": 0, "values": [sourcePk]},
-          {"position": 1, "values": [destPk, sourcePk]},
-        ],
+        [{"position": 0, "values": [sourcePk]}, {"position": 1, "values": [destPk, sourcePk]}],
       ],
       "isInner": Some(false),
       "startBlock": None,
