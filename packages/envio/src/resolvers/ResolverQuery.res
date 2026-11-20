@@ -41,11 +41,33 @@ let getQueryFieldOrThrow = (~table: Table.table, ~entityName, ~apiFieldName, ~wh
 let arrayFieldSchema: Table.queryField => S.t<
   unknown,
 > = Utils.WeakMap.memoize((queryField: Table.queryField) =>
-  switch queryField.fieldType {
-  | Bytea => Utils.Schema.bytesArray->S.toUnknown
-  | _ => S.array(queryField.fieldSchema)->S.toUnknown
-  }
+  S.array(queryField.fieldSchema)->S.toUnknown
 )
+
+// A raw-bytes value never passes through JSON, which has no spelling for it.
+// One value is handed to the driver as it is. A set is written as the array
+// literal Postgres parses, because the driver would declare it by its element
+// type.
+let bindBytesOrThrow = (~value: unknown, ~isArray, ~params: array<JSON.t>, ~fail) => {
+  let hexOrThrow = item =>
+    switch item->Utils.Bytes.asUint8Array {
+    | Some(bytes) => bytes
+    | None => fail("Expected Uint8Array")
+    }
+  if isArray {
+    let literal =
+      "{" ++
+      value
+      ->(Utils.magic: unknown => array<unknown>)
+      ->Array.map(item => `"\\\\x${item->hexOrThrow->Utils.Bytes.toHex}"`)
+      ->Array.join(",") ++ "}"
+    params->Array.push(literal->JSON.Encode.string)->ignore
+    `$${params->Array.length->Int.toString}::bytea[]`
+  } else {
+    params->Array.push(value->hexOrThrow->(Utils.magic: Uint8Array.t => JSON.t))->ignore
+    `$${params->Array.length->Int.toString}`
+  }
+}
 
 let bindOrThrow = (
   ~queryField: Table.queryField,
@@ -56,20 +78,27 @@ let bindOrThrow = (
   ~isArray,
   ~params: array<JSON.t>,
 ) => {
-  let json = try value->S.reverseConvertToJsonOrThrow(
-    isArray ? queryField->arrayFieldSchema : queryField.fieldSchema,
-  ) catch {
-  | exn =>
-    let reason = switch exn {
-    | JsExn(e) => e->JsExn.message->Option.getOr("it isn't the field's type")
-    | _ => "it isn't the field's type"
-    }
+  let fail = reason =>
     JsError.throwWithMessage(
       `Invalid value for db.find("${entityName}", { where: { ${apiFieldName}: { ${operator}: ... } } }): ${reason}`,
     )
+  switch queryField.fieldType {
+  | Bytea => bindBytesOrThrow(~value, ~isArray, ~params, ~fail)
+  | _ =>
+    let json = try value->S.reverseConvertToJsonOrThrow(
+      isArray ? queryField->arrayFieldSchema : queryField.fieldSchema,
+    ) catch {
+    | exn =>
+      fail(
+        switch exn {
+        | JsExn(e) => e->JsExn.message->Option.getOr("it isn't the field's type")
+        | _ => "it isn't the field's type"
+        },
+      )
+    }
+    params->Array.push(json)->ignore
+    `$${params->Array.length->Int.toString}`
   }
-  params->Array.push(json)->ignore
-  `$${params->Array.length->Int.toString}`
 }
 
 let makeWhereCondition = (~table, ~entityName, ~where: dict<unknown>, ~params) => {

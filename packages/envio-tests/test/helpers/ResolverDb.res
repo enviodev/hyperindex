@@ -48,6 +48,7 @@ type findOptions = {
 
 @send external find: (db, string, findOptions) => promise<array<'entity>> = "find"
 @send external get: (db, string, string) => promise<Nullable.t<'entity>> = "get"
+@send external getByBytes: (db, string, Uint8Array.t) => promise<Nullable.t<'entity>> = "get"
 
 @get external sqlOf: db => sqlFn = "sql"
 

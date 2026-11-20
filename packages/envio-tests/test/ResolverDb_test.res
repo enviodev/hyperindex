@@ -29,6 +29,21 @@ type Position {
   sizeInUsd: BigInt!
   isLong: Boolean!
 }
+
+enum Kind {
+  Spot
+  Perp
+}
+
+type Sample {
+  id: Bytes!
+  kind: Kind!
+  price: BigDecimal!
+  at: Timestamp
+  doc: Json!
+  raw: Bytes!
+  amounts: [BigInt!]!
+}
 `
 
 let config = InternalTestIndexer.fromUserApi(~configYaml, ~schema).config
@@ -77,6 +92,18 @@ type position = {
   isLong: bool,
 }
 
+type blob = {id: Uint8Array.t, payload: Uint8Array.t}
+
+type sample = {
+  id: string,
+  kind: string,
+  price: BigDecimal.t,
+  at: option<Date.t>,
+  doc: JSON.t,
+  raw: string,
+  amounts: array<bigint>,
+}
+
 Async.beforeAll(async () => {
   let storage = Storage.makeStorageFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled=false)
   let persistence = Storage.makePersistenceFromConfig(~config, ~logger, ~storage)
@@ -95,6 +122,11 @@ Async.beforeAll(async () => {
       ('p1', '0xaaa', 100, true),
       ('p2', '0xaaa', 250, false),
       ('p3', '0xbbb', 300, true);`,
+  )
+  let _ = await sql->Sql.queryForTests(
+    `INSERT INTO "${pgSchema}"."Sample" ("id", "kind", "price", "at", "doc", "raw", "amounts") VALUES
+      ('0x0102', 'Perp', 1.50000001, '2026-01-02T03:04:05Z', '{"a": [1, "two"]}', '0xdeadbeef', '{1, 123456789012345678901234567890}'),
+      ('0x0a0b', 'Spot', 2, NULL, '"text"', '0x', '{}');`,
   )
 })
 
@@ -253,6 +285,116 @@ describe("Resolver db handle", () => {
     let tagged = await db->ResolverDb.taggedSelectOne
     await pool->ResolverDb.endPool
     t.expect((result, tagged->Array.getUnsafe(0)->(row => row["n"]))).toEqual(((true, "1s"), 1))
+  })
+
+  Async.it("decodes every column type of a schema the indexer's storage created", async t => {
+    let pool = makePool()
+    let db = pool->ResolverDb.forResolver({name: "samples", timeoutMs: 5000})
+    let byId: Nullable.t<sample> = await db->ResolverDb.get("Sample", "0x0102")
+    let bySet: array<sample> = await db->ResolverDb.find(
+      "Sample",
+      {
+        where: dict{
+          "id": {"_in": ["0x0a0b", "0x0102"]}->(Utils.magic: {"_in": array<string>} => unknown),
+          "kind": {"_eq": "Spot"}->(Utils.magic: {"_eq": string} => unknown),
+        },
+      },
+    )
+    await pool->ResolverDb.endPool
+    let shown = (sample: sample) => (
+      sample.id,
+      sample.kind,
+      sample.price->BigDecimal.toString,
+      sample.at->Option.map(Date.toISOString),
+      sample.doc,
+      sample.raw,
+      sample.amounts,
+    )
+    t.expect((byId->Nullable.toOption->Option.map(shown), bySet->Array.map(shown))).toEqual((
+      Some((
+        "0x0102",
+        "Perp",
+        "1.50000001",
+        Some("2026-01-02T03:04:05.000Z"),
+        %raw(`{a: [1, "two"]}`),
+        "0xdeadbeef",
+        [1n, 123456789012345678901234567890n],
+      )),
+      [("0x0a0b", "Spot", "2", None, %raw(`"text"`), "0x", [])],
+    ))
+  })
+
+  Async.it("reads and filters raw-bytes columns under `bytes_type: uint8array`", async t => {
+    let bytesConfig = InternalTestIndexer.fromUserApi(
+      ~configYaml=configYaml ++ "bytes_type: uint8array\n",
+      ~schema=`
+type Blob {
+  id: Bytes!
+  payload: Bytes!
+}
+`,
+    ).config
+    let bytesSchema = TestPgSchema.make()
+    let storage = Storage.makeStorageFromEnv(
+      ~config=bytesConfig,
+      ~logger,
+      ~pgSchema=bytesSchema,
+      ~isHasuraEnabled=false,
+    )
+    await Storage.makePersistenceFromConfig(
+      ~config=bytesConfig,
+      ~logger,
+      ~storage,
+    )->Persistence.init(
+      ~logger,
+      ~chainConfigs=bytesConfig.chainMap->ChainMap.values,
+      ~contractMapping=bytesConfig.contractMapping,
+      ~envioInfo=JSON.Encode.object(Dict.make()),
+      ~resetCommand="envio dev -r",
+      ~runCommand=Some("envio dev"),
+      ~reset=true,
+    )
+    await storage.close()
+    let _ = await sql->Sql.queryForTests(
+      `INSERT INTO "${bytesSchema}"."Blob" ("id", "payload") VALUES
+        ('\\x0102', '\\xdeadbeef'), ('\\x0a0b', '\\x');`,
+    )
+
+    let pool = ResolverDb.createPool({
+      connection: {
+        host: Env.Db.host,
+        port: Env.Db.port,
+        username: Env.Db.user,
+        password: Env.Db.password,
+        database: Env.Db.database,
+        ssl: Env.Db.ssl,
+      },
+      entities: bytesConfig.userEntitiesByName,
+      pgSchema: bytesSchema,
+    })
+    let db = pool->ResolverDb.forResolver({name: "blobs", timeoutMs: 5000})
+    let hex = (blob: blob) => (blob.id->Utils.Bytes.toHex, blob.payload->Utils.Bytes.toHex)
+    let byId: Nullable.t<blob> = await db->ResolverDb.getByBytes(
+      "Blob",
+      Uint8Array.fromArray([1, 2]),
+    )
+    let bySet: array<blob> = await db->ResolverDb.find(
+      "Blob",
+      {
+        where: dict{
+          "payload": {
+            "_in": [Uint8Array.fromArray([]), Uint8Array.fromArray([0xde, 0xad, 0xbe, 0xef])],
+          }->(Utils.magic: {"_in": array<Uint8Array.t>} => unknown),
+        },
+        orderBy: [{field: "id", direction: "asc"}],
+      },
+    )
+    await pool->ResolverDb.endPool
+    await sql->TestPgSchema.drop(~pgSchema=bytesSchema)
+    t.expect((byId->Nullable.toOption->Option.map(hex), bySet->Array.map(hex))).toEqual((
+      Some(("0102", "deadbeef")),
+      [("0102", "deadbeef"), ("0a0b", "")],
+    ))
   })
 
   Async.it("filters by a set, and pages the result", async t => {
