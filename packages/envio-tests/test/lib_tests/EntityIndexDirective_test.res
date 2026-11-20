@@ -96,12 +96,11 @@ type TestEntity @index(fields: ["tokenId"]) {
 describe("@index(include:)", () => {
   it("Reaches the config the storage builds its indexes from", t => {
     let config = parse(
-      schemaWith(
-        `@index(fields: ["tokenId", "collection"]) @index(fields: [["tokenId", "DESC"]], include: ["id", "collection"])`,
-      ),
+      schemaWith(`@index(fields: ["tokenId", "collection"]) @index(fields: [["tokenId", "DESC"]], include: ["id", "collection"])`),
     )
-    let entities =
-      (config.envioInfo->(Utils.magic: JSON.t => {"entities": array<{..}>}))["entities"]
+    let entities = (
+      config.envioInfo->(Utils.magic: JSON.t => {"entities": array<{..}>})
+    )["entities"]
     t.expect(
       entities->Array.map(entity => (entity["compositeIndices"], entity["coveringIndices"])),
     ).toEqual([
@@ -161,9 +160,7 @@ describe("@index(include:) rejections", () => {
   it("Rejects the same covering index declared twice, whatever order it includes in", t => {
     t.expect(
       parseError(
-        schemaWith(
-          `@index(fields: ["tokenId"], include: ["id", "collection"]) @index(fields: ["tokenId"], include: ["collection", "id"])`,
-        ),
+        schemaWith(`@index(fields: ["tokenId"], include: ["id", "collection"]) @index(fields: ["tokenId"], include: ["collection", "id"])`),
       ),
     ).toBe(`schema.graphql:2:76: Invalid \`@index\` on \`TestEntity\`: the index over \`tokenId\` including \`collection\`, \`id\` is declared twice.
   Remove the duplicate \`@index\` directive.`)
