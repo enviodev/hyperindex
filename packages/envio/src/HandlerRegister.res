@@ -820,6 +820,10 @@ let isPlainObject = (value: unknown) =>
 
 let addressPattern = RegExp.fromString(`^0x[0-9a-fA-F]{40}$`)
 
+// A filter naming no `status` runs on succeeded transactions only, as a
+// reverted transaction emits no events either.
+let succeeded = Some(1)
+
 // The `chain` a transaction `where` is handed: the chain object, with every
 // contract's `addresses` refusing to be read. A filter is evaluated once at
 // registration, so addresses registered later would never reach it.
@@ -902,11 +906,30 @@ let parseTransactionFilterOrThrow = (
       )
     }
   let status = switch inner->Dict.get("status") {
-  | None => None
-  | Some(value) if value === %raw(`undefined`) => None
-  | Some(value) if value === %raw(`0`) || value === %raw(`1`) =>
-    Some(value->(Utils.magic: unknown => int))
-  | Some(_) => fail("`status` must be 0 (reverted) or 1 (succeeded).")
+  | None => succeeded
+  | Some(value) if value === %raw(`undefined`) => succeeded
+  | Some(value) =>
+    if !Array.isArray(value) {
+      fail("`status` must be an array of 0 (reverted) and 1 (succeeded).")
+    }
+    let outcomes = value->(Utils.magic: unknown => array<unknown>)
+    if outcomes->Utils.Array.isEmpty {
+      fail("`status` lists no value, so it would match no transaction.")
+    }
+    outcomes->Array.forEach(outcome =>
+      if outcome !== %raw(`0`) && outcome !== %raw(`1`) {
+        fail(
+          `\`status\` value ${outcome
+            ->JSON.stringifyAny
+            ->Option.getOr("undefined")} is not 0 (reverted) or 1 (succeeded).`,
+        )
+      }
+    )
+    switch (outcomes->Array.includes(%raw(`0`)), outcomes->Array.includes(%raw(`1`))) {
+    | (true, true) => None
+    | (true, false) => Some(0)
+    | _ => succeeded
+    }
   }
   {
     from: ?addresses("from"),
@@ -975,7 +998,7 @@ let registerOnTransaction = (
         ->makeOnTransactionChainArg(~chainConfig, ~name)
       let result = where({chain: chain->(Utils.magic: dict<unknown> => unknown)})
       let filter = if result === %raw(`true`) {
-        Some(({}: Internal.transactionFilter))
+        Some(({status: ?succeeded}: Internal.transactionFilter))
       } else if result === %raw(`false`) {
         None
       } else if isPlainObject(result) {

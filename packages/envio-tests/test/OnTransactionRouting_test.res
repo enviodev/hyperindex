@@ -48,8 +48,8 @@ import { indexer } from "envio";
 
 const route =
   (name: string) =>
-  async ({ transaction, block, context }: { transaction: { transactionIndex: number }; block: { number: number }; context: any }) =>
-    context.Routed.set({ id: \`\${context.chain.id}-\${block.number}-\${transaction.transactionIndex}-\${name}\` });
+  async ({ transaction, context }: { transaction: { transactionIndex: number; block: { number: number } }; context: any }) =>
+    context.Routed.set({ id: \`\${context.chain.id}-\${transaction.block.number}-\${transaction.transactionIndex}-\${name}\` });
 
 indexer.onTransaction(
   { name: "from-alice", where: () => ({ transaction: { from: ["${alice}"] } }) },
@@ -64,17 +64,17 @@ indexer.onTransaction(
   route("alice-to-bob"),
 );
 indexer.onTransaction(
-  { name: "succeeded", where: () => ({ transaction: { status: 1 } }) },
+  { name: "succeeded", where: () => ({ transaction: { status: [1] } }) },
   route("succeeded"),
 );
 indexer.onTransaction(
-  { name: "reverted-from-bob", where: () => ({ transaction: { from: ["${bob}"], status: 0 } }) },
+  { name: "reverted-from-bob", where: () => ({ transaction: { from: ["${bob}"], status: [0] } }) },
   route("reverted-from-bob"),
 );
 indexer.onTransaction({ name: "everything", where: () => true }, route("everything"));
 indexer.onTransaction({ name: "nothing", where: () => false }, route("nothing"));
 indexer.onTransaction(
-  { name: "to-alice-on-rpc", where: ({ chain }) => chain.id === 2 && { transaction: { to: ["${alice}"] } } },
+  { name: "to-alice-on-rpc", where: ({ chain }) => chain.id === 2 && { transaction: { to: ["${alice}"], status: [0, 1] } } },
   route("to-alice-on-rpc"),
 );
 `,
@@ -110,7 +110,6 @@ describe("onTransaction routing", () => {
                   routed(~blockNumber=4, ~transactionIndex=1, "succeeded"),
                   routed(~blockNumber=4, ~transactionIndex=1, "everything"),
                   routed(~blockNumber=5, "reverted-from-bob"),
-                  routed(~blockNumber=5, "everything"),
                   ...chainId == 2 ? [routed(~blockNumber=5, "to-alice-on-rpc")] : [],
                 ]
               },
@@ -146,7 +145,7 @@ describe("onTransaction routing", () => {
           warning(
             ~name="everything",
             ~chainId=2,
-            ~rpcCost=" Over RPC that reads every block in full.",
+            ~rpcCost=" Over RPC that reads every block in full, and a receipt for every transaction to check its status.",
           ),
         ])
       },

@@ -79,16 +79,16 @@ type Sent {
   ~handlers=`
 import { indexer } from "envio";
 
-const record = (name: string) => async ({ transaction, block, context }: any) => {
+const record = (name: string) => async ({ transaction, context }: any) => {
   if (context.isPreload) return;
-  const id = \`\${name} \${block.number}\`;
+  const id = \`\${name} \${transaction.block.number}\`;
   const runs = ((await context.Sent.get(id))?.runs ?? 0) + 1;
   context.Sent.set({ id, to: (transaction.to ?? "none").toLowerCase(), runs });
 };
 
 indexer.onTransaction({ name: "to-bob", where: () => ({ transaction: { to: ["${bob}"] } }) }, record("to-bob"));
 indexer.onTransaction(
-  { name: "succeeded", where: () => ({ transaction: { from: ["${alice}"], status: 1 } }) },
+  { name: "succeeded", where: () => ({ transaction: { from: ["${alice}"], status: [1] } }) },
   record("succeeded"),
 );
 `,

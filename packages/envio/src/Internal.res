@@ -674,14 +674,15 @@ type onBlockRegistration = {
   blockFieldMask: option<float>,
 }
 
+// `transaction` carries its block as `transaction.block`.
 type onTransactionArgs = {
   transaction: eventTransaction,
-  block: eventBlock,
   context: handlerContext,
 }
 
 // Fields ANDed, the values of one field ORed; an absent field matches any
 // value. Validated at registration, so a source can map it as given.
+// `status` is the one outcome to run on, absent for both.
 type transactionFilter = {
   from?: array<string>,
   to?: array<string>,

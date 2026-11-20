@@ -466,6 +466,11 @@ let parse = (
       }
       let row = transaction->toRpcObject(~isBlock=false)
       row->Dict.set("blockNumber", JSON.String("0x" ++ blockNumber->Int.toString(~radix=16)))
+
+      // A mined transaction succeeded unless the test says it reverted.
+      if !(row->Dict.has("status")) {
+        row->Dict.set("status", JSON.String("0x1"))
+      }
       evmTransactions->Array.push(row)->ignore
       simulatedTransactions
       ->Array.push({simulateIndex: itemIndex, blockNumber, transactionIndex})

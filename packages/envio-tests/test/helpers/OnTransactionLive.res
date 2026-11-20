@@ -26,7 +26,7 @@ indexer.onTransaction(
     }),
     fields: { transaction: ["status", "gasUsed", "input"] },
   },
-  async ({ transaction, block, context }) => {
+  async ({ transaction, context }) => {
     if (!transaction.input.startsWith("0xa9059cbb")) return;
     context.UsdtTransfer.set({
       id: transaction.hash,
@@ -34,7 +34,7 @@ indexer.onTransaction(
       from: (transaction.from ?? "").toLowerCase(),
       status: transaction.status ?? -1,
       gasUsed: transaction.gasUsed,
-      timestamp: block.timestamp,
+      timestamp: transaction.block.timestamp,
     });
   },
 );

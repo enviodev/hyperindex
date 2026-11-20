@@ -24,30 +24,32 @@ import { indexer } from "envio";
 indexer.onTransaction(
   {
     name: "TreasuryActivity",
-    where: ({ chain }) => chain.id === 1 && { transaction: { from: ["0x1111111111111111111111111111111111111111"] } },
+    where: ({ chain }) =>
+      chain.id === 1 && { transaction: { from: ["0x1111111111111111111111111111111111111111"], status: [0, 1] } },
     fields: { transaction: ["input", "value", "status"], block: ["timestamp"] },
   },
-  async ({ transaction, block, context }) => {
+  async ({ transaction, context }) => {
     context.TreasuryTx.set({
       id: transaction.hash,
       to: transaction.to ?? "contract creation",
       value: transaction.value,
       reverted: transaction.status === 0,
-      timestamp: block.timestamp,
+      timestamp: transaction.block.timestamp,
     });
   },
 );
 ```
 
 `where` is required and runs once per configured chain at registration. Return
-`false` to skip the chain, `true` to run on every transaction, or a filter:
+`false` to skip the chain, `true` to run on every succeeded transaction, or a
+filter:
 
 ```ts
 {
   transaction: {
     from?: string[];     // senders
     to?: string[];       // recipients; a contract creation has none and never matches
-    status?: 0 | 1;      // 1 succeeded, 0 reverted; absent runs on both
+    status?: (0 | 1)[];  // outcomes to run on: 1 succeeded, 0 reverted; absent is [1]
   }
 }
 ```
@@ -58,21 +60,22 @@ indexer.onTransaction(
   selector in the handler (`transaction.input.startsWith("0xa9059cbb")`, with
   `input` in `fields`). A call made inside another contract's call is not a
   transaction: use the event it emits instead.
-- Reverted transactions are mined, so they run the handler unless `status: 1`
-  is given. Blocks from before Byzantium carry no status: a `status` filter
-  matches none of their transactions.
+- A handler runs on succeeded transactions unless `status` lists `0`: a
+  reverted transaction emits no events, so it is opt-in. `[0, 1]` runs on
+  every mined transaction, `[0]` on reverted ones only. Blocks from before
+  Byzantium carry no status: only `[0, 1]` runs on their transactions.
 - A filter naming no `from` or `to` runs on every transaction of the
   chain. It is allowed, and warned about at startup.
-- An address that isn't 20 bytes, an empty list or a
-  `status` other than 0 or 1 throws at registration.
+- An address that isn't 20 bytes, an empty list or a `status` value other
+  than 0 or 1 throws at registration.
 - Several handlers may match one transaction: each runs, in registration order.
 
 What the handler gets:
 
-- `transaction` always carries `transactionIndex`, `hash`, `from` and `to`;
-  `block` always carries `number`, `timestamp` and `hash`. Anything else is
-  listed in `fields`, with the names below. Reading an unlisted field is a type
-  error.
+- The handler gets `{ transaction, context }`. `transaction` always carries
+  `transactionIndex`, `hash`, `from`, `to` and its `block`, which always
+  carries `number`, `timestamp` and `hash`. Anything else is listed in
+  `fields`, with the names below. Reading an unlisted field is a type error.
 - `context` is an event handler's: entities, effects, `log`, `chain.id`,
   `isPreload`. The handler runs in the preload pass too.
 - A transaction's handlers run before the event handlers of that transaction
@@ -80,10 +83,10 @@ What the handler gets:
 
 Fetching: HyperSync filters on the server. RPC has no transaction filter, so it
 reads every block in full (100 blocks per request page) and filters locally,
-reading a receipt only where a `status` filter or a receipt field (`status`,
-`gasUsed`, `effectiveGasPrice`, ...) needs one. Over RPC, a filter naming no
-`from` or `to` costs every block in full, and a receipt per
-transaction if it filters on `status`.
+reading a receipt for each transaction the call matched to check its status,
+unless the filter lists `status: [0, 1]` and no receipt field (`status`,
+`gasUsed`, `effectiveGasPrice`, ...) is read. Over RPC, a filter naming no
+`from` or `to` costs every block in full.
 
 Limits: EVM only. Filter values are static: `chain.<Contract>.addresses` can't
 be used, list the addresses. No block range: a handler runs from the chain's
@@ -91,8 +94,8 @@ be used, list the addresses. No block range: a handler runs from the chain's
 rows are written for events only.
 
 Testing: simulate a transaction as `{ transaction: {...}, block: {...} }`. Only
-the fields given are set, so a filter on a field left out doesn't match.
-`transactionIndex` defaults to the block's next free index and `hash` to one
+the fields given are set, so a filter on a field left out doesn't match;
+`status` defaults to 1. `transactionIndex` defaults to the block's next free index and `hash` to one
 made from the block number and that index; an event's
 `transaction.transactionIndex` (0 by default) places it among them.
 

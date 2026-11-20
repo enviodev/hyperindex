@@ -26,12 +26,16 @@ describe("onTransaction registration errors", () => {
       shortAddress: errorOf(() => ({ transaction: { from: ["0x1234"] } })),
       notAList: errorOf(() => ({ transaction: { to: "0x1111111111111111111111111111111111111111" } })),
       emptyList: errorOf(() => ({ transaction: { to: [] } })),
-      status: errorOf(() => ({ transaction: { status: 2 } })),
+      statusNotAList: errorOf(() => ({ transaction: { status: 1 } })),
+      unknownStatus: errorOf(() => ({ transaction: { status: [2] } })),
+      noStatus: errorOf(() => ({ transaction: { status: [] } })),
     }).toEqual({
       shortAddress: invalid('\\\`from\\\` value "0x1234" is not a 20-byte hex address.'),
       notAList: invalid("\\\`to\\\` must be an array of 20-byte hex addresses."),
       emptyList: invalid("\\\`to\\\` lists no value, so it would match no transaction."),
-      status: invalid("\\\`status\\\` must be 0 (reverted) or 1 (succeeded)."),
+      statusNotAList: invalid("\\\`status\\\` must be an array of 0 (reverted) and 1 (succeeded)."),
+      unknownStatus: invalid("\\\`status\\\` value 2 is not 0 (reverted) or 1 (succeeded)."),
+      noStatus: invalid("\\\`status\\\` lists no value, so it would match no transaction."),
     });
   });
 
@@ -124,10 +128,10 @@ import { indexer } from "envio";
 indexer.onTransaction(
   {
     name: "typed",
-    where: () => ({ transaction: { from: ["0x1111111111111111111111111111111111111111"], status: 1 } }),
+    where: () => ({ transaction: { from: ["0x1111111111111111111111111111111111111111"], status: [1] } }),
     fields: { transaction: ["value"], block: ["miner"] },
   },
-  async ({ transaction, block }) => {
+  async ({ transaction }) => {
     const always: [number, string, string | undefined, string | undefined] = [
       transaction.transactionIndex,
       transaction.hash,
@@ -136,15 +140,15 @@ indexer.onTransaction(
     ];
     const listed: [bigint, string, number, number, string] = [
       transaction.value,
-      block.miner,
-      block.number,
-      block.timestamp,
-      block.hash,
+      transaction.block.miner,
+      transaction.block.number,
+      transaction.block.timestamp,
+      transaction.block.hash,
     ];
     // @ts-expect-error - input is not listed
     const input: string = transaction.input;
     // @ts-expect-error - gasUsed is not listed
-    const gasUsed: bigint = block.gasUsed;
+    const gasUsed: bigint = transaction.block.gasUsed;
     void always, listed, input, gasUsed;
   },
 );
@@ -155,6 +159,18 @@ export const registerWithAddresses = () =>
     // @ts-expect-error - a filter's values are static
     { name: "addresses", where: ({ chain }) => ({ transaction: { to: chain.Token.addresses } }) },
     async () => {},
+  );
+export const registerWithOneStatus = () =>
+  indexer.onTransaction(
+    // @ts-expect-error - \`status\` lists the outcomes to run on
+    { name: "one-status", where: () => ({ transaction: { status: 1 } }) },
+    async () => {},
+  );
+export const registerWithBlockArgument = () =>
+  indexer.onTransaction(
+    { name: "block-argument", where: () => true },
+    // @ts-expect-error - the block is \`transaction.block\`
+    async ({ block }) => block,
   );
 export const registerWithoutWhere = () =>
   // @ts-expect-error - a transaction handler needs a \`where\`

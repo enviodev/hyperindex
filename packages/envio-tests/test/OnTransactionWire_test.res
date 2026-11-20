@@ -64,25 +64,25 @@ indexer.onTransaction(
     where: () => ({ transaction: { from: ["${alice}"], to: ["${bob}"] } }),
     fields: { transaction: ["value"] },
   },
-  async ({ transaction, block, context }) =>
-    context.Run.set({ id: id(context, "alice-to-bob", block), value: transaction.value.toString(), gasUsed: undefined }),
+  async ({ transaction, context }) =>
+    context.Run.set({ id: id(context, "alice-to-bob", transaction.block), value: transaction.value.toString(), gasUsed: undefined }),
 );
 indexer.onTransaction(
   {
     name: "alice-to-bob-again",
     where: () => ({ transaction: { from: ["${alice}"], to: ["${bob}"] } }),
   },
-  async ({ block, context }) =>
-    context.Run.set({ id: id(context, "alice-to-bob-again", block), value: undefined, gasUsed: undefined }),
+  async ({ transaction, context }) =>
+    context.Run.set({ id: id(context, "alice-to-bob-again", transaction.block), value: undefined, gasUsed: undefined }),
 );
 indexer.onTransaction(
   {
     name: "reverted-to-alice",
-    where: () => ({ transaction: { to: ["${alice}"], status: 0 } }),
+    where: () => ({ transaction: { to: ["${alice}"], status: [0] } }),
     fields: { transaction: ["gasUsed"] },
   },
-  async ({ transaction, block, context }) =>
-    context.Run.set({ id: id(context, "reverted-to-alice", block), value: undefined, gasUsed: transaction.gasUsed.toString() }),
+  async ({ transaction, context }) =>
+    context.Run.set({ id: id(context, "reverted-to-alice", transaction.block), value: undefined, gasUsed: transaction.gasUsed.toString() }),
 );
 `,
 )
@@ -221,7 +221,7 @@ describe("onTransaction wire", () => {
           [
             {
               transactions: JSON.parseOrThrow(
-                `[{"from":["${alice}"],"to":["${bob}"]},{"to":["${alice}"],"status":0}]`,
+                `[{"from":["${alice}"],"to":["${bob}"],"status":1},{"to":["${alice}"],"status":0}]`,
               ),
               transactionFields: [
                 "block_number",
@@ -238,7 +238,7 @@ describe("onTransaction wire", () => {
           ],
           height,
           [],
-          [hash(~blockNumber=2), hash(~blockNumber=3)],
+          [hash(~blockNumber=1), hash(~blockNumber=2), hash(~blockNumber=3)],
           [],
           (100, true, Some(height)),
         ))

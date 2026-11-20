@@ -41,8 +41,8 @@ indexer.onTransaction(
     where: () => ({ transaction: { from: ["0x1111111111111111111111111111111111111111"] } }),
     fields: { transaction: ["value"] },
   },
-  async ({ transaction, block, context }) => {
-    context.Sent.set({ id: transaction.hash, number: block.number, value: transaction.value });
+  async ({ transaction, context }) => {
+    context.Sent.set({ id: transaction.hash, number: transaction.block.number, value: transaction.value });
   },
 );
 `,

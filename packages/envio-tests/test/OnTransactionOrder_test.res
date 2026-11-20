@@ -76,13 +76,13 @@ const record = async (context: any, name: string) => {
 
 indexer.onTransaction(
   { name: "to-token", where: () => ({ transaction: { to: ["${token}"] } }) },
-  async ({ transaction, block, context }) =>
-    record(context, \`to-token \${block.number}/\${transaction.transactionIndex}\`),
+  async ({ transaction, context }) =>
+    record(context, \`to-token \${transaction.block.number}/\${transaction.transactionIndex}\`),
 );
 indexer.onTransaction(
   { name: "from-alice", where: () => ({ transaction: { from: ["${alice}"] } }) },
-  async ({ transaction, block, context }) =>
-    record(context, \`from-alice \${block.number}/\${transaction.transactionIndex}\`),
+  async ({ transaction, context }) =>
+    record(context, \`from-alice \${transaction.block.number}/\${transaction.transactionIndex}\`),
 );
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) =>
   record(context, \`Transfer \${event.block.number}/\${event.logIndex}\`),

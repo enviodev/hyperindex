@@ -279,7 +279,8 @@ type blockMock = {
 }
 
 // A transaction the chain has, holding the fields given, for the transaction
-// handlers of the query's selection whose filter matches it.
+// handlers of the query's selection whose filter matches it. Its hash and a
+// succeeded status are filled in when not given.
 type transactionMock = {
   blockNumber: int,
   transactionIndex: int,
@@ -884,6 +885,9 @@ let make = (
                     SimulateItems.defaultTransactionHash(~blockNumber, ~transactionIndex),
                   ),
                 )
+              }
+              if row->Dict.get("status")->Option.isNone {
+                row->Dict.set("status", JSON.String("0x1"))
               }
               row
             }),

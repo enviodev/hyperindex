@@ -25,7 +25,7 @@ import { indexer } from "envio";
 indexer.onTransaction(
   {
     name: "usdt-transfers",
-    where: () => ({ transaction: { to: ["0xdac17f958d2ee523a2206206994597c13d831ec7"] } }),
+    where: () => ({ transaction: { to: ["0xdac17f958d2ee523a2206206994597c13d831ec7"], status: [0, 1] } }),
     fields: { transaction: ["input"] },
   },
   async ({ transaction, context }) => {

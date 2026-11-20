@@ -36,8 +36,8 @@ indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async () => {});
 
 indexer.onTransaction(
   { name: "sends", where: () => ({ transaction: { from: ["0x1111111111111111111111111111111111111111"] } }) },
-  async ({ block, context }) => {
-    const id = \`\${block.number}\`;
+  async ({ transaction, context }) => {
+    const id = \`\${transaction.block.number}\`;
     const runs = ((await context.Sent.get(id))?.runs ?? 0) + 1;
     context.Sent.set({ id, runs });
   },

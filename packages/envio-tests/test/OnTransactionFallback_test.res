@@ -59,16 +59,16 @@ import { indexer } from "envio";
 
 indexer.onTransaction(
   { name: "sends", where: () => ({ transaction: { from: ["${alice}"] } }) },
-  async ({ block, context }) => {
+  async ({ transaction, context }) => {
     if (context.isPreload) return;
-    const id = \`\${block.number}\`;
+    const id = \`\${transaction.block.number}\`;
     const runs = ((await context.Sent.get(id))?.runs ?? 0) + 1;
     context.Sent.set({ id, runs });
   },
 );
 // Matches nothing served, and names no call field: the chain syncs over
 // HyperSync, so its warning says nothing of what RPC would cost.
-indexer.onTransaction({ name: "reverted", where: () => ({ transaction: { status: 0 } }) }, async () => {});
+indexer.onTransaction({ name: "reverted", where: () => ({ transaction: { status: [0] } }) }, async () => {});
 `,
 )
 
@@ -108,7 +108,6 @@ describe("onTransaction falling back from HyperSync to RPC", () => {
             transaction->ServedEvmChain.hyperSyncTransaction->JSON.Decode.object->Option.getOrThrow
           row->Dict.delete("input")
           row->Dict.delete("value")
-          row->Dict.delete("status")
           row->Dict.delete("gas_used")
           JSON.Object(row)
         },
@@ -123,6 +122,7 @@ describe("onTransaction falling back from HyperSync to RPC", () => {
             "block_number": JSON.Number(transaction.blockNumber->Int.toFloat),
             "transaction_index": JSON.Number(0.),
             "from": JSON.String(transaction.from),
+            "status": JSON.Number(1.),
           },
         ),
       ),

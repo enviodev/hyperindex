@@ -76,15 +76,15 @@ indexer.onTransaction(
     where: () => ({ transaction: { from: [alice] } }),
     fields: { transaction: ["value", "input"], block: ["miner"] },
   },
-  async ({ transaction, block, context }) => {
-    await record(context, \`from-alice \${block.number}/\${transaction.transactionIndex}\`);
+  async ({ transaction, context }) => {
+    await record(context, \`from-alice \${transaction.block.number}/\${transaction.transactionIndex}\`);
     if (!context.isPreload && transaction.value !== undefined) {
       context.Sent.set({
         id: transaction.hash ?? "no hash",
         value: transaction.value,
         input: transaction.input,
-        miner: block.miner,
-        timestamp: block.timestamp,
+        miner: transaction.block.miner,
+        timestamp: transaction.block.timestamp,
         label: await context.effect(label, { address: transaction.from ?? "" }),
       });
     }
@@ -92,13 +92,13 @@ indexer.onTransaction(
 );
 indexer.onTransaction(
   { name: "to-bob", where: () => ({ transaction: { to: [bob] } }) },
-  async ({ transaction, block, context }) =>
-    record(context, \`to-bob \${block.number}/\${transaction.transactionIndex}\`),
+  async ({ transaction, context }) =>
+    record(context, \`to-bob \${transaction.block.number}/\${transaction.transactionIndex}\`),
 );
 indexer.onTransaction(
-  { name: "succeeded", where: () => ({ transaction: { status: 1 } }) },
-  async ({ transaction, block, context }) =>
-    record(context, \`succeeded \${block.number}/\${transaction.transactionIndex}\`),
+  { name: "succeeded", where: () => ({ transaction: { status: [1] } }) },
+  async ({ transaction, context }) =>
+    record(context, \`succeeded \${transaction.block.number}/\${transaction.transactionIndex}\`),
 );
 indexer.onTransaction(
   { name: "throws", where: () => ({ transaction: { from: ["0x00000000000000000000000000000000000000ff"] } }) },
@@ -108,8 +108,8 @@ indexer.onTransaction(
 );
 indexer.onTransaction(
   { name: "hashes", where: () => ({ transaction: { from: ["0x00000000000000000000000000000000000000dd"] } }) },
-  async ({ transaction, block, context }) => {
-    context.Hashes.set({ id: transaction.hash, blockHash: block.hash });
+  async ({ transaction, context }) => {
+    context.Hashes.set({ id: transaction.hash, blockHash: transaction.block.hash });
   },
 );
 indexer.onTransaction(
@@ -118,8 +118,8 @@ indexer.onTransaction(
     where: () => ({ transaction: { from: ["0x00000000000000000000000000000000000000cc"] } }),
     fields: { block: ["nonce"] },
   },
-  async ({ block, context }) => {
-    context.BlockNonce.set({ id: \`\${block.number}\`, nonce: block.nonce ?? -1n });
+  async ({ transaction, context }) => {
+    context.BlockNonce.set({ id: \`\${transaction.block.number}\`, nonce: transaction.block.nonce ?? -1n });
   },
 );
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) =>
@@ -151,7 +151,7 @@ describe("onTransaction under simulate", () => {
               transaction: { hash, from: alice, to: bob, input: transferCall, value: 5n, status: 1 },
               block: { number: 3, timestamp: 1_700_000_003, miner },
             },
-            // No status and no input given: the filters on them don't match.
+            // No status given: a simulated transaction succeeded.
             { transaction: { from: carol, to: bob, transactionIndex: 2 } },
             { transaction: { from: carol, to: bob, transactionIndex: 1 } },
             // An event of the transaction at index 1: it runs after that
@@ -180,18 +180,24 @@ describe("onTransaction under simulate", () => {
         "to-bob 3/0",
         "succeeded 3/0",
         "to-bob 3/1",
+        "succeeded 3/1",
         "Transfer 3/0",
         "to-bob 3/2",
+        "succeeded 3/2",
         "from-alice 3/3",
+        "succeeded 3/3",
       ],
       preloads: [
         "from-alice 3/0",
         "to-bob 3/0",
         "succeeded 3/0",
         "to-bob 3/1",
+        "succeeded 3/1",
         "Transfer 3/0",
         "to-bob 3/2",
+        "succeeded 3/2",
         "from-alice 3/3",
+        "succeeded 3/3",
       ],
       sent: [
         {
@@ -298,7 +304,8 @@ describe("onTransaction under simulate", () => {
               endBlock: 5,
               simulate: [
                 { transaction: { from: alice } },
-                { transaction: { from: carol } },
+                // Reverted: only a filter listing \`status: [0]\` runs on it.
+                { transaction: { from: carol, status: 0 } },
                 { transaction: { from: alice } },
               ],
             },

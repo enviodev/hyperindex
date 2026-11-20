@@ -76,8 +76,8 @@ const record = async (context: any, name: string) => {
   context.Call.set({ id: \`\${chainId}-\${sequence.calls}\`, name });
 };
 
-const route = (name: string) => async ({ block, transaction, context }: any) =>
-  record(context, \`\${name} \${block.number}/\${transaction.transactionIndex}\`);
+const route = (name: string) => async ({ transaction, context }: any) =>
+  record(context, \`\${name} \${transaction.block.number}/\${transaction.transactionIndex}\`);
 
 // The log's transaction joins with \`from\` alone.
 indexer.onEvent(
@@ -89,7 +89,7 @@ indexer.onTransaction(
   route("alice-to-token"),
 );
 indexer.onTransaction(
-  { name: "bob-succeeded", where: () => ({ transaction: { from: ["${bob}"], status: 1 } }) },
+  { name: "bob-succeeded", where: () => ({ transaction: { from: ["${bob}"], status: [1] } }) },
   route("bob-succeeded"),
 );
 indexer.onTransaction(
@@ -101,7 +101,7 @@ indexer.onTransaction(
   route("carol-to-alice"),
 );
 indexer.onTransaction(
-  { name: "carol-reverted", where: () => ({ transaction: { from: ["${carol}"], status: 0 } }) },
+  { name: "carol-reverted", where: () => ({ transaction: { from: ["${carol}"], status: [0] } }) },
   route("carol-reverted"),
 );
 `,
