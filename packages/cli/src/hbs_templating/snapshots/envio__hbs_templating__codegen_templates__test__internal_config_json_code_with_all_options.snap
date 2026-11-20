@@ -7,6 +7,7 @@ expression: json
   "name": "test-all-options",
   "description": "Test config with all options set",
   "handlers": "custom/handlers",
+  "resolvers": "src/Resolvers.ts",
   "fullBatchSize": 1000,
   "rollbackOnReorg": false,
   "saveFullHistory": true,
