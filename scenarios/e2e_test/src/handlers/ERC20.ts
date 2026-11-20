@@ -115,4 +115,21 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
       new BigDecimal("123456789012345678.123456789"),
     ],
   });
+
+  const widened = event.params.value * 10n ** 45n;
+  context.WideAmount.set({
+    id,
+    widened,
+    negated: -widened,
+    tokens: new BigDecimal(event.params.value.toString()).div("1e18"),
+    both: [widened, -widened],
+  });
+  const widest = 10n ** 76n - 1n;
+  context.WideAmount.set({
+    id: "widest",
+    widened: widest,
+    negated: -widest,
+    tokens: new BigDecimal(`${"9".repeat(58)}.${"9".repeat(18)}`),
+    both: [widest, -widest],
+  });
 });

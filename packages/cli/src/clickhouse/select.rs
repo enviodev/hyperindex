@@ -7,6 +7,7 @@ use anyhow::{bail, Context, Result};
 
 use super::ch_type::ChType;
 use super::ddl::Column;
+use super::row_binary::{self, Rounding};
 use super::table::Table;
 use super::{literal, quoted, quoted_list, table_ref};
 use crate::entity_filter::{Condition, Operator, ValueKind};
@@ -115,9 +116,6 @@ fn number(text: &str) -> Result<&str> {
     }
 }
 
-/// The widest scale a Decimal256 holds.
-const MAX_DECIMAL_SCALE: u32 = 76;
-
 /// An integer as the canonical text a BigInt is kept as, which is what lets
 /// two of them be compared by their text.
 fn integer(text: &str) -> Result<String> {
@@ -207,29 +205,56 @@ pub(super) fn decimal_key(text: &str) -> Result<String> {
     })
 }
 
-/// The scale a value is compared at against a Decimal column of `column_scale`:
-/// wide enough to keep every fractional digit the value spells, so it isn't
-/// compared as a rounded neighbour, as far as a Decimal256 has room beside its
-/// whole part. A value cut there is past what any such column holds anyway.
-fn decimal_scale(text: &str, column_scale: u32) -> u32 {
-    let (mantissa, exponent) = match text.split_once(['e', 'E']) {
-        Some((mantissa, exponent)) => (mantissa, exponent.parse::<i64>().unwrap_or(0)),
-        None => (text, 0),
+/// Which value on a Decimal column's grid of `scale` places a bound between
+/// two of them is compared as. Every value the column holds is on that grid,
+/// so `> b` finds what `> floor(b)` does, `>= b` what `>= ceil(b)` does, and no
+/// value equals a bound off it.
+#[derive(Debug, Clone, Copy)]
+enum Snap {
+    Down,
+    Up,
+    Exactly,
+}
+
+impl Snap {
+    fn of(operator: Operator) -> Snap {
+        match operator {
+            Operator::Gt | Operator::Lte => Snap::Down,
+            Operator::Gte | Operator::Lt => Snap::Up,
+            Operator::Eq | Operator::In => Snap::Exactly,
+        }
+    }
+}
+
+/// A bound as a Decimal of the column's own scale. ClickHouse compares
+/// Decimals of two scales by scaling the coarser one up, and a value near the
+/// top of a precision-76 column scaled up wraps past 256 bits, answering the
+/// comparison wrong without an error.
+fn decimal_bound(text: &str, scale: u32, snap: Snap) -> Result<String> {
+    let text = number(text)?;
+    let at = |rounding| row_binary::decimal_at_scale(text, scale, rounding);
+    let bound = match snap {
+        Snap::Down => at(Rounding::Floor)?,
+        Snap::Up => at(Rounding::Ceiling)?,
+        Snap::Exactly => {
+            let floor = at(Rounding::Floor)?;
+            if floor != at(Rounding::Ceiling)? {
+                return Ok("NULL".to_string());
+            }
+            floor
+        }
     };
-    let (whole, fraction) = mantissa
-        .trim_start_matches(['-', '+'])
-        .split_once('.')
-        .unwrap_or((mantissa.trim_start_matches(['-', '+']), ""));
-    let whole_digits = (whole.trim_start_matches('0').len() as i64 + exponent).max(0);
-    let fraction_digits = (fraction.len() as i64 - exponent).max(0);
-    let room = (i64::from(MAX_DECIMAL_SCALE) - whole_digits).max(0);
-    i64::from(column_scale).max(fraction_digits).min(room) as u32
+    Ok(format!(
+        "toDecimal256({}, {scale})",
+        literal(&row_binary::decimal_text(bound, scale))
+    ))
 }
 
 /// One element as the column's own type reads it.
 fn element(
     text: &str,
     kind: ValueKind,
+    snap: Snap,
     field_type: &FieldType,
     ch_type: &ChType,
 ) -> Result<String> {
@@ -255,16 +280,7 @@ fn element(
                 literal(&integer_key(&integer(text)?))
             }
             ChType::String => literal(&decimal_key(text)?),
-            // Decimals of two scales compare exactly, so the value keeps
-            // every digit it has past the column's.
-            ChType::Decimal { scale, .. } => {
-                let text = number(text)?;
-                format!(
-                    "toDecimal256({}, {})",
-                    literal(text),
-                    decimal_scale(text, *scale)
-                )
-            }
+            ChType::Decimal { scale, .. } => decimal_bound(text, *scale, snap)?,
             _ => number(text)?.to_string(),
         },
     })
@@ -289,9 +305,15 @@ fn compared(column: &Column, kind: ValueKind) -> String {
 
 /// A value: one element for a scalar column, the list's own for a list column.
 fn value(column: &Column, condition: &Condition, value: &[Option<String>]) -> Result<String> {
-    let render = |text: &Option<String>, ch_type: &ChType| match text {
+    let render = |text: &Option<String>, snap: Snap, ch_type: &ChType| match text {
         None => Ok("NULL".to_string()),
-        Some(text) => element(text, condition.kind, &column.field.field_type, ch_type),
+        Some(text) => element(
+            text,
+            condition.kind,
+            snap,
+            &column.field.field_type,
+            ch_type,
+        ),
     };
     if condition.is_list {
         let ChType::Array(inner) = column.ch_type.base() else {
@@ -302,13 +324,13 @@ fn value(column: &Column, condition: &Condition, value: &[Option<String>]) -> Re
             "[{}]",
             value
                 .iter()
-                .map(|text| render(text, inner))
+                .map(|text| render(text, Snap::Exactly, inner))
                 .collect::<Result<Vec<_>>>()?
                 .join(", ")
         ))
     } else {
         match value {
-            [text] => render(text, column.ch_type.base()),
+            [text] => render(text, Snap::of(condition.operator), column.ch_type.base()),
             _ => bail!("A scalar filter takes one value"),
         }
     }
@@ -802,24 +824,33 @@ mod tests {
         );
     }
 
-    /// A Decimal256 holds 76 digits between its whole part and its scale, so
-    /// a value keeps every fractional digit it has only as far as its whole
-    /// part leaves room: a scale past that is refused by the server, failing
-    /// the whole load.
+    /// A bound is compared at the column's own scale, moved onto its grid the
+    /// way the operator keeps its meaning.
     #[test]
-    fn a_decimal_value_keeps_its_digits_as_far_as_a_decimal_holds_them() {
+    fn a_decimal_bound_snaps_to_the_columns_scale() {
+        let bounds = [
+            ("0.001", Snap::Down),
+            ("0.001", Snap::Up),
+            ("0.001", Snap::Exactly),
+            ("-0.001", Snap::Down),
+            ("-0.001", Snap::Up),
+            ("1.5", Snap::Exactly),
+            ("1.5e3", Snap::Down),
+            ("15e-3", Snap::Up),
+        ]
+        .map(|(text, snap)| decimal_bound(text, 2, snap).map_err(|error| error.to_string()));
         assert_eq!(
+            bounds,
             [
-                ("1.555", 2),
-                ("1.5", 2),
-                (&format!("1.{}", "5".repeat(80)), 2),
-                ("12345678901234567.5", 60),
-                ("1.5e3", 2),
-                ("15e-3", 2),
-                ("-0.5", 2),
+                Ok("toDecimal256('0.00', 2)".to_string()),
+                Ok("toDecimal256('0.01', 2)".to_string()),
+                Ok("NULL".to_string()),
+                Ok("toDecimal256('-0.01', 2)".to_string()),
+                Ok("toDecimal256('0.00', 2)".to_string()),
+                Ok("toDecimal256('1.50', 2)".to_string()),
+                Ok("toDecimal256('1500.00', 2)".to_string()),
+                Ok("toDecimal256('0.02', 2)".to_string()),
             ]
-            .map(|(text, scale)| decimal_scale(text, scale)),
-            [3, 2, 75, 59, 2, 3, 2]
         );
     }
 
