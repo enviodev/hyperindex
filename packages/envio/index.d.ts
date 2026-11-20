@@ -876,6 +876,7 @@ export type EvmAllTransactionFields = {
   readonly l1FeeScalar: number | undefined;
   readonly gasUsedForL1: bigint | undefined;
   readonly authorizationList: readonly unknown[] | undefined;
+  readonly sighash: Hex | undefined;
 };
 
 export type EvmBlockFieldName = keyof EvmAllBlockFields & string;

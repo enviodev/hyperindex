@@ -486,6 +486,7 @@ pub enum EvmTxField {
     GasUsedForL1 = 29,
     AccessList = 30,
     AuthorizationList = 31,
+    Sighash = 32,
 }
 
 impl EvmTxField {
@@ -524,6 +525,7 @@ impl EvmTxField {
             GasUsedForL1 => "gasUsedForL1",
             AccessList => "accessList",
             AuthorizationList => "authorizationList",
+            Sighash => "sighash",
         }
     }
 
@@ -533,24 +535,22 @@ impl EvmTxField {
             TransactionIndex | Status | Type | L1FeeScalar => ColumnKind::U64,
             Hash | Root => ColumnKind::Fixed(32),
             From | To | ContractAddress => ColumnKind::Fixed(20),
+            Sighash => ColumnKind::Fixed(4),
             _ => ColumnKind::Var,
         }
     }
 }
 
-/// The first four bytes of the calldata, which a `sighash` filter matches,
-/// for a row fetched with the selector alone. Internal: past the fields a
-/// handler can select, so filtering on it keeps the calldata itself out of
-/// the buffer. A row holding the calldata reads its selector from there.
-pub(crate) const SELECTOR_COLUMN: usize = EvmTxField::VARIANTS.len();
-pub(crate) const SELECTOR_BIT: u64 = 1 << SELECTOR_COLUMN;
+/// The selector calldata starts with, or none for calldata shorter than one.
+pub(crate) fn sighash_of_input(input: &[u8]) -> Option<&[u8]> {
+    input.get(..4)
+}
 
 pub(crate) fn transactions_schema() -> Schema {
     Schema {
         columns: EvmTxField::VARIANTS
             .iter()
             .map(|field| field.column_kind())
-            .chain([ColumnKind::Fixed(4)])
             .collect(),
         has_tiebreak: false,
         has_fetched: true,
@@ -576,13 +576,6 @@ pub(crate) fn push_transaction(
         make_key(u64::from(block_number), u64::from(index)),
         0,
         fetched | TRANSACTION_INDEX_BIT,
-    );
-    builder.set_optional_bytes(
-        SELECTOR_COLUMN,
-        transaction
-            .sighash
-            .as_ref()
-            .and_then(|sighash| sighash.get(..4)),
     );
     let t = transaction;
     let set = |builder: &mut ChunkBuilder, field: EvmTxField, value: Option<&[u8]>| {
@@ -675,6 +668,11 @@ pub(crate) fn push_transaction(
                 .context("encode transaction.authorizationList")?,
         );
     }
+    set(
+        builder,
+        Sighash,
+        t.sighash.as_ref().and_then(|v| sighash_of_input(v)),
+    );
     Ok(())
 }
 
@@ -696,7 +694,7 @@ fn transaction_column(
                 .map(|(index, mask)| (mask & bit != 0).then_some(*index as i64))
                 .collect(),
         ),
-        Hash | Input | LogsBloom | Root => Column::Str(cells(rows, masks, bit, |row| {
+        Hash | Input | LogsBloom | Root | Sighash => Column::Str(cells(rows, masks, bit, |row| {
             Ok(row.bytes_at(column).map(crate::hex::to_hex))
         })?),
         From | To | ContractAddress => Column::Str(cells(rows, masks, bit, |row| {

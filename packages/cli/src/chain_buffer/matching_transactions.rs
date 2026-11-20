@@ -8,7 +8,7 @@ use napi_derive::napi;
 
 use hypersync_client::simple_types::Transaction;
 
-use super::evm::{EvmTxField, SELECTOR_BIT, SELECTOR_COLUMN};
+use super::evm::EvmTxField;
 use super::table::RowRef;
 
 /// One `indexer.onTransaction` registration, as JS resolved it for a chain.
@@ -65,30 +65,12 @@ impl<T> Held<T> {
 pub(crate) struct TransactionView<'a> {
     pub(crate) from: Held<&'a [u8]>,
     pub(crate) to: Held<&'a [u8]>,
-    pub(crate) selector: Held<&'a [u8]>,
+    pub(crate) sighash: Held<&'a [u8]>,
     pub(crate) status: Held<u64>,
 }
 
 const fn bit(field: EvmTxField) -> u64 {
     1 << field as u32
-}
-
-/// The selector a `sighash` filter compares: the internal column for a row
-/// fetched with it, otherwise the first four bytes of the calldata when the
-/// row holds that.
-fn held_selector<'a>(
-    fetched: u64,
-    selector: Option<&'a [u8]>,
-    input: Option<&'a [u8]>,
-) -> Held<&'a [u8]> {
-    if fetched & SELECTOR_BIT != 0 {
-        Held::new(true, selector)
-    } else {
-        Held::new(
-            fetched & bit(EvmTxField::Input) != 0,
-            input.and_then(|input| input.get(..4)),
-        )
-    }
 }
 
 impl<'a> TransactionView<'a> {
@@ -100,11 +82,7 @@ impl<'a> TransactionView<'a> {
         TransactionView {
             from: held(EvmTxField::From),
             to: held(EvmTxField::To),
-            selector: held_selector(
-                fetched,
-                row.bytes_at(SELECTOR_COLUMN),
-                row.bytes_at(EvmTxField::Input as usize),
-            ),
+            sighash: held(EvmTxField::Sighash),
             status: Held::new(
                 fetched & bit(EvmTxField::Status) != 0,
                 row.u64_at(EvmTxField::Status as usize),
@@ -126,13 +104,12 @@ impl<'a> TransactionView<'a> {
                 EvmTxField::To,
                 transaction.to.as_deref().map(|to| to.as_slice()),
             ),
-            selector: held_selector(
-                fetched,
+            sighash: held(
+                EvmTxField::Sighash,
                 transaction
                     .sighash
                     .as_deref()
-                    .and_then(|sighash| sighash.get(..4)),
-                transaction.input.as_ref().map(|input| input.as_ref()),
+                    .map(|sighash| sighash.as_ref()),
             ),
             status: Held::new(
                 fetched & bit(EvmTxField::Status) != 0,
@@ -154,7 +131,7 @@ impl TransactionFilter {
         let when = |filters: bool, mask: u64| if filters { mask } else { 0 };
         when(!self.from.is_empty(), bit(EvmTxField::From))
             | when(!self.to.is_empty(), bit(EvmTxField::To))
-            | when(!self.sighash.is_empty(), SELECTOR_BIT)
+            | when(!self.sighash.is_empty(), bit(EvmTxField::Sighash))
             | when(self.status.is_some(), bit(EvmTxField::Status))
     }
 
@@ -162,7 +139,7 @@ impl TransactionFilter {
     pub(crate) fn matches_call(&self, view: &TransactionView) -> bool {
         any_of(&self.from, view.from)
             && any_of(&self.to, view.to)
-            && any_of(&self.sighash, view.selector)
+            && any_of(&self.sighash, view.sighash)
     }
 
     pub(crate) fn matches_status(&self, status: Held<u64>) -> bool {
@@ -328,13 +305,13 @@ mod tests {
     fn view<'a>(
         from: Held<&'a [u8]>,
         to: Held<&'a [u8]>,
-        selector: Held<&'a [u8]>,
+        sighash: Held<&'a [u8]>,
         status: Held<u64>,
     ) -> TransactionView<'a> {
         TransactionView {
             from,
             to,
-            selector,
+            sighash,
             status,
         }
     }

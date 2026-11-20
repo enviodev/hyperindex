@@ -660,6 +660,7 @@ pub mod evm {
         L1FeeScalar,
         GasUsedForL1,
         AuthorizationList,
+        Sighash,
         // We want to encourage the use of context.chain.id instead
         // ChainId,
         //These values are available by default on the block

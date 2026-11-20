@@ -15,7 +15,7 @@ use super::client::{parse_hex_u64, JsonRpcClient};
 use super::enrich::{collect_worst, require, EnrichError, FetchKey, Fetches};
 use super::fields::{tx_fields_in, tx_mask_of, Carrier};
 use super::responses;
-use crate::chain_buffer::evm::{push_transaction, EvmTxField, SELECTOR_BIT};
+use crate::chain_buffer::evm::{push_transaction, sighash_of_input, EvmTxField};
 use crate::chain_buffer::matching_transactions::{
     Held, OnTransactionRegistration, TransactionView,
 };
@@ -59,14 +59,12 @@ impl<'a> TransactionRead<'a> {
         })
     }
 
-    /// The needed fields the transaction's own response fills, the selector
-    /// taken from its calldata.
+    /// The needed fields the transaction's own response fills.
     fn transaction_fields(&self) -> u64 {
         self.transaction_mask
             & (tx_mask_of(Carrier::Log)
                 | tx_mask_of(Carrier::Transaction)
-                | tx_mask_of(Carrier::Either)
-                | SELECTOR_BIT)
+                | tx_mask_of(Carrier::Either))
     }
 
     /// The needed fields a receipt fills, when one of `matched` needs any:
@@ -87,7 +85,7 @@ struct Call<'r> {
     hash: format::Hash,
     from: Vec<u8>,
     to: Option<Vec<u8>>,
-    selector: Option<Vec<u8>>,
+    sighash: Option<Vec<u8>>,
 }
 
 fn malformed(block_number: u64, message: impl std::fmt::Display) -> EnrichError {
@@ -150,8 +148,8 @@ fn calls_of(block_number: u64, block: &Json) -> Result<Vec<Call<'_>>, EnrichErro
                 hash,
                 from,
                 to: hex_field(block_number, response, "to")?,
-                selector: hex_field(block_number, response, "input")?
-                    .and_then(|input| input.get(..4).map(<[u8]>::to_vec)),
+                sighash: hex_field(block_number, response, "input")?
+                    .and_then(|input| sighash_of_input(&input).map(<[u8]>::to_vec)),
             })
         })
         .collect()
@@ -182,7 +180,7 @@ pub(crate) async fn read(
             let view = TransactionView {
                 from: Held::Value(&call.from),
                 to: held_or_absent(&call.to),
-                selector: held_or_absent(&call.selector),
+                sighash: held_or_absent(&call.sighash),
                 status: Held::Unheld,
             };
             let matched: Vec<&OnTransactionRegistration> = read
@@ -248,9 +246,6 @@ pub(crate) async fn read(
             }
             responses::check_transaction(&transaction, &fields)
                 .map_err(|error| EnrichError::from_response(block_number, error))?;
-            if fetched & SELECTOR_BIT != 0 {
-                transaction.sighash = call.selector.clone().map(format::Data::from);
-            }
             let status = match receipt_fields {
                 // A receipt from before status existed holds none.
                 Some(fields) if fields & STATUS_BIT != 0 => {
@@ -261,7 +256,7 @@ pub(crate) async fn read(
             let view = TransactionView {
                 from: Held::Value(&call.from),
                 to: held_or_absent(&call.to),
-                selector: held_or_absent(&call.selector),
+                sighash: held_or_absent(&call.sighash),
                 status,
             };
             let runs = matched

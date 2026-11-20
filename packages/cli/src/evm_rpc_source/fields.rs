@@ -18,7 +18,7 @@ use hypersync_client::simple_types::{Block, Transaction};
 use serde_json::Value as Json;
 
 use crate::chain_buffer::evm::EvmBlockField;
-use crate::chain_buffer::evm::{EvmTxField, SELECTOR_BIT};
+use crate::chain_buffer::evm::{sighash_of_input, EvmTxField};
 use crate::evm_hypersync_source::query::TransactionField;
 
 /// Which JSON-RPC response carries a transaction field.
@@ -43,7 +43,7 @@ pub(crate) fn tx_carrier(field: EvmTxField) -> Carrier {
         TransactionIndex | Hash => Carrier::Log,
         Gas | GasPrice | Input | Nonce | Value | V | R | S | YParity | MaxPriorityFeePerGas
         | MaxFeePerGas | MaxFeePerBlobGas | BlobVersionedHashes | AccessList
-        | AuthorizationList => Carrier::Transaction,
+        | AuthorizationList | Sighash => Carrier::Transaction,
         CumulativeGasUsed | EffectiveGasPrice | GasUsed | ContractAddress | LogsBloom | Root
         | Status | L1Fee | L1GasPrice | L1GasUsed | L1FeeScalar | GasUsedForL1 => Carrier::Receipt,
         From | To | Type => Carrier::Either,
@@ -87,6 +87,7 @@ pub(crate) fn tx_field_column(field: TransactionField) -> Option<EvmTxField> {
         Q::GasUsedForL1 => EvmTxField::GasUsedForL1,
         Q::AccessList => EvmTxField::AccessList,
         Q::AuthorizationList => EvmTxField::AuthorizationList,
+        Q::Sighash => EvmTxField::Sighash,
         Q::BlockHash
         | Q::BlockNumber
         | Q::ChainId
@@ -94,7 +95,6 @@ pub(crate) fn tx_field_column(field: TransactionField) -> Option<EvmTxField> {
         | Q::L1BaseFeeScalar
         | Q::L1BlobBaseFee
         | Q::L1BlobBaseFeeScalar
-        | Q::Sighash
         | Q::BlobGasPrice
         | Q::BlobGasUsed
         | Q::DepositNonce
@@ -104,13 +104,12 @@ pub(crate) fn tx_field_column(field: TransactionField) -> Option<EvmTxField> {
     })
 }
 
-/// Selection mask over store field ordinals. `Sighash` lands in the internal
-/// selector column.
+/// Selection mask over store field ordinals.
 pub(crate) fn tx_mask(fields: &[TransactionField]) -> u64 {
-    fields.iter().fold(0, |acc, &field| match field {
-        TransactionField::Sighash => acc | SELECTOR_BIT,
-        field => tx_field_column(field).map_or(acc, |column| acc | 1u64 << (column as u32)),
-    })
+    fields
+        .iter()
+        .filter_map(|&field| tx_field_column(field))
+        .fold(0, |acc, column| acc | 1u64 << (column as u32))
 }
 
 /// The block field the store derives from its key, so a row always has it.
@@ -278,8 +277,22 @@ pub(crate) fn set_tx_field(tx: &mut Transaction, field: EvmTxField, raw: &Json) 
         GasUsedForL1 => tx.gas_used_for_l1 = Some(hex_value(name, raw)?),
         AccessList => tx.access_list = Some(from_json(name, raw)?),
         AuthorizationList => tx.authorization_list = Some(from_json(name, raw)?),
+        Sighash => {
+            let input: format::Data = hex_value(name, raw)?;
+            tx.sighash =
+                sighash_of_input(&input).map(|sighash| format::Data::from(sighash.to_vec()));
+        }
     }
     Ok(())
+}
+
+/// The key of the response a transaction field is read from: `sighash` is
+/// derived from the calldata, as no RPC carries it.
+pub(crate) fn tx_response_key(field: EvmTxField) -> &'static str {
+    match field {
+        EvmTxField::Sighash => EvmTxField::Input.name(),
+        field => field.name(),
+    }
 }
 
 #[cfg(test)]

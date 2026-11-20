@@ -4,7 +4,6 @@
 use napi::bindgen_prelude::Either;
 
 use super::query::{BlockField, TransactionField, TransactionFilter, TransactionSelection};
-use crate::chain_buffer::evm::SELECTOR_BIT;
 use crate::chain_buffer::matching_transactions::OnTransactionRegistration;
 use crate::evm_rpc_source::fields::tx_fields_in;
 
@@ -54,10 +53,7 @@ pub(crate) fn build(registrations: &[&OnTransactionRegistration]) -> BuiltTransa
         };
         push_unique(&mut filters, built);
     }
-    let mut transaction_fields = tx_fields_in(transaction_mask);
-    if transaction_mask & SELECTOR_BIT != 0 {
-        transaction_fields.push(TransactionField::Sighash);
-    }
+    let transaction_fields = tx_fields_in(transaction_mask);
     BuiltTransactionSelection {
         filters,
         transaction_fields,

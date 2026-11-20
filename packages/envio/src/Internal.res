@@ -68,6 +68,7 @@ type evmTransactionField =
   | @as("gasUsedForL1") GasUsedForL1
   | @as("accessList") AccessList
   | @as("authorizationList") AuthorizationList
+  | @as("sighash") Sighash
 
 let allEvmBlockFields: array<evmBlockField> = [
   Number,
@@ -133,6 +134,7 @@ let allEvmTransactionFields: array<evmTransactionField> = [
   GasUsedForL1,
   AccessList,
   AuthorizationList,
+  Sighash,
 ]
 let evmTransactionFieldSchema = S.enum(allEvmTransactionFields)
 
@@ -266,6 +268,7 @@ type evmTransactionInput = {
   l1FeeScalar?: float,
   gasUsedForL1?: bigint,
   authorizationList?: JSON.t,
+  sighash?: string,
 }
 
 type genericEvent<'params, 'block, 'transaction> = {
