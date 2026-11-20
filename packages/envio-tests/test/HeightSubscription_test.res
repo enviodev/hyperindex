@@ -544,9 +544,9 @@ describe("Height subscription", () => {
       await sync->answerQuery(~fromBlock=101, ~toBlock=101)
 
       // Recruiting the fallback answers this wait inside the stall callback
-      // that recruited it.
+      // that recruited it, four blocks past sync, which is held for it.
       await indexer.advanceTime(50)
-      await sync.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
+      await fallback.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
       await sync.expectNewHeightCalls(1)
       let stallWarnings = () =>
         indexer.infoAndAboveLogs()

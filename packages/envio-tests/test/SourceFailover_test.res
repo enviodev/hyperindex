@@ -68,6 +68,10 @@ let sourceLogs = (indexer: IndexerRunner.t) =>
     msg->String.startsWith("MockSource ") ? Some(msg) : None
   )
 
+// How many times items queries moved to another source.
+let switchCount = (indexer: IndexerRunner.t) =>
+  indexer.infoAndAboveLogs()->Array.filter(({msg}) => msg == "Switching data-source")->Array.length
+
 describe("Source failover", () => {
   scenario->Scenario.it(
     "Retries on same source twice before switching, then alternates every second retry",
@@ -144,9 +148,10 @@ describe("Source failover", () => {
       sync.resolveGetHeightOrThrow(100)
       await sync.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
       // Sync stops following the chain at 100. The fallback, recruited once the
-      // wait stalls, reports where the chain really is.
+      // wait stalls, is a single block ahead: too little to tell a stopped
+      // source from a block sync hasn't polled yet, so sync takes the query.
       sync.setAutoHeight(100)
-      fallback.setAutoHeight(200)
+      fallback.setAutoHeight(101)
       await indexer.advanceTime(10)
       let early = await Scenario.failThroughBackoff(
         ~indexer,
@@ -155,28 +160,71 @@ describe("Source failover", () => {
         ~reply=Fail(Source.SourceBehindHead({blockNumber: 150, requestStats: []})),
         ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 50],
       )
-      await fallback.expectItemsQueries([{fromBlock: 101, retryCount: 13, reply: upTo(200)}])
+      await fallback.expectItemsQueries([{fromBlock: 101, retryCount: 13, reply: upTo(101)}])
 
       // Long past the recovery timeout, but sync's height is still 100.
       await indexer.advanceTime(200)
-      fallback.setAutoHeight(201)
+      fallback.setAutoHeight(102)
       await indexer.advanceTime(50)
-      await fallback.expectItemsQueries([{fromBlock: 201, reply: upTo(201)}])
+      await fallback.expectItemsQueries([{fromBlock: 102, reply: upTo(102)}])
 
-      // One block is enough: the source is following its chain again.
+      // One block is enough, short of the block it couldn't serve: the source
+      // is following its chain again.
       sync.setAutoHeight(101)
       await indexer.advanceTime(1_000)
-      fallback.setAutoHeight(202)
+      fallback.setAutoHeight(103)
       await indexer.advanceTime(50)
-      await sync.expectItemsQueries([{fromBlock: 202, reply: LeavePending}])
-      t.expect((early, fallback.pendingItemsQueries, indexer->sourceLogs)).toEqual((
+      await sync.expectItemsQueries([{fromBlock: 103, reply: LeavePending}])
+      t.expect((
+        early,
+        fallback.pendingItemsQueries,
+        indexer->sourceLogs,
+        indexer->switchCount,
+      )).toEqual((
         [],
         [],
         [
           "MockSource is still catching up to block 150. This is a delay on the provider's side; indexing will continue automatically, using another data source if one is configured.",
-          "MockSource has moved past block 100 and is used for queries again.",
         ],
+        2,
       ))
+    },
+  )
+
+  scenario->Scenario.it(
+    "Holds a source a stalled wait finds more than a block behind, without querying it, until its height moves",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~sourceTiming={
+      newBlockStallTimeoutRealtime: 10,
+      stalledPollingInterval: 50,
+      reducedPollingInterval: 1_000,
+    },
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
+      sync.setAutoHeight(100)
+      fallback.setAutoHeight(102)
+      await indexer.advanceTime(10)
+      await fallback.expectItemsQueries([{fromBlock: 101, reply: upTo(102)}])
+      fallback.setAutoHeight(103)
+      await indexer.advanceTime(50)
+      await fallback.expectItemsQueries([{fromBlock: 103, reply: upTo(103)}])
+
+      sync.setAutoHeight(104)
+      await indexer.advanceTime(1_000)
+      fallback.setAutoHeight(104)
+      await indexer.advanceTime(50)
+      await sync.expectItemsQueries([{fromBlock: 104, reply: LeavePending}])
+      t.expect((
+        sync.pendingItemsQueries->Array.map(query => query.fromBlock),
+        indexer->sourceLogs,
+        indexer->switchCount,
+      )).toEqual(([104], [], 2))
     },
   )
 

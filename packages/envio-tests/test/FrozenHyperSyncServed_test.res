@@ -81,7 +81,7 @@ type seen = {id: string}
 
 describe("A HyperSync instance that stopped following its chain", () => {
   Async.it(
-    "Indexes on the RPC fallback, and stops querying HyperSync once it has failed over",
+    "Switches to the RPC fallback without querying HyperSync past its frozen height",
     async t => {
       let exited = ref(false)
       await scenario->Scenario.run(
@@ -124,16 +124,22 @@ describe("A HyperSync instance that stopped following its chain", () => {
             rows->Array.length,
             queriesPastFrozenHeight->Array.length,
             indexer.infoAndAboveLogs()->Array.filterMap(
-              ({msg}) => msg->String.startsWith("HyperSync ") ? Some(msg) : None,
+              ({msg, params}) =>
+                msg->String.startsWith("HyperSync ") || msg == "Switching data-source"
+                  ? Some((msg, params->Dict.get("source")))
+                  : None,
             ),
           )).toEqual((
             true,
             lastBlock,
-            // The behind-the-head window on HyperSync before failing over, and
-            // nothing after it, however many recovery timeouts pass.
-            13,
+            // The stalled wait that recruits the fallback finds HyperSync blocks
+            // behind it, so HyperSync is held before it is asked for anything.
+            0,
             [
-              "HyperSync is still catching up to block 11. This is a delay on the provider's side; indexing will continue automatically, using another data source if one is configured.",
+              (
+                "Switching data-source",
+                Some(JSON.String(`RPC (127.0.0.1:${rpcPort->Int.toString})`)),
+              ),
             ],
           ))
         },
