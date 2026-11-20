@@ -30,7 +30,6 @@ type queryShape = {
   fromBlock: int,
   toBlock: MockSource.toBlock,
   addresses: array<string>,
-  itemsTarget: option<int>,
 }
 
 let shapeOf = (query: MockSource.pendingItemsQuery) => {
@@ -38,7 +37,6 @@ let shapeOf = (query: MockSource.pendingItemsQuery) => {
   fromBlock: query.fromBlock,
   toBlock: query.toBlock,
   addresses: query->MockSource.addresses->Array.map(Address.toString),
-  itemsTarget: query->MockSource.itemsTarget,
 }
 
 let pendingShapes = (source: MockSource.t) => source.pendingItemsQueries->Array.map(shapeOf)
@@ -84,7 +82,6 @@ describe("FetchState queries over the indexer loop", () => {
             fromBlock: 0,
             toBlock: Unbounded,
             addresses: [staticAddress],
-            itemsTarget: Some(30000),
           },
         ],
         [],
@@ -94,7 +91,6 @@ describe("FetchState queries over the indexer loop", () => {
             fromBlock: 11,
             toBlock: Unbounded,
             addresses: [staticAddress],
-            itemsTarget: Some(1),
           },
         ],
       ))
@@ -159,7 +155,6 @@ describe("FetchState queries over the indexer loop", () => {
           fromBlock: 11,
           toBlock: Bounded(11),
           addresses: [staticAddress],
-          itemsTarget: Some(1),
         },
       ])
     },
@@ -178,7 +173,6 @@ describe("FetchState queries over the indexer loop", () => {
           fromBlock: 0,
           toBlock: Bounded(9),
           addresses: [staticAddress],
-          itemsTarget: Some(30000),
         },
       ])
     },
@@ -219,7 +213,6 @@ describe("FetchState queries over the indexer loop", () => {
             fromBlock: 0,
             toBlock: Bounded(8),
             addresses: [staticAddress],
-            itemsTarget: Some(30000),
           },
         ],
         [],
@@ -240,7 +233,6 @@ describe("FetchState queries over the indexer loop", () => {
           fromBlock: 0,
           toBlock: Bounded(8),
           addresses: [staticAddress],
-          itemsTarget: Some(30000),
         },
       ])
     },
@@ -309,7 +301,6 @@ chains:
           fromBlock: 0,
           toBlock: Bounded(25),
           addresses: [staticAddress],
-          itemsTarget: Some(1),
         },
       ])
     },
@@ -331,7 +322,6 @@ chains:
           fromBlock: 0,
           toBlock: Unbounded,
           addresses: [staticAddress],
-          itemsTarget: Some(1),
         },
       ])
     },

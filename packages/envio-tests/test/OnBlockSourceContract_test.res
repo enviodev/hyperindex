@@ -126,7 +126,6 @@ let fetch = (
   // Far below the head, where a page's blocks aren't checked one by one.
   ~knownHeight=1_000,
   ~reorgableFrom=None,
-  ~itemsTarget=None,
 ) =>
   source.getItemsOrThrow(
     ~fromBlock,
@@ -140,7 +139,6 @@ let fetch = (
       ~onEventRegistrations=[],
       ~onBlockRegistrations,
     ),
-    ~itemsTarget,
     ~retry=0,
     ~logger=Logger.makeInMemory()->Logger.withFields({"test": "onBlock source contract"}),
   )
@@ -518,15 +516,20 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     ])
   })
 
-  // The page's item target counts handler runs; reading every block, the
-  // source reads as many blocks as the densest handler needs to reach it.
-  Async.it("caps a page reading every block at the blocks its item target needs", async t => {
+  // A page reading every block for its handlers is bounded by its range, not
+  // a block cap: a cap would differ between queries and defeat the server's
+  // query cache. Open-ended, it ends where the handlers have run a page's
+  // worth of times — every 2 blocks from block 10, 5,000 runs end at 10,009.
+  Async.it("bounds an open-ended page reading every block by its range", async t => {
     let queries = await MockHyperSyncServer.withServer(
-      ~height=100,
+      ~height=100_000,
       async server => {
         let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
-        server->MockHyperSyncServer.pushResponse({blocks: [10, 11, 12, 13]->Array.map(header)})
-        let _ = await source->fetch(~addressSet, ~itemsTarget=Some(2))
+        server->MockHyperSyncServer.pushResponse({
+          blocks: [10, 11, 12, 13]->Array.map(header),
+          nextBlock: 14,
+        })
+        let _ = await source->fetch(~addressSet, ~toBlock=None, ~knownHeight=100_000)
         server->MockHyperSyncServer.takeQueries
       },
     )
@@ -534,9 +537,8 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     t.expect(queries).toEqual([
       JSON.parseOrThrow(`{
         "from_block": 10,
-        "to_block": 14,
+        "to_block": 10010,
         "include_all_blocks": true,
-        "max_num_blocks": 4,
         "field_selection": {"block": ["hash", "miner", "number", "timestamp"]}
       }`),
     ])

@@ -153,7 +153,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       ~addressSet=programSet,
       ~knownHeight=slot + 1000,
       ~partitionId="0",
-      ~itemsTarget=Some(5000),
       ~selection={
         onEventRegistrations: [(reg :> Internal.onEventRegistration)],
         dependsOnAddresses: true,
@@ -215,7 +214,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         {
           fromSlot: slot - 10,
           toSlot: Some(slot + 10),
-          itemsTarget: 5000,
           onEventRegistrationIndexes: [0],
           onBlockRegistrationIndexes: [],
         }: SvmHyperSyncClient.Items.query
@@ -328,7 +326,6 @@ describe("SvmHyperSyncSource reorgable range", () => {
       ~addressSet=programSet,
       ~knownHeight=slot + 1,
       ~partitionId="0",
-      ~itemsTarget=None,
       ~selection={
         onEventRegistrations: [(makeReg() :> Internal.onEventRegistration)],
         dependsOnAddresses: true,

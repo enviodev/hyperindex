@@ -70,7 +70,6 @@ let runQuery = async (
     ~query={
       fromBlock,
       toBlock: Some(toBlock),
-      itemsTarget: 10_000,
       onEventRegistrationIndexes: registrationIndexes,
       onBlockRegistrationIndexes: [],
       clientFilteredContracts: None,

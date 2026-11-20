@@ -94,7 +94,19 @@ type Trade @index(fields: ["poolId", ["date", "DESC"]]) {
 }
 ```
 
+Covering index — `include` stores extra columns in the index without keying on them, so a query that reads only the key and included columns is answered from the index alone (a Postgres index-only scan):
+
+```graphql
+type Trade @index(fields: ["poolId", ["date", "DESC"]], include: ["volume"]) {
+  id: ID!
+  poolId: String!
+  date: BigInt!
+  volume: BigDecimal!
+}
+```
+
 - Fields default to ASC; use `["field", "DESC"]` for descending
+- `include` takes plain field names (no direction), works with one or more key `fields`, and is Postgres-only. Keep included columns small: they are copied into the index, and an index entry is limited to about 2.7 kB
 - IDs and `@derivedFrom` fields are automatically indexed
 - Any non-derived field is queryable via `context.Entity.getWhere()`. Indexes are never created up front: `@index` fields are built together when the backfill finishes, before the indexer reports ready, and any field — marked or not — is indexed on the spot if a `getWhere` needs it earlier, pausing indexing while it builds
 

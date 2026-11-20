@@ -152,7 +152,6 @@ let fetch = (
       ),
       onBlockRegistrations: [],
     },
-    ~itemsTarget=Some(5_000),
     ~retry=0,
     ~logger=Logger.makeInMemory()->Logger.withFields({"test": "HyperSync source contract"}),
   )
@@ -268,8 +267,7 @@ describe("HyperSync source contract", () => {
             "topic3",
             "transaction_index"
           ]
-        },
-        "max_num_logs": 5000
+        }
       }`,
       ),
     ])

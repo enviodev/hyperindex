@@ -267,8 +267,7 @@ type pendingItemsQuery = {
 // pending queries doesn't have to spell them out.
 @get external addresses: pendingItemsQuery => array<Address.t> = "addresses"
 @get external reorgableFrom: pendingItemsQuery => option<int> = "reorgableFrom"
-// The item count the indexer asked the source to stop at, if any.
-@get external itemsTarget: pendingItemsQuery => option<int> = "itemsTarget"
+// The registrations the query fetches for.
 @get external selection: pendingItemsQuery => FetchState.selection = "selection"
 
 // A block the chain has, for the block handlers of the query's selection that
@@ -1278,7 +1277,6 @@ let make = (
           ~knownHeight,
           ~partitionId,
           ~selection,
-          ~itemsTarget,
           ~retry,
           ~logger as _,
         ) => {
@@ -1345,10 +1343,6 @@ let make = (
             ->Utils.Object.definePropertyWithValue(
               "reorgableFrom",
               {enumerable: false, value: reorgableFrom},
-            )
-            ->Utils.Object.definePropertyWithValue(
-              "itemsTarget",
-              {enumerable: false, value: itemsTarget},
             )
             ->Utils.Object.definePropertyWithValue(
               "selection",

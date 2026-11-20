@@ -125,8 +125,18 @@ struct EntityJson {
     // every deployed indexer with a composite index demand a reset.
     #[serde(rename = "compositeIndices", skip_serializing_if = "Vec::is_empty")]
     composite_indexes: Vec<Vec<CompositeIndexJson>>,
+    // Apart from `compositeIndices` rather than a new shape for it, so a
+    // project with no `include` keeps producing the JSON it always has.
+    #[serde(rename = "coveringIndices", skip_serializing_if = "Vec::is_empty")]
+    covering_indexes: Vec<CoveringIndexJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
+}
+
+#[derive(Serialize, Debug)]
+struct CoveringIndexJson {
+    fields: Vec<CompositeIndexJson>,
+    include: Vec<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -825,17 +835,30 @@ impl SystemConfig {
                     })
                     .collect();
 
+                let index_fields = |fields: &[entity_parsing::IndexField]| {
+                    fields
+                        .iter()
+                        .map(|f| CompositeIndexJson {
+                            field_name: f.column.field_name().to_string(),
+                            direction: f.direction.as_pascal_str().to_string(),
+                        })
+                        .collect::<Vec<_>>()
+                };
                 let composite_indexes = entity
                     .get_composite_indexes()
+                    .iter()
+                    .map(|fields| index_fields(fields))
+                    .collect();
+                let covering_indexes = entity
+                    .get_covering_indexes()
                     .into_iter()
-                    .map(|fields| {
-                        fields
+                    .map(|index| CoveringIndexJson {
+                        fields: index_fields(index.get_index_fields()),
+                        include: index
+                            .get_included_columns()
                             .iter()
-                            .map(|f| CompositeIndexJson {
-                                field_name: f.column.field_name().to_string(),
-                                direction: f.direction.as_pascal_str().to_string(),
-                            })
-                            .collect()
+                            .map(|column| column.field_name().to_string())
+                            .collect(),
                     })
                     .collect();
 
@@ -876,6 +899,7 @@ impl SystemConfig {
                     properties,
                     derived_fields,
                     composite_indexes,
+                    covering_indexes,
                     description: entity.description.clone(),
                 })
             })

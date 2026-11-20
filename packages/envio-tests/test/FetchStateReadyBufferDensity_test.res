@@ -81,7 +81,7 @@ describe("Query sizing from the ready buffer", () => {
       let afterDenseRange =
         mock
         ->MockSource.takeNewPendingItemsQueries(~seen)
-        ->Array.map(query => (query.fromBlock, query.toBlock, query->MockSource.itemsTarget))
+        ->Array.map(query => (query.fromBlock, query.toBlock))
       holdProcessing.release()
       await indexer.waitUntilIdle()
 

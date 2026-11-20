@@ -41,7 +41,14 @@ describe("Admission into the shared buffer pool", () => {
       t.expect(
         chainIds->Array.map(
           chain =>
-            source(chain).pendingItemsQueries->Array.map(query => query->MockSource.itemsTarget),
+            source(chain).pendingItemsQueries->Array.map(
+              query =>
+                indexer->QueryReservations.reservation(
+                  ~chainId=chain,
+                  ~partitionId=query.partitionId,
+                  ~fromBlock=query.fromBlock,
+                ),
+            ),
         ),
       ).toEqual(chainIds->Array.map(chain => chain <= 10 ? [Some(10)] : []))
     },

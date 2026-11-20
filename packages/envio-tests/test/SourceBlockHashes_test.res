@@ -134,7 +134,6 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
     ~knownHeight=toBlock + 1000,
     ~partitionId="0",
     ~selection=makeSelection(),
-    ~itemsTarget=Some(5000),
     ~retry=0,
     ~logger=Logger.makeInMemory()->Logger.withFields({"test": "SourceBlockHashes"}),
   ) catch {

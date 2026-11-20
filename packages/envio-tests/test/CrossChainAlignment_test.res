@@ -35,10 +35,18 @@ let sources: array<Scenario.sourceMock> = [{chain: 1}, {chain: 2}]
 
 let eventAt = (blockNumber): MockSource.itemMock => {blockNumber, logIndex: 0}
 
-let newQueries = (mock: MockSource.t, ~seen) =>
+let newQueries = (mock: MockSource.t, ~indexer, ~chainId, ~seen) =>
   mock
   ->MockSource.takeNewPendingItemsQueries(~seen)
-  ->Array.map(query => (query.fromBlock, query.toBlock, query->MockSource.itemsTarget))
+  ->Array.map(query => (
+    query.fromBlock,
+    query.toBlock,
+    indexer->QueryReservations.reservation(
+      ~chainId,
+      ~partitionId=query.partitionId,
+      ~fromBlock=query.fromBlock,
+    ),
+  ))
 
 // Chain 1 reaches `leaderFetchedTo` while chain 2's first query is held, then
 // chain 2 reaches block 400. Returns the queries each chain issues after that.
@@ -65,7 +73,10 @@ let queriesOnceBothFetched = async (
     {fromBlock: 1, reply: Respond({items: [eventAt(1)], latestFetchedBlockNumber: 400})},
   ])
   await indexer.waitUntilIdle()
-  (leader->newQueries(~seen), follower->newQueries(~seen))
+  (
+    leader->newQueries(~indexer, ~chainId=1, ~seen),
+    follower->newQueries(~indexer, ~chainId=2, ~seen),
+  )
 }
 
 describe("Cross-chain alignment", () => {
@@ -115,8 +126,8 @@ describe("Cross-chain alignment", () => {
     ~sources,
     async (~t, ~indexer, ~source) => {
       // Chain 1 at 250 of its 500 end block is 50% through, ahead of chain 2 at
-      // 400 of 1000, so chain 2 anchors. Both send probes bounded only by their
-      // item targets, and the clamped chain's is the smaller one.
+      // 400 of 1000, so chain 2 anchors. Both send probes, and the clamped
+      // chain's reserves less of the pool.
       t.expect(
         await queriesOnceBothFetched(~indexer, ~source, ~leaderEventAt=1, ~leaderFetchedTo=250),
       ).toEqual(([(251, MockSource.Bounded(500), Some(1))], [(401, MockSource.Unbounded, Some(2))]))

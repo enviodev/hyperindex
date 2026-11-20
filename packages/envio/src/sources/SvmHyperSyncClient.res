@@ -125,9 +125,6 @@ module Items = {
     fromSlot: int,
     // Inclusive; None queries to the end of available data.
     toSlot: option<int>,
-    // Soft cap on the page's items: the instructions it selects, or for a query
-    // selecting slots alone, its slot handlers' runs. Absent sends no cap.
-    itemsTarget?: int,
     onEventRegistrationIndexes: array<int>,
     onBlockRegistrationIndexes: array<int>,
     // Slots at or above this one can still be reorged, so a page reaching

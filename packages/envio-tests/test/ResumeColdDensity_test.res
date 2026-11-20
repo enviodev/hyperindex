@@ -57,7 +57,13 @@ describe("A resumed chain with no events processed", () => {
           chain => (chain.firstEventBlock, chain.progressBlock),
         ),
         mock.pendingItemsQueries->Array.map(
-          query => (query.fromBlock, query->MockSource.itemsTarget),
+          query => (
+            query.fromBlock,
+            restarted->QueryReservations.probeReservation(
+              ~partitionId=query.partitionId,
+              ~fromBlock=query.fromBlock,
+            ),
+          ),
         ),
       )).toEqual(([(Some(200), 301)], [(302, Some(100))]))
     },

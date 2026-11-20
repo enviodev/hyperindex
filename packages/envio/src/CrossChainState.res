@@ -419,7 +419,8 @@ let checkAndFetch = async (
 
   // A chain with no density signal probes blind, so it only gets a bounded
   // slice of the pool — one unknown chain shouldn't hold the whole budget
-  // while it takes its first measurements. Its probe is one admission unit.
+  // while it takes its first measurements. It is handed one admission unit,
+  // of which each probe reserves up to a page.
   let coldChainBudget = minimumAdmissionBudget
 
   let prioritizedChainStates = crossChainState->priorityOrder
