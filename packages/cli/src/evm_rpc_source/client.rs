@@ -237,16 +237,23 @@ impl JsonRpcClient {
         // 429/400), so parse the body first and fall back to the HTTP status
         // only when there's no JSON-RPC envelope to read. A 429 is still
         // throttling either way, unless its message limits the request itself.
+        let snippet = || String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).into_owned();
+        // For a body that is no JSON-RPC envelope, whether parseable or not.
+        let rate_limited_by_status = |snippet: &str| {
+            (!status.is_success() && is_rate_limited(status.as_u16(), None, snippet)).then(|| {
+                RpcError::RateLimited {
+                    code: None,
+                    message: format!("HTTP {status} for {method}: {snippet}"),
+                    retry_after_millis,
+                }
+            })
+        };
         let parsed: JsonRpcResponse = match serde_json::from_slice(&bytes) {
             Ok(parsed) => parsed,
             Err(e) => {
-                let snippet = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).into_owned();
-                if !status.is_success() && is_rate_limited(status.as_u16(), None, &snippet) {
-                    return Err(RpcError::RateLimited {
-                        code: None,
-                        message: format!("HTTP {status} for {method}: {snippet}"),
-                        retry_after_millis,
-                    });
+                let snippet = snippet();
+                if let Some(rate_limited) = rate_limited_by_status(&snippet) {
+                    return Err(rate_limited);
                 }
                 let err = anyhow::anyhow!(
                     "invalid JSON-RPC response for {method} (HTTP {status}): {e}; body: {snippet}"
@@ -278,9 +285,11 @@ impl JsonRpcClient {
             Some(result) => serde_json::from_str(result.get())
                 .with_context(|| format!("parse {method} result"))
                 .map_err(RpcError::MalformedResponse),
-            None => Err(RpcError::MalformedResponse(anyhow::anyhow!(
-                "JSON-RPC response for {method} (HTTP {status}) has neither result nor error"
-            ))),
+            None => Err(rate_limited_by_status(&snippet()).unwrap_or_else(|| {
+                RpcError::MalformedResponse(anyhow::anyhow!(
+                    "JSON-RPC response for {method} (HTTP {status}) has neither result nor error"
+                ))
+            })),
         }
     }
 

@@ -33,7 +33,7 @@ let throttlingAnswers = [
   // A gateway in front of the node, answering for it.
   _ => (429, "Too Many Requests"),
   _ => (429, "Too Many Requests"),
-  _ => (429, "Too Many Requests"),
+  _ => (429, `{"message":"Too Many Requests"}`),
   // Throttling worded in the error alone, under HTTP 200.
   request => (200, request->rpcError(~code=-32005, ~message="limit exceeded")),
   request => (200, request->rpcError(~code=-32005, ~message="project ID request rate exceeded")),
