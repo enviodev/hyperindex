@@ -45,9 +45,20 @@ let detect = (~env: dict<string>, ~hasChannel) =>
   | _ => None
   }
 
+// Prototype: a worker thread reports through its parent port instead of a
+// fork's channel.
+@module("node:worker_threads") external isMainThread: bool = "isMainThread"
+type parentPort
+@module("node:worker_threads") external parentPort: Nullable.t<parentPort> = "parentPort"
+@send external postToParentPort: (parentPort, 'msg) => unit = "postMessage"
+@send
+external onParentPortMessage: (parentPort, @as("message") _, 'msg => unit) => unit = "on"
+
+let isThread = !isMainThread
+
 let config = detect(
   ~env=NodeJs.Process.process.env,
-  ~hasChannel=NodeJs.Process.channel->Nullable.toOption->Option.isSome,
+  ~hasChannel=isThread || NodeJs.Process.channel->Nullable.toOption->Option.isSome,
 )
 
 let isEnabled = config->Option.isSome
@@ -72,23 +83,35 @@ type workerMessage =
 // that, a worker gone on its own would read as a failure to the supervisor
 // still deciding what the interrupt meant. A supervisor that dies can't tear
 // the group down, so losing the channel is what ends the worker then.
-let bindToSupervisor = (~logger) => {
-  NodeJs.Process.onSignal("SIGINT", () => ())
-  NodeJs.Process.onDisconnect(() => {
-    logger->Logger.error("The indexer supervisor is gone. Stopping this chain's process.")
-    NodeJs.process->NodeJs.exitWithCode(Failure)
-  })
-}
+let bindToSupervisor = (~logger) =>
+  if !isThread {
+    NodeJs.Process.onSignal("SIGINT", () => ())
+    NodeJs.Process.onDisconnect(() => {
+      logger->Logger.error("The indexer supervisor is gone. Stopping this chain's process.")
+      NodeJs.process->NodeJs.exitWithCode(Failure)
+    })
+  }
 
-%%private(let send = (message: workerMessage) => NodeJs.Process.sendToParent(message)->ignore)
+%%private(
+  let send = (message: workerMessage) =>
+    switch parentPort->Nullable.toOption {
+    | Some(port) if isThread => port->postToParentPort(message)
+    | _ => NodeJs.Process.sendToParent(message)->ignore
+    }
+)
 
 // A worker done with its chains exits only once its final snapshot is on the
 // channel: the last periodic one can be up to an interval old, and the
 // supervisor would go on reporting those chains as it left them.
 let exitAfterReporting = (~metrics: Metrics.t) =>
-  NodeJs.Process.sendToParentThen(Snapshot({metrics, runtime: Metrics.sampleRuntime()}), () =>
-    NodeJs.process->NodeJs.exitWithCode(Success)
-  )->ignore
+  if isThread {
+    send(Snapshot({metrics, runtime: Metrics.sampleRuntime()}))
+    let _ = setTimeout(() => NodeJs.process->NodeJs.exitWithCode(Success), 50)
+  } else {
+    NodeJs.Process.sendToParentThen(Snapshot({metrics, runtime: Metrics.sampleRuntime()}), () =>
+      NodeJs.process->NodeJs.exitWithCode(Success)
+    )->ignore
+  }
 
 // Reports this process's chains and its own runtime for as long as it runs, so
 // the supervisor can merge every worker's into the one snapshot the run serves,
@@ -101,9 +124,12 @@ let bindRun = (~getMetrics: unit => Metrics.t, ~onReleaseRealtime: unit => unit)
       () => send(Snapshot({metrics: getMetrics(), runtime: Metrics.sampleRuntime()})),
       snapshotIntervalMillis,
     )
-    NodeJs.Process.onMessage((message: parentMessage) =>
+    let onMessage = (message: parentMessage) =>
       switch message {
       | ReleaseRealtime => onReleaseRealtime()
       }
-    )
+    switch parentPort->Nullable.toOption {
+    | Some(port) if isThread => port->onParentPortMessage(onMessage)
+    | _ => NodeJs.Process.onMessage(onMessage)
+    }
   }

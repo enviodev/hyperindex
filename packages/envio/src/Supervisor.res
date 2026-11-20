@@ -20,12 +20,24 @@ let maxWorkers = 4
 // up the last. How much work a chain has is the contracts' to decide, so config
 // order is the only ranking the run can be given: listing chains busiest-first
 // in config.yaml is what balances the layout.
+// Prototype: `ENVIO_PROTOTYPE_WORKERS` sets the worker count outright (a number,
+// or `per-chain`), ignoring the connection budget, for measuring layouts.
+@val external prototypeWorkers: Nullable.t<string> = "process.env.ENVIO_PROTOTYPE_WORKERS"
+@val external prototypeTransport: Nullable.t<string> = "process.env.ENVIO_PROTOTYPE_TRANSPORT"
+@val external prototypeSharedPool: Nullable.t<string> = "process.env.ENVIO_PROTOTYPE_SHARED_PG_POOL"
+
 let plan = (~chainIds: array<ChainId.t>, ~maxConnections: int): option<array<worker>> => {
-  let workerCount =
-    [chainIds->Array.length, maxConnections / minConnectionsPerWorker, maxWorkers]->Array.reduce(
+  let chainCount = chainIds->Array.length
+  let workerCount = switch prototypeWorkers->Nullable.toOption {
+  | Some("per-chain") => chainCount
+  | Some(count) => Pervasives.min(chainCount, count->Int.fromString->Option.getOr(1))
+  | None =>
+    [chainCount, maxConnections / minConnectionsPerWorker, maxWorkers]->Array.reduce(
       maxWorkers,
       Pervasives.min,
     )
+  }
+  let isSharedPool = prototypeSharedPool->Nullable.toOption->Option.isSome
   if workerCount < 2 {
     None
   } else {
@@ -40,7 +52,9 @@ let plan = (~chainIds: array<ChainId.t>, ~maxConnections: int): option<array<wor
           let isReversePass = mod(dealIndex / workerCount, 2) === 1
           (isReversePass ? workerCount - 1 - position : position) === workerIndex
         }),
-        maxConnections: evenShare + (workerIndex < remainder ? 1 : 0),
+        maxConnections: isSharedPool
+          ? maxConnections
+          : Pervasives.max(1, evenShare + (workerIndex < remainder ? 1 : 0)),
       }),
     )
   }
@@ -130,6 +144,9 @@ let memoryBudgets = (~workerCount) =>
 // for a run the operator is watching in colour.
 @val external stdoutIsTty: Nullable.t<bool> = "process.stdout.isTTY"
 
+@module("./ThreadChild.mjs")
+external spawnThread: (string, dict<string>) => NodeJs.ChildProcess.Child.t = "spawnThread"
+
 let fork = (
   worker: worker,
   ~workerIndex,
@@ -170,17 +187,21 @@ let fork = (
     env->Dict.set("FORCE_COLOR", "1")
   }
 
-  let child = NodeJs.ChildProcess.fork(
-    entryPath,
-    [],
-    {
-      env,
-      serialization: "advanced",
-      stdio: pipeOutput
-        ? ["inherit", "pipe", "pipe", "ipc"]
-        : ["inherit", "inherit", "inherit", "ipc"],
-    },
-  )
+  let child = switch prototypeTransport->Nullable.toOption {
+  | Some("thread") => spawnThread(entryPath, env)
+  | _ =>
+    NodeJs.ChildProcess.fork(
+      entryPath,
+      [],
+      {
+        env,
+        serialization: "advanced",
+        stdio: pipeOutput
+          ? ["inherit", "pipe", "pipe", "ipc"]
+          : ["inherit", "inherit", "inherit", "ipc"],
+      },
+    )
+  }
   if pipeOutput {
     // A worker's lines are already written by its logger, so they're passed on
     // as they are, above the display. Each stream keeps the one it was written

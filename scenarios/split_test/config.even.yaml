@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=../../packages/envio/evm.schema.json
+name: split_test
+description: Workload even
+disable_default_cross_chain: true
+storage:
+  postgres:
+    column_name_format: snake_case
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - {id: 1, start_block: 18000000, end_block: 18560000, contracts: [{name: ERC20, address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"}]}
+  - {id: 8453, start_block: 10000000, end_block: 12360000, contracts: [{name: ERC20, address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"}]}
+  - {id: 42161, start_block: 150000000, end_block: 165000000, contracts: [{name: ERC20, address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"}]}
+  - {id: 10, start_block: 110000000, end_block: 122400000, contracts: [{name: ERC20, address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"}]}

@@ -113,7 +113,14 @@ pub struct Column {
 #[derive(Clone)]
 pub struct PgClient {
     pool: Pool,
+    // Prototype: worker threads of one run draw from a single pool, so no
+    // thread closes it on its way out.
+    shared: bool,
 }
+
+static SHARED_POOLS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, Pool>>,
+> = std::sync::LazyLock::new(Default::default);
 
 /// A transaction, pinned to the connection it was opened on.
 ///
@@ -334,7 +341,30 @@ fn build_config(options: &PgConnectionOptions) -> Config {
 
 impl PgClient {
     pub fn connect(options: PgConnectionOptions) -> Result<Self> {
-        let config = build_config(&options);
+        if std::env::var_os("ENVIO_PROTOTYPE_SHARED_PG_POOL").is_none() {
+            return Ok(Self {
+                pool: Self::build_pool(&options)?,
+                shared: false,
+            });
+        }
+        let key = format!(
+            "{}:{}/{}@{}",
+            options.host, options.port, options.database, options.user
+        );
+        let mut pools = SHARED_POOLS.lock().unwrap();
+        let pool = match pools.get(&key) {
+            Some(pool) => pool.clone(),
+            None => {
+                let pool = Self::build_pool(&options)?;
+                pools.insert(key, pool.clone());
+                pool
+            }
+        };
+        Ok(Self { pool, shared: true })
+    }
+
+    fn build_pool(options: &PgConnectionOptions) -> Result<Pool> {
+        let config = build_config(options);
         // A returned connection is checked for being closed and nothing more.
         // Nothing here leaves session state behind to reset — the one thing
         // that would, an unfinished transaction, is kept out of the pool by
@@ -353,14 +383,12 @@ impl PgClient {
         // Only opening a connection is bounded. Waiting for a free slot when
         // every connection is busy is the pool doing its job, and how long that
         // takes is how long the statements ahead take.
-        let pool = Pool::builder(manager)
+        Pool::builder(manager)
             .max_size(options.max_connections.max(1))
             .runtime(deadpool_postgres::Runtime::Tokio1)
             .create_timeout(Some(options.connect_timeout))
             .build()
-            .context("Failed building the Postgres connection pool")?;
-
-        Ok(Self { pool })
+            .context("Failed building the Postgres connection pool")
     }
 
     async fn client(&self) -> Result<deadpool_postgres::Object> {
@@ -452,6 +480,9 @@ impl PgClient {
     }
 
     pub fn close(&self) {
+        if self.shared {
+            return;
+        }
         self.pool.close();
     }
 }
