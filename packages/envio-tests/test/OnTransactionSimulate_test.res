@@ -251,6 +251,31 @@ describe("onTransaction under simulate", () => {
       );
   });
 
+  // A transaction no filter matches would otherwise let a test pass without
+  // running anything, as an event no handler runs on would.
+  it("fails the run over a transaction no handler ran on", async (t) => {
+    const indexer = createTestIndexer();
+    await t
+      .expect(
+        indexer.process({
+          chains: {
+            1: {
+              startBlock: 0,
+              endBlock: 5,
+              simulate: [
+                { transaction: { from: alice } },
+                { transaction: { from: carol } },
+                { transaction: { from: alice } },
+              ],
+            },
+          },
+        }),
+      )
+      .rejects.toThrow(
+        "simulate: 1 item you passed to simulate never reached a handler, so nothing ran for them. Each was filtered out before the handler, usually by a non-wildcard srcAddress that isn't indexed for the contract, a where/block filter that excluded the event, or, for a transaction, no onTransaction filter matching the fields it gives. Unrouted items, by index in each chain's simulate array:\\n  - chain 1: 1",
+      );
+  });
+
   it("refuses a transaction field it doesn't know", async (t) => {
     const indexer = createTestIndexer();
     await t
