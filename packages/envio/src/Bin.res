@@ -25,11 +25,13 @@ type startCmd = {
 }
 type migrateCmd = {reset: bool, config: JSON.t}
 type dropSchemaCmd = {config: JSON.t}
+type resolversCmd = {mode: string, cwd: string, env: dict<JSON.t>, config: JSON.t}
 
 type command =
   | Start(startCmd)
   | Migrate(migrateCmd)
   | DropSchema(dropSchemaCmd)
+  | Resolvers(resolversCmd)
 
 let decodeCommand = (json: JSON.t): command => {
   let obj = switch json->JSON.Decode.object {
@@ -44,6 +46,7 @@ let decodeCommand = (json: JSON.t): command => {
   | "start" => Start(json->(Utils.magic: JSON.t => startCmd))
   | "migrate" => Migrate(json->(Utils.magic: JSON.t => migrateCmd))
   | "drop-schema" => DropSchema(json->(Utils.magic: JSON.t => dropSchemaCmd))
+  | "resolvers" => Resolvers(json->(Utils.magic: JSON.t => resolversCmd))
   | other => JsError.throwWithMessage(`Unknown command kind: ${other}`)
   }
 }
@@ -65,8 +68,8 @@ let run = async args => {
       await Main.start(~logger)
     } else {
       switch (await Core.runCli(args))->Null.toOption {
-      // Rust-only command (codegen / init / stop / docker / metrics / help /
-      // version / scripts) — nothing for JS to do, exit cleanly.
+      // Rust-only command (init / stop / docker / metrics / help / version /
+      // scripts) — nothing for JS to do, exit cleanly.
       | None => ()
       | Some(json) =>
         switch decodeCommand(json->JSON.parseOrThrow) {
@@ -74,6 +77,15 @@ let run = async args => {
           Config.prime(config)
           processChdir(cwd)
           applyEnv(env)
+          // `envio dev` only — see ResolverProcess.startForDev. Deployed, the
+          // resolvers are their own service and are never started from here.
+          // Imported on demand: the resolvers bring their own Postgres driver,
+          // which an indexer has no use for and must not load.
+          let loaded = Config.load()
+          if loaded.isDev && loaded.resolvers->Option.isSome {
+            let startForDev = await import(ResolverProcess.startForDev)
+            let _ = await startForDev(~logger, ~config=loaded, ~projectRoot=cwd)
+          }
           await Main.start(~logger, ~reset)
         | Migrate({reset, config}) =>
           Config.prime(config)
@@ -81,6 +93,55 @@ let run = async args => {
         | DropSchema({config}) =>
           Config.prime(config)
           await Main.dropSchema(~logger)
+        | Resolvers({mode, cwd, env, config}) =>
+          Config.prime(config)
+          processChdir(cwd)
+          applyEnv(env)
+          switch mode {
+          | "manifest" =>
+            await (await import(ResolverProcess.writeManifest))(
+              ~logger,
+              ~config=Config.load(),
+              ~projectRoot=cwd,
+            )
+          | "metadata" =>
+            let handlerUrl = switch Env.Resolvers.publicUrl() {
+            | Some(url) => url
+            | None =>
+              JsError.throwWithMessage(
+                "ENVIO_RESOLVERS_PUBLIC_URL is not set. It is the URL Hasura posts to and is baked into every action, so the metadata cannot be printed without it.",
+              )
+            }
+            let metadata = await (await import(ResolverProcess.metadataJson))(
+              ~logger,
+              ~config=Config.load(),
+              ~projectRoot=cwd,
+              ~handlerUrl,
+            )
+            // stdout, so it pipes into `hasura metadata apply` or `jq` rather
+            // than being buried in the log stream.
+            Console.log(JSON.stringify(metadata, ~space=2))
+          | "migrate" =>
+            let {applied, reasons} = await (await import(ResolverProcess.migrate))(
+              ~logger,
+              ~config=Config.load(),
+              ~projectRoot=cwd,
+            )
+            logger->Logger.info(
+              applied
+                ? `Updated Hasura to match these resolvers: ${reasons->Array.join("; ")}`
+                : "Hasura already matches these resolvers; nothing to update",
+            )
+          // Serving keeps the event loop alive on its own, so returning here
+          // leaves the process running rather than exiting.
+          | _ =>
+            let running = await (await import(ResolverProcess.serve))(
+              ~logger,
+              ~config=Config.load(),
+              ~projectRoot=cwd,
+            )
+            running->(await import(ResolverProcess.handleSignals))(~logger)
+          }
         }
       }
     }
