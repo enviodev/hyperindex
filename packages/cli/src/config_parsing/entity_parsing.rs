@@ -617,9 +617,32 @@ fn check_clickhouse_sortable(entity: &str, resolved: &ResolvedColumn) -> anyhow:
 }
 
 /// An `@index` over one column is a plain single index, and the entity may
-/// already have that one covered.
-fn check_worth_indexing(entity: &str, only: &ResolvedColumn) -> anyhow::Result<()> {
+/// already have that one covered. With included columns it is an index nothing
+/// else builds — the primary key carries none — so only the `@index` on the
+/// field, which the covering one makes redundant, still stands in the way.
+fn check_worth_indexing(
+    entity: &str,
+    only: &ResolvedColumn,
+    has_include: bool,
+) -> anyhow::Result<()> {
     match &only.column {
+        EntityColumn::Declared(name)
+            if has_include
+                && only
+                    .field
+                    .is_some_and(|field| field.field_type.has_indexed_directive()) =>
+        {
+            Err(directive_error(
+                entity,
+                INDEX_DIRECTIVE,
+                &format!(
+                    "`{name}` is already marked `@index` on the field, and this index serves \
+                     every query that one does"
+                ),
+                "Remove the `@index` on the field.",
+            ))
+        }
+        _ if has_include => Ok(()),
         EntityColumn::Declared(name) if name == ID_FIELD_NAME => Err(directive_error(
             entity,
             INDEX_DIRECTIVE,
@@ -657,10 +680,41 @@ fn check_worth_indexing(entity: &str, only: &ResolvedColumn) -> anyhow::Result<(
     }
 }
 
+/// The columns an index carries without keying on them. Any stored column
+/// qualifies — nothing sorts or compares an included value — but one the key
+/// already holds is in every index entry as it is.
+fn resolve_include(
+    resolver: &ColumnResolver,
+    key: &[ResolvedColumn],
+    include: Vec<String>,
+) -> anyhow::Result<Vec<EntityColumn>> {
+    let mut included = resolver
+        .resolve_distinct(INDEX_DIRECTIVE, "index", include)?
+        .into_iter()
+        .map(|resolved| {
+            if key.iter().any(|keyed| keyed.column == resolved.column) {
+                let name = resolved.column.field_name();
+                return Err(directive_error(
+                    resolver.entity,
+                    INDEX_DIRECTIVE,
+                    &format!("`{name}` is both a key column in `fields` and listed in `include`"),
+                    "Drop it from `include`: the index already stores every column it is keyed on.",
+                ));
+            }
+            Ok(resolved.column)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    // Postgres gives the order of included columns no meaning, so two
+    // spellings of one set are the same index.
+    included.sort_by(|a, b| a.field_name().cmp(b.field_name()));
+    Ok(included)
+}
+
 impl MultiFieldIndex {
     fn resolve(
         resolver: &ColumnResolver,
         columns: Vec<(String, IndexFieldDirection)>,
+        include: Option<Vec<String>>,
     ) -> anyhow::Result<Self> {
         let entity = resolver.entity;
         if columns.is_empty() {
@@ -676,12 +730,26 @@ impl MultiFieldIndex {
             columns.into_iter().unzip();
         let resolved = resolver.resolve_distinct(INDEX_DIRECTIVE, "index", names)?;
 
+        let include = match include {
+            None => Vec::new(),
+            Some(include) if include.is_empty() => {
+                return Err(directive_error(
+                    entity,
+                    INDEX_DIRECTIVE,
+                    "`include` lists no columns",
+                    "List the columns the index should carry, e.g. `include: [\"balance\"]`, or \
+                     drop `include`.",
+                ));
+            }
+            Some(include) => resolve_include(resolver, &resolved, include)?,
+        };
+
         if let [only] = resolved.as_slice() {
-            check_worth_indexing(entity, only)?;
+            check_worth_indexing(entity, only, !include.is_empty())?;
         }
 
-        Ok(Self(
-            resolved
+        Ok(Self {
+            fields: resolved
                 .into_iter()
                 .zip(directions)
                 .map(|(resolved, direction)| IndexField {
@@ -689,11 +757,20 @@ impl MultiFieldIndex {
                     direction,
                 })
                 .collect(),
-        ))
+            include,
+        })
     }
 
     fn render_columns(&self) -> String {
-        backtick_list(self.0.iter().map(|f| f.column.field_name()))
+        let key = backtick_list(self.fields.iter().map(|f| f.column.field_name()));
+        if self.include.is_empty() {
+            key
+        } else {
+            format!(
+                "{key} including {}",
+                backtick_list(self.include.iter().map(EntityColumn::field_name))
+            )
+        }
     }
 }
 
@@ -959,9 +1036,10 @@ impl Entity {
         let mut multi_field_indexes: Vec<MultiFieldIndex> = Vec::new();
         for directive in obj.directives.iter().filter(|d| d.name == "index") {
             let at_directive = at(source, directive.position);
-            let columns = parse_index_directive_columns(directive)
-                .with_context(|| format!("{at_directive}: Invalid `@index` on `{name}`"))?;
-            let index = MultiFieldIndex::resolve(&resolver, columns)
+            let invalid = || format!("{at_directive}: Invalid `@index` on `{name}`");
+            let columns = parse_index_directive_columns(directive).with_context(invalid)?;
+            let include = parse_index_directive_include(directive).with_context(invalid)?;
+            let index = MultiFieldIndex::resolve(&resolver, columns, include)
                 .with_context(|| at_directive.clone())?;
             if multi_field_indexes.contains(&index) {
                 return Err(directive_error(
@@ -990,6 +1068,39 @@ impl Entity {
             cross_chain,
             internal,
         })
+    }
+}
+
+/// The column names an `@index(..., include: [...])` directive asks the index
+/// to carry, as written. `None` when the directive has no `include`.
+fn parse_index_directive_include(
+    directive: &Directive<'_, String>,
+) -> anyhow::Result<Option<Vec<String>>> {
+    if let Some((unknown, _)) = directive
+        .arguments
+        .iter()
+        .find(|(key, _)| key != "fields" && key != "include")
+    {
+        return Err(anyhow!(
+            "Unknown argument `{unknown}`. An `@index` takes `fields` and, optionally, `include`."
+        ));
+    }
+    match directive.arguments.iter().find(|(key, _)| key == "include") {
+        None => Ok(None),
+        Some((_, Value::List(columns))) => columns
+            .iter()
+            .map(|column| match column {
+                Value::String(name) => Ok(name.clone()),
+                _ => Err(anyhow!(
+                    "`include` should list field names as strings, e.g. `include: [\"balance\"]`. \
+                     An included column has no direction."
+                )),
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map(Some),
+        Some(_) => Err(anyhow!(
+            "`include` should be a list of field names, e.g. `include: [\"balance\"]`."
+        )),
     }
 }
 
@@ -1173,19 +1284,20 @@ impl Entity {
         Ok(())
     }
 
-    ///Returns defined multi field indexes where definitions
-    ///have > 1 fields.
+    /// The indexes over more than one key column that include nothing. Those
+    /// that do are `get_covering_indexes`, whatever their key.
     pub fn get_composite_indexes(&self) -> Vec<Vec<IndexField>> {
         self.multi_field_indexes
             .iter()
-            .cloned()
-            .filter_map(|multi_field_index| {
-                if multi_field_index.0.len() > 1 {
-                    Some(multi_field_index.0)
-                } else {
-                    None
-                }
-            })
+            .filter(|index| index.fields.len() > 1 && index.include.is_empty())
+            .map(|index| index.fields.clone())
+            .collect()
+    }
+
+    pub fn get_covering_indexes(&self) -> Vec<&MultiFieldIndex> {
+        self.multi_field_indexes
+            .iter()
+            .filter(|index| !index.include.is_empty())
             .collect()
     }
 }
@@ -1938,16 +2050,27 @@ pub struct IndexField {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct MultiFieldIndex(Vec<IndexField>);
+pub struct MultiFieldIndex {
+    fields: Vec<IndexField>,
+    /// Sorted by name.
+    include: Vec<EntityColumn>,
+}
 
 impl MultiFieldIndex {
     pub fn get_index_fields(&self) -> &[IndexField] {
-        &self.0
+        &self.fields
     }
 
+    pub fn get_included_columns(&self) -> &[EntityColumn] {
+        &self.include
+    }
+
+    /// The column of a plain single-column index. One key column with
+    /// included ones is not that: it is built as the index it declares, never
+    /// through the field's own index flag.
     fn as_single(&self) -> Option<&EntityColumn> {
-        match self.0.as_slice() {
-            [only] => Some(&only.column),
+        match self.fields.as_slice() {
+            [only] if self.include.is_empty() => Some(&only.column),
             _ => None,
         }
     }

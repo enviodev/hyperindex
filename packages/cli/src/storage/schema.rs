@@ -153,6 +153,13 @@ pub struct IndexField {
     pub direction: Direction,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CompositeIndex {
+    pub fields: Vec<IndexField>,
+    /// Schema fields the index carries without keying on them.
+    pub include: Vec<String>,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize)]
 pub struct DerivedFrom {
     #[serde(rename = "derivedFromEntity")]
@@ -218,7 +225,7 @@ pub struct Entity {
     pub chain_id: Option<ChainIdColumn>,
     pub postgres: bool,
     pub clickhouse: Option<ClickHouseOptions>,
-    pub composite_indexes: Vec<Vec<IndexField>>,
+    pub composite_indexes: Vec<CompositeIndex>,
     /// Fields resolved from the other side of a relationship, which nothing
     /// stores.
     pub derived_from: Vec<DerivedFrom>,
@@ -434,6 +441,14 @@ struct EntityJson {
     derived_fields: Vec<DerivedFrom>,
     #[serde(default, rename = "compositeIndices")]
     composite_indexes: Vec<Vec<CompositeIndexJson>>,
+    #[serde(default, rename = "coveringIndices")]
+    covering_indexes: Vec<CoveringIndexJson>,
+}
+
+#[derive(Deserialize)]
+struct CoveringIndexJson {
+    fields: Vec<CompositeIndexJson>,
+    include: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -554,23 +569,35 @@ impl EntityJson {
                 },
             ),
         };
+        let index_fields = |fields: Vec<CompositeIndexJson>| {
+            fields
+                .into_iter()
+                .map(|field| {
+                    Ok(IndexField {
+                        field: field.field_name,
+                        direction: match field.direction.as_str() {
+                            "Asc" => Direction::Asc,
+                            "Desc" => Direction::Desc,
+                            other => bail!("`{other}` is not an index direction"),
+                        },
+                    })
+                })
+                .collect::<Result<Vec<_>>>()
+        };
         let composite_indexes = self
             .composite_indexes
             .into_iter()
-            .map(|index| {
-                index
+            .map(|fields| (fields, Vec::new()))
+            .chain(
+                self.covering_indexes
                     .into_iter()
-                    .map(|field| {
-                        Ok(IndexField {
-                            field: field.field_name,
-                            direction: match field.direction.as_str() {
-                                "Asc" => Direction::Asc,
-                                "Desc" => Direction::Desc,
-                                other => bail!("`{other}` is not an index direction"),
-                            },
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()
+                    .map(|index| (index.fields, index.include)),
+            )
+            .map(|(fields, include)| {
+                Ok(CompositeIndex {
+                    fields: index_fields(fields)?,
+                    include,
+                })
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(Entity {

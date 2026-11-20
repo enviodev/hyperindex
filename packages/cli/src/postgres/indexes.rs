@@ -272,6 +272,8 @@ pub struct Entry {
     pub table_name: String,
     pub method: String,
     pub columns: Vec<IndexColumn>,
+    /// The INCLUDE columns, sorted as a definition's are.
+    pub include: Vec<String>,
     pub is_valid: bool,
     pub is_unique: bool,
     /// An index with a WHERE clause only covers rows inside its predicate, so
@@ -335,6 +337,17 @@ impl Entry {
                 "it covers ({}) rather than exactly the declared columns",
                 columns_text(&self.columns)
             ))
+        // Included columns never change what a filter can use, so only a
+        // declared index is held to them.
+        } else if coverage == Coverage::Exact && self.include != definition.include {
+            Some(if self.include.is_empty() {
+                "it includes no columns, unlike the declared index".to_string()
+            } else {
+                format!(
+                    "it includes ({}) rather than exactly the declared columns",
+                    self.include.join(", ")
+                )
+            })
         } else {
             None
         }
@@ -351,6 +364,7 @@ impl Entry {
             && !self.is_partial
             && !self.is_expression
             && self.columns == definition.columns
+            && self.include == definition.include
     }
 }
 
@@ -513,10 +527,11 @@ pub trait Db: Send + Sync {
     ) -> impl Future<Output = Result<Vec<Entry>>> + Send;
 }
 
-/// One row per index, its key columns in ordinal order. INCLUDE columns are
-/// left out (they don't affect what the index can serve), and an expression
-/// column comes back as its printed definition, so an expression index can
-/// never be mistaken for a plain-column one.
+/// One row per index, its key columns in ordinal order and its INCLUDE columns
+/// apart from them: `indkey` lists both, key columns first, and only the first
+/// `indnkeyatts` are searched by. An expression column comes back as its
+/// printed definition, so an expression index can never be mistaken for a
+/// plain-column one.
 fn catalog_query(by_name: bool) -> String {
     format!(
         "SELECT
@@ -533,14 +548,19 @@ fn catalog_query(by_name: bool) -> String {
       THEN pg_get_indexdef(ix.indexrelid, k.ord::int, true)
       ELSE a.attname::text
     END ORDER BY k.ord
-  ),
+  ) FILTER (WHERE k.ord <= ix.indnkeyatts),
   array_agg((ix.indoption[k.ord - 1] & 1) = 1 ORDER BY k.ord)
+    FILTER (WHERE k.ord <= ix.indnkeyatts),
+  coalesce(
+    array_agg(a.attname::text ORDER BY a.attname) FILTER (WHERE k.ord > ix.indnkeyatts),
+    '{{}}'
+  )
 FROM pg_index ix
 JOIN pg_class i ON i.oid = ix.indexrelid
 JOIN pg_class t ON t.oid = ix.indrelid
 JOIN pg_namespace n ON n.oid = t.relnamespace
 JOIN pg_am am ON am.oid = i.relam
-JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON k.ord <= ix.indnkeyatts
+JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
 LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
 WHERE n.nspname = $1{}
 GROUP BY t.relname, i.relname, am.amname, ix.indisvalid, ix.indisready,
@@ -561,6 +581,7 @@ fn entry_from_row(row: &Row) -> Result<Entry> {
         is_partial: row.try_get(5)?,
         is_expression: row.try_get(6)?,
         predicate: row.try_get(7)?,
+        include: row.try_get(10)?,
         columns: names
             .into_iter()
             .zip(descending)
@@ -641,8 +662,10 @@ impl<D: Db> Indexes<D> {
         Ok(())
     }
 
-    /// Every column a btree index on the table keys on, whatever declared it:
-    /// the schema, a getWhere filter or the primary key.
+    /// Every column a btree index on the table stores, whatever declared it:
+    /// the schema, a getWhere filter or the primary key. An included column
+    /// counts as much as a key one: it sits in the same index entry, under the
+    /// same size limit.
     pub fn btree_columns(&self, table_name: &str) -> HashSet<String> {
         self.catalog
             .lock()
@@ -650,7 +673,13 @@ impl<D: Db> Indexes<D> {
             .by_name
             .values()
             .filter(|entry| entry.table_name == table_name && entry.method == BTREE)
-            .flat_map(|entry| entry.columns.iter().map(|column| column.name.clone()))
+            .flat_map(|entry| {
+                entry
+                    .columns
+                    .iter()
+                    .map(|column| column.name.clone())
+                    .chain(entry.include.iter().cloned())
+            })
             .collect()
     }
 
@@ -883,6 +912,7 @@ mod tests {
         IndexDefinition {
             table_name: table_name.to_string(),
             columns: vec![column(name)],
+            include: Vec::new(),
             method: BTREE.to_string(),
         }
     }
@@ -891,7 +921,15 @@ mod tests {
         IndexDefinition {
             table_name: table_name.to_string(),
             columns: names.iter().map(|name| column(name)).collect(),
+            include: Vec::new(),
             method: BTREE.to_string(),
+        }
+    }
+
+    fn including(definition: IndexDefinition, include: &[&str]) -> IndexDefinition {
+        IndexDefinition {
+            include: include.iter().map(|column| column.to_string()).collect(),
+            ..definition
         }
     }
 
@@ -902,6 +940,7 @@ mod tests {
             table_name: definition.table_name.clone(),
             method: definition.method.clone(),
             columns: definition.columns.clone(),
+            include: definition.include.clone(),
             is_valid: true,
             is_unique: false,
             is_partial: false,
@@ -1119,6 +1158,88 @@ mod tests {
                 ],
                 Some("it covers (a, b) rather than exactly the declared columns".to_string()),
             )
+        );
+    }
+
+    /// An index is searched by its key alone, so what it includes can't keep
+    /// it from serving a getWhere. A declared index is a promise about what
+    /// the index carries too: one that includes other columns, or none, would
+    /// leave the queries it was declared for reading the table.
+    #[test]
+    fn included_columns_matter_to_a_declared_index_and_not_to_a_query() {
+        let plain = single("Token", "owner_id");
+        let covering = including(plain.clone(), &["balance"]);
+        let verdicts = |entry: &Entry, definition: &IndexDefinition| {
+            (
+                entry.reject_reason(definition, Coverage::LeadingColumns),
+                entry.reject_reason(definition, Coverage::Exact),
+                entry.is_exactly(definition),
+            )
+        };
+        let built_covering = built(&covering, "covering");
+        let built_plain = built(&plain, "plain");
+        assert_eq!(
+            [
+                verdicts(&built_covering, &covering),
+                verdicts(&built_covering, &plain),
+                verdicts(&built_plain, &covering),
+                verdicts(&built_covering, &including(plain.clone(), &["tokenId"])),
+            ],
+            [
+                (None, None, true),
+                (
+                    None,
+                    Some(
+                        "it includes (balance) rather than exactly the declared columns"
+                            .to_string()
+                    ),
+                    false
+                ),
+                (
+                    None,
+                    Some("it includes no columns, unlike the declared index".to_string()),
+                    false
+                ),
+                (
+                    None,
+                    Some(
+                        "it includes (balance) rather than exactly the declared columns"
+                            .to_string()
+                    ),
+                    false
+                ),
+            ]
+        );
+    }
+
+    /// A plain index and a covering one over the same key are both declared,
+    /// so both are built, on a database holding either or neither.
+    #[test]
+    fn a_covering_index_is_built_alongside_the_plain_one_over_its_key() {
+        let plain = single("Token", "owner_id");
+        let covering = including(plain.clone(), &["balance"]);
+        let planned = |entries: Vec<Entry>| {
+            let mut catalog = Catalog::new(entries);
+            [&plain, &covering].map(|definition| {
+                catalog
+                    .prepare(definition, Coverage::Exact, SCHEMA)
+                    .unwrap()
+                    .map(|prepared| prepared.queries)
+            })
+        };
+        let create_plain = Some(vec![plain.create_query(SCHEMA)]);
+        let create_covering = Some(vec![covering.create_query(SCHEMA)]);
+        assert_eq!(
+            [
+                planned(vec![]),
+                planned(vec![built(&plain, &plain.name())]),
+                planned(vec![built(&covering, &covering.name())]),
+            ],
+            [
+                [create_plain.clone(), create_covering.clone()],
+                [None, create_covering],
+                [create_plain, None],
+            ]
         );
     }
 
