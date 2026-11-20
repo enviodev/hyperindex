@@ -62,6 +62,12 @@ let failOver = async (~failing: MockSource.t, ~next: MockSource.t, ~fromBlock, ~
   await next.expectItemsQueries([{fromBlock, retryCount: 3, reply: upTo(toBlock)}])
 }
 
+// What an operator is told about a source falling behind and catching up.
+let sourceLogs = (indexer: IndexerRunner.t) =>
+  indexer.infoAndAboveLogs()->Array.filterMap(({msg}) =>
+    msg->String.startsWith("MockSource ") ? Some(msg) : None
+  )
+
 describe("Source failover", () => {
   scenario->Scenario.it(
     "Retries on same source twice before switching, then alternates every second retry",
@@ -161,7 +167,49 @@ describe("Source failover", () => {
       fallback.setAutoHeight(202)
       await indexer.advanceTime(50)
       await sync.expectItemsQueries([{fromBlock: 202, reply: LeavePending}])
-      t.expect((early, fallback.pendingItemsQueries)).toEqual(([], []))
+      t.expect((early, fallback.pendingItemsQueries, indexer->sourceLogs)).toEqual((
+        [],
+        [],
+        [
+          "MockSource is still catching up to block 101. This is a delay on the provider's side; indexing will continue automatically, using another data source if one is configured.",
+          "MockSource has caught up to block 101 and is used for queries again.",
+        ],
+      ))
+    },
+  )
+
+  scenario->Scenario.it(
+    "Goes back to a source behind the head after the recovery timeout when its height is already past the block",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~sourceTiming={recoveryTimeout: 200.},
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      // The instance that served the query lags the height the source reported.
+      let early = await Scenario.failThroughBackoff(
+        ~indexer,
+        ~source=sync,
+        ~alsoWatching=[fallback],
+        ~reply=Fail(Source.SourceBehindHead({blockNumber: 1, requestStats: []})),
+        ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 50],
+      )
+      await fallback.expectItemsQueries([{fromBlock: 1, retryCount: 13, reply: upTo(100)}])
+
+      await indexer.advanceTime(200)
+      [sync, fallback]->Array.forEach(mock => mock.setAutoHeight(101))
+      await indexer.advanceTime(50)
+      await sync.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
+      t.expect((early, fallback.pendingItemsQueries, indexer->sourceLogs)).toEqual((
+        [],
+        [],
+        [
+          "MockSource is still catching up to block 1. This is a delay on the provider's side; indexing will continue automatically, using another data source if one is configured.",
+        ],
+      ))
     },
   )
 

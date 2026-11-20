@@ -499,23 +499,27 @@ let releaseBehindHeadHold = (sourceState: sourceState) =>
 
 // Polls at the reduced interval: nothing waits on the source while it is held,
 // and a source that stopped following its chain can stay stopped for weeks.
+//
+// A source that already reported a height at or past the block isn't held: the
+// instance that served the query was behind its siblings, not the source.
 let holdUntilHeightReaches = (sourceManager: t, sourceState: sourceState, ~blockNumber) =>
-  if sourceState.behindHeadHold->Option.isNone {
-    let released = ref(false)
-    let subscription = sourceState.feed->HeightFeed.onHeightAbove(
-      ~knownHeight=blockNumber - 1,
-      ~interval=() => sourceManager.reducedPollingInterval,
-      ~onHeight=_ => {
-        released := true
-        sourceState.behindHeadHold = None
-      },
+  if (
+    sourceState.behindHeadHold->Option.isNone &&
+      sourceState.feed->HeightFeed.knownHeight < blockNumber
+  ) {
+    sourceState.behindHeadHold = Some(
+      sourceState.feed->HeightFeed.onHeightAbove(
+        ~knownHeight=blockNumber - 1,
+        ~interval=() => sourceManager.reducedPollingInterval,
+        ~onHeight=height => {
+          sourceState.behindHeadHold = None
+          sourceManager.logger->Logger.info(
+            `${sourceState.source.name} has caught up to block ${blockNumber->Int.toString} and is used for queries again.`,
+            ~params={"source": sourceState.source.name, "height": height},
+          )
+        },
+      ),
     )
-
-    // A height the source already reported past the block answers on the spot:
-    // the instance that served the query was behind its siblings, not the source.
-    if !released.contents {
-      sourceState.behindHeadHold = Some(subscription)
-    }
   }
 
 let disableSource = (sourceManager: t, sourceState: sourceState) => {
