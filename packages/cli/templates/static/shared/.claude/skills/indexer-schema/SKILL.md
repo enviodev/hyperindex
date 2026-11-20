@@ -112,21 +112,18 @@ type Trade @index(fields: ["poolId", ["date", "DESC"]], include: ["volume"]) {
 
 ## @config
 
-Bound the digits of a numeric field:
+`BigInt` and `BigDecimal` are unbounded by default and hold any uint256/int256. `@config` caps their digits. Pick by what the field stores:
 
-```graphql
-type Token {
-  id: ID!
-  totalSupply: BigInt!                                 # a raw uint256: leave it unbounded
-  feeBps: BigInt! @config(precision: 5)
-  price: BigDecimal! @config(precision: 30, scale: 15)
-}
-```
+| Field stores | Declare |
+|---|---|
+| Raw on-chain amount: balance, supply, transfer value, liquidity, `sqrtPriceX96` | `BigInt!` (no `@config`: a uint256 has up to 78 digits) |
+| Amount you sort, filter or `sum()` in ClickHouse, known to stay below 10^76 | `BigInt! @config(precision: 76)` |
+| Price, rate or USD value with a fixed number of decimals | `BigDecimal! @config(precision: 30, scale: 18)` |
+| Decimal of unknown size or decimals | `BigDecimal!` |
+| Small integer: fee in bps, token decimals, tick | `Int!`, not `BigInt` |
 
-- Without `@config`, `BigInt` and `BigDecimal` are unbounded (`NUMERIC` in Postgres): every uint256 and int256 fits. Leave raw token amounts unbounded unless you know their range
-- With `@config`, Postgres rounds a value to `scale` fractional digits and refuses one whose whole part has more than `precision − scale` digits
-- In ClickHouse, a precision of 1–76 with a scale no greater than the precision stores a numeric `Decimal(P, S)` column, which sorts and aggregates as a number. Any other field, unbounded included, stores a `String` column: cast it in SQL (`toUInt256(amount)`, `toInt256(amount)`, `toDecimal256(price, 18)`), list it in no `clickhouse.orderBy`, and give a ClickHouse entity whose `BigInt` id is unbounded an `orderBy` of other fields
-- 76 digits doesn't hold every uint256: its maximum, 2^256 − 1, has 78 digits
+- **Postgres** rounds a bounded value to `scale` decimals and stops the indexer on one with more than `precision − scale` whole digits.
+- **ClickHouse** stores precision ≤ 76 (with scale ≤ precision) as a numeric `Decimal(P, S)`. Anything else is a `String`: cast it in SQL (`toUInt256(x)`, `toInt256(x)`, `toDecimal256(x, 18)`), keep it out of `clickhouse.orderBy`, and give an entity whose `BigInt` id is unbounded an `orderBy` of other fields.
 
 ## Array Rules
 
