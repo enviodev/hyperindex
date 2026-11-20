@@ -1,15 +1,10 @@
 open Vitest
 
-// `FieldMask.orMask` is `(a | b) >>> 0`, so a field whose code is 32 or higher
-// is silently dropped the moment two selections merge or two items group — the
-// mask itself stays exact (it sums `2**code` in f64), which is what makes the
-// loss quiet. EVM transactions already sit exactly on the ceiling, so this is
-// the test that has to fail before a 33rd field lands.
+// A mask is a float summing `2**code`, exact while every code is below 53.
+// `orMask` must keep every one of those bits when two selections merge.
 describe("field-code mask ceiling", () => {
-  it("no ecosystem exceeds the 32 field codes a mask can hold", t => {
+  it("no ecosystem exceeds the 53 field codes a mask can hold", t => {
     t.expect({
-      // Pinned because it sits exactly on the ceiling — the next EVM
-      // transaction field is the one that breaks `orMask`.
       "evmTransaction": Evm.transactionFields->Array.length,
       "overCeiling": [
         Evm.transactionFields,
@@ -17,21 +12,26 @@ describe("field-code mask ceiling", () => {
         Svm.transactionFields,
         Svm.blockFields,
         Fuel.blockFields,
-      ]->Array.filter(fields => fields->Array.length > 32),
+      ]->Array.filter(fields => fields->Array.length > 53),
     }).toEqual({
       "evmTransaction": 32,
-      // Widen `orMask` (BigInt, or a pair of floats) before adding the 33rd.
       "overCeiling": [],
     })
   })
 
-  it("orMask drops a field code at the ceiling", t =>
-    // Pins the failure mode the count guards against, so the reason the ceiling
-    // is 32 stays legible.
-    t.expect((
-      FieldMask.orMask(FieldMask.pow2(31), 1.),
-      FieldMask.orMask(FieldMask.pow2(32), 1.),
-    )).toEqual((2147483649., 1.))
+  it("orMask keeps field codes past 31", t =>
+    t.expect({
+      "code32": FieldMask.orMask(FieldMask.pow2(32), 1.),
+      "code52": FieldMask.orMask(FieldMask.pow2(52), FieldMask.pow2(31)),
+      "overlappingHighBits": FieldMask.orMask(
+        FieldMask.pow2(40) +. FieldMask.pow2(33),
+        FieldMask.pow2(33) +. 1.,
+      ),
+    }).toEqual({
+      "code32": 4294967297.,
+      "code52": 4503601774854144.,
+      "overlappingHighBits": 1108101562369.,
+    })
   )
 })
 
@@ -62,10 +62,8 @@ describe("Transaction field-code contract", () => {
     )
   })
 
-  it("orMask combines field masks as unsigned 32-bit values", t => {
-    // The highest EVM field code is 31, so the highest mask bit is 2^31. A plain
-    // JS `|` renders that bit negative; orMask's `>>> 0` recovers the unsigned
-    // value. These pin both the disjoint/overlapping cases and the bit-31 edge.
+  it("orMask combines field masks", t => {
+    // A plain JS `|` renders bit 31 negative, so it's pinned with the rest.
     t.expect({
       "disjoint": FieldMask.orMask(1., 2.),
       "overlapping": FieldMask.orMask(3., 6.),

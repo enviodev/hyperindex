@@ -7,6 +7,7 @@ type context = {
   chainId: ChainId.t,
   onEventRegistrations: array<Internal.onEventRegistration>,
   onBlockRegistrations: array<Internal.onBlockRegistration>,
+  onTransactionRegistrations: array<Internal.onTransactionRegistration>,
 }
 
 // Which source item a row replays to, and so which conversion builds the
@@ -17,6 +18,7 @@ type format =
   | @as(2) SvmInstruction
   | @as(3) Block
   | @as(4) Decoded
+  | @as(5) Transaction
 
 @get_index external numberAt: (array<unknown>, int) => float = ""
 @get_index external valueAt: (array<unknown>, int) => 'a = ""
@@ -112,14 +114,15 @@ type links = {
     items->Array.forEachWithIndex((item, row) => {
       switch toRead.transactionRows->valueAt(row)->(Utils.magic: unknown => Null.t<float>) {
       | Value(link) =>
-        let payload = (item->Internal.castUnsafeEventItem).payload
-        if link < 0. {
-          payload->Internal.setPayloadTransaction(%raw(`{}`))
-        } else {
-          let transaction =
-            transactions
-            ->Array.getUnsafe(link->Float.toInt)
-            ->(Utils.magic: dict<unknown> => Internal.eventTransaction)
+        let transaction =
+          link < 0.
+            ? %raw(`{}`)
+            : transactions
+              ->Array.getUnsafe(link->Float.toInt)
+              ->(Utils.magic: dict<unknown> => Internal.eventTransaction)
+        switch item {
+        | Transaction(_) => item->Internal.setItemTransaction(transaction)
+        | Event({payload}) =>
           payload->Internal.setPayloadTransaction(transaction)
           if (
             transaction
@@ -128,6 +131,7 @@ type links = {
           ) {
             Svm.attachAccountActivities(payload, transaction)
           }
+        | Block(_) => ()
         }
       | Null => ()
       }
@@ -135,7 +139,7 @@ type links = {
       | Value(link) =>
         let holder = switch item {
         | Event({payload}) => payload->Internal.payloadBlockHolder
-        | Block(_) => item->Internal.itemBlockHolder
+        | Block(_) | Transaction(_) => item->Internal.itemBlockHolder
         }
         holder->Internal.setHolderBlock(
           link < 0.
@@ -207,6 +211,14 @@ let read = (rows: ChainBuffer.builtItems, ~context: context): array<Internal.ite
           ->(Utils.magic: Internal.onEventRegistration => Internal.evmOnEventRegistration),
           ~chainId=context.chainId,
         )
+      | Transaction =>
+        Internal.Transaction({
+          onTransactionRegistration: context.onTransactionRegistrations->Array.getUnsafe(
+            registrationIndex,
+          ),
+          blockNumber: blockNumbers->numberAt(row)->Float.toInt,
+          transactionIndex: transactionIndexes->numberAt(row)->Float.toInt,
+        })
       | Block =>
         let skipped: bool = skipped->valueAt(row)
         Internal.Block({

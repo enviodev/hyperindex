@@ -350,9 +350,11 @@ fn not_cached() -> Result<Vec<u8>> {
 }
 
 /// The page HyperSync would serve `query` from the chain's rows: the logs in
-/// `[from_block, to_block)` some log selection matches, with the blocks those
-/// logs belong to, or every block of the range when the query includes all
-/// blocks. The range ends at the server's height, as HyperSync's does.
+/// `[from_block, to_block)` some log selection matches, the transactions some
+/// transaction selection matches or a returned log belongs to, and the blocks
+/// those rows belong to, or every block of the range when the query includes
+/// all blocks. The range ends at the server's height, as HyperSync's does.
+/// Each row carries only the fields the query selected for its table.
 fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
     let from_block = query.get("from_block").and_then(Value::as_u64).unwrap_or(0);
     let next_block = query
@@ -385,6 +387,29 @@ fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
                     .any(|selection| log_matches(log, selection))
         })
         .collect();
+    let transaction_selections = query
+        .get("transactions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let key = |row: &Value| {
+        (
+            number(row, "block_number"),
+            number(row, "transaction_index"),
+        )
+    };
+    let transactions: Vec<Value> = rows("transactions")
+        .into_iter()
+        .map(with_sighash)
+        .filter(|transaction| {
+            number(transaction, "block_number")
+                .is_some_and(|block| block >= from_block && block < next_block)
+                && (transaction_selections
+                    .iter()
+                    .any(|selection| transaction_matches(transaction, selection))
+                    || logs.iter().any(|log| key(log) == key(transaction)))
+        })
+        .collect();
     let include_all_blocks = query
         .get("include_all_blocks")
         .and_then(Value::as_bool)
@@ -397,16 +422,82 @@ fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
                     .is_some_and(|block| block >= from_block && block < next_block)
             } else {
                 logs.iter()
-                    .any(|log| number(log, "block_number") == number(block, "number"))
+                    .chain(&transactions)
+                    .any(|row| number(row, "block_number") == number(block, "number"))
             }
         })
         .collect();
 
+    let selected = |table: &str, rows: Vec<Value>| -> Vec<Value> {
+        let fields: Vec<&str> = query
+            .pointer(&format!("/field_selection/{table}"))
+            .and_then(Value::as_array)
+            .map(|fields| fields.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        if fields.is_empty() {
+            return Vec::new();
+        }
+        rows.into_iter()
+            .map(|row| {
+                Value::Object(
+                    fields
+                        .iter()
+                        .filter_map(|field| {
+                            row.get(*field)
+                                .map(|value| (field.to_string(), value.clone()))
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
+    };
+
     serde_json::json!({
         "nextBlock": next_block,
-        "blocks": blocks,
-        "logs": logs,
+        "blocks": selected("block", blocks),
+        "transactions": selected("transaction", transactions),
+        "logs": selected("log", logs),
     })
+}
+
+/// A transaction row with the selector HyperSync derives from its calldata.
+fn with_sighash(mut transaction: Value) -> Value {
+    let sighash = transaction
+        .get("input")
+        .and_then(Value::as_str)
+        .filter(|input| input.len() >= 10)
+        .map(|input| input[..10].to_string());
+    if let (Some(sighash), Some(row)) = (sighash, transaction.as_object_mut()) {
+        row.entry("sighash").or_insert(Value::String(sighash));
+    }
+    transaction
+}
+
+/// HyperSync's transaction filter: every listed field must match one of its
+/// values, an empty list matches anything, and a row without the field
+/// matches no list.
+fn transaction_matches(transaction: &Value, selection: &Value) -> bool {
+    let any_of = |name: &str| match selection
+        .get(name)
+        .and_then(Value::as_array)
+        .filter(|values| !values.is_empty())
+    {
+        None => true,
+        Some(values) => transaction
+            .get(name)
+            .and_then(Value::as_str)
+            .is_some_and(|actual| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .any(|value| value.eq_ignore_ascii_case(actual))
+            }),
+    };
+    let status_matches = match selection.get("status").and_then(Value::as_u64) {
+        None => true,
+        Some(status) => transaction.get("status").and_then(Value::as_u64) == Some(status),
+    };
+    any_of("from") && any_of("to") && any_of("sighash") && status_matches
 }
 
 /// HyperSync's log filter: every listed address and topic position must match
@@ -1000,8 +1091,23 @@ mod tests {
                 "address": address, "topic0": "0x01", "topic1": topic1,
             })
         };
+        let transaction = |block: u64, index: u64, from: &str, input: &str| {
+            serde_json::json!({
+                "block_number": block, "transaction_index": index,
+                "from": from, "input": input, "status": 1,
+            })
+        };
         let chain = serde_json::json!({
-            "blocks": [{"number": 5}, {"number": 6}, {"number": 7}],
+            "blocks": [
+                {"number": 5, "miner": "0x01"},
+                {"number": 6, "miner": "0x01"},
+                {"number": 7, "miner": "0x01"},
+            ],
+            "transactions": [
+                transaction(5, 0, "0x00000000000000000000000000000000000000cc", "0x"),
+                transaction(7, 1, "0x00000000000000000000000000000000000000cc", "0xa9059cbb00"),
+                transaction(7, 2, "0x00000000000000000000000000000000000000dd", "0xa9059cbb"),
+            ],
             "logs": [
                 log(5, "0x00000000000000000000000000000000000000AA", "0x0a"),
                 log(6, "0x00000000000000000000000000000000000000aa", "0x0b"),
@@ -1018,6 +1124,15 @@ mod tests {
                     "address": ["0x00000000000000000000000000000000000000aa"],
                     "topics": [["0x01"], ["0x0a"]],
                 }],
+                "transactions": [{
+                    "from": ["0x00000000000000000000000000000000000000CC"],
+                    "sighash": ["0xa9059cbb"],
+                }],
+                "field_selection": {
+                    "block": ["number"],
+                    "transaction": ["block_number", "transaction_index", "sighash"],
+                    "log": ["block_number", "address"],
+                },
             }),
             7,
         );
@@ -1025,8 +1140,15 @@ mod tests {
             page,
             serde_json::json!({
                 "nextBlock": 8,
-                "blocks": [{"number": 5}],
-                "logs": [log(5, "0x00000000000000000000000000000000000000AA", "0x0a")],
+                "blocks": [{"number": 5}, {"number": 7}],
+                "transactions": [
+                    {"block_number": 5, "transaction_index": 0},
+                    {"block_number": 7, "transaction_index": 1, "sighash": "0xa9059cbb"},
+                ],
+                "logs": [{
+                    "block_number": 5,
+                    "address": "0x00000000000000000000000000000000000000AA",
+                }],
             })
         );
     }

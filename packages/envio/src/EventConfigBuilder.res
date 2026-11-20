@@ -461,6 +461,43 @@ let resolveOnBlockFieldMask = (fields: unknown, ~name, ~ecosystem: Ecosystem.t):
     }
   }
 
+// Every transaction handler reads these whatever it lists.
+let onTransactionTransactionFields = ["transactionIndex", "hash", "from", "to"]
+let onTransactionBlockFields = ["number", "timestamp", "hash"]
+
+// Resolve a transaction handler's `fields` option, the shape `onEvent` takes,
+// into the transaction and block tables' bitmasks.
+let resolveOnTransactionFieldMasks = (fields: unknown, ~name) => {
+  let registration = `\`indexer.onTransaction("${name}")\``
+  let (blockFields, transactionFields) = if typeof(fields) === #undefined {
+    (Utils.Set.make(), Utils.Set.make())
+  } else {
+    validateFieldsShapeOrThrow(
+      fields,
+      ~registration,
+      ~validKeys=evmSelectionKinds,
+      ~shapeNoun="block and transaction",
+    )
+    (
+      parseFieldsOrThrow(
+        selectionList(fields, "block"),
+        ~valid=validBlockFields,
+        ~kind="block",
+        ~registration,
+      ),
+      parseFieldsOrThrow(
+        selectionList(fields, "transaction"),
+        ~valid=validTransactionFields,
+        ~kind="transaction",
+        ~registration,
+      ),
+    )
+  }
+  transactionFields->Utils.Set.addMany(onTransactionTransactionFields)
+  blockFields->Utils.Set.addMany(onTransactionBlockFields)
+  (Evm.eventTransactionFieldMask(transactionFields), Evm.eventBlockFieldMask(blockFields))
+}
+
 // ============== Build complete EVM event config ==============
 
 let buildEvmEventConfig = (

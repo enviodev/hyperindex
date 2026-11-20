@@ -674,6 +674,35 @@ type onBlockRegistration = {
   blockFieldMask: option<float>,
 }
 
+// `transaction` carries its block as `transaction.block`.
+type onTransactionArgs = {
+  transaction: eventTransaction,
+  context: handlerContext,
+}
+
+// Fields ANDed, the values of one field ORed; an absent field matches any
+// value. Validated at registration, so a source can map it as given.
+// `status` is the one outcome to run on, absent for both.
+type transactionFilter = {
+  from?: array<string>,
+  to?: array<string>,
+  status?: int,
+}
+
+type onTransactionRegistration = {
+  // Chain-scoped, in registration order: the order a transaction's handlers
+  // run in.
+  index: int,
+  name: string,
+  chainId: ChainId.t,
+  filter: transactionFilter,
+  // The fields the handler reads as the tables' bitmasks, the always-carried
+  // ones included.
+  transactionFieldMask: float,
+  blockFieldMask: float,
+  handler: onTransactionArgs => promise<unit>,
+}
+
 @tag("kind")
 type item =
   | @as(0)
@@ -703,27 +732,38 @@ type item =
       // none to materialise and the handler runs without one.
       skipped?: bool,
     })
+  | @as(2)
+  Transaction({
+      onTransactionRegistration: onTransactionRegistration,
+      blockNumber: int,
+      transactionIndex: int,
+      // Joined by the build from the chain buffer's rows, for the
+      // registration's selected fields.
+      transaction?: eventTransaction,
+      block?: eventBlock,
+    })
 
 external castUnsafeEventItem: item => eventItem = "%identity"
 external itemBlockHolder: item => blockHolder = "%identity"
+@set external setItemTransaction: (item, eventTransaction) => unit = "transaction"
 
 @get
 external getItemBlockNumber: item => int = "blockNumber"
-// Only meaningful on an `Event`: a block item has no log index, and the buffer
-// comparator reads this only after the kinds match.
+// Only meaningful on an `Event`: other items have no log index, and
+// `FetchState.isSameLog` reads this only after checking the kind.
 @get
 external getItemLogIndex: item => int = "logIndex"
 @get
 external getItemOrderPath: item => Nullable.t<array<int>> = "orderPath"
-// The variant tag. Read directly so the comparator can order every event of a
-// block ahead of that block's handlers without a `switch`.
+// The variant tag, read without a `switch`.
 @get
 external getItemKind: item => int = "kind"
 
 let getItemChainId = item =>
   switch item {
   | Event({chainId})
-  | Block({onBlockRegistration: {chainId}}) => chainId
+  | Block({onBlockRegistration: {chainId}})
+  | Transaction({onTransactionRegistration: {chainId}}) => chainId
   }
 
 // EVM `fields` bag. Parsed from the JS object as `unknown` at registration;

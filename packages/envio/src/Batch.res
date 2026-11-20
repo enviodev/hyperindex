@@ -402,22 +402,22 @@ let findFirstEventBlockNumber = (batch: t, ~chainId) => {
   result.contents
 }
 
-let findLastEventItem = (batch: t, ~chainId) => {
+// The block of the chain's last item that carries one in the batch: an
+// event's, or a transaction handler's, which always reads the block's time.
+let findLastItemBlock = (batch: t, ~chainId) => {
   let idx = ref(batch.items->Array.length - 1)
   let result = ref(None)
   while idx.contents >= 0 && result.contents === None {
     let item = batch.items->Array.getUnsafe(idx.contents)
-    switch item {
-    | Internal.Event(_) as eventItem => {
-        let eventItem = eventItem->Internal.castUnsafeEventItem
-        if eventItem.chainId === chainId {
-          result := Some(eventItem)
-        } else {
-          idx := idx.contents - 1
-        }
+    if item->Internal.getItemChainId === chainId {
+      switch item {
+      | Internal.Event({payload}) =>
+        result := Some(payload->Internal.getPayloadBlock->Nullable.toOption)
+      | Internal.Transaction({?block}) => result := Some(block)
+      | Internal.Block(_) => ()
       }
-    | Internal.Block(_) => idx := idx.contents - 1
     }
+    idx := idx.contents - 1
   }
-  result.contents
+  result.contents->Option.flatMap(block => block)
 }

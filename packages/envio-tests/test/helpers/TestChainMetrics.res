@@ -27,6 +27,7 @@ let registrationsByChainId: HandlerRegister.registrationsByChainId = {
             ),
           },
         ],
+        onTransactionRegistrations: [],
       }: HandlerRegister.chainRegistrations
     ),
   )

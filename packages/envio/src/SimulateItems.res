@@ -177,6 +177,51 @@ type rawSimulateItem
 @get external getProgram: rawSimulateItem => option<string> = "program"
 @get external getInstruction: rawSimulateItem => option<string> = "instruction"
 @get external getBlock: rawSimulateItem => option<JSON.t> = "block"
+@get external getTransaction: rawSimulateItem => option<dict<unknown>> = "transaction"
+
+// A simulated value as a JSON-RPC node spells it: quantities in hex, the one
+// decimal field as a number, and nothing for a value the test left empty. A
+// block's nonce is 8 bytes of data rather than a quantity, so it keeps its
+// leading zeros.
+let toRpcValue = (value: unknown, ~key, ~isBlock): option<JSON.t> =>
+  switch typeof(value) {
+  | #bigint if isBlock && key === "nonce" =>
+    Some(
+      JSON.String(
+        "0x" ++
+        value
+        ->(Utils.magic: unknown => bigint)
+        ->BigInt.toString(~radix=16)
+        ->String.padStart(16, "0"),
+      ),
+    )
+  | #bigint =>
+    Some(JSON.String("0x" ++ value->(Utils.magic: unknown => bigint)->BigInt.toString(~radix=16)))
+  | #number if key === "l1FeeScalar" => Some(value->(Utils.magic: unknown => JSON.t))
+  | #number =>
+    Some(JSON.String("0x" ++ value->(Utils.magic: unknown => int)->Int.toString(~radix=16)))
+  | #string if value === %raw(`""`) => None
+  | #string | #object if value !== %raw(`null`) => Some(value->(Utils.magic: unknown => JSON.t))
+  | _ => None
+  }
+
+// The hash a simulated transaction given none takes: its block number, then
+// its index, each in 16 bytes.
+let defaultTransactionHash = (~blockNumber, ~transactionIndex) =>
+  `0x${blockNumber->Int.toString(~radix=16)->String.padStart(32, "0")}${transactionIndex
+    ->Int.toString(~radix=16)
+    ->String.padStart(32, "0")}`
+
+let toRpcObject = (fields: dict<unknown>, ~isBlock) => {
+  let object = Dict.make()
+  fields->Dict.forEachWithKey((value, key) =>
+    switch value->toRpcValue(~key, ~isBlock) {
+    | Some(value) => object->Dict.set(key, value)
+    | None => ()
+    }
+  )
+  object
+}
 
 let findEventConfig = (~config: Config.t, ~contractName: string, ~eventName: string) => {
   let found = ref(None)
@@ -247,6 +292,7 @@ type parseResult = {
   items: array<Internal.item>,
   getBlock: int => option<Internal.eventBlock>,
   page: option<BufferPage.t>,
+  transactions: array<Config.simulatedTransaction>,
 }
 
 type svmSimActivity = {
@@ -339,6 +385,10 @@ let parse = (
   let svmTxs: array<BufferPage.svmTxInput> = []
   let svmActivities: array<BufferPage.svmActivityInput> = []
   let svmBlocks: array<BufferPage.observedBlock> = []
+  let evmTransactions: array<dict<JSON.t>> = []
+  let simulatedTransactions: array<Config.simulatedTransaction> = []
+  // Per block, the indexes its simulated transactions took.
+  let evmTransactionIndexes: dict<array<int>> = Dict.make()
   // Coordinate "block:logIndex" -> the index of the first item that claimed it,
   // used to reject two items resolving to the same (block, logIndex).
   let seenCoordinates = Dict.make()
@@ -347,6 +397,84 @@ let parse = (
     let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
 
     switch (config.ecosystem.name, raw->getProgram, raw->getInstruction) {
+    | (Evm, None, None)
+      if raw->getContract->Option.isNone &&
+      raw->getEvent->Option.isNone &&
+      raw->getTransaction->Option.isSome =>
+      let fail = message =>
+        JsError.throwWithMessage(
+          `simulate: transaction at index ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString}: ${message}`,
+        )
+      let (block, blockNumber) = parseBlock(
+        ~ecosystem=Evm,
+        ~defaultBlockNumber=currentBlock.contents,
+        ~blockJson=raw->getBlock,
+      )
+      block->addCarriedBlock(~blockNumber)
+      currentBlock := blockNumber
+      let transaction = raw->getTransaction->Option.getUnsafe->Dict.copy
+      transaction
+      ->Dict.keysToArray
+      ->Array.forEach(key =>
+        if !(Evm.transactionFields->Array.includes(key)) {
+          fail(`unknown transaction field "${key}"`)
+        }
+      )
+      let blockKey = blockNumber->Int.toString
+      let taken = switch evmTransactionIndexes->Dict.get(blockKey) {
+      | Some(taken) => taken
+      | None =>
+        let taken = []
+        evmTransactionIndexes->Dict.set(blockKey, taken)
+        taken
+      }
+      let transactionIndex = switch transaction->Dict.get("transactionIndex") {
+      | None => taken->Array.reduce(0, (next, index) => Pervasives.max(next, index + 1))
+      | Some(index) if index === %raw(`undefined`) =>
+        taken->Array.reduce(0, (next, index) => Pervasives.max(next, index + 1))
+      | Some(index)
+        if typeof(index) === #number &&
+        Math.floor(index->(Utils.magic: unknown => float)) ===
+          index->(Utils.magic: unknown => float) &&
+        index->(Utils.magic: unknown => float) >= 0. =>
+        index->(Utils.magic: unknown => int)
+      | Some(index) =>
+        fail(
+          `transactionIndex must be a non-negative integer, got ${index
+            ->JSON.stringifyAny
+            ->Option.getOr("undefined")}`,
+        )
+      }
+      if taken->Array.includes(transactionIndex) {
+        fail(
+          `block ${blockKey} already has a transaction at index ${transactionIndex->Int.toString}. Give each one a distinct transactionIndex (or omit it to take the next free one).`,
+        )
+      }
+      taken->Array.push(transactionIndex)->ignore
+      transaction->Dict.set("transactionIndex", transactionIndex->(Utils.magic: int => unknown))
+
+      // A handler always reads the hash, so one left out is made from where
+      // the transaction sits.
+      if (
+        transaction->Dict.get("hash")->Option.isNone ||
+          transaction->Dict.getUnsafe("hash") === %raw(`undefined`)
+      ) {
+        transaction->Dict.set(
+          "hash",
+          defaultTransactionHash(~blockNumber, ~transactionIndex)->(Utils.magic: string => unknown),
+        )
+      }
+      let row = transaction->toRpcObject(~isBlock=false)
+      row->Dict.set("blockNumber", JSON.String("0x" ++ blockNumber->Int.toString(~radix=16)))
+
+      // A mined transaction succeeded unless the test says it reverted.
+      if !(row->Dict.has("status")) {
+        row->Dict.set("status", JSON.String("0x1"))
+      }
+      evmTransactions->Array.push(row)->ignore
+      simulatedTransactions
+      ->Array.push({simulateIndex: itemIndex, blockNumber, transactionIndex})
+      ->ignore
     | (Evm | Svm, None, None)
       if raw->getContract->Option.isNone &&
       raw->getEvent->Option.isNone &&
@@ -720,11 +848,54 @@ let parse = (
       items,
       getBlock,
       page: Some(BufferPage.fromSvmJs(svmTxs, svmActivities, svmBlocks)),
+      transactions: [],
+    }
+  | Evm if evmTransactions->Utils.Array.notEmpty => {
+      items,
+      getBlock,
+      transactions: simulatedTransactions,
+      // A transaction handler reads its block from the buffer, with the
+      // defaults an event's block gets.
+      page: Some(
+        BufferPage.fromEvmJs(
+          ~transactions=evmTransactions,
+          ~blocks=evmTransactionIndexes
+          ->Dict.keysToArray
+          ->Array.filterMap(blockKey =>
+            blockKey
+            ->Int.fromString
+            ->Option.flatMap(getBlock)
+            ->Option.map(block => {
+              let row =
+                block
+                ->(Utils.magic: Internal.eventBlock => dict<unknown>)
+                ->toRpcObject(~isBlock=true)
+
+              // A handler always reads the block's hash, which an event's
+              // block defaults to empty.
+              if row->Dict.get("hash")->Option.isNone {
+                row->Dict.set(
+                  "hash",
+                  JSON.String(
+                    `0x${blockKey
+                      ->Int.fromString
+                      ->Option.getOr(0)
+                      ->Int.toString(~radix=16)
+                      ->String.padStart(64, "0")}`,
+                  ),
+                )
+              }
+              row
+            })
+          ),
+        ),
+      ),
     }
   | _ => {
       items,
       getBlock,
       page: None,
+      transactions: [],
     }
   }
 }
@@ -756,6 +927,7 @@ let patchConfig = (
             let registrations: HandlerRegister.chainRegistrations = {
               onEventRegistrations: [],
               onBlockRegistrations: [],
+              onTransactionRegistrations: [],
             }
             registrationsByChainId->Dict.set(chainIdStr, registrations)
             registrations
@@ -765,7 +937,7 @@ let patchConfig = (
           // Parse with the process's startBlock so items default into the range
           // the source will be queried over; the source now filters by range.
           let chainConfig = {...chainConfig, startBlock: Config.Block(startBlock), endBlock}
-          let {items, getBlock, page} = parse(
+          let {items, getBlock, page, transactions} = parse(
             ~simulateItems,
             ~config,
             ~chainConfig,
@@ -778,6 +950,7 @@ let patchConfig = (
               getBlock,
               endBlock,
               ?page,
+              transactions,
             }),
           }
         | None => chainConfig

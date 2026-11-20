@@ -7,14 +7,15 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 mod classify;
-mod client;
+pub(crate) mod client;
 mod enrich;
 pub(crate) mod fields;
 mod head_checks;
 mod inflight;
 mod interval;
 mod logs;
-mod responses;
+pub(crate) mod responses;
+mod transactions;
 
 use crate::address_store::AddressSet;
 use crate::block_selection::BlockSelection;
@@ -33,6 +34,7 @@ use client::{parse_hex_u64, JsonRpcClient, RpcError};
 use enrich::{BlockRead, EnrichError, EnrichRequest, Fetches, PageRefs, SelectedFields};
 use hypersync_client::format::{self, Hex};
 use interval::{IntervalState, SyncConfig};
+use transactions::TransactionRead;
 
 #[napi(object)]
 pub struct EvmRpcClientConfig {
@@ -145,6 +147,8 @@ pub struct NextPageParams {
     pub on_event_registration_indexes: Vec<i64>,
     /// The block handlers selecting blocks, by chain-scoped id.
     pub on_block_registration_indexes: Vec<i64>,
+    /// The transaction handlers selecting transactions, by chain-scoped id.
+    pub on_transaction_registration_indexes: Vec<i64>,
     /// Contract names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
@@ -318,8 +322,9 @@ pub struct EvmRpcClient {
 /// provider doesn't serve them.
 const RETRIES_BEFORE_RECHECKING_BY_NUMBER: i64 = 3;
 
-/// How many blocks a page reads for its block handlers at most: each costs an
-/// `eth_getBlockByNumber`, which the log range's size says nothing about.
+/// How many blocks a page reads for its block or transaction handlers at most:
+/// each costs an `eth_getBlockByNumber`, which the log range's size says
+/// nothing about.
 const MAX_HANDLER_BLOCKS_PER_PAGE: usize = 100;
 
 /// Everything one page read works from: the range it covers, the queries to run
@@ -335,6 +340,8 @@ struct PageQuery<'a> {
     selections: &'a [BuiltLogSelection],
     address_set: &'a AddressSet,
     block_selection: &'a BlockSelection,
+    /// Reads every block of the page in full.
+    transactions: Option<&'a TransactionRead<'a>>,
     block_read: &'a BlockRead,
     known: &'a ChainBuffer,
 }
@@ -552,10 +559,19 @@ impl EvmRpcClient {
                 Some(interval_end),
             )
             .map_err(map_err)?;
+        let transaction_read = TransactionRead::new(
+            self.chain
+                .transaction_matcher
+                .select(&params.on_transaction_registration_indexes)
+                .map_err(map_err)?,
+        );
         // A page selecting only blocks, where no handler runs, reads nothing:
         // over a final range it has no reorg observation to make either, so it
         // answers without a request up to the next block a handler runs on.
-        if params.on_event_registration_indexes.is_empty() && block_selection.is_empty() {
+        if params.on_event_registration_indexes.is_empty()
+            && block_selection.is_empty()
+            && transaction_read.is_none()
+        {
             let next_handler_block = self
                 .chain
                 .schedule
@@ -579,10 +595,19 @@ impl EvmRpcClient {
         }
         let to_block =
             block_selection.range_end(from_block, interval_end, MAX_HANDLER_BLOCKS_PER_PAGE);
-        // A block handler can select fields no event registration does, so a
-        // page reading blocks for one reads them for its fields too.
-        let block_read = (!block_selection.is_empty())
-            .then(|| BlockRead::for_chain(self.block_read.covering | block_selection.mask()));
+        let to_block = match transaction_read {
+            Some(_) => to_block.min(from_block + MAX_HANDLER_BLOCKS_PER_PAGE as u64 - 1),
+            None => to_block,
+        };
+        // A block or transaction handler can select fields no event
+        // registration does, so a page reading blocks for one reads them for
+        // its fields too.
+        let handler_block_mask = block_selection.mask()
+            | transaction_read
+                .as_ref()
+                .map_or(0, |transactions| transactions.block_mask);
+        let block_read = (!block_selection.is_empty() || transaction_read.is_some())
+            .then(|| BlockRead::for_chain(self.block_read.covering | handler_block_mask));
 
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
@@ -609,6 +634,7 @@ impl EvmRpcClient {
             selections: &built.log_selections,
             address_set,
             block_selection: &block_selection,
+            transactions: transaction_read.as_ref(),
             block_read: block_read.as_ref().unwrap_or(&self.block_read),
             known,
         };
@@ -734,11 +760,22 @@ impl EvmRpcClient {
             query.reorgable_from,
             (!query.selections.is_empty()).then_some(query.known_height),
         );
+        // A transaction page reads every block in full, which serves the
+        // checked blocks' headers too, and observes each block's hash.
+        let read_blocks: Vec<u64> = match query.transactions {
+            Some(_) => (query.from_block..=query.to_block).collect(),
+            None => checked_blocks.clone(),
+        };
         // Both are awaited before either is judged: a failed range is what
         // decides the retry, so it wins over a header that failed beside it.
         let (logs, headers) = futures_util::future::join(
             self.fetch_selection_logs(query),
-            enrich::fetch_block_responses(&self.inner, &self.fetches, &checked_blocks),
+            enrich::fetch_block_responses(
+                &self.inner,
+                &self.fetches,
+                &read_blocks,
+                query.transactions.is_some(),
+            ),
         )
         .await;
         let mut logs = logs.map_err(PageError::Logs)?;
@@ -814,12 +851,19 @@ impl EvmRpcClient {
         {
             refs.add_block(block, mask);
         }
+        if let Some(read) = query.transactions {
+            for block in
+                transactions::read(&self.inner, &self.fetches, read, &headers, &mut page).await?
+            {
+                refs.add_block(block, read.block_mask);
+            }
+        }
 
         enrich::page(
             &self.inner,
             &self.fetches,
             EnrichRequest {
-                checked_blocks: &checked_blocks,
+                checked_blocks: &read_blocks,
                 prefetched_blocks: &headers,
                 refs,
                 known: query.known,
