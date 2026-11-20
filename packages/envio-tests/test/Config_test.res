@@ -70,7 +70,6 @@ let transactionFieldToInt = (field: Internal.evmTransactionField) =>
   | L1FeeScalar => 30
   | GasUsedForL1 => 31
   | AuthorizationList => 32
-  | Sighash => 33
   }
 
 // Compile-time exhaustiveness check: evmBlockConstructor must have a field for every evmBlockField variant.
@@ -147,7 +146,6 @@ let _assertTransactionConstructorCoversAllFields = (
   | L1FeeScalar => tx.l1FeeScalar->ignore
   | GasUsedForL1 => tx.gasUsedForL1->ignore
   | AuthorizationList => tx.authorizationList->ignore
-  | Sighash => tx.sighash->ignore
   }
 
 describe("Field selection enum schemas", () => {
@@ -173,8 +171,8 @@ describe("Field selection enum schemas", () => {
         sum := sum.contents + transactionFieldToInt(parsed)
       },
     )
-    // n*(n+1)/2 where n = 33
-    t.expect(sum.contents).toBe(33 * 34 / 2)
+    // n*(n+1)/2 where n = 32
+    t.expect(sum.contents).toBe(32 * 33 / 2)
   })
 })
 

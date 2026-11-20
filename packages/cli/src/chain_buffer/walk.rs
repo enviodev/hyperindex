@@ -625,7 +625,6 @@ mod tests {
             index,
             from: from.map(|from| vec![from.to_string()]),
             to: None,
-            sighash: None,
             status: None,
             transaction_field_mask: 0.0,
             block_field_mask: 0.0,

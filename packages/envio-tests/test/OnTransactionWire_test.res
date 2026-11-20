@@ -11,7 +11,6 @@ let alice = "0x1111111111111111111111111111111111111111"
 let bob = "0x2222222222222222222222222222222222222222"
 let carol = "0x3333333333333333333333333333333333333333"
 let dave = "0x4444444444444444444444444444444444444444"
-let transfer = "0xa9059cbb"
 
 let height = 250
 
@@ -21,7 +20,7 @@ let served = ServedEvmChain.serveDuringSuite(
   ~height,
   ~logs=[],
   ~transactions=[
-    {blockNumber: 1, transactionIndex: 0, from: alice, to: bob, input: transfer, value: 7n},
+    {blockNumber: 1, transactionIndex: 0, from: alice, to: bob, value: 7n},
     {blockNumber: 2, transactionIndex: 0, from: bob, to: alice, status: 0, gasUsed: 30000n},
     {blockNumber: 3, transactionIndex: 0, from: carol, to: alice},
     {blockNumber: 150, transactionIndex: 0, from: dave, to: bob},
@@ -61,20 +60,20 @@ const id = (context: { chain: { id: number } }, name: string, block: { number: n
 
 indexer.onTransaction(
   {
-    name: "alice-transfers",
-    where: () => ({ transaction: { from: ["${alice}"], sighash: ["${transfer}"] } }),
+    name: "alice-to-bob",
+    where: () => ({ transaction: { from: ["${alice}"], to: ["${bob}"] } }),
     fields: { transaction: ["value"] },
   },
   async ({ transaction, block, context }) =>
-    context.Run.set({ id: id(context, "alice-transfers", block), value: transaction.value.toString(), gasUsed: undefined }),
+    context.Run.set({ id: id(context, "alice-to-bob", block), value: transaction.value.toString(), gasUsed: undefined }),
 );
 indexer.onTransaction(
   {
-    name: "alice-transfers-again",
-    where: () => ({ transaction: { from: ["${alice}"], sighash: ["${transfer}"] } }),
+    name: "alice-to-bob-again",
+    where: () => ({ transaction: { from: ["${alice}"], to: ["${bob}"] } }),
   },
   async ({ block, context }) =>
-    context.Run.set({ id: id(context, "alice-transfers-again", block), value: undefined, gasUsed: undefined }),
+    context.Run.set({ id: id(context, "alice-to-bob-again", block), value: undefined, gasUsed: undefined }),
 );
 indexer.onTransaction(
   {
@@ -202,12 +201,12 @@ describe("onTransaction wire", () => {
           ->Array.flatMap(
             chainId => [
               {
-                id: `${chainId->Int.toString}-1-alice-transfers`,
+                id: `${chainId->Int.toString}-1-alice-to-bob`,
                 value: Some("7"),
                 gasUsed: None,
               },
               {
-                id: `${chainId->Int.toString}-1-alice-transfers-again`,
+                id: `${chainId->Int.toString}-1-alice-to-bob-again`,
                 value: None,
                 gasUsed: None,
               },
@@ -222,14 +221,13 @@ describe("onTransaction wire", () => {
           [
             {
               transactions: JSON.parseOrThrow(
-                `[{"from":["${alice}"],"sighash":["${transfer}"]},{"to":["${alice}"],"status":0}]`,
+                `[{"from":["${alice}"],"to":["${bob}"]},{"to":["${alice}"],"status":0}]`,
               ),
               transactionFields: [
                 "block_number",
                 "from",
                 "gas_used",
                 "hash",
-                "sighash",
                 "status",
                 "to",
                 "transaction_index",

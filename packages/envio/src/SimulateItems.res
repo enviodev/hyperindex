@@ -102,7 +102,6 @@ let evmSimulateTransactionSchema = S.schema(s =>
     "l1FeeScalar": s.matches(S.null(S.float)),
     "gasUsedForL1": s.matches(S.null(S.bigint)),
     "authorizationList": s.matches(S.null(S.json(~validate=false))),
-    "sighash": s.matches(S.null(S.string)),
   }
 )
 
@@ -114,15 +113,7 @@ let parseEvmSimulateTransaction = (~transactionJson: option<JSON.t>): Internal.e
     ->(Utils.magic: dict<unit> => JSON.t)
     ->S.convertOrThrow(evmSimulateTransactionSchema)
   }
-  let transaction = transaction->(Utils.magic: _ => Internal.evmTransactionInput)
-  let transaction = switch (transaction.sighash, transaction.input) {
-  | (None, Some(input)) if input->String.length >= 10 => {
-      ...transaction,
-      sighash: input->String.slice(~start=0, ~end=10),
-    }
-  | _ => transaction
-  }
-  transaction->(Utils.magic: Internal.evmTransactionInput => Internal.eventTransaction)
+  transaction->(Utils.magic: _ => Internal.eventTransaction)
 }
 
 // Fuel simulate block schema — fields: id, height, time

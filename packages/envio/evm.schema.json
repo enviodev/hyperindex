@@ -372,8 +372,7 @@
         "l1GasUsed",
         "l1FeeScalar",
         "gasUsedForL1",
-        "authorizationList",
-        "sighash"
+        "authorizationList"
       ]
     },
     "BlockField": {

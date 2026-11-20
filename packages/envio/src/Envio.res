@@ -140,7 +140,7 @@ type onBlockOptions<'chain> = {
 }
 
 // `where` returns `false` to skip the chain, `true` to run on every
-// transaction, or `{transaction: {from?, to?, sighash?, status?}}` (see
+// transaction, or `{transaction: {from?, to?, status?}}` (see
 // `EvmOnTransactionFilter` in `packages/envio/index.d.ts`).
 type onTransactionOptions<'chain> = {
   name: string,

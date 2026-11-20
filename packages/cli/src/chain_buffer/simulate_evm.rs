@@ -68,8 +68,7 @@ pub(crate) fn push_simulated_block(
     Ok(())
 }
 
-/// A filter on a field the test left out matches nothing. `sighash` is
-/// derived from `input` unless the test gave it.
+/// A filter on a field the test left out matches nothing.
 pub(crate) fn push_simulated_transaction(
     builder: &mut ChunkBuilder,
     transaction: &Map<String, Value>,
@@ -78,18 +77,15 @@ pub(crate) fn push_simulated_transaction(
     let index = u32::try_from(quantity_at(transaction, "transactionIndex")?)
         .context("\"transactionIndex\" exceeds what a block holds")?;
     let hash = format::Hash::decode_hex(required_text(transaction, "hash")?).context("\"hash\"")?;
-    let mut mask = named_mask(
+    let mask = named_mask(
         transaction,
         EvmTxField::VARIANTS,
         EvmTxField::name,
         &["blockNumber"],
         "transaction",
     )?;
-    if mask & (1 << EvmTxField::Input as u32) != 0 {
-        mask |= 1 << EvmTxField::Sighash as u32;
-    }
     let response = Value::Object(transaction.clone());
-    let mut decoded = responses::build_transaction(
+    let decoded = responses::build_transaction(
         block_number,
         index,
         &hash,
@@ -98,11 +94,5 @@ pub(crate) fn push_simulated_transaction(
         &tx_fields_in(mask),
     )
     .map_err(|error| anyhow::anyhow!("transaction {block_number}/{index}: {error}"))?;
-    if let Some(sighash) = transaction.get(EvmTxField::Sighash.name()) {
-        let sighash = sighash
-            .as_str()
-            .context("\"sighash\" must be a hex string")?;
-        decoded.sighash = Some(format::Data::decode_hex(sighash).context("\"sighash\"")?);
-    }
     push_transaction(builder, &decoded, mask)
 }

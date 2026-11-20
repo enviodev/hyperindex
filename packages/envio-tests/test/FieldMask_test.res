@@ -14,7 +14,7 @@ describe("field-code mask ceiling", () => {
         Fuel.blockFields,
       ]->Array.filter(fields => fields->Array.length > 53),
     }).toEqual({
-      "evmTransaction": 33,
+      "evmTransaction": 32,
       "overCeiling": [],
     })
   })

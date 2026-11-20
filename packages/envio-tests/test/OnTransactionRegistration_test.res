@@ -25,30 +25,28 @@ describe("onTransaction registration errors", () => {
     t.expect({
       shortAddress: errorOf(() => ({ transaction: { from: ["0x1234"] } })),
       notAList: errorOf(() => ({ transaction: { to: "0x1111111111111111111111111111111111111111" } })),
-      selectorNotAList: errorOf(() => ({ transaction: { sighash: "0xa9059cbb" } })),
       emptyList: errorOf(() => ({ transaction: { to: [] } })),
-      longSelector: errorOf(() => ({ transaction: { sighash: ["0xa9059cbb00"] } })),
       status: errorOf(() => ({ transaction: { status: 2 } })),
     }).toEqual({
       shortAddress: invalid('\\\`from\\\` value "0x1234" is not a 20-byte hex address.'),
       notAList: invalid("\\\`to\\\` must be an array of 20-byte hex addresses."),
-      selectorNotAList: invalid("\\\`sighash\\\` must be an array of 4-byte hex selectors."),
       emptyList: invalid("\\\`to\\\` lists no value, so it would match no transaction."),
-      longSelector: invalid('\\\`sighash\\\` value "0xa9059cbb00" is not a 4-byte hex selector.'),
       status: invalid("\\\`status\\\` must be 0 (reverted) or 1 (succeeded)."),
     });
   });
 
   it("names a filter of the wrong shape", (t) => {
-    const shape = "Expected \\\`true\\\`, \\\`false\\\` or { transaction: { from?, to?, sighash?, status? } }.";
+    const shape = "Expected \\\`true\\\`, \\\`false\\\` or { transaction: { from?, to?, status? } }.";
     t.expect({
       outer: errorOf(() => ({ from: ["0x1111111111111111111111111111111111111111"] })),
       inner: errorOf(() => ({ transaction: { value: [1n] } })),
+      sighash: errorOf(() => ({ transaction: { sighash: ["0xa9059cbb"] } })),
       returned: errorOf(() => undefined),
       notAFunction: errorOf({ transaction: {} }),
     }).toEqual({
       outer: invalid(shape),
       inner: invalid(\`Unknown field \\\`value\\\`. \${shape}\`),
+      sighash: invalid(\`Unknown field \\\`sighash\\\`. \${shape}\`),
       returned:
         '\\\`indexer.onTransaction("bad")\\\` \\\`where\\\` returned an invalid value of type undefined. Expected \\\`true\\\`, \\\`false\\\` or a filter object.',
       notAFunction:

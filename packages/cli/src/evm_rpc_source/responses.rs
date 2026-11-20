@@ -12,9 +12,7 @@ use hypersync_client::format;
 use hypersync_client::simple_types::{Block, Transaction};
 use serde_json::Value as Json;
 
-use super::fields::{
-    set_block_field, set_tx_field, tx_carrier, tx_field_column, tx_response_key, Carrier,
-};
+use super::fields::{set_block_field, set_tx_field, tx_carrier, tx_field_column, Carrier};
 use crate::chain_buffer::evm::EvmTxField;
 use crate::evm_hypersync_source::query::{BlockField, TransactionField};
 use crate::evm_hypersync_source::{block_field_missing, transaction_field_missing};
@@ -149,7 +147,7 @@ pub(crate) fn build_transaction(
             Carrier::Receipt => receipt,
             Carrier::Either => transaction.or(receipt),
         };
-        if let Some(raw) = source.and_then(|response| present(response, tx_response_key(field))) {
+        if let Some(raw) = source.and_then(|response| present(response, field.name())) {
             set_tx_field(&mut tx, field, raw).map_err(ResponseError::Malformed)?;
         }
     }

@@ -149,7 +149,7 @@ describe("onTransaction falling back from HyperSync to RPC", () => {
           ),
           true,
           [
-            "`indexer.onTransaction(\"reverted\")` runs on every transaction of chain 1: its filter names no `from`, `to` or `sighash`.",
+            "`indexer.onTransaction(\"reverted\")` runs on every transaction of chain 1: its filter names no `from` or `to`.",
           ],
         ))
       },

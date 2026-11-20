@@ -128,10 +128,6 @@ module Transaction = {
       "Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - authorizationList"
     )
     authorizationList?: unit,
-    @deprecated(
-      "Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - sighash"
-    )
-    sighash?: unit,
   }
 }
 
@@ -1426,10 +1422,6 @@ module Gravatar = {
         "Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: CustomSelection\n    field_selection:\n      transaction_fields:\n        - authorizationList"
       )
       authorizationList?: unit,
-      @deprecated(
-        "Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: CustomSelection\n    field_selection:\n      transaction_fields:\n        - sighash"
-      )
-      sighash?: unit,
     }
 
     type event = {

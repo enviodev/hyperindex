@@ -34,11 +34,6 @@ type Hashes {
   blockHash: String!
 }
 
-type Selector {
-  id: ID!
-  sighash: String!
-}
-
 type Sent {
   id: ID!
   value: BigInt!
@@ -96,11 +91,6 @@ indexer.onTransaction(
     record(context, \`to-bob \${block.number}/\${transaction.transactionIndex}\`),
 );
 indexer.onTransaction(
-  { name: "transfers", where: () => ({ transaction: { sighash: ["0xa9059cbb"] } }) },
-  async ({ transaction, block, context }) =>
-    record(context, \`transfers \${block.number}/\${transaction.transactionIndex}\`),
-);
-indexer.onTransaction(
   { name: "succeeded", where: () => ({ transaction: { status: 1 } }) },
   async ({ transaction, block, context }) =>
     record(context, \`succeeded \${block.number}/\${transaction.transactionIndex}\`),
@@ -115,16 +105,6 @@ indexer.onTransaction(
   { name: "hashes", where: () => ({ transaction: { from: ["0x00000000000000000000000000000000000000dd"] } }) },
   async ({ transaction, block, context }) => {
     context.Hashes.set({ id: transaction.hash, blockHash: block.hash });
-  },
-);
-indexer.onTransaction(
-  {
-    name: "selectors",
-    where: () => ({ transaction: { from: ["0x00000000000000000000000000000000000000ee"] } }),
-    fields: { transaction: ["sighash"] },
-  },
-  async ({ transaction, context }) => {
-    context.Selector.set({ id: \`\${transaction.transactionIndex}\`, sighash: transaction.sighash ?? "none" });
   },
 );
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) =>
@@ -181,7 +161,6 @@ describe("onTransaction under simulate", () => {
       calls: [
         "from-alice 3/0",
         "to-bob 3/0",
-        "transfers 3/0",
         "succeeded 3/0",
         "Transfer 3/0",
         "to-bob 3/2",
@@ -190,7 +169,6 @@ describe("onTransaction under simulate", () => {
       preloads: [
         "from-alice 3/0",
         "to-bob 3/0",
-        "transfers 3/0",
         "succeeded 3/0",
         "Transfer 3/0",
         "to-bob 3/2",
@@ -248,29 +226,6 @@ describe("onTransaction under simulate", () => {
     t.expect((await indexer.Hashes.getAll()).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
       { id: "0x" + word(4).slice(32) + word(0).slice(32), blockHash: "0x" + word(4) },
       { id: "0x" + word(4).slice(32) + word(7).slice(32), blockHash: "0x" + word(4) },
-    ]);
-  });
-
-  it("derives sighash from the input a test gives, or takes the one it gives", async (t) => {
-    const indexer = createTestIndexer();
-    const erin = "0x00000000000000000000000000000000000000ee";
-    await indexer.process({
-      chains: {
-        1: {
-          startBlock: 0,
-          endBlock: 5,
-          simulate: [
-            { transaction: { from: erin, input: transferCall } },
-            { transaction: { from: erin, sighash: "0x095ea7b3" } },
-            { transaction: { from: erin, input: "0x" } },
-          ],
-        },
-      },
-    });
-    t.expect((await indexer.Selector.getAll()).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
-      { id: "0", sighash: "0xa9059cbb" },
-      { id: "1", sighash: "0x095ea7b3" },
-      { id: "2", sighash: "none" },
     ]);
   });
 

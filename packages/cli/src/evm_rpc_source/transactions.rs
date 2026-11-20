@@ -15,7 +15,7 @@ use super::client::{parse_hex_u64, JsonRpcClient};
 use super::enrich::{collect_worst, require, EnrichError, FetchKey, Fetches};
 use super::fields::{tx_fields_in, tx_mask_of, Carrier};
 use super::responses;
-use crate::chain_buffer::evm::{push_transaction, sighash_of_input, EvmTxField};
+use crate::chain_buffer::evm::{push_transaction, EvmTxField};
 use crate::chain_buffer::matching_transactions::{
     Held, OnTransactionRegistration, TransactionView,
 };
@@ -85,7 +85,6 @@ struct Call<'r> {
     hash: format::Hash,
     from: Vec<u8>,
     to: Option<Vec<u8>>,
-    sighash: Option<Vec<u8>>,
 }
 
 fn malformed(block_number: u64, message: impl std::fmt::Display) -> EnrichError {
@@ -148,8 +147,6 @@ fn calls_of(block_number: u64, block: &Json) -> Result<Vec<Call<'_>>, EnrichErro
                 hash,
                 from,
                 to: hex_field(block_number, response, "to")?,
-                sighash: hex_field(block_number, response, "input")?
-                    .and_then(|input| sighash_of_input(&input).map(<[u8]>::to_vec)),
             })
         })
         .collect()
@@ -180,7 +177,6 @@ pub(crate) async fn read(
             let view = TransactionView {
                 from: Held::Value(&call.from),
                 to: held_or_absent(&call.to),
-                sighash: held_or_absent(&call.sighash),
                 status: Held::Unheld,
             };
             let matched: Vec<&OnTransactionRegistration> = read
@@ -256,7 +252,6 @@ pub(crate) async fn read(
             let view = TransactionView {
                 from: Held::Value(&call.from),
                 to: held_or_absent(&call.to),
-                sighash: held_or_absent(&call.sighash),
                 status,
             };
             let runs = matched

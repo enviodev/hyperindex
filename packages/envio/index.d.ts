@@ -876,7 +876,6 @@ export type EvmAllTransactionFields = {
   readonly l1FeeScalar: number | undefined;
   readonly gasUsedForL1: bigint | undefined;
   readonly authorizationList: readonly unknown[] | undefined;
-  readonly sighash: Hex | undefined;
 };
 
 export type EvmBlockFieldName = keyof EvmAllBlockFields & string;
@@ -1179,8 +1178,6 @@ export type EvmOnTransactionFilter = {
     readonly from?: readonly Address[];
     /** Recipients. A contract creation has none, so it never matches. */
     readonly to?: readonly Address[];
-    /** 4-byte selectors the calldata starts with, e.g. `"0xa9059cbb"`. */
-    readonly sighash?: readonly Hex[];
     /** `1` succeeded, `0` reverted. Absent runs on both: a reverted
      * transaction is mined too. Blocks from before Byzantium carry no
      * status, so a `status` filter matches none of their transactions. */

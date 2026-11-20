@@ -20,7 +20,6 @@ pub struct OnTransactionRegistrationInput {
     /// its values.
     pub from: Option<Vec<String>>,
     pub to: Option<Vec<String>>,
-    pub sighash: Option<Vec<String>>,
     pub status: Option<i64>,
     /// The transaction fields the handler reads, as the transactions table's
     /// bitmask, the always-carried ones included.
@@ -35,14 +34,12 @@ pub struct OnTransactionRegistrationInput {
 pub(crate) struct TransactionFilter {
     pub(crate) from: Vec<[u8; 20]>,
     pub(crate) to: Vec<[u8; 20]>,
-    pub(crate) sighash: Vec<[u8; 4]>,
     pub(crate) status: Option<u8>,
 }
 
 /// A field of a transaction as matching reads it: `Unheld` when the row was
 /// not fetched with it, `Absent` when it was and the transaction has none (a
-/// contract creation's `to`, calldata shorter than a selector, a receipt
-/// predating `status`).
+/// contract creation's `to`, a receipt predating `status`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Held<T> {
     Unheld,
@@ -65,7 +62,6 @@ impl<T> Held<T> {
 pub(crate) struct TransactionView<'a> {
     pub(crate) from: Held<&'a [u8]>,
     pub(crate) to: Held<&'a [u8]>,
-    pub(crate) sighash: Held<&'a [u8]>,
     pub(crate) status: Held<u64>,
 }
 
@@ -82,7 +78,6 @@ impl<'a> TransactionView<'a> {
         TransactionView {
             from: held(EvmTxField::From),
             to: held(EvmTxField::To),
-            sighash: held(EvmTxField::Sighash),
             status: Held::new(
                 fetched & bit(EvmTxField::Status) != 0,
                 row.u64_at(EvmTxField::Status as usize),
@@ -104,13 +99,6 @@ impl<'a> TransactionView<'a> {
                 EvmTxField::To,
                 transaction.to.as_deref().map(|to| to.as_slice()),
             ),
-            sighash: held(
-                EvmTxField::Sighash,
-                transaction
-                    .sighash
-                    .as_deref()
-                    .map(|sighash| sighash.as_ref()),
-            ),
             status: Held::new(
                 fetched & bit(EvmTxField::Status) != 0,
                 transaction.status.map(|status| status.to_u8() as u64),
@@ -131,15 +119,12 @@ impl TransactionFilter {
         let when = |filters: bool, mask: u64| if filters { mask } else { 0 };
         when(!self.from.is_empty(), bit(EvmTxField::From))
             | when(!self.to.is_empty(), bit(EvmTxField::To))
-            | when(!self.sighash.is_empty(), bit(EvmTxField::Sighash))
             | when(self.status.is_some(), bit(EvmTxField::Status))
     }
 
     /// The part a transaction's own fields decide, before its receipt is read.
     pub(crate) fn matches_call(&self, view: &TransactionView) -> bool {
-        any_of(&self.from, view.from)
-            && any_of(&self.to, view.to)
-            && any_of(&self.sighash, view.sighash)
+        any_of(&self.from, view.from) && any_of(&self.to, view.to)
     }
 
     pub(crate) fn matches_status(&self, status: Held<u64>) -> bool {
@@ -200,7 +185,6 @@ impl OnTransactionRegistration {
             filter: TransactionFilter {
                 from: parse_values(&input.from, "from")?,
                 to: parse_values(&input.to, "to")?,
-                sighash: parse_values(&input.sighash, "sighash")?,
                 status,
             },
             transaction_mask: input.transaction_field_mask as u64,
@@ -295,7 +279,6 @@ mod tests {
             index,
             from: None,
             to: None,
-            sighash: None,
             status: None,
             transaction_field_mask: 0.0,
             block_field_mask: 0.0,
@@ -305,15 +288,9 @@ mod tests {
     fn view<'a>(
         from: Held<&'a [u8]>,
         to: Held<&'a [u8]>,
-        sighash: Held<&'a [u8]>,
         status: Held<u64>,
     ) -> TransactionView<'a> {
-        TransactionView {
-            from,
-            to,
-            sighash,
-            status,
-        }
+        TransactionView { from, to, status }
     }
 
     fn matched(matcher: &TransactionMatcher, view: &TransactionView) -> Vec<u32> {
@@ -326,11 +303,9 @@ mod tests {
     fn fields_are_anded_values_ored_and_an_unheld_field_never_matches() {
         let a = [0u8; 19].into_iter().chain([0xaa]).collect::<Vec<_>>();
         let b = [0u8; 19].into_iter().chain([0xbb]).collect::<Vec<_>>();
-        let selector = [0xa9, 0x05, 0x9c, 0xbb];
         let matcher = TransactionMatcher::new(&[
             OnTransactionRegistrationInput {
                 to: Some(vec![A.to_string(), B.to_string()]),
-                sighash: Some(vec!["0xa9059cbb".to_string()]),
                 ..input(0)
             },
             OnTransactionRegistrationInput {
@@ -345,28 +320,15 @@ mod tests {
             (
                 matched(
                     &matcher,
-                    &view(
-                        Held::Value(&a),
-                        Held::Value(&b),
-                        Held::Value(&selector),
-                        Held::Value(1)
-                    )
+                    &view(Held::Value(&a), Held::Value(&b), Held::Value(1))
                 ),
                 matched(
                     &matcher,
-                    &view(
-                        Held::Value(&a),
-                        Held::Absent,
-                        Held::Value(&selector),
-                        Held::Value(0)
-                    )
+                    &view(Held::Value(&a), Held::Absent, Held::Value(0))
                 ),
-                matched(
-                    &matcher,
-                    &view(Held::Value(&a), Held::Value(&b), Held::Unheld, Held::Unheld)
-                ),
+                matched(&matcher, &view(Held::Unheld, Held::Value(&b), Held::Unheld)),
             ),
-            (vec![0, 1, 2], vec![2], vec![2])
+            (vec![0, 1, 2], vec![2], vec![0, 2])
         );
     }
 
@@ -375,10 +337,6 @@ mod tests {
         let errors: Vec<String> = [
             OnTransactionRegistrationInput {
                 from: Some(vec!["0x1234".to_string()]),
-                ..input(0)
-            },
-            OnTransactionRegistrationInput {
-                sighash: Some(vec!["0xa9059cbb00".to_string()]),
                 ..input(0)
             },
             OnTransactionRegistrationInput {
@@ -397,7 +355,6 @@ mod tests {
             errors,
             vec![
                 "transaction registration 0: `from` value 0x1234 must be 20 bytes, got 2",
-                "transaction registration 0: `sighash` value 0xa9059cbb00 must be 4 bytes, got 5",
                 "transaction registration 0: `to` lists no value",
                 "transaction registration 0: `status` must be 0 or 1, got 2",
             ]

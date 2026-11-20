@@ -47,16 +47,14 @@ pub(crate) fn build(registrations: &[&OnTransactionRegistration]) -> BuiltTransa
         let built = TransactionFilter {
             from: hex_list(&filter.from),
             to: hex_list(&filter.to),
-            sighash: hex_list(&filter.sighash),
             status: filter.status.map(i64::from),
             ..Default::default()
         };
         push_unique(&mut filters, built);
     }
-    let transaction_fields = tx_fields_in(transaction_mask);
     BuiltTransactionSelection {
         filters,
-        transaction_fields,
+        transaction_fields: tx_fields_in(transaction_mask),
         block_fields: BlockField::in_store_mask(block_mask),
     }
 }
@@ -76,7 +74,6 @@ mod tests {
             index,
             from: None,
             to: None,
-            sighash: None,
             status: None,
             transaction_field_mask: ((1 << EvmTxField::Hash as u64)
                 | (1 << EvmTxField::From as u64)) as f64,
@@ -111,7 +108,7 @@ mod tests {
                 ..input(1)
             },
             OnTransactionRegistrationInput {
-                sighash: Some(vec!["0xa9059cbb".to_string()]),
+                to: Some(vec![A.to_string()]),
                 ..input(2)
             },
         ])
@@ -127,15 +124,15 @@ mod tests {
                         ..Default::default()
                     },
                     TransactionFilter {
-                        sighash: Some(vec!["0xa9059cbb".to_string()]),
+                        to: Some(vec![A.to_string()]),
                         ..Default::default()
                     },
                 ],
                 transaction_fields: vec![
                     TransactionField::From,
                     TransactionField::Hash,
+                    TransactionField::To,
                     TransactionField::Status,
-                    TransactionField::Sighash,
                 ],
                 block_fields: vec![],
             }

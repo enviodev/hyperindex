@@ -60,12 +60,8 @@ indexer.onTransaction(
   route("to-bob-or-carol"),
 );
 indexer.onTransaction(
-  { name: "transfer-or-approve", where: () => ({ transaction: { sighash: ["${transfer}", "${approve}"] } }) },
-  route("transfer-or-approve"),
-);
-indexer.onTransaction(
-  { name: "alice-transfers", where: () => ({ transaction: { from: ["${alice}"], sighash: ["${transfer}"] } }) },
-  route("alice-transfers"),
+  { name: "alice-to-bob", where: () => ({ transaction: { from: ["${alice}"], to: ["${bob}"] } }) },
+  route("alice-to-bob"),
 );
 indexer.onTransaction(
   { name: "succeeded", where: () => ({ transaction: { status: 1 } }) },
@@ -101,8 +97,7 @@ describe("onTransaction routing", () => {
                 [
                   routed(~blockNumber=1, "from-alice"),
                   routed(~blockNumber=1, "to-bob-or-carol"),
-                  routed(~blockNumber=1, "transfer-or-approve"),
-                  routed(~blockNumber=1, "alice-transfers"),
+                  routed(~blockNumber=1, "alice-to-bob"),
                   routed(~blockNumber=1, "succeeded"),
                   routed(~blockNumber=1, "everything"),
                   routed(~blockNumber=2, "to-bob-or-carol"),
@@ -112,10 +107,8 @@ describe("onTransaction routing", () => {
                   routed(~blockNumber=3, "succeeded"),
                   routed(~blockNumber=3, "everything"),
                   routed(~blockNumber=4, ~transactionIndex=1, "to-bob-or-carol"),
-                  routed(~blockNumber=4, ~transactionIndex=1, "transfer-or-approve"),
                   routed(~blockNumber=4, ~transactionIndex=1, "succeeded"),
                   routed(~blockNumber=4, ~transactionIndex=1, "everything"),
-                  routed(~blockNumber=5, "transfer-or-approve"),
                   routed(~blockNumber=5, "reverted-from-bob"),
                   routed(~blockNumber=5, "everything"),
                   ...chainId == 2 ? [routed(~blockNumber=5, "to-alice-on-rpc")] : [],
@@ -137,7 +130,7 @@ describe("onTransaction routing", () => {
       scenario,
       async indexer => {
         let warning = (~name, ~chainId, ~rpcCost) =>
-          `\`indexer.onTransaction("${name}")\` runs on every transaction of chain ${chainId->Int.toString}: its filter names no \`from\`, \`to\` or \`sighash\`.${rpcCost}`
+          `\`indexer.onTransaction("${name}")\` runs on every transaction of chain ${chainId->Int.toString}: its filter names no \`from\` or \`to\`.${rpcCost}`
         t.expect(
           indexer.infoAndAboveLogs()
           ->Array.filter(({msg}) => msg->String.includes("runs on every transaction"))

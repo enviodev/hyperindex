@@ -25,12 +25,11 @@ import { indexer } from "envio";
 indexer.onTransaction(
   {
     name: "usdt-transfers",
-    where: () => ({
-      transaction: { to: ["0xdac17f958d2ee523a2206206994597c13d831ec7"], sighash: ["0xa9059cbb"] },
-    }),
+    where: () => ({ transaction: { to: ["0xdac17f958d2ee523a2206206994597c13d831ec7"] } }),
+    fields: { transaction: ["input"] },
   },
   async ({ transaction, context }) => {
-    context.UsdtTransfer.set({ id: transaction.hash });
+    if (transaction.input.startsWith("0xa9059cbb")) context.UsdtTransfer.set({ id: transaction.hash });
   },
 );
 `,

@@ -2783,7 +2783,6 @@ impl FieldSelection {
                 name: "HyperSyncClient.ResponseTypes.authorizationList".to_string(),
                 type_params: vec![],
             }))),
-            Tx::Sighash => Res::option(Res::Hex),
         }
     }
 

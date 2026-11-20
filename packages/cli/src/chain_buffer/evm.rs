@@ -486,7 +486,6 @@ pub enum EvmTxField {
     GasUsedForL1 = 29,
     AccessList = 30,
     AuthorizationList = 31,
-    Sighash = 32,
 }
 
 impl EvmTxField {
@@ -525,7 +524,6 @@ impl EvmTxField {
             GasUsedForL1 => "gasUsedForL1",
             AccessList => "accessList",
             AuthorizationList => "authorizationList",
-            Sighash => "sighash",
         }
     }
 
@@ -535,15 +533,9 @@ impl EvmTxField {
             TransactionIndex | Status | Type | L1FeeScalar => ColumnKind::U64,
             Hash | Root => ColumnKind::Fixed(32),
             From | To | ContractAddress => ColumnKind::Fixed(20),
-            Sighash => ColumnKind::Fixed(4),
             _ => ColumnKind::Var,
         }
     }
-}
-
-/// The selector calldata starts with, or none for calldata shorter than one.
-pub(crate) fn sighash_of_input(input: &[u8]) -> Option<&[u8]> {
-    input.get(..4)
 }
 
 pub(crate) fn transactions_schema() -> Schema {
@@ -668,11 +660,6 @@ pub(crate) fn push_transaction(
                 .context("encode transaction.authorizationList")?,
         );
     }
-    set(
-        builder,
-        Sighash,
-        t.sighash.as_ref().and_then(|v| sighash_of_input(v)),
-    );
     Ok(())
 }
 
@@ -694,7 +681,7 @@ fn transaction_column(
                 .map(|(index, mask)| (mask & bit != 0).then_some(*index as i64))
                 .collect(),
         ),
-        Hash | Input | LogsBloom | Root | Sighash => Column::Str(cells(rows, masks, bit, |row| {
+        Hash | Input | LogsBloom | Root => Column::Str(cells(rows, masks, bit, |row| {
             Ok(row.bytes_at(column).map(crate::hex::to_hex))
         })?),
         From | To | ContractAddress => Column::Str(cells(rows, masks, bit, |row| {

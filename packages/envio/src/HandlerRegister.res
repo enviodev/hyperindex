@@ -818,9 +818,7 @@ let registerOnBlock = (
 let isPlainObject = (value: unknown) =>
   typeof(value) === #object && value !== %raw(`null`) && !Array.isArray(value)
 
-let hexPattern = bytes => RegExp.fromString(`^0x[0-9a-fA-F]{${(bytes * 2)->Int.toString}}$`)
-let addressPattern = hexPattern(20)
-let selectorPattern = hexPattern(4)
+let addressPattern = RegExp.fromString(`^0x[0-9a-fA-F]{40}$`)
 
 // The `chain` a transaction `where` is handed: the chain object, with every
 // contract's `addresses` refusing to be read. A filter is evaluated once at
@@ -860,7 +858,7 @@ let parseTransactionFilterOrThrow = (
     JsError.throwWithMessage(
       `\`indexer.onTransaction("${name}")\` \`where\` returned an invalid filter for chain ${chainId->ChainId.toString}: ${message}`,
     )
-  let shape = "Expected `true`, `false` or { transaction: { from?, to?, sighash?, status? } }."
+  let shape = "Expected `true`, `false` or { transaction: { from?, to?, status? } }."
   let outer = result->(Utils.magic: unknown => dict<unknown>)
   if outer->Dict.keysToArray != ["transaction"] {
     fail(shape)
@@ -873,17 +871,17 @@ let parseTransactionFilterOrThrow = (
   inner
   ->Dict.keysToArray
   ->Array.forEach(key =>
-    if !(["from", "to", "sighash", "status"]->Array.includes(key)) {
+    if !(["from", "to", "status"]->Array.includes(key)) {
       fail(`Unknown field \`${key}\`. ${shape}`)
     }
   )
-  let values = (key, ~pattern, ~noun, ~nouns) =>
+  let addresses = key =>
     switch inner->Dict.get(key) {
     | None => None
     | Some(value) if value === %raw(`undefined`) => None
     | Some(value) =>
       if !Array.isArray(value) {
-        fail(`\`${key}\` must be an array of ${nouns}.`)
+        fail(`\`${key}\` must be an array of 20-byte hex addresses.`)
       }
       let values = value->(Utils.magic: unknown => array<unknown>)
       if values->Utils.Array.isEmpty {
@@ -892,12 +890,12 @@ let parseTransactionFilterOrThrow = (
       Some(
         values->Array.map(value =>
           switch value->(Utils.magic: unknown => JSON.t) {
-          | JSON.String(text) if pattern->RegExp.test(text) => text->String.toLowerCase
+          | JSON.String(text) if addressPattern->RegExp.test(text) => text->String.toLowerCase
           | _ =>
             fail(
               `\`${key}\` value ${value
                 ->JSON.stringifyAny
-                ->Option.getOr("undefined")} is not a ${noun}.`,
+                ->Option.getOr("undefined")} is not a 20-byte hex address.`,
             )
           }
         ),
@@ -911,24 +909,8 @@ let parseTransactionFilterOrThrow = (
   | Some(_) => fail("`status` must be 0 (reverted) or 1 (succeeded).")
   }
   {
-    from: ?values(
-      "from",
-      ~pattern=addressPattern,
-      ~noun="20-byte hex address",
-      ~nouns="20-byte hex addresses",
-    ),
-    to: ?values(
-      "to",
-      ~pattern=addressPattern,
-      ~noun="20-byte hex address",
-      ~nouns="20-byte hex addresses",
-    ),
-    sighash: ?values(
-      "sighash",
-      ~pattern=selectorPattern,
-      ~noun="4-byte hex selector",
-      ~nouns="4-byte hex selectors",
-    ),
+    from: ?addresses("from"),
+    to: ?addresses("to"),
     ?status,
   }
 }
@@ -1009,13 +991,13 @@ let registerOnTransaction = (
       | None => ()
       | Some(filter) =>
         matchedAny := true
-        if filter.from === None && filter.to === None && filter.sighash === None {
+        if filter.from === None && filter.to === None {
           let readsOverRpc = switch chainConfig.sourceConfig {
           | EvmSourceConfig({rpcs}) => rpcs->Array.some(rpc => rpc.sourceFor === Sync)
           | _ => false
           }
           logger->Logger.warn(
-            `\`indexer.onTransaction("${name}")\` runs on every transaction of chain ${chainId->ChainId.toString}: its filter names no \`from\`, \`to\` or \`sighash\`.${readsOverRpc
+            `\`indexer.onTransaction("${name}")\` runs on every transaction of chain ${chainId->ChainId.toString}: its filter names no \`from\` or \`to\`.${readsOverRpc
                 ? ` Over RPC that reads every block in full${filter.status === None
                       ? ""
                       : ", and a receipt for every transaction to check its status"}.`

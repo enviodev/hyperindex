@@ -47,20 +47,23 @@ indexer.onTransaction(
   transaction: {
     from?: string[];     // senders
     to?: string[];       // recipients; a contract creation has none and never matches
-    sighash?: string[];  // 4-byte selectors the calldata starts with, e.g. "0xa9059cbb"
     status?: 0 | 1;      // 1 succeeded, 0 reverted; absent runs on both
   }
 }
 ```
 
-- Fields are ANDed, values within a field are ORed: `{ to: [A, B], sighash: [S] }`
-  matches a call of `S` on `A` or `B`.
+- Fields are ANDed, values within a field are ORed: `{ from: [S], to: [A, B] }`
+  matches a transaction `S` sends to `A` or `B`.
+- To run on calls of one function, filter on `to` and check the calldata's
+  selector in the handler (`transaction.input.startsWith("0xa9059cbb")`, with
+  `input` in `fields`). A call made inside another contract's call is not a
+  transaction: use the event it emits instead.
 - Reverted transactions are mined, so they run the handler unless `status: 1`
   is given. Blocks from before Byzantium carry no status: a `status` filter
   matches none of their transactions.
-- A filter naming no `from`, `to` or `sighash` runs on every transaction of the
+- A filter naming no `from` or `to` runs on every transaction of the
   chain. It is allowed, and warned about at startup.
-- An address that isn't 20 bytes, a selector that isn't 4, an empty list or a
+- An address that isn't 20 bytes, an empty list or a
   `status` other than 0 or 1 throws at registration.
 - Several handlers may match one transaction: each runs, in registration order.
 
@@ -79,7 +82,7 @@ Fetching: HyperSync filters on the server. RPC has no transaction filter, so it
 reads every block in full (100 blocks per request page) and filters locally,
 reading a receipt only where a `status` filter or a receipt field (`status`,
 `gasUsed`, `effectiveGasPrice`, ...) needs one. Over RPC, a filter naming no
-`from`, `to` or `sighash` costs every block in full, and a receipt per
+`from` or `to` costs every block in full, and a receipt per
 transaction if it filters on `status`.
 
 Limits: EVM only. Filter values are static: `chain.<Contract>.addresses` can't
@@ -159,13 +162,10 @@ field_selection:
 
 ## Available Transaction Fields
 
-`transactionIndex`, `hash`, `from`, `to`, `gas`, `gasPrice`, `maxPriorityFeePerGas`, `maxFeePerGas`, `cumulativeGasUsed`, `effectiveGasPrice`, `gasUsed`, `input`, `nonce`, `value`, `v`, `r`, `s`, `contractAddress`, `logsBloom`, `root`, `status`, `yParity`, `accessList`, `maxFeePerBlobGas`, `blobVersionedHashes`, `type`, `l1Fee`, `l1GasPrice`, `l1GasUsed`, `l1FeeScalar`, `gasUsedForL1`, `authorizationList`, `sighash`
+`transactionIndex`, `hash`, `from`, `to`, `gas`, `gasPrice`, `maxPriorityFeePerGas`, `maxFeePerGas`, `cumulativeGasUsed`, `effectiveGasPrice`, `gasUsed`, `input`, `nonce`, `value`, `v`, `r`, `s`, `contractAddress`, `logsBloom`, `root`, `status`, `yParity`, `accessList`, `maxFeePerBlobGas`, `blobVersionedHashes`, `type`, `l1Fee`, `l1GasPrice`, `l1GasUsed`, `l1FeeScalar`, `gasUsedForL1`, `authorizationList`
 
 Some are chain-specific and read as `undefined` where they don't apply: the
 `l1*` fields need an L2, `root` only appears on pre-Byzantium transactions.
-`sighash` is the 4-byte selector the calldata starts with, `undefined` for
-calldata shorter than that: select it instead of `input` when the handler
-only needs to know which function was called.
 
 ## Available Block Fields
 

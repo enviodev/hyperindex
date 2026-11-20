@@ -1,7 +1,7 @@
 open Vitest
 
 // An RPC answer a transaction page can't trust is retried rather than read: a
-// calldata that won't decode would otherwise match no selector, and a receipt
+// recipient that won't decode would otherwise match no filter, and a receipt
 // from another block than the one its transaction was read from would decide
 // a `status` filter on another fork's outcome. Each kind is answered badly
 // once, then well.
@@ -12,22 +12,22 @@ let rpcPort = 18771
 let height = 3
 
 let transactions: array<ServedEvmChain.transaction> = [
-  {blockNumber: 2, transactionIndex: 0, from: alice, to: bob, input: "0xa9059cbb"},
+  {blockNumber: 2, transactionIndex: 0, from: alice, to: bob},
   {blockNumber: 3, transactionIndex: 0, from: alice, to: bob, status: 1},
 ]
 
-let corruptedCalldata = ref(false)
+let corruptedRecipient = ref(false)
 let movedReceipt = ref(false)
 
 let getResult = (~method, ~params) => {
   let result = ServedEvmChain.rpcResult(~logs=[], ~transactions, ~height, ~method, ~params)
   switch (method, result) {
-  | ("eth_getBlockByNumber", JSON.Object(block)) if !corruptedCalldata.contents =>
+  | ("eth_getBlockByNumber", JSON.Object(block)) if !corruptedRecipient.contents =>
     switch block->Dict.get("transactions") {
     | Some(JSON.Array([JSON.Object(transaction)]))
       if block->Dict.get("number") == Some(JSON.String("0x2")) =>
-      corruptedCalldata := true
-      transaction->Dict.set("input", JSON.String("0xa9059cbb0"))
+      corruptedRecipient := true
+      transaction->Dict.set("to", JSON.String(bob ++ "0"))
     | _ => ()
     }
     result
@@ -86,7 +86,7 @@ const record = (name: string) => async ({ transaction, block, context }: any) =>
   context.Sent.set({ id, to: (transaction.to ?? "none").toLowerCase(), runs });
 };
 
-indexer.onTransaction({ name: "transfers", where: () => ({ transaction: { sighash: ["0xa9059cbb"] } }) }, record("transfers"));
+indexer.onTransaction({ name: "to-bob", where: () => ({ transaction: { to: ["${bob}"] } }) }, record("to-bob"));
 indexer.onTransaction(
   { name: "succeeded", where: () => ({ transaction: { from: ["${alice}"], status: 1 } }) },
   record("succeeded"),
@@ -114,7 +114,7 @@ describe("onTransaction over RPC answers it can't trust", () => {
         let sent: array<sent> = await indexer.query("Sent")
         t.expect((
           exited.contents,
-          corruptedCalldata.contents,
+          corruptedRecipient.contents,
           movedReceipt.contents,
           sent->Array.toSorted((a, b) => String.compare(a.id, b.id)),
         )).toEqual((
@@ -124,7 +124,8 @@ describe("onTransaction over RPC answers it can't trust", () => {
           [
             {id: "succeeded 2", to: bob, runs: 1},
             {id: "succeeded 3", to: bob, runs: 1},
-            {id: "transfers 2", to: bob, runs: 1},
+            {id: "to-bob 2", to: bob, runs: 1},
+            {id: "to-bob 3", to: bob, runs: 1},
           ],
         ))
       },
