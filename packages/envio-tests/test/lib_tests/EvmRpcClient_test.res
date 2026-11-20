@@ -110,7 +110,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
       },
     )
 
-    t.expect(error).toEqual(Some("JSON-RPC error -32029: rate limited"))
+    t.expect(error).toEqual(Some("rate limited: rate limited"))
   })
 
   Async.it("Reports HTTP status and body snippet for a non-JSON response", async t => {
@@ -471,6 +471,70 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       EvmRpcClient.SuggestedToBlock,
       Some("eth_getLogs is limited to a 1000 blocks range"),
       Some(999),
+    ))
+  })
+
+  // https://github.com/enviodev/hyperindex/issues/1669
+  Async.it("Waits as long as a throttling provider asks, then asks the same range", async t => {
+    let wildcardRegistration = () =>
+      makeRegistration(
+        ~index=0,
+        ~topicCount=1,
+        ~isWildcard=true,
+        ~dependsOnAddresses=false,
+        ~params=[],
+      )
+    let logsFilter = JSON.parseOrThrow(
+      `[{"fromBlock":"0x0","toBlock":"0x1388","topics":[["${transferSighash}"]]}]`,
+    )
+
+    let outcome = await MockRpcServer.withScenario(
+      ~name="throttled eth_getLogs with Retry-After",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~params=logsFilter,
+          ~reply=RawHttp({
+            status: 429,
+            headers: dict{"Retry-After": "3"},
+            body: `{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"limit exceeded"}}`,
+          }),
+        ),
+        MockRpcServer.expectCall(
+          ~phase=1,
+          ~method="eth_getLogs",
+          ~params=logsFilter,
+          ~reply=RpcResult(JSON.Array([])),
+        ),
+      ],
+      async mock => {
+        let addressStore = makeAddressStore()
+        let client = makeClient(
+          ~url=mock.url,
+          ~eventRegistrations=[wildcardRegistration()],
+          ~addressStore,
+        )
+        let page = () =>
+          client->callNextPage(
+            ~eventRegistrations=[wildcardRegistration()],
+            ~addressStore,
+            ~fromBlock=0,
+            ~toBlockCeiling=5000,
+            ~indexes=[0],
+            ~addressSet=addressStore->AddressStore.emptySet,
+          )
+        let (throttled, _) = await page()
+        let (retried, _) = await page()
+        (
+          (throttled.kind, throttled.backoffMillis, throttled.providerMessage),
+          (retried.kind, retried.toBlock),
+        )
+      },
+    )
+
+    t.expect(outcome).toEqual((
+      (EvmRpcClient.Backoff, Some(3000), Some("limit exceeded")),
+      (EvmRpcClient.Ok, 5000),
     ))
   })
 

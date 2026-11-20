@@ -41,8 +41,19 @@ static RATE_LIMITED: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)rate.?limit|too many requests|request rate|compute units|throughput").unwrap()
 });
 
-pub fn is_rate_limited_message(message: &str) -> bool {
-    RATE_LIMITED.is_match(message)
+/// Whether a provider refused a request for how often it is asked rather than
+/// for what it asked. A refusal naming a block range or a result cap is about
+/// the request even under HTTP 429 or a throttling code: `-32005` is throttling
+/// on geth-based endpoints and a result cap on Infura, so neither the status
+/// nor the code alone can decide.
+pub fn is_rate_limited(http_status: u16, code: Option<i64>, message: &str) -> bool {
+    if suggested_block_interval_from_message(message).is_some()
+        || is_response_too_large_message(message)
+        || is_result_cap_message(message)
+    {
+        return false;
+    }
+    http_status == 429 || code == Some(429) || RATE_LIMITED.is_match(message)
 }
 
 /// Whether a provider refused an `eth_getLogs` for what the answer would hold,
@@ -261,6 +272,35 @@ mod tests {
         assert_eq!(
             messages.map(is_result_cap_message),
             [true, true, true, true, false, false, false, false, false, false]
+        );
+    }
+
+    #[test]
+    fn throttling_is_told_from_limits_on_the_request() {
+        let refusals = [
+            (429, Some(-32005), "limit exceeded"),
+            (429, None, "Too Many Requests"),
+            (200, Some(-32005), "project ID request rate exceeded"),
+            (
+                200,
+                Some(429),
+                "Your app has exceeded its compute units per second capacity",
+            ),
+            // Infura's result cap shares the throttling code.
+            (200, Some(-32005), "query returned more than 10000 results"),
+            // A range or result limit is about the request, whatever the status.
+            (
+                429,
+                Some(-32005),
+                "eth_getLogs is limited to a 1000 blocks range",
+            ),
+            (429, Some(-32005), "More than 50000 logs returned"),
+            (200, Some(-32000), "header not found"),
+            (502, None, "upstream exploded"),
+        ];
+        assert_eq!(
+            refusals.map(|(status, code, message)| is_rate_limited(status, code, message)),
+            [true, true, true, true, false, false, false, false, false]
         );
     }
 
