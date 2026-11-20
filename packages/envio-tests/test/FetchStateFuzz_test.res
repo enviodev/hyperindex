@@ -144,6 +144,29 @@ let regenerateAbove = (world, ~rng, ~keepUpTo) => {
         world.registrationBlocks->Dict.set(address, blockNumber)
       }
     )
+    // https://github.com/enviodev/hyperindex/issues/1810
+    // Registered again from a later block, often by an emitter in another
+    // partition, so the later registration can reach the indexer first. The
+    // address is indexed from its earliest one either way.
+    planned->Array.forEach(((_, address)) => {
+      let registeredAt = world.registrationBlocks->Dict.getUnsafe(address)
+      if rng() < 0.3 && registeredAt < lastRegistrable {
+        let blockNumber = randomInt(rng, ~min=registeredAt + 1, ~max=lastRegistrable)
+        let emitters = [staticAddress]->Array.concat(
+          dynamicAddresses->Array.filter(emitter =>
+            world.registrationBlocks
+            ->Dict.get(emitter)
+            ->Option.mapOr(false, emitterRegisteredAt => emitterRegisteredAt < blockNumber)
+          ),
+        )
+        drawn->Array.push({
+          blockNumber,
+          logIndex: 0,
+          address: pick(rng, emitters),
+          registers: [address],
+        })
+      }
+    })
   }
   for blockNumber in keepUpTo + 1 to worldEnd {
     if rng() < 0.3 {
@@ -690,7 +713,9 @@ let fuzzSeed = async (~t: Vitest.testContext, ~indexer, ~source: MockSource.t, ~
 }
 
 describe("Fetching through random replies, registrations, height changes and reorgs", () => {
-  [(1, 1, 3), (2, 2, 5), (3, 3, 1000), (4, 1, 5)]->Array.forEach(((
+  // Seeds 106 and 121 deliver an address's later registration before its
+  // earlier one. https://github.com/enviodev/hyperindex/issues/1810
+  [(1, 1, 3), (2, 2, 5), (3, 3, 1000), (4, 1, 5), (106, 1, 3), (121, 1, 1000)]->Array.forEach(((
     seed,
     maxAddrInPartition,
     clientFilterAddressThreshold,

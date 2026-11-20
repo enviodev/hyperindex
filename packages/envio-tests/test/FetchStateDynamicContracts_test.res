@@ -450,8 +450,9 @@ describe("Dynamic contract registration", () => {
     },
   )
 
+  // https://github.com/enviodev/hyperindex/issues/1810
   scenario->Scenario.it(
-    "reports a re-registration from an earlier block and doesn't fetch it from there",
+    "fetches a re-registration from an earlier block from there, without a warning",
     ~sources,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
@@ -502,19 +503,9 @@ describe("Dynamic contract registration", () => {
           staticPartitionQuery([]),
           {partitionId: "1", fromBlock: 101, toBlock: Bounded(800), addresses: [nftFactory]},
           {partitionId: "2", fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
+          {partitionId: "3", fromBlock: 5, toBlock: Bounded(800), addresses: [address1]},
         ],
-        [
-          {
-            IndexerRunner.msg: "Skipping same-contract re-registration: the address is already registered for this contract. The start block does not move earlier.",
-            params: dict{
-              "chainId": JSON.Number(1337.),
-              "contractName": JSON.String("Gravatar"),
-              "contractAddress": JSON.String(address1),
-              "registeredFromBlock": JSON.Number(10.),
-              "requestedFromBlock": JSON.Number(5.),
-            },
-          },
-        ],
+        [],
       ))
     },
   )
