@@ -319,10 +319,13 @@ impl StoreInner {
     /// still on the contractRegister backlog, which holds processing, and so
     /// every batch write, below both blocks. A config address (block -1) is
     /// never retired.
+    /// Sets `retired` when it retires an entry, whose pending write the caller
+    /// then drops: once per batch, not once per retirement.
     fn register_one(
         &mut self,
         reg: &AddressRegistration,
         track_unwritten: bool,
+        retired: &mut bool,
     ) -> RegistrationVerdict {
         let Some(key) = address_key(self.ecosystem, &reg.address) else {
             return RegistrationVerdict {
@@ -341,7 +344,7 @@ impl StoreInner {
                 };
             }
             self.retire(id);
-            self.unwritten.retain(|&pending| pending != id);
+            *retired = true;
         }
         let id = self.insert(&key, contract_idx, reg.registration_block);
         if track_unwritten {
@@ -856,7 +859,8 @@ impl AddressStore {
         registrations: Vec<AddressRegistration>,
         track_unwritten: bool,
     ) -> napi::Result<Vec<RegistrationVerdict>> {
-        let mut store = self.inner.write().unwrap();
+        let mut guard = self.inner.write().unwrap();
+        let store = &mut *guard;
         for reg in registrations.iter() {
             if store.contract_idx(&reg.contract_name).is_none() {
                 return Err(napi::Error::from_reason(format!(
@@ -866,10 +870,16 @@ impl AddressStore {
             }
             check_registration_block(reg.registration_block)?;
         }
-        Ok(registrations
+        let mut retired = false;
+        let verdicts = registrations
             .iter()
-            .map(|reg| store.register_one(reg, track_unwritten))
-            .collect())
+            .map(|reg| store.register_one(reg, track_unwritten, &mut retired))
+            .collect();
+        if retired {
+            let entries = &store.entries;
+            store.unwritten.retain(|&id| !entries.is_dead(id));
+        }
+        Ok(verdicts)
     }
 }
 

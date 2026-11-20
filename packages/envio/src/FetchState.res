@@ -1293,10 +1293,11 @@ let createPartitions = (
   ~maxAddrInPartition: int,
   ~nextPartitionIndex: int,
   ~existingPartitions: array<partition>,
+  // Floor for latestFetchedBlock: the progress block on startup, else -1, so an
+  // address registered at block 0 is fetched from block 0.
   ~progressBlockNumber: int,
   ~knownHeight: int,
-): // Floor for latestFetchedBlock (use progressBlockNumber from make, or 0 for registerDynamicContracts)
-OptimizedPartitions.t => {
+): OptimizedPartitions.t => {
   let nextPartitionIndexRef = ref(nextPartitionIndex)
 
   // ── Phase 1: Create per-contract-name partitions ──
@@ -1634,7 +1635,7 @@ let registerDynamicContracts = (
         ~nextPartitionIndex=fetchState.optimizedPartitions.nextPartitionIndex +
         newPartitions->Array.length,
         ~existingPartitions=mutExistingPartitions->Array.concat(newPartitions),
-        ~progressBlockNumber=0,
+        ~progressBlockNumber=-1,
         ~knownHeight=Pervasives.max(claimCeiling, fetchState.knownHeight),
       )
 
@@ -1678,7 +1679,7 @@ let switchDynamicContractsToClientSideFiltering = (fetchState: t, ~addressStore:
           ~maxAddrInPartition,
           ~nextPartitionIndex,
           ~existingPartitions=fetchState.optimizedPartitions.entities->Dict.valuesToArray,
-          ~progressBlockNumber=0,
+          ~progressBlockNumber=-1,
           ~knownHeight=fetchState.knownHeight,
         ),
       )

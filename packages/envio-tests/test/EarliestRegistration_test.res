@@ -143,6 +143,14 @@ let pingedBlocks = async (indexer: IndexerRunner.t) =>
   )
   ->Array.toSorted(Int.compare)
 
+// A ping's id once per time it was handled.
+let handledPingIds = async (indexer: IndexerRunner.t) =>
+  (await indexer.query("Ping"))
+  ->Array.flatMap((ping: {"id": string, "handled": int}) =>
+    Array.make(~length=ping["handled"], ping["id"])
+  )
+  ->Array.toSorted(String.compare)
+
 let registeredChildren = async (indexer: IndexerRunner.t) =>
   (await indexer.queryAddresses())
   ->Array.filter(row => row.contractName === "Child")
@@ -198,6 +206,28 @@ describe("An address registered for one contract from two blocks", () => {
         await registeredChildren(indexer),
         warnings(indexer),
       )).toEqual(([10, 20, 60, 200], [(child, 10)], []))
+    },
+  )
+
+  scenario->Scenario.it(
+    "is indexed from block 0 when the earlier registration is at block 0",
+    ~sources,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1337)
+      await pointAtChildFirst(~indexer, ~source)
+      await source.respondUpTo(
+        300,
+        ~items=[
+          born(~blockNumber=0, child),
+          ping(~blockNumber=0, child),
+          ping(~blockNumber=20, child),
+        ],
+      )
+
+      t.expect((await pingedBlocks(indexer), await registeredChildren(indexer))).toEqual((
+        [0, 20],
+        [(child, 0)],
+      ))
     },
   )
 
@@ -505,19 +535,20 @@ describe("An address registered twice below its contract's start block", () => {
         },
         {reply: LeavePending},
       ])
-      // The new chain keeps the birth at 110 but not the pointer at 150.
+      // The new chain keeps the birth at 110 but not the pointer at 150, and
+      // its ping at 210 sits at another log index than the orphaned one.
       await Scenario.driveRollback(
         ~source,
         ~validUpTo=130,
         ~head=251,
-        ~refetched=[ping(~blockNumber=210, child)],
+        ~refetched=[ping(~blockNumber=210, ~logIndex=2, child)],
       )
       await indexer.waitUntilIdle()
       await source.respondUpTo(300, ~items=[ping(~blockNumber=280, child)])
       await indexer.advanceTime(500)
 
-      t.expect((await pingedBlocks(indexer), await registeredChildren(indexer))).toEqual((
-        [210, 280],
+      t.expect((await handledPingIds(indexer), await registeredChildren(indexer))).toEqual((
+        ["210-2", "280-1"],
         [(child, 110)],
       ))
     },

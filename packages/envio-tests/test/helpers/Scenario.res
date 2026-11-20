@@ -326,8 +326,12 @@ let run = async (
     ~provideClickHouse?,
     ~chains?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
-    ~onIndexerStarted=indexer =>
-      mocks->Array.forEach(((chain, mock)) =>
+    ~onIndexerStarted=(indexer, ~chains) =>
+      mocks
+      ->Array.filter(((chain, _)) =>
+        chains->Option.mapOr(true, chainIds => chainIds->Array.includes(chain->ChainId.fromInt))
+      )
+      ->Array.forEach(((chain, mock)) =>
         mock.attachIndexer(
           ~waitUntilIdle=indexer.waitUntilIdle,
           ~isRegisteringContracts=indexer.isRegisteringContracts,
@@ -580,27 +584,22 @@ let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetc
       )
       source.getBlockHashesCalls->Utils.Array.clearInPlace
     }
-    let due = source.pendingItemsQueries->Array.filter(query => query.fromBlock <= head)
-    if due->Array.length > 0 {
-      await source.expectItemsQueries(
-        due->Array.map((query): MockSource.expectedItemsQuery => {
-          let latest = switch query.toBlock {
-          | Bounded(toBlock) => Math.Int.min(toBlock, head)
-          | Unbounded => head
-          }
-          {
-            partitionId: query.partitionId,
-            fromBlock: query.fromBlock,
-            reply: Respond({
-              items: refetched->Array.filter((item: MockSource.itemMock) =>
-                item.blockNumber >= query.fromBlock && item.blockNumber <= latest
-              ),
-              latestFetchedBlockNumber: latest,
-            }),
-          }
-        }),
-      )
-    }
+    // Replied to one by one, so a query past `head` stays pending for the
+    // caller rather than failing a match that doesn't list it.
+    source.pendingItemsQueries
+    ->Array.filter(query => query.fromBlock <= head)
+    ->Array.forEach(query => {
+      let latest = switch query.toBlock {
+      | Bounded(toBlock) => Math.Int.min(toBlock, head)
+      | Unbounded => head
+      }
+      (query->MockSource.control).respond({
+        items: refetched->Array.filter((item: MockSource.itemMock) =>
+          item.blockNumber >= query.fromBlock && item.blockNumber <= latest
+        ),
+        latestFetchedBlockNumber: latest,
+      })
+    })
     await Utils.delay(0)
   }
 }

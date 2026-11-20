@@ -260,9 +260,10 @@ let run = async (
   // Runs after `restart` has stopped the previous indexer and before the next
   // one starts, so mocked sources can void what the stopped one left in flight.
   ~onIndexerStopped: unit => unit=() => (),
-  // Runs with every indexer the run starts, a restart's included, so mocked
-  // sources answer for the one now running.
-  ~onIndexerStarted: t => unit=_ => (),
+  // Runs with every indexer the run starts, a restart's and a sibling's
+  // included, with the chains it drives (`None`: every chain), so mocked
+  // sources answer for the one now running their chain.
+  ~onIndexerStarted: (t, ~chains: option<array<ChainId.t>>) => unit=(_, ~chains as _) => (),
   // Leaves the `ENVIO_CLICKHOUSE_*` settings to the environment rather than
   // pointing them at a database of the run's own, for a test about a run that
   // has none.
@@ -895,14 +896,18 @@ let run = async (
       stop,
       infoAndAboveLogs: () => logger->Logger.inMemoryLines->Array.filterMap(toInfoLogEntry),
       allLogsAsJson: () => logger->Logger.inMemoryLines,
-      sibling: (~chains) => make(~reset=false, ~config=baseConfig, ~chains),
+      sibling: async (~chains) => {
+        let indexer = await make(~reset=false, ~config=baseConfig, ~chains)
+        onIndexerStarted(indexer, ~chains=Some(chains))
+        indexer
+      },
       restart: async (~config=baseConfig, ~chains=?, ~reset=false, ~asWorker=?, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
         await stop()
         onIndexerStopped()
         let indexer = await make(~reset, ~config, ~chains?, ~asWorker?)
-        onIndexerStarted(indexer)
+        onIndexerStarted(indexer, ~chains)
         indexer
       },
       dumpEffectCache: () => storage.dumpEffectCache(),
@@ -911,7 +916,7 @@ let run = async (
 
   let outcome = try {
     let indexer = await make(~reset=chains->Option.isNone, ~config, ~chains?)
-    onIndexerStarted(indexer)
+    onIndexerStarted(indexer, ~chains)
     // A body waiting on progress the failed indexer will never make would
     // otherwise sit until the test times out.
     await Promise.race([
