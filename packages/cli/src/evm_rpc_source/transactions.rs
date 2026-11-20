@@ -21,13 +21,18 @@ use crate::chain_buffer::matching_transactions::{
 };
 use crate::chain_buffer::page::PageData;
 
-const FROM_TO: u64 = (1 << EvmTxField::From as u32) | (1 << EvmTxField::To as u32);
 const STATUS_BIT: u64 = 1 << EvmTxField::Status as u32;
+
+/// The transaction fields a registration needs a row to hold: what its
+/// handler reads and what its filter compares.
+fn fields_needed(registration: &OnTransactionRegistration) -> u64 {
+    registration.transaction_mask | registration.filter.fields_read()
+}
 
 /// The transaction registrations a page reads for.
 pub(crate) struct TransactionRead<'a> {
     pub(crate) registrations: Vec<&'a OnTransactionRegistration>,
-    /// The union of the registrations' transaction fields.
+    /// The union of the registrations' needed transaction fields.
     transaction_mask: u64,
     /// The union of the registrations' block fields.
     pub(crate) block_mask: u64,
@@ -43,7 +48,7 @@ impl<'a> TransactionRead<'a> {
                 .iter()
                 .fold((0, 0), |(transactions, blocks), registration| {
                     (
-                        transactions | registration.transaction_mask,
+                        transactions | fields_needed(registration),
                         blocks | registration.block_mask,
                     )
                 });
@@ -54,28 +59,24 @@ impl<'a> TransactionRead<'a> {
         })
     }
 
-    /// The fields a transaction's own response fills: what the handlers read
-    /// of it, and the call fields matching reads.
+    /// The needed fields the transaction's own response fills, the selector
+    /// taken from its calldata.
     fn transaction_fields(&self) -> u64 {
-        (self.transaction_mask
+        self.transaction_mask
             & (tx_mask_of(Carrier::Log)
                 | tx_mask_of(Carrier::Transaction)
-                | tx_mask_of(Carrier::Either)))
-            | FROM_TO
-            | SELECTOR_BIT
+                | tx_mask_of(Carrier::Either)
+                | SELECTOR_BIT)
     }
 
-    /// What a receipt read for `matched` adds.
+    /// The needed fields a receipt fills, when one of `matched` needs any:
+    /// `status` to filter on, or a field only the receipt carries.
     fn receipt_fields(&self, matched: &[&OnTransactionRegistration]) -> Option<u64> {
-        let filters_status = matched
+        let receipt = tx_mask_of(Carrier::Receipt);
+        matched
             .iter()
-            .any(|registration| registration.filter.status.is_some());
-        let receipt_fields = self.transaction_mask & tx_mask_of(Carrier::Receipt);
-        let reads_receipt_fields = matched
-            .iter()
-            .any(|registration| registration.transaction_mask & tx_mask_of(Carrier::Receipt) != 0);
-        (filters_status || reads_receipt_fields)
-            .then_some(receipt_fields | if filters_status { STATUS_BIT } else { 0 })
+            .any(|registration| fields_needed(registration) & receipt != 0)
+            .then_some(self.transaction_mask & receipt)
     }
 }
 
@@ -156,7 +157,8 @@ fn calls_of(block_number: u64, block: &Json) -> Result<Vec<Call<'_>>, EnrichErro
         .collect()
 }
 
-fn held(value: &Option<Vec<u8>>) -> Held<&[u8]> {
+/// A field a full block's transaction always holds, present or not.
+fn held_or_absent(value: &Option<Vec<u8>>) -> Held<&[u8]> {
     match value {
         Some(value) => Held::Value(value),
         None => Held::Absent,
@@ -179,8 +181,8 @@ pub(crate) async fn read(
         for call in calls_of(block_number, &blocks[&block_number])? {
             let view = TransactionView {
                 from: Held::Value(&call.from),
-                to: held(&call.to),
-                selector: held(&call.selector),
+                to: held_or_absent(&call.to),
+                selector: held_or_absent(&call.selector),
                 status: Held::Unheld,
             };
             let matched: Vec<&OnTransactionRegistration> = read
@@ -246,7 +248,9 @@ pub(crate) async fn read(
             }
             responses::check_transaction(&transaction, &fields)
                 .map_err(|error| EnrichError::from_response(block_number, error))?;
-            transaction.sighash = call.selector.clone().map(format::Data::from);
+            if fetched & SELECTOR_BIT != 0 {
+                transaction.sighash = call.selector.clone().map(format::Data::from);
+            }
             let status = match receipt_fields {
                 // A receipt from before status existed holds none.
                 Some(fields) if fields & STATUS_BIT != 0 => {
@@ -256,8 +260,8 @@ pub(crate) async fn read(
             };
             let view = TransactionView {
                 from: Held::Value(&call.from),
-                to: held(&call.to),
-                selector: held(&call.selector),
+                to: held_or_absent(&call.to),
+                selector: held_or_absent(&call.selector),
                 status,
             };
             let runs = matched

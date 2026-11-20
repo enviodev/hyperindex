@@ -10,6 +10,7 @@ let transactionRow = (~blockNumber, ~transactionIndex) =>
   dict{
     "blockNumber": JSON.String(`0x${blockNumber->Int.toString(~radix=16)}`),
     "transactionIndex": JSON.String(`0x${transactionIndex->Int.toString(~radix=16)}`),
+    "hash": JSON.String(SimulateItems.defaultTransactionHash(~blockNumber, ~transactionIndex)),
     "from": JSON.String(alice),
   }
 

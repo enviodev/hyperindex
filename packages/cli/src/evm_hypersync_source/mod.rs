@@ -161,7 +161,7 @@ impl EvmHyperSyncClient {
         let selects_logs = !params.on_event_registration_indexes.is_empty();
         let transaction_registrations = self
             .chain
-            .transactions
+            .transaction_matcher
             .select(&params.on_transaction_registration_indexes)
             .map_err(map_err)?;
         let selects_transactions = !transaction_registrations.is_empty();
@@ -284,7 +284,7 @@ impl EvmHyperSyncClient {
         let handler_blocks =
             block_selection.blocks_run_on(block_query.from_block..(next_block as u64));
         let matcher = &self.evm.matcher;
-        let transaction_matcher = selects_transactions.then_some(&self.chain.transactions);
+        let transaction_matcher = selects_transactions.then_some(&self.chain.transaction_matcher);
         let mut page = tokio::task::block_in_place(|| {
             process_response(
                 response.data.blocks,

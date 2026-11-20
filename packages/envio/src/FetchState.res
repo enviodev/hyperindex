@@ -62,15 +62,16 @@ let makeSelection = (
   onTransactionRegistrations,
   dependsOnAddresses,
   ?clientFilteredContracts,
-  startBlock: ?deriveSelectionStartBlock(
-    Array.concat(
-      Array.concat(
-        onEventRegistrations->Array.map(reg => reg.startBlock),
-        onBlockRegistrations->Array.map(reg => reg.startBlock),
-      ),
-      // A transaction handler runs from the chain's start block.
-      onTransactionRegistrations->Array.map(_ => None),
-    ),
+  // A transaction handler runs from the chain's start block.
+  startBlock: ?(
+    onTransactionRegistrations->Utils.Array.notEmpty
+      ? None
+      : deriveSelectionStartBlock(
+          Array.concat(
+            onEventRegistrations->Array.map(reg => reg.startBlock),
+            onBlockRegistrations->Array.map(reg => reg.startBlock),
+          ),
+        )
   ),
 }
 

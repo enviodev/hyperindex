@@ -193,6 +193,13 @@ let toRpcValue = (value: unknown, ~key): option<JSON.t> =>
   | _ => None
   }
 
+// The hash a simulated transaction given none takes: its block number, then
+// its index, each in 16 bytes.
+let defaultTransactionHash = (~blockNumber, ~transactionIndex) =>
+  `0x${blockNumber->Int.toString(~radix=16)->String.padStart(32, "0")}${transactionIndex
+    ->Int.toString(~radix=16)
+    ->String.padStart(32, "0")}`
+
 let toRpcObject = (fields: dict<unknown>) => {
   let object = Dict.make()
   fields->Dict.forEachWithKey((value, key) =>
@@ -442,9 +449,7 @@ let parse = (
       ) {
         transaction->Dict.set(
           "hash",
-          `0x${blockNumber->Int.toString(~radix=16)->String.padStart(32, "0")}${transactionIndex
-            ->Int.toString(~radix=16)
-            ->String.padStart(32, "0")}`->(Utils.magic: string => unknown),
+          defaultTransactionHash(~blockNumber, ~transactionIndex)->(Utils.magic: string => unknown),
         )
       }
       let row = transaction->toRpcObject

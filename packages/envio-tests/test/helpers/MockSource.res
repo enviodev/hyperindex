@@ -877,6 +877,14 @@ let make = (
                 "transactionIndex",
                 JSON.String(`0x${transactionIndex->Int.toString(~radix=16)}`),
               )
+              if row->Dict.get("hash")->Option.isNone {
+                row->Dict.set(
+                  "hash",
+                  JSON.String(
+                    SimulateItems.defaultTransactionHash(~blockNumber, ~transactionIndex),
+                  ),
+                )
+              }
               row
             }),
             ~blocks=[],

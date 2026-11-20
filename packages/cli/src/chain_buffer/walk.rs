@@ -1,7 +1,10 @@
 //! One forward walk over a range of the buffer: per block, the rows in key
 //! order, each row's matching registrations in index order, each transaction's
-//! handlers ahead of its events, then the block handlers running on the block. Rows are matched and decoded here, on a
-//! worker thread; nothing about a match is stored.
+//! handlers ahead of its events, then the block handlers running on the block.
+//! Rows are matched and decoded here, on a worker thread; nothing about a
+//! match is stored.
+
+use std::iter::Peekable;
 
 use anyhow::Result;
 
@@ -132,6 +135,25 @@ pub(crate) fn build(
     })
 }
 
+/// The lowest block among the next row of each stream, the next decoded event
+/// and the next block handler run.
+fn first_block_to_walk<'r>(
+    rows: &mut Peekable<impl Iterator<Item = RowRef<'r>>>,
+    transactions: Option<&mut Peekable<impl Iterator<Item = RowRef<'r>>>>,
+    decoded: Option<&DecodedEvent>,
+    next_block_handler_run: Option<u64>,
+) -> Option<u64> {
+    [
+        rows.peek().map(RowRef::block_number),
+        transactions.and_then(|rows| rows.peek().map(RowRef::block_number)),
+        decoded.map(|event| event.block_number),
+        next_block_handler_run,
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+}
+
 struct Walker<'a> {
     shared: &'a Shared,
     snapshots: &'a Snapshots,
@@ -152,7 +174,7 @@ impl Walker<'_> {
             .peekable();
         // Read only for transaction handlers: an indexer without one walks no
         // second stream.
-        let mut transactions = (!self.shared.transactions.is_empty()).then(|| {
+        let mut transactions = (!self.shared.transaction_matcher.is_empty()).then(|| {
             snapshots
                 .transactions
                 .rows_in_block_range(from_block, max_block)
@@ -160,20 +182,12 @@ impl Walker<'_> {
         });
         let mut block = from_block;
         loop {
-            let next = [
-                rows.peek().map(RowRef::block_number),
-                transactions
-                    .as_mut()
-                    .and_then(|rows| rows.peek().map(RowRef::block_number)),
-                snapshots
-                    .decoded
-                    .get(self.decoded_at)
-                    .map(|event| event.block_number),
+            let next = first_block_to_walk(
+                &mut rows,
+                transactions.as_mut(),
+                snapshots.decoded.get(self.decoded_at),
                 self.shared.schedule.first_from(block),
-            ]
-            .into_iter()
-            .flatten()
-            .min()
+            )
             .filter(|next| *next <= max_block);
             let Some(next) = next else {
                 return Some(max_block);
@@ -191,21 +205,13 @@ impl Walker<'_> {
             self.walk_block(next, &block_rows, &block_transactions, false);
             if self.items.len() >= target_items {
                 // The blocks up to the next one holding anything are done too.
-                let following = [
-                    rows.peek().map(RowRef::block_number),
-                    transactions
-                        .as_mut()
-                        .and_then(|rows| rows.peek().map(RowRef::block_number)),
-                    snapshots
-                        .decoded
-                        .get(self.decoded_at)
-                        .map(|event| event.block_number),
+                let following = first_block_to_walk(
+                    &mut rows,
+                    transactions.as_mut(),
+                    snapshots.decoded.get(self.decoded_at),
                     next.checked_add(1)
                         .and_then(|after| self.shared.schedule.first_from(after)),
-                ]
-                .into_iter()
-                .flatten()
-                .min();
+                );
                 return Some(match following {
                     Some(following) if following <= max_block => following - 1,
                     _ => max_block,
@@ -323,15 +329,16 @@ impl Walker<'_> {
         while let Some(row) = transactions.next_if(|row| row.position() <= through as u64) {
             let shared = self.shared;
             let items = &mut self.items;
-            shared
-                .transactions
-                .for_each_match(&TransactionView::of_row(row), |registration| {
+            shared.transaction_matcher.for_each_match(
+                &TransactionView::of_row(row),
+                |registration| {
                     items.push(Item::Transaction {
                         block_number: row.block_number(),
                         transaction_index: row.position() as u32,
                         registration: registration.index,
                     })
-                });
+                },
+            );
         }
     }
 

@@ -245,12 +245,13 @@ impl Page {
         let mut data = PageData::new(Ecosystem::Evm);
         let mut rows = data.blocks.builder();
         for block in &blocks {
-            super::evm::push_simulated_block(&mut rows, block).map_err(to_napi)?;
+            super::simulate_evm::push_simulated_block(&mut rows, block).map_err(to_napi)?;
         }
         data.add_blocks(rows.finish());
         let mut rows = data.transactions.builder();
         for transaction in &transactions {
-            super::evm::push_simulated_transaction(&mut rows, transaction).map_err(to_napi)?;
+            super::simulate_evm::push_simulated_transaction(&mut rows, transaction)
+                .map_err(to_napi)?;
         }
         data.add_transactions(rows.finish());
         Ok(Page::from_data(data))

@@ -8,7 +8,7 @@ use napi_derive::napi;
 
 use hypersync_client::simple_types::Transaction;
 
-use super::evm::{transaction_selector, with_selector, EvmTxField, SELECTOR_BIT, SELECTOR_COLUMN};
+use super::evm::{EvmTxField, SELECTOR_BIT, SELECTOR_COLUMN};
 use super::table::RowRef;
 
 /// One `indexer.onTransaction` registration, as JS resolved it for a chain.
@@ -69,20 +69,44 @@ pub(crate) struct TransactionView<'a> {
     pub(crate) status: Held<u64>,
 }
 
+const fn bit(field: EvmTxField) -> u64 {
+    1 << field as u32
+}
+
+/// The selector a `sighash` filter compares: the internal column for a row
+/// fetched with it, otherwise the first four bytes of the calldata when the
+/// row holds that.
+fn held_selector<'a>(
+    fetched: u64,
+    selector: Option<&'a [u8]>,
+    input: Option<&'a [u8]>,
+) -> Held<&'a [u8]> {
+    if fetched & SELECTOR_BIT != 0 {
+        Held::new(true, selector)
+    } else {
+        Held::new(
+            fetched & bit(EvmTxField::Input) != 0,
+            input.and_then(|input| input.get(..4)),
+        )
+    }
+}
+
 impl<'a> TransactionView<'a> {
     pub(crate) fn of_row(row: &RowRef<'a>) -> Self {
         let row = *row;
         let fetched = row.fetched();
-        let held = |field: EvmTxField| fetched & (1 << field as u32) != 0;
+        let held =
+            |field: EvmTxField| Held::new(fetched & bit(field) != 0, row.bytes_at(field as usize));
         TransactionView {
-            from: Held::new(
-                held(EvmTxField::From),
-                row.bytes_at(EvmTxField::From as usize),
+            from: held(EvmTxField::From),
+            to: held(EvmTxField::To),
+            selector: held_selector(
+                fetched,
+                row.bytes_at(SELECTOR_COLUMN),
+                row.bytes_at(EvmTxField::Input as usize),
             ),
-            to: Held::new(held(EvmTxField::To), row.bytes_at(EvmTxField::To as usize)),
-            selector: Held::new(fetched & SELECTOR_BIT != 0, row.bytes_at(SELECTOR_COLUMN)),
             status: Held::new(
-                held(EvmTxField::Status),
+                fetched & bit(EvmTxField::Status) != 0,
                 row.u64_at(EvmTxField::Status as usize),
             ),
         }
@@ -90,23 +114,28 @@ impl<'a> TransactionView<'a> {
 
     /// A source's transaction, read for the fields of `fetched`.
     pub(crate) fn of_transaction(transaction: &'a Transaction, fetched: u64) -> Self {
-        let fetched = with_selector(fetched);
-        let held = |field: EvmTxField| fetched & (1 << field as u32) != 0;
+        let held = |field: EvmTxField, value: Option<&'a [u8]>| {
+            Held::new(fetched & bit(field) != 0, value)
+        };
         TransactionView {
-            from: Held::new(
-                held(EvmTxField::From),
-                transaction.from.as_ref().map(|from| from.as_slice()),
+            from: held(
+                EvmTxField::From,
+                transaction.from.as_deref().map(|from| from.as_slice()),
             ),
-            to: Held::new(
-                held(EvmTxField::To),
-                transaction.to.as_ref().map(|to| to.as_slice()),
+            to: held(
+                EvmTxField::To,
+                transaction.to.as_deref().map(|to| to.as_slice()),
             ),
-            selector: Held::new(
-                fetched & SELECTOR_BIT != 0,
-                transaction_selector(transaction),
+            selector: held_selector(
+                fetched,
+                transaction
+                    .sighash
+                    .as_deref()
+                    .and_then(|sighash| sighash.get(..4)),
+                transaction.input.as_ref().map(|input| input.as_ref()),
             ),
             status: Held::new(
-                held(EvmTxField::Status),
+                fetched & bit(EvmTxField::Status) != 0,
                 transaction.status.map(|status| status.to_u8() as u64),
             ),
         }
@@ -119,6 +148,16 @@ fn any_of<const N: usize>(values: &[[u8; N]], actual: Held<&[u8]>) -> bool {
 }
 
 impl TransactionFilter {
+    /// The fields matching compares, as the transactions table's bitmask: what
+    /// a source fetches for a row to be matched.
+    pub(crate) fn fields_read(&self) -> u64 {
+        let when = |filters: bool, mask: u64| if filters { mask } else { 0 };
+        when(!self.from.is_empty(), bit(EvmTxField::From))
+            | when(!self.to.is_empty(), bit(EvmTxField::To))
+            | when(!self.sighash.is_empty(), SELECTOR_BIT)
+            | when(self.status.is_some(), bit(EvmTxField::Status))
+    }
+
     /// The part a transaction's own fields decide, before its receipt is read.
     pub(crate) fn matches_call(&self, view: &TransactionView) -> bool {
         any_of(&self.from, view.from)

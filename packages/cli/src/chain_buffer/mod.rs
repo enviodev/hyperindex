@@ -15,6 +15,7 @@ pub(crate) mod matching_transactions;
 pub(crate) mod merge;
 pub(crate) mod page;
 pub(crate) mod schedule;
+pub(crate) mod simulate_evm;
 pub(crate) mod svm;
 pub(crate) mod table;
 pub(crate) mod walk;
@@ -217,7 +218,7 @@ pub(crate) struct Shared {
     pub(crate) should_checksum: bool,
     pub(crate) registrations: Registrations,
     pub(crate) schedule: Schedule,
-    pub(crate) transactions: TransactionMatcher,
+    pub(crate) transaction_matcher: TransactionMatcher,
     /// By event registration index.
     transaction_masks: Vec<u64>,
     event_block_masks: Vec<u64>,
@@ -266,7 +267,7 @@ impl Shared {
 
     /// The transaction and block fields a transaction registration reads.
     pub(crate) fn on_transaction_masks(&self, registration: u32) -> (u64, u64) {
-        self.transactions
+        self.transaction_matcher
             .registration(registration)
             .map_or((0, 0), |registration| {
                 (registration.transaction_mask, registration.block_mask)
@@ -426,6 +427,24 @@ impl ChainBuffer {
         .map_err(to_napi)
     }
 
+    /// Whether transaction rows count as rows a build makes items from: with
+    /// transaction handlers they do, matched or only joined to a log.
+    fn counts_transaction_rows(&self) -> bool {
+        !self.shared.transaction_matcher.is_empty()
+    }
+
+    /// The rows of blocks `[from, to]` a build makes items from.
+    fn count_rows_in_block_range(&self, tables: &Tables, from: u64, to: u64) -> usize {
+        let transactions = if self.counts_transaction_rows() {
+            tables.transactions.count_in_block_range(from, to)
+        } else {
+            0
+        };
+        tables.events.count_in_block_range(from, to)
+            + tables.decoded.count_range(from, to)
+            + transactions
+    }
+
     /// Whether the stored transaction holds every field of `mask`.
     pub(crate) fn has_transaction_fields(&self, block_number: u64, index: u32, mask: u64) -> bool {
         mask == 0
@@ -474,7 +493,7 @@ impl ChainBuffer {
                 should_checksum: config.should_checksum,
                 registrations,
                 schedule: Schedule::new(&config.block_handlers).map_err(to_napi)?,
-                transactions: TransactionMatcher::new(&config.transaction_registrations)
+                transaction_matcher: TransactionMatcher::new(&config.transaction_registrations)
                     .map_err(to_napi)?,
                 transaction_masks: config.transaction_masks.iter().map(|m| *m as u64).collect(),
                 event_block_masks: config.event_block_masks.iter().map(|m| *m as u64).collect(),
@@ -588,12 +607,7 @@ impl ChainBuffer {
             return 0;
         }
         let (from, to) = (block(from_block), block(to_block).min(LAST_BLOCK));
-        let tables = self.tables();
-        let mut rows =
-            tables.events.count_in_block_range(from, to) + tables.decoded.count_range(from, to);
-        if !self.shared.transactions.is_empty() {
-            rows += tables.transactions.count_in_block_range(from, to);
-        }
+        let rows = self.count_rows_in_block_range(&self.tables(), from, to);
         rows as u32 + self.shared.schedule.count_runs(from, to, |_| true) as u32
     }
 
@@ -622,46 +636,27 @@ impl ChainBuffer {
     pub fn get_block_number_of_row_at(&self, from_block: i64, row_offset: u32) -> Option<i64> {
         let from = block(from_block);
         let tables = self.tables();
-        let counts_transactions = !self.shared.transactions.is_empty();
-        if tables.decoded.len() == 0 && !counts_transactions {
+        if tables.decoded.len() == 0 && !self.counts_transaction_rows() {
             return tables
                 .events
                 .block_number_of_row_at(from, row_offset as usize)
                 .map(|block| block as i64);
         }
-        let decoded = tables.decoded.copy_range(from, LAST_BLOCK);
-        let mut streams: Vec<Box<dyn Iterator<Item = u64> + '_>> = vec![
-            Box::new(
-                tables
-                    .events
-                    .rows_in_block_range(from, LAST_BLOCK)
-                    .map(|row| row.block_number()),
-            ),
-            Box::new(decoded.iter().map(|event| event.block_number)),
-        ];
-        if counts_transactions {
-            streams.push(Box::new(
-                tables
-                    .transactions
-                    .rows_in_block_range(from, LAST_BLOCK)
-                    .map(|row| row.block_number()),
-            ));
+        // The lowest block whose rows from `from` outnumber the offset.
+        let rows_through = |to: u64| self.count_rows_in_block_range(&tables, from, to);
+        if rows_through(LAST_BLOCK) <= row_offset as usize {
+            return None;
         }
-        let mut streams: Vec<_> = streams.into_iter().map(Iterator::peekable).collect();
-        for _ in 0..row_offset {
-            let lowest = streams
-                .iter_mut()
-                .filter_map(|stream| stream.peek().copied())
-                .min()?;
-            streams
-                .iter_mut()
-                .find_map(|stream| stream.next_if_eq(&lowest))?;
+        let (mut low, mut high) = (from, LAST_BLOCK);
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if rows_through(middle) > row_offset as usize {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
         }
-        streams
-            .iter_mut()
-            .filter_map(|stream| stream.peek().copied())
-            .min()
-            .map(|block| block as i64)
+        Some(low as i64)
     }
 
     /// The bytes the buffer's tables hold.
@@ -672,15 +667,14 @@ impl ChainBuffer {
             as f64
     }
 
-    /// Every stored event row, and transaction row when transaction handlers
-    /// run on them.
+    /// Every stored row a build makes items from.
     #[napi]
     pub fn row_count(&self) -> u32 {
         let tables = self.tables();
-        let transactions = if self.shared.transactions.is_empty() {
-            0
-        } else {
+        let transactions = if self.counts_transaction_rows() {
             tables.transactions.len()
+        } else {
+            0
         };
         (tables.events.len() + tables.decoded.len() + transactions) as u32
     }

@@ -3,13 +3,12 @@
 
 use alloy_primitives::U256;
 use anyhow::{Context, Result};
-use hypersync_client::format::{self, Hex};
+use hypersync_client::format;
 use hypersync_client::simple_types;
 use strum::VariantArray;
 
 use super::deliver::{build_columns, cells, hex_quantity, Column, Columns};
 use super::table::{make_key, ChunkBuilder, ColumnKind, RowRef, Schema, MAX_POSITION};
-use crate::evm_hypersync_source::query::BlockField;
 use crate::evm_hypersync_source::types::{
     encode_address, map_i64, AccessList as AccessListItem, Authorization as AuthorizationItem,
 };
@@ -539,9 +538,10 @@ impl EvmTxField {
     }
 }
 
-/// The first four bytes of the calldata, which a `sighash` filter matches.
-/// Internal: past the fields a handler can select, so filtering on it keeps
-/// the calldata itself out of the buffer.
+/// The first four bytes of the calldata, which a `sighash` filter matches,
+/// for a row fetched with the selector alone. Internal: past the fields a
+/// handler can select, so filtering on it keeps the calldata itself out of
+/// the buffer. A row holding the calldata reads its selector from there.
 pub(crate) const SELECTOR_COLUMN: usize = EvmTxField::VARIANTS.len();
 pub(crate) const SELECTOR_BIT: u64 = 1 << SELECTOR_COLUMN;
 
@@ -558,32 +558,9 @@ pub(crate) fn transactions_schema() -> Schema {
 }
 
 const TRANSACTION_INDEX_BIT: u64 = 1 << EvmTxField::TransactionIndex as u32;
-const INPUT_BIT: u64 = 1 << EvmTxField::Input as u32;
-
-/// A transaction's selector: none for calldata shorter than four bytes, which
-/// no `sighash` filter matches.
-pub(crate) fn transaction_selector(transaction: &simple_types::Transaction) -> Option<&[u8]> {
-    transaction
-        .sighash
-        .as_ref()
-        .map(|sighash| sighash.as_ref())
-        .or_else(|| transaction.input.as_ref().map(|input| input.as_ref()))
-        .and_then(|bytes| bytes.get(..4))
-}
-
-/// A fetched mask with the selector held wherever the calldata it comes from
-/// is.
-pub(crate) fn with_selector(fetched: u64) -> u64 {
-    if fetched & INPUT_BIT != 0 {
-        fetched | SELECTOR_BIT
-    } else {
-        fetched
-    }
-}
 
 /// Appends a HyperSync transaction. A transaction without its key is
-/// dropped: nothing can join it. Its selector is held when `fetched` names it
-/// or the calldata it comes from.
+/// dropped: nothing can join it.
 pub(crate) fn push_transaction(
     builder: &mut ChunkBuilder,
     transaction: &simple_types::Transaction,
@@ -598,9 +575,15 @@ pub(crate) fn push_transaction(
     builder.push_row(
         make_key(u64::from(block_number), u64::from(index)),
         0,
-        with_selector(fetched) | TRANSACTION_INDEX_BIT,
+        fetched | TRANSACTION_INDEX_BIT,
     );
-    builder.set_optional_bytes(SELECTOR_COLUMN, transaction_selector(transaction));
+    builder.set_optional_bytes(
+        SELECTOR_COLUMN,
+        transaction
+            .sighash
+            .as_ref()
+            .and_then(|sighash| sighash.get(..4)),
+    );
     let t = transaction;
     let set = |builder: &mut ChunkBuilder, field: EvmTxField, value: Option<&[u8]>| {
         builder.set_optional_bytes(field as usize, value)
@@ -777,94 +760,6 @@ pub(crate) fn transaction_columns(
         |field| field.name(),
         |field| transaction_column(field, rows, indexes, masks, should_checksum),
     )
-}
-
-/// The mask of the fields `object` names, as a JSON-RPC node spells them; a
-/// field's ordinal is its position in `variants`. A key naming no field is a
-/// typo the test would otherwise never see.
-fn named_mask<F: Copy>(
-    object: &serde_json::Map<String, serde_json::Value>,
-    variants: &[F],
-    name: impl Fn(F) -> &'static str,
-    keys: &'static [&'static str],
-    table: &str,
-) -> Result<u64> {
-    object.keys().try_fold(0, |mask, key| {
-        if keys.contains(&key.as_str()) {
-            return Ok(mask);
-        }
-        let ordinal = variants
-            .iter()
-            .position(|field| name(*field) == key)
-            .with_context(|| format!("unknown {table} field \"{key}\""))?;
-        Ok(mask | 1 << ordinal)
-    })
-}
-
-fn quantity_at(object: &serde_json::Map<String, serde_json::Value>, key: &str) -> Result<u64> {
-    let text = object
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .with_context(|| format!("\"{key}\" is required"))?;
-    crate::evm_rpc_source::client::parse_hex_u64(text).with_context(|| format!("\"{key}\""))
-}
-
-/// Appends a simulated block, holding the fields the test gave and no other.
-pub(crate) fn push_simulated_block(
-    builder: &mut ChunkBuilder,
-    block: &serde_json::Map<String, serde_json::Value>,
-) -> Result<()> {
-    let number = quantity_at(block, "number")?;
-    let mask = named_mask(
-        block,
-        EvmBlockField::VARIANTS,
-        EvmBlockField::name,
-        &[],
-        "block",
-    )?;
-    let decoded = crate::evm_rpc_source::responses::build_block(
-        &serde_json::Value::Object(block.clone()),
-        number,
-        &BlockField::in_store_mask(mask),
-        &[],
-    )
-    .map_err(|error| anyhow::anyhow!("block {number}: {error}"))?;
-    push_block(builder, &decoded, mask);
-    Ok(())
-}
-
-/// Appends a simulated transaction, holding the fields the test gave and no
-/// other: a filter on a field it left out matches nothing.
-pub(crate) fn push_simulated_transaction(
-    builder: &mut ChunkBuilder,
-    transaction: &serde_json::Map<String, serde_json::Value>,
-) -> Result<()> {
-    let block_number = quantity_at(transaction, "blockNumber")?;
-    let index = u32::try_from(quantity_at(transaction, "transactionIndex")?)
-        .context("\"transactionIndex\" exceeds what a block holds")?;
-    let mask = named_mask(
-        transaction,
-        EvmTxField::VARIANTS,
-        EvmTxField::name,
-        &["blockNumber"],
-        "transaction",
-    )?;
-    let hash = match transaction.get("hash").and_then(serde_json::Value::as_str) {
-        Some(hash) => Some(format::Hash::decode_hex(hash).context("\"hash\"")?),
-        None => None,
-    };
-    let response = serde_json::Value::Object(transaction.clone());
-    let mut decoded = crate::evm_rpc_source::responses::build_transaction(
-        block_number,
-        index,
-        &hash.clone().unwrap_or_else(|| format::Hash::from([0; 32])),
-        Some(&response),
-        Some(&response),
-        &crate::evm_rpc_source::fields::tx_fields_in(mask),
-    )
-    .map_err(|error| anyhow::anyhow!("transaction {block_number}/{index}: {error}"))?;
-    decoded.hash = hash;
-    push_transaction(builder, &decoded, mask)
 }
 
 /// A hash as JS spells it.

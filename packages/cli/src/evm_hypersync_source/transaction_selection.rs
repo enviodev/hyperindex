@@ -4,7 +4,7 @@
 use napi::bindgen_prelude::Either;
 
 use super::query::{BlockField, TransactionField, TransactionFilter, TransactionSelection};
-use crate::chain_buffer::evm::EvmTxField;
+use crate::chain_buffer::evm::SELECTOR_BIT;
 use crate::chain_buffer::matching_transactions::OnTransactionRegistration;
 use crate::evm_rpc_source::fields::tx_fields_in;
 
@@ -41,13 +41,10 @@ fn push_unique<T: PartialEq>(values: &mut Vec<T>, value: T) {
 pub(crate) fn build(registrations: &[&OnTransactionRegistration]) -> BuiltTransactionSelection {
     let mut filters: Vec<TransactionFilter> = Vec::new();
     let (mut transaction_mask, mut block_mask) = (0, 0);
-    let (mut filters_sighash, mut filters_status) = (false, false);
     for registration in registrations {
         let filter = &registration.filter;
-        transaction_mask |= registration.transaction_mask;
+        transaction_mask |= registration.transaction_mask | filter.fields_read();
         block_mask |= registration.block_mask;
-        filters_sighash |= !filter.sighash.is_empty();
-        filters_status |= filter.status.is_some();
         let built = TransactionFilter {
             from: hex_list(&filter.from),
             to: hex_list(&filter.to),
@@ -57,19 +54,9 @@ pub(crate) fn build(registrations: &[&OnTransactionRegistration]) -> BuiltTransa
         };
         push_unique(&mut filters, built);
     }
-    // Matching the returned rows reads their sender and recipient whatever
-    // the handlers list.
-    let call_fields = if registrations.is_empty() {
-        0
-    } else {
-        (1 << EvmTxField::From as u64) | (1 << EvmTxField::To as u64)
-    };
-    let mut transaction_fields = tx_fields_in(transaction_mask | call_fields);
-    if filters_sighash {
-        push_unique(&mut transaction_fields, TransactionField::Sighash);
-    }
-    if filters_status {
-        push_unique(&mut transaction_fields, TransactionField::Status);
+    let mut transaction_fields = tx_fields_in(transaction_mask);
+    if transaction_mask & SELECTOR_BIT != 0 {
+        transaction_fields.push(TransactionField::Sighash);
     }
     BuiltTransactionSelection {
         filters,
@@ -81,6 +68,7 @@ pub(crate) fn build(registrations: &[&OnTransactionRegistration]) -> BuiltTransa
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain_buffer::evm::EvmTxField;
     use crate::chain_buffer::matching_transactions::{
         OnTransactionRegistrationInput, TransactionMatcher,
     };
@@ -150,9 +138,8 @@ mod tests {
                 transaction_fields: vec![
                     TransactionField::From,
                     TransactionField::Hash,
-                    TransactionField::To,
-                    TransactionField::Sighash,
                     TransactionField::Status,
+                    TransactionField::Sighash,
                 ],
                 block_fields: vec![],
             }

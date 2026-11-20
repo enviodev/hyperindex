@@ -43,8 +43,8 @@ pub(crate) fn first_hash_mismatch(
 /// The page's transactions a transaction handler runs on that the store holds
 /// no running copy of yet: rows like any other for the density a partition is
 /// priced by, counted once however many pages bring them.
-fn matched_transactions(shared: &Shared, stored: &Table, incoming: &Table) -> usize {
-    let matcher = &shared.transactions;
+fn count_newly_matched_transactions(shared: &Shared, stored: &Table, incoming: &Table) -> usize {
+    let matcher = &shared.transaction_matcher;
     if matcher.is_empty() {
         return 0;
     }
@@ -109,7 +109,7 @@ pub(crate) fn merge_page(
     }
     let rows_kept = tables.events.merge_table(&page.events)
         + tables.decoded.merge(&page.decoded)
-        + matched_transactions(shared, &tables.transactions, &page.transactions);
+        + count_newly_matched_transactions(shared, &tables.transactions, &page.transactions);
     tables.transactions.merge_table(&page.transactions);
     for block_number in blocks_with_other_hash(&tables.blocks, &page.blocks, page.ecosystem) {
         tables.blocks.remove_block_range(block_number, block_number);

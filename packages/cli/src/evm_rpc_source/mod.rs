@@ -562,7 +562,7 @@ impl EvmRpcClient {
             .map_err(map_err)?;
         let transaction_read = TransactionRead::new(
             self.chain
-                .transactions
+                .transaction_matcher
                 .select(&params.on_transaction_registration_indexes)
                 .map_err(map_err)?,
         );
