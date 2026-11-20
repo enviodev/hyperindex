@@ -28,10 +28,7 @@ let rpcError = (request, ~code, ~message) =>
 let throttlingAnswers = [
   // geth-based endpoints: a JSON-RPC error under HTTP 429.
   request => (429, request->rpcError(~code=-32005, ~message="limit exceeded")),
-  request => (429, request->rpcError(~code=-32005, ~message="limit exceeded")),
-  request => (429, request->rpcError(~code=-32005, ~message="limit exceeded")),
-  // A gateway in front of the node, answering for it.
-  _ => (429, "Too Many Requests"),
+  // A gateway in front of the node, answering for it in text or in its own JSON.
   _ => (429, "Too Many Requests"),
   _ => (429, `{"message":"Too Many Requests"}`),
   // Throttling worded in the error alone, under HTTP 200.
