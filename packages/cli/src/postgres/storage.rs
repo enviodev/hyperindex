@@ -824,6 +824,7 @@ impl Storage {
                     name,
                     direction: Direction::Asc,
                 }],
+                include: Vec::new(),
                 method: BTREE.to_string(),
             })
             .collect()

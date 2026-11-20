@@ -19,8 +19,7 @@ let invokeContractRegister = (runtime: HandlerRuntime.t, item: Internal.item) =>
   })
 }
 
-// Runs every item's contractRegister concurrently, collecting what they add
-// in call order.
+// Runs every item's contractRegister concurrently, collecting what they add.
 let runOrThrow = async (items: array<Internal.item>, ~runtime, ~chainState) => {
   let registrations: array<AddressStore.registration> = []
   let chainLogger = chainState->ChainState.logger

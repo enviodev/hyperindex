@@ -870,6 +870,7 @@ async fn a_backfill_that_loses_its_index_to_an_orphaned_build_still_finishes() {
             name: "owner".to_string(),
             direction: Direction::Asc,
         }],
+        include: Vec::new(),
         method: BTREE.to_string(),
     };
     storage.indexes.reload().await.unwrap();
@@ -932,6 +933,120 @@ async fn a_backfill_that_loses_its_index_to_an_orphaned_build_still_finishes() {
     assert_eq!(
         (finalized, indexes),
         (Ok(1), vec![(definition.name(), true)])
+    );
+}
+
+/// The catalog is what decides whether a declared index is already there, so
+/// what Postgres reports for a covering index has to read back as the
+/// definition that built it: key columns and included ones apart, however the
+/// included ones were ordered when it was created. And the index has to do
+/// what it is for, answering from the index alone a query the plain one sends
+/// to the table.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn a_covering_index_reads_back_as_declared_and_serves_an_index_only_scan() {
+    use super::index_definition::{IndexColumn, IndexDefinition, BTREE};
+    use super::indexes::{Coverage, Db};
+    use crate::storage::schema::Direction;
+
+    let schema = "live_covering_index";
+    let client = client();
+    client
+        .batch(&format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE; CREATE SCHEMA {schema}; \
+             CREATE TABLE {schema}.\"Token\" (id text PRIMARY KEY, owner text, \"tokenId\" int, \
+             balance numeric, note text); \
+             INSERT INTO {schema}.\"Token\" SELECT i::text, 'owner' || i, i, i, 'n' \
+             FROM generate_series(1, 5000) i"
+        ))
+        .await
+        .unwrap();
+    // The planner only picks an index-only scan once the visibility map says
+    // the heap needn't be checked, which a vacuum is what sets.
+    client
+        .batch(&format!("VACUUM ANALYZE {schema}.\"Token\""))
+        .await
+        .unwrap();
+    let covering = IndexDefinition {
+        table_name: "Token".to_string(),
+        columns: vec![
+            IndexColumn {
+                name: "owner".to_string(),
+                direction: Direction::Asc,
+            },
+            IndexColumn {
+                name: "tokenId".to_string(),
+                direction: Direction::Desc,
+            },
+        ],
+        include: vec!["balance".to_string(), "note".to_string()],
+        method: BTREE.to_string(),
+    };
+    let plain = IndexDefinition {
+        include: Vec::new(),
+        ..covering.clone()
+    };
+    client.batch(&covering.create_query(schema)).await.unwrap();
+    // Declared out of order, which is not how the indexer creates one: the
+    // catalog still has to report the same set.
+    client
+        .batch(&format!(
+            "CREATE INDEX by_hand ON {schema}.\"Token\"(owner, \"tokenId\" DESC) \
+             INCLUDE (note, balance)"
+        ))
+        .await
+        .unwrap();
+
+    let entries = Db::read(&client, schema, None).await.unwrap();
+    let entry = |name: &str| entries.iter().find(|entry| entry.name == name).unwrap();
+    let ours = entry(&covering.name());
+    let read_back = (
+        ours.columns.clone(),
+        ours.include.clone(),
+        entry("by_hand").include.clone(),
+        entry("Token_pkey").include.clone(),
+        ours.reject_reason(&covering, Coverage::Exact),
+        ours.reject_reason(&plain, Coverage::Exact),
+        ours.reject_reason(&plain, Coverage::LeadingColumns),
+    );
+
+    let plan = client
+        .query(
+            &format!(
+                "EXPLAIN (COSTS OFF) SELECT owner, \"tokenId\", balance FROM {schema}.\"Token\" \
+                 WHERE owner = 'owner7'"
+            ),
+            &[],
+        )
+        .await
+        .unwrap()
+        .0
+        .iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<Vec<_>>()
+        .join("\n");
+    client
+        .batch(&format!("DROP SCHEMA {schema} CASCADE"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        (read_back, plan.contains("Index Only Scan")),
+        (
+            (
+                covering.columns.clone(),
+                vec!["balance".to_string(), "note".to_string()],
+                vec!["balance".to_string(), "note".to_string()],
+                Vec::new(),
+                None,
+                Some(
+                    "it includes (balance, note) rather than exactly the declared columns"
+                        .to_string()
+                ),
+                None,
+            ),
+            true
+        )
     );
 }
 

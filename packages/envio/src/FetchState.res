@@ -981,14 +981,6 @@ let updateInternal = (
 // chain that owns it turns them into log lines.
 type notice =
   | SwitchedToClientSideFiltering({contractName: string, addressCount: int, threshold: int})
-  // The address is already registered for the contract from a later block, and
-  // a registration never moves an address's start block earlier.
-  | SkippedReRegistration({
-      contractName: string,
-      contractAddress: Address.t,
-      registeredFromBlock: int,
-      requestedFromBlock: int,
-    })
   | SkippedInvalidAddress({contractName: string, contractAddress: Address.t})
   // A stored address (from the config or a resume) the address store refused
   // because the contract already has it.
@@ -1299,29 +1291,6 @@ let collapseClientFilteredContracts = (
   }
 }
 
-// A rejected registration is simply absent from every partition, so without a
-// notice the user sees a contract that never indexes and nothing saying why.
-let reportRejectedRegistration = (
-  verdict: AddressStore.verdict,
-  ~onNotice,
-  ~contractAddress: Address.t,
-  ~contractName: string,
-) =>
-  switch verdict {
-  | Duplicate({effectiveStartBlock, existingEffectiveStartBlock})
-    if existingEffectiveStartBlock > effectiveStartBlock =>
-    onNotice(
-      SkippedReRegistration({
-        contractName,
-        contractAddress,
-        registeredFromBlock: existingEffectiveStartBlock,
-        requestedFromBlock: effectiveStartBlock,
-      }),
-    )
-  | Invalid => onNotice(SkippedInvalidAddress({contractName, contractAddress}))
-  | Duplicate(_) | Added(_) => ()
-  }
-
 /**
 Creates partitions from indexing addresses with two phases:
 Phase 1: Create per-contract-name partitions (smart grouping by startBlock)
@@ -1340,10 +1309,11 @@ let createPartitions = (
   ~maxAddrInPartition: int,
   ~nextPartitionIndex: int,
   ~existingPartitions: array<partition>,
+  // Floor for latestFetchedBlock: the progress block on startup, else -1, so an
+  // address registered at block 0 is fetched from block 0.
   ~progressBlockNumber: int,
   ~knownHeight: int,
-): // Floor for latestFetchedBlock (use progressBlockNumber from make, or 0 for registerDynamicContracts)
-OptimizedPartitions.t => {
+): OptimizedPartitions.t => {
   let nextPartitionIndexRef = ref(nextPartitionIndex)
 
   // ── Phase 1: Create per-contract-name partitions ──
@@ -1519,8 +1489,8 @@ let registerDynamicContracts = (
   // height in here. Defaults to what the fetch state knows, which is all
   // there is to go on when no response is being applied.
   ~claimCeiling=fetchState.knownHeight,
-  // Registrations collected from contractRegister calls, in the order the
-  // handlers made them. May contain duplicates, which the store filters out.
+  // Registrations collected from contractRegister calls, in any order. May
+  // contain duplicates: the store keeps each address's earliest registration.
   registrations: array<AddressStore.registration>,
 ) => {
   if fetchState.normalSelection.onEventRegistrations->Utils.Array.isEmpty {
@@ -1534,10 +1504,10 @@ let registerDynamicContracts = (
   // exactly what this batch adds.
   let idCursor = addressStore->AddressStore.nextId
   // The store resolves each address against both what it already holds and the
-  // batch's own earlier entries, so the same address registered twice for one
-  // contract inside a single batch is a duplicate just as it is across batches.
-  // It also decides which additions this chain fetches for, since it's what
-  // holds the contract list.
+  // batch's own earlier entries. An earlier registration replaces a later one
+  // under a fresh id, above the cursor, so it gets a partition from its own
+  // block like any addition. The store also decides which additions this chain
+  // fetches for, since it's what holds the contract list.
   let verdicts = addressStore->AddressStore.registerBatch(registrations)
 
   let registeringContractNames = []
@@ -1552,12 +1522,15 @@ let registerDynamicContracts = (
     // Nothing on this chain is fetched by address for the contract, so there's
     // no partition to build. The address is still stored and persisted, so a
     // config that later adds address-dependent events picks it up on restart.
-    | Added({fetchable: false}) => ()
-    | Duplicate(_) | Invalid =>
-      verdict->reportRejectedRegistration(
-        ~onNotice,
-        ~contractAddress=registration.address,
-        ~contractName=registration.contractName,
+    | Added({fetchable: false}) | Duplicate => ()
+    // An invalid address is simply absent from every partition, so without a
+    // notice the user sees a contract that never indexes and nothing saying why.
+    | Invalid =>
+      onNotice(
+        SkippedInvalidAddress({
+          contractName: registration.contractName,
+          contractAddress: registration.address,
+        }),
       )
     }
   }
@@ -1678,7 +1651,7 @@ let registerDynamicContracts = (
         ~nextPartitionIndex=fetchState.optimizedPartitions.nextPartitionIndex +
         newPartitions->Array.length,
         ~existingPartitions=mutExistingPartitions->Array.concat(newPartitions),
-        ~progressBlockNumber=0,
+        ~progressBlockNumber=-1,
         ~knownHeight=Pervasives.max(claimCeiling, fetchState.knownHeight),
       )
 
@@ -1722,7 +1695,7 @@ let switchDynamicContractsToClientSideFiltering = (fetchState: t, ~addressStore:
           ~maxAddrInPartition,
           ~nextPartitionIndex,
           ~existingPartitions=fetchState.optimizedPartitions.entities->Dict.valuesToArray,
-          ~progressBlockNumber=0,
+          ~progressBlockNumber=-1,
           ~knownHeight=fetchState.knownHeight,
         ),
       )

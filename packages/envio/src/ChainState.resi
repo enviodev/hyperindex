@@ -37,6 +37,7 @@ let itemContext: t => StoredItems.context
 // Where builds read from: the last block a batch has taken.
 let processingBlockNumber: t => int
 let fetchStateOf: t => FetchState.t
+let addressStore: t => AddressStore.t
 let shouldChecksum: t => bool
 let entities: t => EntityTables.t
 let resetEntities: (t, ~perChainEntities: array<Internal.entityConfig>) => unit
