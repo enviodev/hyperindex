@@ -348,8 +348,15 @@ fn row(cells: &[&str]) -> Vec<String> {
     cells.iter().map(|cell| cell.to_string()).collect()
 }
 
-fn account_with_balance(balance_type: FieldType) -> Entity {
-    entity_input(
+/// What an `Account` whose balance is `balance_type` stores: the balance
+/// column's type, the accounts with each of `balances` that a balance above
+/// zero loads, and what writing `overflowing` as a balance fails with.
+async fn balances_stored_as(
+    balance_type: FieldType,
+    balances: &[&str],
+    overflowing: &str,
+) -> (String, Vec<Vec<String>>, String) {
+    let live = Live::with(vec![entity_input(
         "Account",
         vec![
             column("id", "String"),
@@ -359,18 +366,7 @@ fn account_with_balance(balance_type: FieldType) -> Entity {
                 ..column("balance", "BigInt")
             },
         ],
-    )
-}
-
-/// What an `Account` whose balance is `balance_type` stores: the balance
-/// column's type, the accounts with each of `balances` that a balance above
-/// zero loads, and what writing `overflowing` as a balance fails with.
-async fn balances_stored_as(
-    balance_type: FieldType,
-    balances: &[&str],
-    overflowing: &str,
-) -> (String, Vec<Vec<String>>, String) {
-    let live = Live::with(vec![account_with_balance(balance_type)]);
+    )]);
     let account = live.account();
     initialize(&live).await;
     let ids = (0..balances.len())

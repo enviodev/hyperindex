@@ -179,28 +179,18 @@ static POWERS_OF_TEN: LazyLock<Vec<U256>> = LazyLock::new(|| {
     .collect()
 });
 
-/// Whether a Decimal256 holds `value` as the integer at its scale.
-pub(super) fn fits_decimal256(value: I256) -> bool {
-    value.unsigned_abs() < POWERS_OF_TEN[MAX_DECIMAL_PRECISION as usize]
-}
-
 /// RowBinary carries a Decimal as the integer at its scale, in the column's
 /// width of two's complement. Nothing on the server checks the integer against
 /// the precision, so a wider one would be stored as given.
-fn put_decimal(out: &mut Vec<u8>, value: I256, ch_type: &ChType) -> Result<()> {
-    let ChType::Decimal { precision, scale } = ch_type else {
-        bail!("{ch_type:?} is not a Decimal column");
-    };
-    let limit = POWERS_OF_TEN
-        .get(*precision as usize)
-        .context("Decimal precision is wider than ClickHouse's widest Decimal")?;
-    if value.unsigned_abs() >= *limit {
+fn put_decimal(out: &mut Vec<u8>, value: I256, precision: u32, scale: u32) -> Result<()> {
+    let width = decimal_bytes(precision)?;
+    if value.unsigned_abs() >= POWERS_OF_TEN[precision as usize] {
         bail!(
-            "{} is out of range for a {ch_type} column",
-            decimal_text(value, *scale)
+            "{} is out of range for a Decimal({precision},{scale}) column",
+            decimal_text(value, scale)
         );
     }
-    out.extend_from_slice(&value.into_raw().to_le_bytes::<32>()[..decimal_bytes(*precision)?]);
+    out.extend_from_slice(&value.into_raw().to_le_bytes::<32>()[..width]);
     Ok(())
 }
 
@@ -235,10 +225,6 @@ const DATETIME64_MIN_MS: i128 = -2_208_988_800_000;
 const DATETIME64_MAX_MS: i128 = 10_413_791_999_999;
 
 fn put_int(out: &mut Vec<u8>, value: i128, ch_type: &ChType) -> Result<()> {
-    if let ChType::Decimal { .. } = ch_type {
-        let value = I256::try_from(value).expect("every i128 fits an I256");
-        return put_decimal(out, value, ch_type);
-    }
     let (min, max) = int_bounds(ch_type)?;
     if value < min || value > max {
         if let (ChType::DateTime64, Ok(ticks)) = (ch_type, i64::try_from(value)) {
@@ -257,7 +243,9 @@ fn put_int(out: &mut Vec<u8>, value: i128, ch_type: &ChType) -> Result<()> {
 fn encode_text_scalar(out: &mut Vec<u8>, ch_type: &ChType, text: &str) -> Result<()> {
     match ch_type {
         ChType::String => put_string(out, text),
-        ChType::Decimal { scale, .. } => put_decimal(out, decimal_to_i256(text, *scale)?, ch_type)?,
+        ChType::Decimal { precision, scale } => {
+            put_decimal(out, decimal_to_i256(text, *scale)?, *precision, *scale)?
+        }
         ChType::Enum { .. } => {
             let numeric = ch_type
                 .enum_value(text)
@@ -337,9 +325,12 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
         (ChType::Enum { .. } | ChType::Decimal { .. }, Value::String(text)) => {
             encode_text_scalar(out, ch_type, text)?
         }
-        (ChType::Decimal { scale, .. }, Value::Number(number)) => {
-            put_decimal(out, decimal_to_i256(&number.to_string(), *scale)?, ch_type)?
-        }
+        (ChType::Decimal { precision, scale }, Value::Number(number)) => put_decimal(
+            out,
+            decimal_to_i256(&number.to_string(), *scale)?,
+            *precision,
+            *scale,
+        )?,
         (ChType::Enum { .. }, _) => {
             bail!("`{value}` is not a value a {ch_type:?} element can hold")
         }

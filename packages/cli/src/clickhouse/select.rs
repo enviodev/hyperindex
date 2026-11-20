@@ -3,7 +3,7 @@
 //! ClickHouse pushes nothing through `LIMIT 1 BY`; a load names the ids it
 //! wants up front, so the primary key narrows the scan to them.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 
 use super::ch_type::ChType;
 use super::ddl::Column;
@@ -232,13 +232,7 @@ impl Snap {
 /// comparison wrong without an error.
 fn decimal_bound(text: &str, scale: u32, snap: Snap) -> Result<String> {
     let text = number(text)?;
-    let past_every_decimal =
-        || anyhow!("`{text}` is past the widest number a Decimal column is compared with");
-    // `number` has checked the spelling, so the only thing parsing can refuse
-    // is a bound too wide for 256 bits.
-    let at = |rounding| {
-        row_binary::decimal_at_scale(text, scale, rounding).map_err(|_| past_every_decimal())
-    };
+    let at = |rounding| row_binary::decimal_at_scale(text, scale, rounding);
     let bound = match snap {
         Snap::Down => at(Rounding::Floor)?,
         Snap::Up => at(Rounding::Ceiling)?,
@@ -250,9 +244,6 @@ fn decimal_bound(text: &str, scale: u32, snap: Snap) -> Result<String> {
             floor
         }
     };
-    if !row_binary::fits_decimal256(bound) {
-        return Err(past_every_decimal());
-    }
     Ok(format!(
         "toDecimal256({}, {scale})",
         literal(&row_binary::decimal_text(bound, scale))
@@ -834,8 +825,7 @@ mod tests {
     }
 
     /// A bound is compared at the column's own scale, moved onto its grid the
-    /// way the operator keeps its meaning, and one no Decimal256 holds at that
-    /// scale is refused rather than left to wrap.
+    /// way the operator keeps its meaning.
     #[test]
     fn a_decimal_bound_snaps_to_the_columns_scale() {
         let bounds = [
@@ -847,7 +837,6 @@ mod tests {
             ("1.5", Snap::Exactly),
             ("1.5e3", Snap::Down),
             ("15e-3", Snap::Up),
-            ("1e80", Snap::Down),
         ]
         .map(|(text, snap)| decimal_bound(text, 2, snap).map_err(|error| error.to_string()));
         assert_eq!(
@@ -861,10 +850,6 @@ mod tests {
                 Ok("toDecimal256('1.50', 2)".to_string()),
                 Ok("toDecimal256('1500.00', 2)".to_string()),
                 Ok("toDecimal256('0.02', 2)".to_string()),
-                Err(
-                    "`1e80` is past the widest number a Decimal column is compared with"
-                        .to_string()
-                ),
             ]
         );
     }
