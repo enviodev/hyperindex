@@ -495,11 +495,15 @@ let dispatch = async (
   }
 }
 
-let markWorking = (sourceState: sourceState) => {
+// Stops the held source's height poll.
+let releaseHold = (sourceState: sourceState) =>
   switch sourceState.health {
   | Held(subscription) => subscription.unsubscribe()
   | Working | Recovering(_) => ()
   }
+
+let markWorking = (sourceState: sourceState) => {
+  sourceState->releaseHold
   sourceState.health = Working
 }
 
@@ -522,24 +526,28 @@ let isWorking = (sourceManager: t, sourceState: sourceState, ~now) =>
 // chain again, and one still far behind is held again by the next thing that
 // shows it. Polls at the reduced interval: nothing waits on the source while it
 // is held, and a source that stopped following its chain can stay stopped for
-// weeks.
+// weeks. Polls behind a live height stream too: a source that stopped following
+// its chain is exactly the one whose stream can keep its keep-alives flowing
+// while its heights stop, and while the fallback answers every wait, nothing
+// else would ever ask it again.
 let holdUntilHeightMoves = (sourceManager: t, sourceState: sourceState) =>
   switch sourceState.health {
   | Held(_) => ()
   | Working | Recovering(_) =>
-    sourceState.health = Held(
+    let subscription =
       sourceState.feed->HeightFeed.onHeightAbove(
         ~knownHeight=sourceState.feed->HeightFeed.knownHeight,
         ~interval=() => sourceManager.reducedPollingInterval,
         ~onHeight=_ => sourceState.health = Working,
-      ),
-    )
+      )
+    sourceState.health = Held(subscription)
+    subscription.distrustStream()
   }
 
 let disableSource = (sourceManager: t, sourceState: sourceState) => {
   if !sourceState.disabled {
     sourceState.disabled = true
-    sourceState->markWorking
+    sourceState->releaseHold
     sourceState.feed->HeightFeed.stop
     if sourceState.source.sourceFor === Realtime {
       // Only clear hasRealtime if no other non-disabled Realtime sources remain

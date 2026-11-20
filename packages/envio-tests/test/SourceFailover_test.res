@@ -62,7 +62,7 @@ let failOver = async (~failing: MockSource.t, ~next: MockSource.t, ~fromBlock, ~
   await next.expectItemsQueries([{fromBlock, retryCount: 3, reply: upTo(toBlock)}])
 }
 
-// What an operator is told about a source falling behind and catching up.
+// What an operator is told about a source by name, such as it falling behind.
 let sourceLogs = (indexer: IndexerRunner.t) =>
   indexer.infoAndAboveLogs()->Array.filterMap(({msg}) =>
     msg->String.startsWith("MockSource ") ? Some(msg) : None
