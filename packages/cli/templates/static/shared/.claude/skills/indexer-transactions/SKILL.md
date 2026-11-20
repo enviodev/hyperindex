@@ -24,7 +24,7 @@ import { indexer } from "envio";
 indexer.onTransaction(
   {
     name: "TreasuryActivity",
-    where: ({ chain }) => chain.id === 1 && { transaction: { from: ["0x1234...abcd"] } },
+    where: ({ chain }) => chain.id === 1 && { transaction: { from: ["0x1111111111111111111111111111111111111111"] } },
     fields: { transaction: ["input", "value", "status"], block: ["timestamp"] },
   },
   async ({ transaction, block, context }) => {
@@ -101,7 +101,7 @@ await indexer.process({
       endBlock: 10,
       simulate: [
         {
-          transaction: { from: "0x1234...abcd", to: "0xdac1...1ec7", input: "0xa9059cbb...", value: 5n, status: 1 },
+          transaction: { from: "0x1111111111111111111111111111111111111111", to: "0xdAC17F958D2ee523a2206206994597C13D831ec7", input: "0xa9059cbb", value: 5n, status: 1 },
           block: { number: 3, timestamp: 1_700_000_003 },
         },
       ],

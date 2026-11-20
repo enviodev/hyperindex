@@ -946,6 +946,20 @@ let registerOnTransaction = (
   ~handler: Internal.onTransactionArgs => promise<unit>,
   ~getChainsObject: Config.t => dict<unknown>,
 ) => {
+  if typeof(name) !== #string || name === "" {
+    JsError.throwWithMessage(
+      `\`indexer.onTransaction\` expected \`name\` to be a non-empty string, but got ${(typeof(
+          name,
+        ) :> string)}.`,
+    )
+  }
+  if typeof(handler) !== #function {
+    JsError.throwWithMessage(
+      `\`indexer.onTransaction("${name}")\` expected a handler function as the second argument, but got ${(typeof(
+          handler,
+        ) :> string)}.`,
+    )
+  }
   withRegistration(registration => {
     let config = registration.config
     if config.ecosystem.name !== Evm {

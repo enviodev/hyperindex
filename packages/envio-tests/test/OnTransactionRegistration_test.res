@@ -56,6 +56,27 @@ describe("onTransaction registration errors", () => {
     });
   });
 
+  it("names a missing name or handler at the call that registered it", (t) => {
+    const errorOfCall = (name: unknown, handler: unknown) => {
+      try {
+        indexer.onTransaction({ name: name as any, where: () => true }, handler as any);
+        return "no error";
+      } catch (error) {
+        return (error as Error).message;
+      }
+    };
+    t.expect({
+      noName: errorOfCall(undefined, async () => {}),
+      emptyName: errorOfCall("", async () => {}),
+      noHandler: errorOfCall("bad", undefined),
+    }).toEqual({
+      noName: "\\\`indexer.onTransaction\\\` expected \\\`name\\\` to be a non-empty string, but got undefined.",
+      emptyName: "\\\`indexer.onTransaction\\\` expected \\\`name\\\` to be a non-empty string, but got string.",
+      noHandler:
+        '\\\`indexer.onTransaction("bad")\\\` expected a handler function as the second argument, but got undefined.',
+    });
+  });
+
   it("hands \\\`where\\\` each contract's name and abi", (t) => {
     let seen: unknown;
     indexer.onTransaction(
