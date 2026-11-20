@@ -17,6 +17,11 @@ type sourceState = {
   // Timestamp (ms) when this source last failed during executeQuery.
   // Used to decide when to attempt recovery to this source.
   mutable lastFailedAt: option<float>,
+  // Set once the source stays behind the head long enough to fail a query over,
+  // and held until its own height reaches the block it couldn't serve. The
+  // recovery timeout alone would hand queries back to a source that stopped
+  // following its chain every time it ran out, for as long as the indexer runs.
+  mutable behindHeadHold: option<HeightFeed.subscription>,
   requestStats: dict<requestStatAgg>,
 }
 
@@ -388,6 +393,7 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
         ),
         disabled: false,
         lastFailedAt: None,
+        behindHeadHold: None,
         requestStats,
       }
     }),
@@ -483,9 +489,39 @@ let dispatch = async (
   }
 }
 
+let releaseBehindHeadHold = (sourceState: sourceState) =>
+  switch sourceState.behindHeadHold {
+  | Some(subscription) =>
+    sourceState.behindHeadHold = None
+    subscription.unsubscribe()
+  | None => ()
+  }
+
+// Polls at the reduced interval: nothing waits on the source while it is held,
+// and a source that stopped following its chain can stay stopped for weeks.
+let holdUntilHeightReaches = (sourceManager: t, sourceState: sourceState, ~blockNumber) =>
+  if sourceState.behindHeadHold->Option.isNone {
+    let released = ref(false)
+    let subscription = sourceState.feed->HeightFeed.onHeightAbove(
+      ~knownHeight=blockNumber - 1,
+      ~interval=() => sourceManager.reducedPollingInterval,
+      ~onHeight=_ => {
+        released := true
+        sourceState.behindHeadHold = None
+      },
+    )
+
+    // A height the source already reported past the block answers on the spot:
+    // the instance that served the query was behind its siblings, not the source.
+    if !released.contents {
+      sourceState.behindHeadHold = Some(subscription)
+    }
+  }
+
 let disableSource = (sourceManager: t, sourceState: sourceState) => {
   if !sourceState.disabled {
     sourceState.disabled = true
+    sourceState->releaseBehindHeadHold
     sourceState.feed->HeightFeed.stop
     if sourceState.source.sourceFor === Realtime {
       // Only clear hasRealtime if no other non-disabled Realtime sources remain
@@ -523,10 +559,12 @@ let getNextSources = (sourceManager: t, ~isRealtime, ~excludedSources=?) => {
       | None => false
       }
       if !isExcluded {
-        let isWorking = switch sourceState.lastFailedAt {
-        | Some(failedAt) => now -. failedAt >= sourceManager.recoveryTimeout
-        | None => true
-        }
+        let isWorking =
+          sourceState.behindHeadHold->Option.isNone &&
+            switch sourceState.lastFailedAt {
+            | Some(failedAt) => now -. failedAt >= sourceManager.recoveryTimeout
+            | None => true
+            }
         switch getSourceRole(
           ~sourceFor=sourceState.source.sourceFor,
           ~isRealtime,
@@ -680,6 +718,9 @@ let retryBehindHead = async (
     )
   }
   logger->Logger.logAt(level, msg, ~params={"retry": retry, "backOffMilliseconds": backoffMillis})
+  if retry >= behindHeadFailoverRetries {
+    sourceManager->holdUntilHeightReaches(sourceState, ~blockNumber)
+  }
   await sourceManager->backoffBeforeRetry(
     sourceState,
     ~retry,
@@ -1083,6 +1124,7 @@ let executeQuery = async (
       sourceState->recordRequestStats(response.requestStats)
       validateResponsePage(~method="getItems", ~page=response.page)
       sourceState.lastFailedAt = None
+      sourceState->releaseBehindHeadHold
 
       // The response carries a fresh height for exactly this source, so during a
       // long backfill (when nothing is waiting on the feed) it keeps the
@@ -1258,6 +1300,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
           ~requiredBlockNumbers=blockNumbers,
         )
         sourceState.lastFailedAt = None
+        sourceState->releaseBehindHeadHold
         responseRef := Some(data)
       | Error(exn) => throw(exn)
       }

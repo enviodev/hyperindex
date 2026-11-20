@@ -118,6 +118,53 @@ describe("Source failover", () => {
     },
   )
 
+  // https://github.com/enviodev/hyperindex/issues/1829
+  scenario->Scenario.it(
+    "Keeps a source that fell behind off queries until its own height reaches the block it missed",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~sourceTiming={
+      recoveryTimeout: 200.,
+      newBlockStallTimeoutRealtime: 10,
+      stalledPollingInterval: 50,
+      reducedPollingInterval: 1_000,
+    },
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
+      // Sync stops following the chain at 100. The fallback, recruited once the
+      // wait stalls, reports where the chain really is.
+      sync.setAutoHeight(100)
+      fallback.setAutoHeight(200)
+      await indexer.advanceTime(10)
+      let early = await Scenario.failThroughBackoff(
+        ~indexer,
+        ~source=sync,
+        ~alsoWatching=[fallback],
+        ~reply=Fail(Source.SourceBehindHead({blockNumber: 101, requestStats: []})),
+        ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 50],
+      )
+      await fallback.expectItemsQueries([{fromBlock: 101, retryCount: 13, reply: upTo(200)}])
+
+      // Long past the recovery timeout, but sync's height is still 100.
+      await indexer.advanceTime(200)
+      fallback.setAutoHeight(201)
+      await indexer.advanceTime(50)
+      await fallback.expectItemsQueries([{fromBlock: 201, reply: upTo(201)}])
+
+      sync.setAutoHeight(201)
+      await indexer.advanceTime(1_000)
+      fallback.setAutoHeight(202)
+      await indexer.advanceTime(50)
+      await sync.expectItemsQueries([{fromBlock: 202, reply: LeavePending}])
+      t.expect((early, fallback.pendingItemsQueries)).toEqual(([], []))
+    },
+  )
+
   scenario->Scenario.it(
     "Stays on a healthy primary however short the recovery timeout",
     ~sources=[
