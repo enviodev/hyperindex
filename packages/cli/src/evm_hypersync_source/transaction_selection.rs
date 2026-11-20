@@ -59,7 +59,11 @@ pub(crate) fn build(registrations: &[&OnTransactionRegistration]) -> BuiltTransa
     }
     // Matching the returned rows reads their sender and recipient whatever
     // the handlers list.
-    let call_fields = (1 << EvmTxField::From as u64) | (1 << EvmTxField::To as u64);
+    let call_fields = if registrations.is_empty() {
+        0
+    } else {
+        (1 << EvmTxField::From as u64) | (1 << EvmTxField::To as u64)
+    };
     let mut transaction_fields = tx_fields_in(transaction_mask | call_fields);
     if filters_sighash {
         push_unique(&mut transaction_fields, TransactionField::Sighash);
@@ -94,6 +98,19 @@ mod tests {
                 | (1 << EvmTxField::From as u64)) as f64,
             block_field_mask: 0.0,
         }
+    }
+
+    // An indexer with no transaction handler asks for no transaction field.
+    #[test]
+    fn no_registration_selects_nothing() {
+        assert_eq!(
+            build(&[]),
+            BuiltTransactionSelection {
+                filters: vec![],
+                transaction_fields: vec![],
+                block_fields: vec![],
+            }
+        );
     }
 
     #[test]
