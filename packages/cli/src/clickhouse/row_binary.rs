@@ -43,7 +43,23 @@ pub(super) fn put_string(out: &mut Vec<u8>, value: &str) {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Rounding {
+    /// As Postgres rounds a numeric(P, S): the entity lands in both stores, and
+    /// ClickHouse's own cast, which truncates, would leave this one an ulp under
+    /// the other.
+    HalfAwayFromZero,
+    Floor,
+    Ceiling,
+}
+
 fn decimal_to_i256(text: &str, scale: u32) -> Result<I256> {
+    decimal_at_scale(text, scale, Rounding::HalfAwayFromZero)
+}
+
+/// The integer a decimal is at `scale` places, the digits past them rounded
+/// as `rounding` says.
+pub(super) fn decimal_at_scale(text: &str, scale: u32, rounding: Rounding) -> Result<I256> {
     let text = text.trim();
     if text.is_empty() {
         bail!("a Decimal column cannot hold an empty value");
@@ -97,13 +113,13 @@ fn decimal_to_i256(text: &str, scale: u32) -> Result<I256> {
         bail!("`{text}` is not a decimal");
     }
     let shift = i64::from(scale) + i64::from(exponent) - kept_frac as i64;
-    // Rounded half away from zero on the first dropped digit, as Postgres
-    // rounds a numeric(P, S) — the entity lands in both stores, and ClickHouse's
-    // own cast, which truncates, would leave this one an ulp under the other.
-    let mut round_away = frac_part
+    // Half away from zero looks at the first dropped digit alone; a floor or a
+    // ceiling at whether any dropped digit is other than zero.
+    let mut half_or_more = frac_part
         .as_bytes()
         .get(kept_frac)
         .is_some_and(|d| *d >= b'5');
+    let mut dropped_any = frac_part.as_bytes()[kept_frac..].iter().any(|d| *d != b'0');
     let ten = U256::from(10u8);
     match shift.cmp(&0) {
         std::cmp::Ordering::Greater if !magnitude.is_zero() => {
@@ -117,16 +133,23 @@ fn decimal_to_i256(text: &str, scale: u32) -> Result<I256> {
         std::cmp::Ordering::Less => {
             for _ in 0..-shift {
                 if magnitude.is_zero() {
-                    round_away = false;
+                    half_or_more = false;
                     break;
                 }
-                round_away = magnitude % ten >= U256::from(5u8);
+                let digit = magnitude % ten;
+                half_or_more = digit >= U256::from(5u8);
+                dropped_any |= !digit.is_zero();
                 magnitude /= ten;
             }
         }
         std::cmp::Ordering::Equal => {}
     }
-    if round_away {
+    let away_from_zero = match rounding {
+        Rounding::HalfAwayFromZero => half_or_more,
+        Rounding::Floor => negative && dropped_any,
+        Rounding::Ceiling => !negative && dropped_any,
+    };
+    if away_from_zero {
         magnitude = magnitude
             .checked_add(U256::from(1u8))
             .context("decimal overflows the column's precision")?;
@@ -155,6 +178,11 @@ static POWERS_OF_TEN: LazyLock<Vec<U256>> = LazyLock::new(|| {
     .take(MAX_DECIMAL_PRECISION as usize + 1)
     .collect()
 });
+
+/// Whether a Decimal256 holds `value` as the integer at its scale.
+pub(super) fn fits_decimal256(value: I256) -> bool {
+    value.unsigned_abs() < POWERS_OF_TEN[MAX_DECIMAL_PRECISION as usize]
+}
 
 /// RowBinary carries a Decimal as the integer at its scale, in the column's
 /// width of two's complement. Nothing on the server checks the integer against
@@ -583,7 +611,7 @@ impl<'a> Reader<'a> {
 
 /// A Decimal's integer at its scale, rendered the way Postgres renders a
 /// `numeric(P, S)`: every one of its `scale` places written out.
-fn decimal_text(value: I256, scale: u32) -> String {
+pub(super) fn decimal_text(value: I256, scale: u32) -> String {
     let negative = value.is_negative();
     let digits = value.unsigned_abs().to_string();
     let scale = scale as usize;
