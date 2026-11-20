@@ -54,6 +54,7 @@ type pool
 type poolOptions = {
   entities: dict<Internal.entityConfig>,
   pgSchema: string,
+  logger: Logger.t,
 }
 
 @module("./db.js")
@@ -74,6 +75,7 @@ type serverOptions = {
   // probe's body, so an operator reads it wherever the failed probe surfaces
   // rather than by correlating logs.
   checkCompatible?: unit => promise<Nullable.t<string>>,
+  logger: Logger.t,
 }
 
 @module("./server.js")
@@ -128,7 +130,7 @@ let sourceFilesIn = async (~absoluteDir, ~relativePath) => {
   ->Array.toSorted(String.compare)
 }
 
-let loadOrThrow = async (~projectRoot, ~relativePath) => {
+let loadOrThrow = async (~projectRoot, ~relativePath, ~logger) => {
   let absolute = NodeJs.Path.resolve([projectRoot, relativePath])->NodeJs.Path.toString
   // A missing path deliberately falls through to the single-module import, so
   // the error still names the file and says what Node made of it.
@@ -140,7 +142,7 @@ let loadOrThrow = async (~projectRoot, ~relativePath) => {
   let relativePaths = if isDir {
     let files = await sourceFilesIn(~absoluteDir=absolute, ~relativePath)
     if files->Utils.Array.isEmpty {
-      Logging.warn(
+      logger->ResolverLog.warn(
         `'${relativePath}' is a directory with no .js, .mjs or .ts files in it, so no resolvers were loaded.`,
       )
     }
@@ -178,11 +180,12 @@ let loadOrThrow = async (~projectRoot, ~relativePath) => {
 // parse -- it registers no custom fields rather than refusing to start.
 let emptyManifest: JSON.t = %raw(`{ schemaVersion: 1, resolvers: [], types: [] }`)
 
-let writeManifest = async (~config: Config.t, ~projectRoot) => {
+let writeManifest = async (~config: Config.t, ~projectRoot, ~logger=?) => {
+  let logger = logger->ResolverLog.orDefault
   let {manifest, sdl} = switch config.resolvers {
   | None => {manifest: emptyManifest, sdl: ""}
   | Some(relativePath) =>
-    await loadOrThrow(~projectRoot, ~relativePath)
+    await loadOrThrow(~projectRoot, ~relativePath, ~logger)
     let bundle = buildRegisteredManifest()
     checkCollisions(bundle.manifest, schemaNamesOf(config))
     bundle
@@ -229,11 +232,12 @@ let handlerUrlOrThrow = () =>
 
 /// The Hasura metadata for this project's resolvers, as `envio resolvers
 /// metadata` prints it.
-let metadataJson = async (~config: Config.t, ~projectRoot, ~handlerUrl) => {
+let metadataJson = async (~config: Config.t, ~projectRoot, ~handlerUrl, ~logger=?) => {
+  let logger = logger->ResolverLog.orDefault
   let manifest = switch config.resolvers {
   | None => emptyManifest
   | Some(relativePath) =>
-    await loadOrThrow(~projectRoot, ~relativePath)
+    await loadOrThrow(~projectRoot, ~relativePath, ~logger)
     let bundle = buildRegisteredManifest()
     checkCollisions(bundle.manifest, schemaNamesOf(config))
     bundle.manifest
@@ -248,13 +252,13 @@ let metadataJson = async (~config: Config.t, ~projectRoot, ~handlerUrl) => {
 /// Strict where `serve` is forgiving. Serving keeps answering when an apply
 /// fails, because Hasura simply sends it nothing until the metadata lands; a
 /// deploy step that cannot land it has to be a failure the pipeline sees.
-let migrate = async (~config: Config.t, ~projectRoot) => {
+let migrate = async (~config: Config.t, ~projectRoot, ~logger=?) => {
   let (endpoint, adminSecret) = switch hasuraTarget() {
   | Ok(target) => target
   | Error(message) => JsError.throwWithMessage(message)
   }
   let handlerUrl = handlerUrlOrThrow()
-  let metadata = await metadataJson(~config, ~projectRoot, ~handlerUrl)
+  let metadata = await metadataJson(~config, ~projectRoot, ~handlerUrl, ~logger?)
   await applyResolverMetadata({endpoint, adminSecret, metadata})
 }
 
@@ -311,6 +315,18 @@ external unsafe: (sqlFn, string, array<JSON.t>) => promise<array<{"n": int}>> = 
 external readConfigRows: (sqlFn, string, array<JSON.t>) => promise<array<{"config": string}>> =
   "unsafe"
 
+// Created by the Rust storage, which owns the indexer's own tables.
+let envioInfoTableName = "envio_info"
+
+// Postgres' SQLSTATE for undefined_table: what a read gets from a schema an
+// envio without the table initialized.
+@get external getSqlStateCode: JsExn.t => option<string> = "code"
+let isUndefinedTable = exn =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(e) => e->getSqlStateCode === Some("42P01")
+  | _ => false
+  }
+
 // The compat check the indexer runs on resume, run instead against the database
 // a resolver process was pointed at.
 //
@@ -325,7 +341,7 @@ let compatibilityOf = (~pool, ~pgSchema, ~envioInfo) =>
     let sql = pool->forResolver({name: "readyz", timeoutMs: readyzProbeMs})->sqlOf
     switch await readConfigRows(
       sql,
-      `SELECT "config" FROM "${pgSchema}"."${InternalTable.EnvioInfo.table.tableName}" LIMIT 1;`,
+      `SELECT "config" FROM "${pgSchema}"."${envioInfoTableName}" LIMIT 1;`,
       [],
     ) {
     | rows =>
@@ -346,7 +362,7 @@ let compatibilityOf = (~pool, ~pgSchema, ~envioInfo) =>
         }
       }
     | exception exn =>
-      InternalTable.isUndefinedTable(exn)
+      isUndefinedTable(exn)
         ? Nullable.make(
             "The database has no envio_info table, so it was not initialized by this indexer.",
           )
@@ -354,7 +370,12 @@ let compatibilityOf = (~pool, ~pgSchema, ~envioInfo) =>
     }
   }
 
-type running = {server: server, pool: pool, shutdown: unit => promise<unit>}
+type running = {
+  server: server,
+  pool: pool,
+  shutdown: unit => promise<unit>,
+  logger: Logger.t,
+}
 
 let serve = async (
   ~config: Config.t,
@@ -363,7 +384,9 @@ let serve = async (
   ~exposeErrors=?,
   ~pgSchema=Env.Db.publicSchema,
   ~envioInfo=Config.getPublicConfigJson()->Config.toEnvioInfo,
+  ~logger=?,
 ) => {
+  let logger = logger->ResolverLog.orDefault
   let exposeErrors = exposeErrors->Option.getOr(Env.Resolvers.exposeErrors())
   let relativePath = switch config.resolvers {
   | Some(relativePath) => relativePath
@@ -372,7 +395,7 @@ let serve = async (
       "There is nothing to serve: config.yaml has no `resolvers:` entry. Add one naming the module that declares them, e.g. `resolvers: src/Resolvers.ts`.",
     )
   }
-  await loadOrThrow(~projectRoot, ~relativePath)
+  await loadOrThrow(~projectRoot, ~relativePath, ~logger)
 
   // Checked here too, not only at manifest time: `envio dev` never writes the
   // artefacts, and a collision it doesn't catch becomes a schema serve refuses.
@@ -381,7 +404,7 @@ let serve = async (
 
   let resolvers = getRegisteredResolvers()
   if resolvers->Utils.Array.isEmpty {
-    Logging.warn(
+    logger->ResolverLog.warn(
       `'${relativePath}' declared no resolvers, so this process will answer nothing. Every resolver has to be created with createResolver at module scope to register.`,
     )
   }
@@ -405,7 +428,7 @@ let serve = async (
   | Error(_) => ()
   }
 
-  let pool = createResolverPoolFromEnv({entities, pgSchema})
+  let pool = createResolverPoolFromEnv({entities, pgSchema, logger})
   // The pool is opened before the socket, and a bind that fails -- the port is
   // already taken -- returns nothing, so no caller can reach `shutdown` to
   // release it later. It has to go back here or not at all.
@@ -417,6 +440,7 @@ let serve = async (
     actionSecret: ?Env.Resolvers.actionSecret(),
     privateKeys: Env.Resolvers.privateKeys(),
     checkCompatible: compatibilityOf(~pool, ~pgSchema, ~envioInfo),
+    logger,
   }) catch {
   | exn =>
     try await pool->endPool catch {
@@ -424,7 +448,7 @@ let serve = async (
     }
     throw(exn)
   }
-  Logging.info(
+  logger->ResolverLog.info(
     `Serving ${resolvers
       ->Array.length
       ->Int.toString} custom resolvers on port ${server.port->Int.toString}`,
@@ -449,13 +473,13 @@ let serve = async (
     // until the metadata lands, Hasura simply sends nothing here.
     switch await applyResolverMetadata({endpoint, adminSecret, metadata}) {
     | {applied, reasons} =>
-      Logging.info(
+      logger->ResolverLog.info(
         applied
           ? `Registered custom resolvers with Hasura: ${reasons->Array.join("; ")}`
           : "Hasura already publishes these custom resolvers; nothing to register",
       )
     | exception exn =>
-      Logging.error(
+      logger->ResolverLog.error(
         `Failed to register the custom resolvers with Hasura, so Hasura will not route to this process yet: ${exn
           ->Utils.prettifyExn
           ->Obj.magic}. ${intervalMs === 0
@@ -476,13 +500,13 @@ let serve = async (
         // `clear_metadata`, so a re-initialised indexer deletes these actions
         // while this process keeps running.
         onApplied: reasons =>
-          Logging.warn(
+          logger->ResolverLog.warn(
             `Hasura had lost the custom resolvers and they were restored: ${reasons->Array.join(
                 "; ",
               )}`,
           ),
         onError: exn =>
-          Logging.error(
+          logger->ResolverLog.error(
             `Failed to re-assert the custom resolver metadata: ${exn
               ->Utils.prettifyExn
               ->Obj.magic}`,
@@ -490,7 +514,7 @@ let serve = async (
       })
     }
   | Error(message) =>
-    Logging.info(
+    logger->ResolverLog.info(
       `${message} Nothing was registered with Hasura; this process still answers /hasura-action and /resolve.`,
     )
     () => ()
@@ -520,7 +544,7 @@ let serve = async (
       promise
     }
 
-  {server, pool, shutdown}
+  {server, pool, shutdown, logger}
 }
 
 /// Wires SIGTERM/SIGINT to `shutdown`, so a rolling update drains rather than
@@ -529,7 +553,7 @@ let serve = async (
 let handleSignals = (running: running) =>
   ["SIGTERM", "SIGINT"]->Array.forEach(signal =>
     onSignal(signal, () => {
-      Logging.info(`Received ${signal}, draining custom resolvers...`)
+      running.logger->ResolverLog.info(`Received ${signal}, draining custom resolvers...`)
       let _ = (
         async () => {
           await running.shutdown()
@@ -596,13 +620,14 @@ let stopChild = (child): promise<unit> =>
     }
   })
 
-let startForDev = async (~config: Config.t, ~projectRoot) => {
+let startForDev = async (~config: Config.t, ~projectRoot, ~logger=?) => {
+  let logger = logger->ResolverLog.orDefault
   switch config.resolvers {
   | None => None
   // Set when you are running `envio resolvers` and envio-serve yourself —
   // under a debugger, or with env of your own.
   | Some(_) if processEnv->Dict.get("ENVIO_RESOLVERS_EXTERNAL") == Some("true") =>
-    Logging.info(
+    logger->ResolverLog.info(
       "ENVIO_RESOLVERS_EXTERNAL=true — not starting resolvers here. Run `envio resolvers` in another terminal, and envio-serve against .envio/serve-project.",
     )
     None
@@ -659,17 +684,17 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
     resolverChild->onChildExit("exit", (code, signal) =>
       switch (code->Nullable.toOption, signal->Nullable.toOption) {
       | (Some(0), _) => ()
-      | (_, Some(s)) => Logging.info(`Custom resolvers stopped (${s}).`)
+      | (_, Some(s)) => logger->ResolverLog.info(`Custom resolvers stopped (${s}).`)
       | (Some(c), _) =>
-        Logging.error(
+        logger->ResolverLog.error(
           `The custom resolvers process exited with code ${c->Int.toString}. The indexer keeps running; fix the resolver and run \`envio dev\` again.`,
         )
-      | _ => Logging.info("Custom resolvers stopped.")
+      | _ => logger->ResolverLog.info("Custom resolvers stopped.")
       }
     )
 
     if !(await waitForHealthz(~port)) {
-      Logging.warn(
+      logger->ResolverLog.warn(
         `The custom resolvers process did not answer /healthz on port ${port->Int.toString} within ${(healthzTimeoutMs / 1000)
             ->Int.toString}s. Its own output above says why.`,
       )
@@ -678,7 +703,7 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
     // Rewritten first: the copy below hands serve whatever `.envio/resolvers.json`
     // holds, and that is whatever the last codegen left. A resolver edited since
     // then would be served against a manifest describing the previous shape.
-    await writeManifest(~config, ~projectRoot)
+    await writeManifest(~config, ~projectRoot, ~logger)
 
     let serveDir = NodeJs.Path.resolve([projectRoot, ".envio", "serve-project"])
     await NodeJs.Fs.Promises.mkdir(~path=serveDir, ~options={recursive: true})
@@ -715,7 +740,9 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
         )
         child->unref
         serveChild := Some(child)
-        Logging.info(`Custom resolvers ready — GraphQL with custom fields on port ${servePort}`)
+        logger->ResolverLog.info(
+          `Custom resolvers ready — GraphQL with custom fields on port ${servePort}`,
+        )
       }
 
       // Serve refuses to boot against a database with no tables, and the
@@ -725,11 +752,14 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
       let pool = createResolverPoolFromEnv({
         entities: Dict.make(),
         pgSchema: Env.Db.publicSchema,
+        logger,
       })
       let sql = pool->forResolver({name: "dev-wait", timeoutMs: 5000})->sqlOf
       let rec waitForTables = async attempt =>
         if attempt >= 120 {
-          Logging.warn("Timed out waiting for the indexer's tables; starting envio-serve anyway.")
+          logger->ResolverLog.warn(
+            "Timed out waiting for the indexer's tables; starting envio-serve anyway.",
+          )
           startServe()
           await pool->endPool
         } else {
@@ -752,7 +782,7 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
       // -- so its rejection has to be caught here or it is unhandled.
       waitForTables(0)
       ->Promise.catch(exn => {
-        Logging.warn(
+        logger->ResolverLog.warn(
           `Stopped waiting for the resolver tables: ${exn->Utils.prettifyExn->Obj.magic}`,
         )
         Promise.resolve()
@@ -762,9 +792,9 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
       // Not a warning when Hasura is running: it publishes the resolvers as
       // actions, so they are already in the endpoint a developer opens.
       if Env.Hasura.enabled {
-        Logging.info(`Custom resolvers are published by Hasura as actions. Set ENVIO_SERVE_BIN to serve them through envio-serve instead.`)
+        logger->ResolverLog.info(`Custom resolvers are published by Hasura as actions. Set ENVIO_SERVE_BIN to serve them through envio-serve instead.`)
       } else {
-        Logging.warn(
+        logger->ResolverLog.warn(
           `Resolvers are declared, but ENVIO_HASURA=false and ENVIO_SERVE_BIN is unset, so nothing publishes them. ` ++
           `Drop ENVIO_HASURA=false to have Hasura serve them as actions, or point ENVIO_SERVE_BIN at an envio-serve binary and run it against ${serveDir->NodeJs.Path.toString}.`,
         )

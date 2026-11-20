@@ -63,6 +63,9 @@ importers:
       express:
         specifier: 4.22.3
         version: 4.22.3
+      postgres:
+        specifier: 3.4.8
+        version: 3.4.8
       rescript-schema:
         specifier: 9.5.1
         version: 9.5.1(rescript@12.3.1)

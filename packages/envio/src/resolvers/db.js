@@ -19,7 +19,7 @@
 import postgres from "postgres";
 import { Db as DbEnv, Resolvers as ResolversEnv } from "../Env.res.mjs";
 import { ResolverError } from "./errors.js";
-import { warn as logWarn } from "../Logging.res.mjs";
+import { fromJs as resolverLogger, warn as logWarn } from "./ResolverLog.res.mjs";
 import {
   decodeChainHeights,
   decodeRows,
@@ -125,7 +125,7 @@ export function createResolverPool(options) {
       "INVALID_OPTION"
     );
   }
-  const { connection, entities, pgSchema, poolerBacked, onWarn } = options;
+  const { connection, entities, pgSchema, poolerBacked, onWarn, logger } = options;
 
   if (!connection || typeof connection !== "object") {
     throw new ResolverDbError(
@@ -179,7 +179,10 @@ export function createResolverPool(options) {
     onnotice: () => {},
   });
 
-  const warn = typeof onWarn === "function" ? onWarn : logWarn;
+  const warn =
+    typeof onWarn === "function"
+      ? onWarn
+      : (message) => logWarn(resolverLogger(logger), message);
   const gate = new Gate(poolSize);
   // Kept on the pool, not the handle: a handle is per request, so warning
   // there would repeat the same line for every request a wide resolver serves.
@@ -359,5 +362,6 @@ export function createResolverPoolFromEnv(options) {
       options?.poolWaitTimeoutMs ?? ResolversEnv.poolWaitTimeoutMs(),
     poolerBacked: options?.poolerBacked ?? ResolversEnv.poolerBacked(),
     onWarn: options?.onWarn,
+    logger: options?.logger,
   });
 }

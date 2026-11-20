@@ -70,15 +70,17 @@ export const ping = createResolver({
 `
 
 let pgSchema = TestPgSchema.make()
-let sql = PgStorage.makeClient()
+let logger = Logger.makeInMemory()
+let sql = TestPgSchema.client(~logger, ~pgSchema, ~config)
 
 Async.beforeAll(async () => {
   mkdirSync(pathJoin([projectRoot, "src"]), {"recursive": true})
   writeFileSync(pathJoin([projectRoot, "src", "Resolvers.ts"]), resolverSource)
 
-  let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false)
-  let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
+  let storage = Storage.makeStorageFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled=false)
+  let persistence = Storage.makePersistenceFromConfig(~config, ~logger, ~storage)
   await persistence->Persistence.init(
+    ~logger,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
     ~envioInfo,
@@ -86,16 +88,24 @@ Async.beforeAll(async () => {
     ~runCommand=Some("envio dev"),
     ~reset=true,
   )
+  await storage.close()
 })
 
 Async.afterAll(async () => {
   await sql->TestPgSchema.drop(~pgSchema)
-  await sql->Postgres.endSql
+  await sql->StorageClient.close
 })
 
 describe("resolver readiness", () => {
   Async.it("takes traffic only while the database matches the build serving it", async t => {
-    let running = await ResolverProcess.serve(~config, ~projectRoot, ~pgSchema, ~envioInfo, ~port=0)
+    let running = await ResolverProcess.serve(
+      ~config,
+      ~projectRoot,
+      ~pgSchema,
+      ~envioInfo,
+      ~port=0,
+      ~logger,
+    )
     let url = `http://127.0.0.1:${running.server.port->Int.toString}/readyz`
 
     let matching = await probe(url)
@@ -107,12 +117,15 @@ describe("resolver readiness", () => {
     | Object(dict) => dict->Dict.set("name", JSON.Encode.string("something-else"))
     | _ => ()
     }
-    await sql->InternalTable.EnvioInfo.write(~pgSchema, ~envioInfo=drifted)
+    let _ = await sql->Sql.queryForTests(
+      `UPDATE "${pgSchema}"."envio_info" SET "config" = $1;`,
+      ~params=[drifted->JSON.stringify->(Utils.magic: string => unknown)],
+    )
     let mismatched = await probe(url)
 
     // No `envio_info` at all is the same answer: the schema was made by a
     // version that did not record one, so nothing can be compared.
-    let _ = await sql->Postgres.unsafe(`DELETE FROM "${pgSchema}"."envio_info";`)
+    let _ = await sql->Sql.queryForTests(`DELETE FROM "${pgSchema}"."envio_info";`)
     let uninitialised = await probe(url)
 
     await running.shutdown()

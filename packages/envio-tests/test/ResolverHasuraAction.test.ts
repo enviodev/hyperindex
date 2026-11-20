@@ -8,6 +8,9 @@ import {
 } from "envio";
 import { createResolverPoolFromEnv } from "envio/src/resolvers/db.js";
 import { startResolverServer } from "envio/src/resolvers/server.js";
+import { makeInMemory } from "envio/src/Logger.res.mjs";
+
+const logger = makeInMemory();
 
 // Hasura's action contract, over real HTTP. It is not envio-serve's: the result
 // is returned bare rather than under `data`, and a failure is a status code
@@ -115,8 +118,8 @@ const action = async (body: unknown) => {
 };
 
 beforeAll(async () => {
-  pool = createResolverPoolFromEnv({ entities: {}, pgSchema: "public" });
-  server = await startResolverServer({
+  pool = createResolverPoolFromEnv({ logger, entities: {}, pgSchema: "public" });
+  server = await startResolverServer({ logger,
     resolvers,
     pool,
     port: 0,
@@ -213,7 +216,7 @@ describe("resolver /hasura-action", () => {
   // And the claim is believed once something can vouch for it, which is what
   // makes an admin resolver reachable through Hasura at all.
   it("answers an admin resolver for Hasura once a secret is configured", async () => {
-    const guarded = await startResolverServer({
+    const guarded = await startResolverServer({ logger,
       resolvers,
       pool,
       port: 0,
@@ -433,7 +436,7 @@ describe("resolver /hasura-action", () => {
     // The role arrives in the request body, so it is the caller's claim, not a
     // fact. With a secret configured, only something Hasura sent can be
     // believed -- and an unauthenticated caller can no longer assert `admin`.
-    const guarded = await startResolverServer({
+    const guarded = await startResolverServer({ logger,
       resolvers,
       pool,
       port: 0,

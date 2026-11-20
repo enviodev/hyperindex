@@ -35,6 +35,18 @@ let getQueryFieldOrThrow = (~table: Table.table, ~entityName, ~apiFieldName, ~wh
     )
   }
 
+// Memoized per field: rescript-schema compiles and caches operations on the
+// schema instance, so building S.array(fieldSchema) per `_in` filter would
+// recompile the serializer on every call.
+let arrayFieldSchema: Table.queryField => S.t<
+  unknown,
+> = Utils.WeakMap.memoize((queryField: Table.queryField) =>
+  switch queryField.fieldType {
+  | Bytea => Utils.Schema.bytesArray->S.toUnknown
+  | _ => S.array(queryField.fieldSchema)->S.toUnknown
+  }
+)
+
 let bindOrThrow = (
   ~queryField: Table.queryField,
   ~entityName,
@@ -45,7 +57,7 @@ let bindOrThrow = (
   ~params: array<JSON.t>,
 ) => {
   let json = try value->S.reverseConvertToJsonOrThrow(
-    isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
+    isArray ? queryField->arrayFieldSchema : queryField.fieldSchema,
   ) catch {
   | exn =>
     let reason = switch exn {
@@ -239,8 +251,22 @@ type chainHeight = {
 // `envio_chains` is read by column rather than with `Table.pgRowsSchema`: the
 // table's BIGINT columns come back from the driver as strings, which is why
 // every other raw read of it casts on the way out. Only the watermark columns
-// are selected, so none of those are in the result at all.
-let chainColumns: array<InternalTable.Chains.field> = [
+// are selected, so none of those are in the result at all. The table is
+// created by the Rust storage, which is where these names come from.
+let chainsTableName = "envio_chains"
+
+type chainColumn = [
+  | #id
+  | #ecosystem
+  | #start_block
+  | #end_block
+  | #source_block
+  | #buffer_block
+  | #progress_block
+  | #ready_at
+]
+
+let chainColumns: array<chainColumn> = [
   #id,
   #ecosystem,
   #start_block,
@@ -264,27 +290,21 @@ type chainRow = {
 
 let chainRowsSchema = S.array(
   S.object((s): chainRow => {
-    id: s.field((#id: InternalTable.Chains.field :> string), S.unknown),
-    ecosystem: s.field((#ecosystem: InternalTable.Chains.field :> string), S.string),
-    startBlock: s.field((#start_block: InternalTable.Chains.field :> string), S.int),
-    endBlock: s.field((#end_block: InternalTable.Chains.field :> string), S.null(S.int)),
-    sourceBlock: s.field((#source_block: InternalTable.Chains.field :> string), S.int),
-    bufferBlock: s.field((#buffer_block: InternalTable.Chains.field :> string), S.int),
-    progressBlock: s.field((#progress_block: InternalTable.Chains.field :> string), S.int),
-    readyAt: s.field(
-      (#ready_at: InternalTable.Chains.field :> string),
-      S.null(Utils.Schema.dbDate),
-    ),
+    id: s.field((#id: chainColumn :> string), S.unknown),
+    ecosystem: s.field((#ecosystem: chainColumn :> string), S.string),
+    startBlock: s.field((#start_block: chainColumn :> string), S.int),
+    endBlock: s.field((#end_block: chainColumn :> string), S.null(S.int)),
+    sourceBlock: s.field((#source_block: chainColumn :> string), S.int),
+    bufferBlock: s.field((#buffer_block: chainColumn :> string), S.int),
+    progressBlock: s.field((#progress_block: chainColumn :> string), S.int),
+    readyAt: s.field((#ready_at: chainColumn :> string), S.null(Utils.Schema.dbDate)),
   }),
 )
 
 let makeChainHeightsQuery = (pgSchema: string): query => {
   text: `SELECT ${chainColumns
     ->Array.map(column => `"${(column :> string)}"`)
-    ->Array.join(", ")} FROM ${quoted(
-      ~pgSchema,
-      ~tableName=InternalTable.Chains.table.tableName,
-    )};`,
+    ->Array.join(", ")} FROM ${quoted(~pgSchema, ~tableName=chainsTableName)};`,
   params: [],
 }
 

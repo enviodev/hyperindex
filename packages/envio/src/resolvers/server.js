@@ -16,7 +16,11 @@ import {
   toActionResponse,
   toResolveRequest,
 } from "./hasuraAction.js";
-import { error as logError, warn as logWarn } from "../Logging.res.mjs";
+import {
+  error as logError,
+  fromJs as resolverLogger,
+  warn as logWarn,
+} from "./ResolverLog.res.mjs";
 import { Resolvers as ResolversEnv } from "../Env.res.mjs";
 
 // Serve coerces arguments before dispatching, so a request is small by
@@ -113,6 +117,7 @@ export async function startResolverServer(options) {
     actionSecret,
     privateKeys = [],
   } = options;
+  const logger = resolverLogger(options.logger);
   const port = options.port ?? ResolversEnv.port();
   const host = options.host ?? "0.0.0.0";
 
@@ -122,6 +127,7 @@ export async function startResolverServer(options) {
   const plural = privateResolvers.length > 1;
   if (privateKeys.length === 0 && privateResolvers.length > 0) {
     logWarn(
+      logger,
       `ENVIO_RESOLVERS_PRIVATE_KEYS is not set, so ${named()} cannot be reached: a private resolver with no key configured refuses every caller rather than serving anyone.`
     );
   }
@@ -130,6 +136,7 @@ export async function startResolverServer(options) {
   // `admin` role believable.
   if (actionSecret === undefined && privateResolvers.length > 0) {
     logWarn(
+      logger,
       `ENVIO_RESOLVERS_ACTION_SECRET is not set, so an 'admin' role in a request is only the caller's own claim and is not believed. ${named()} ${
         plural ? "are" : "is"
       } private, so ${plural ? "they" : "it"} can only be reached with a key from ENVIO_RESOLVERS_PRIVATE_KEYS.`
@@ -144,6 +151,7 @@ export async function startResolverServer(options) {
       options.onError ??
       ((error, context) =>
         logError(
+          logger,
           `Resolver '${context.field}' failed (requestId ${context.requestId}): ${
             error?.stack ?? error
           }`

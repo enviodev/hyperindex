@@ -41,7 +41,8 @@ let perChainConfig = InternalTestIndexer.fromUserApi(
 ).config
 
 let pgSchema = TestPgSchema.make()
-let sql = PgStorage.makeClient()
+let logger = Logger.makeInMemory()
+let sql = TestPgSchema.client(~logger, ~pgSchema, ~config)
 
 type jsError = {message: string, code?: string, cause?: ResolverDb.causedError}
 
@@ -66,6 +67,7 @@ let makePool = (~poolSize=?, ~poolWaitTimeoutMs=?, ~onWarn=?, ()) =>
     ?poolSize,
     ?poolWaitTimeoutMs,
     ?onWarn,
+    logger,
   })
 
 type position = {
@@ -76,9 +78,10 @@ type position = {
 }
 
 Async.beforeAll(async () => {
-  let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false)
-  let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
+  let storage = Storage.makeStorageFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled=false)
+  let persistence = Storage.makePersistenceFromConfig(~config, ~logger, ~storage)
   await persistence->Persistence.init(
+    ~logger,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
     ~envioInfo=JSON.Encode.object(Dict.make()),
@@ -86,7 +89,8 @@ Async.beforeAll(async () => {
     ~runCommand=Some("envio dev"),
     ~reset=true,
   )
-  let _ = await sql->Postgres.unsafe(
+  await storage.close()
+  let _ = await sql->Sql.queryForTests(
     `INSERT INTO "${pgSchema}"."Position" ("id", "account", "sizeInUsd", "isLong") VALUES
       ('p1', '0xaaa', 100, true),
       ('p2', '0xaaa', 250, false),
@@ -96,7 +100,7 @@ Async.beforeAll(async () => {
 
 Async.afterAll(async () => {
   await sql->TestPgSchema.drop(~pgSchema)
-  await sql->Postgres.endSql
+  await sql->StorageClient.close
 })
 
 describe("Resolver db handle", () => {
@@ -232,13 +236,13 @@ describe("Resolver db handle", () => {
       async tx => {
         let first: array<{
           "pid": int,
-        }> = await tx->Postgres.unsafe("SELECT pg_backend_pid() AS pid;")
+        }> = await tx->ResolverDb.txUnsafe("SELECT pg_backend_pid() AS pid;")
         let second: array<{
           "pid": int,
-        }> = await tx->Postgres.unsafe("SELECT pg_backend_pid() AS pid;")
+        }> = await tx->ResolverDb.txUnsafe("SELECT pg_backend_pid() AS pid;")
         let shown: array<{
           "statement_timeout": string,
-        }> = await tx->Postgres.unsafe("SHOW statement_timeout;")
+        }> = await tx->ResolverDb.txUnsafe("SHOW statement_timeout;")
         (
           first->Array.getUnsafe(0)->(row => row["pid"]) ===
             second->Array.getUnsafe(0)->(row => row["pid"]),

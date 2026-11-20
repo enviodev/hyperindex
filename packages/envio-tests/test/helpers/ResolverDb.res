@@ -12,7 +12,7 @@ type connection = {
   username: string,
   password: string,
   database: string,
-  ssl: Postgres.sslOptions,
+  ssl: Sql.sslMode,
 }
 
 type poolOptions = {
@@ -23,6 +23,7 @@ type poolOptions = {
   poolerBacked?: bool,
   poolWaitTimeoutMs?: int,
   onWarn?: string => unit,
+  logger?: Logger.t,
 }
 
 @module("envio/src/resolvers/db.js")
@@ -53,8 +54,12 @@ type findOptions = {
 // `db.sql` is a tagged template, which ReScript has no syntax for.
 let taggedSelectOne: db => promise<array<{"n": int}>> = %raw("(db) => db.sql`SELECT 1::int AS n`")
 
-@send external transaction: (db, Postgres.sql => promise<'a>) => promise<'a> = "transaction"
+// The postgres.js handle a transaction's callback is given.
+type txSql
+
+@send external transaction: (db, txSql => promise<'a>) => promise<'a> = "transaction"
 @send external unsafe: (sqlFn, string, array<JSON.t>) => promise<'rows> = "unsafe"
+@send external txUnsafe: (txSql, string) => promise<'rows> = "unsafe"
 
 type chainHeight = {
   chainId: ChainId.t,

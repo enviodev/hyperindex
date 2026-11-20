@@ -1,5 +1,7 @@
 open Vitest
 
+let logger = Logger.makeInMemory()
+
 // `resolvers:` may name a directory, not just a file. A project may keep its
 // resolvers as `resolvers/<name>/index.ts` — a parent directory of
 // subdirectories — and `handlers:` already auto-loads that way, so the two
@@ -82,7 +84,7 @@ beforeAll(() => {
 
 describe("resolvers: pointing at a directory", () => {
   Async.it("registers every resolver in the tree, and skips spec files", async t => {
-    await ResolverProcess.writeManifest(~config, ~projectRoot)
+    await ResolverProcess.writeManifest(~config, ~projectRoot, ~logger)
 
     let manifest =
       readFileSync(pathJoin([projectRoot, ".envio", "resolvers.json"]), "utf8")->JSON.parseOrThrow

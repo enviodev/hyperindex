@@ -81,7 +81,7 @@ let run = async args => {
           // resolvers are their own service and are never started from here.
           let loaded = Config.load()
           if loaded.isDev {
-            let _ = await ResolverProcess.startForDev(~config=loaded, ~projectRoot=cwd)
+            let _ = await ResolverProcess.startForDev(~config=loaded, ~projectRoot=cwd, ~logger)
           }
           await Main.start(~logger, ~reset)
         | Migrate({reset, config}) =>
@@ -96,7 +96,7 @@ let run = async args => {
           applyEnv(env)
           switch mode {
           | "manifest" =>
-            await ResolverProcess.writeManifest(~config=Config.load(), ~projectRoot=cwd)
+            await ResolverProcess.writeManifest(~config=Config.load(), ~projectRoot=cwd, ~logger)
           | "metadata" =>
             let handlerUrl = switch Env.Resolvers.publicUrl() {
             | Some(url) => url
@@ -109,6 +109,7 @@ let run = async args => {
               ~config=Config.load(),
               ~projectRoot=cwd,
               ~handlerUrl,
+              ~logger,
             )
             // stdout, so it pipes into `hasura metadata apply` or `jq` rather
             // than being buried in the log stream.
@@ -117,8 +118,9 @@ let run = async args => {
             let {applied, reasons} = await ResolverProcess.migrate(
               ~config=Config.load(),
               ~projectRoot=cwd,
+              ~logger,
             )
-            Logging.info(
+            logger->Logger.info(
               applied
                 ? `Updated Hasura to match these resolvers: ${reasons->Array.join("; ")}`
                 : "Hasura already matches these resolvers; nothing to update",
@@ -126,7 +128,11 @@ let run = async args => {
           // Serving keeps the event loop alive on its own, so returning here
           // leaves the process running rather than exiting.
           | _ =>
-            let running = await ResolverProcess.serve(~config=Config.load(), ~projectRoot=cwd)
+            let running = await ResolverProcess.serve(
+              ~config=Config.load(),
+              ~projectRoot=cwd,
+              ~logger,
+            )
             running->ResolverProcess.handleSignals
           }
         }

@@ -3,6 +3,9 @@ import { S } from "envio";
 import { createResolver, getRegisteredResolvers } from "envio/src/resolvers/index.js";
 import { createResolverPoolFromEnv } from "envio/src/resolvers/db.js";
 import { startResolverServer } from "envio/src/resolvers/server.js";
+import { makeInMemory } from "envio/src/Logger.res.mjs";
+
+const logger = makeInMemory();
 
 // The staleness gate, over real HTTP against a real server. Only the one read
 // it makes is substituted: what the indexer wrote about each chain is the
@@ -66,7 +69,7 @@ const ask = async (field: string) => {
 };
 
 beforeAll(async () => {
-  pool = createResolverPoolFromEnv({ entities: {}, pgSchema: "public" });
+  pool = createResolverPoolFromEnv({ logger, entities: {}, pgSchema: "public" });
   const counted = {
     ...pool,
     forResolver: (options: never) => ({
@@ -79,7 +82,7 @@ beforeAll(async () => {
       },
     }),
   };
-  server = await startResolverServer({
+  server = await startResolverServer({ logger,
     resolvers: getRegisteredResolvers().filter((resolver: { name: string }) =>
       ["everyChain", "namedChains", "ungated"].includes(resolver.name)
     ),

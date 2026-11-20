@@ -17,6 +17,9 @@ import {
   type Server as TcpServer,
   type Socket,
 } from "node:net";
+import { makeInMemory } from "envio/src/Logger.res.mjs";
+
+const logger = makeInMemory();
 
 // The wire contract envio-serve already implements and tests. Everything here
 // goes over real HTTP against a real server, because the shape of the bytes is
@@ -122,8 +125,8 @@ const resolve = async (body: unknown) => {
 };
 
 beforeAll(async () => {
-  pool = createResolverPoolFromEnv({ entities: {}, pgSchema: "public" });
-  server = await startResolverServer({
+  pool = createResolverPoolFromEnv({ logger, entities: {}, pgSchema: "public" });
+  server = await startResolverServer({ logger,
     resolvers: getRegisteredResolvers(),
     pool,
     port: 0,
@@ -269,7 +272,7 @@ describe("resolver /resolve", () => {
   // and the key is what decides whether it answers. Without one configured it
   // answers nobody -- fail closed, not open.
   it("answers a private resolver only for a caller holding one of its keys", async () => {
-    const keyed = await startResolverServer({
+    const keyed = await startResolverServer({ logger,
       resolvers: getRegisteredResolvers(),
       pool,
       port: 0,
@@ -309,7 +312,7 @@ describe("resolver /resolve", () => {
   });
 
   it("answers an admin resolver asked for as admin once a secret is configured", async () => {
-    const guarded = await startResolverServer({
+    const guarded = await startResolverServer({ logger,
       resolvers: getRegisteredResolvers(),
       pool,
       port: 0,
@@ -430,7 +433,7 @@ describe("resolver /resolve", () => {
     // Ready has to mean the database answers. A process that is up and cannot
     // reach Postgres has nothing to serve, and taking traffic is worse than
     // being restarted.
-    const brokenPool = createResolverPool({
+    const brokenPool = createResolverPool({ logger,
       // Nothing listens on port 1, so the probe has to say so.
       connection: {
         host: "127.0.0.1",
@@ -443,7 +446,7 @@ describe("resolver /resolve", () => {
       pgSchema: "public",
       poolSize: 1,
     });
-    const broken = await startResolverServer({
+    const broken = await startResolverServer({ logger,
       resolvers: [],
       pool: brokenPool,
       port: 0,
@@ -475,7 +478,7 @@ describe("resolver /resolve", () => {
     });
     await new Promise<void>((resolve) => blackHole.listen(0, "127.0.0.1", () => resolve()));
     const address = blackHole.address();
-    const stalledPool = createResolverPool({
+    const stalledPool = createResolverPool({ logger,
       connection: {
         host: "127.0.0.1",
         port: typeof address === "object" && address ? address.port : 0,
@@ -490,7 +493,7 @@ describe("resolver /resolve", () => {
       // is under test is that the probe does not wait for it.
       poolWaitTimeoutMs: 20_000,
     });
-    const stalled = await startResolverServer({ resolvers: [], pool: stalledPool, port: 0 });
+    const stalled = await startResolverServer({ logger, resolvers: [], pool: stalledPool, port: 0 });
     try {
       const started = Date.now();
       const readyz = await fetch(`http://127.0.0.1:${stalled.port}/readyz`);
@@ -517,8 +520,8 @@ describe("resolver /resolve", () => {
   // it must not also be the first thing to fire when the pool is merely busy,
   // because then a pod under load reports a database fault it does not have.
   it("blames the pool, not the database, when the pool is the thing that is full", async () => {
-    const busyPool = createResolverPoolFromEnv({ entities: {}, pgSchema: "public", poolSize: 1 });
-    const busy = await startResolverServer({ resolvers: [], pool: busyPool, port: 0 });
+    const busyPool = createResolverPoolFromEnv({ logger, entities: {}, pgSchema: "public", poolSize: 1 });
+    const busy = await startResolverServer({ logger, resolvers: [], pool: busyPool, port: 0 });
     // Hold the pool's only connection for longer than the probe will wait.
     const hog = busyPool
       .forResolver({ name: "hog", timeoutMs: 10_000 })
@@ -536,7 +539,7 @@ describe("resolver /resolve", () => {
   });
 
   it("puts an unexpected error's message on the wire only in dev", async () => {
-    const dev = await startResolverServer({
+    const dev = await startResolverServer({ logger,
       resolvers: getRegisteredResolvers(),
       pool,
       port: 0,
