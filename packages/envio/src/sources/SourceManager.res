@@ -18,7 +18,7 @@ type sourceState = {
   // Used to decide when to attempt recovery to this source.
   mutable lastFailedAt: option<float>,
   // Set once the source stays behind the head long enough to fail a query over,
-  // and held until its own height reaches the block it couldn't serve. The
+  // and held until its own height moves. The
   // recovery timeout alone would hand queries back to a source that stopped
   // following its chain every time it ran out, for as long as the indexer runs.
   mutable behindHeadHold: option<HeightFeed.subscription>,
@@ -497,24 +497,21 @@ let releaseBehindHeadHold = (sourceState: sourceState) =>
   | None => ()
   }
 
+// Released by a single new block: a source that moves at all is following its
+// chain again, and one still far behind earns another hold on its next query.
 // Polls at the reduced interval: nothing waits on the source while it is held,
 // and a source that stopped following its chain can stay stopped for weeks.
-//
-// A source that already reported a height at or past the block isn't held: the
-// instance that served the query was behind its siblings, not the source.
-let holdUntilHeightReaches = (sourceManager: t, sourceState: sourceState, ~blockNumber) =>
-  if (
-    sourceState.behindHeadHold->Option.isNone &&
-      sourceState.feed->HeightFeed.knownHeight < blockNumber
-  ) {
+let holdUntilHeightMoves = (sourceManager: t, sourceState: sourceState) =>
+  if sourceState.behindHeadHold->Option.isNone {
+    let heldAt = sourceState.feed->HeightFeed.knownHeight
     sourceState.behindHeadHold = Some(
       sourceState.feed->HeightFeed.onHeightAbove(
-        ~knownHeight=blockNumber - 1,
+        ~knownHeight=heldAt,
         ~interval=() => sourceManager.reducedPollingInterval,
         ~onHeight=height => {
           sourceState.behindHeadHold = None
           sourceManager.logger->Logger.info(
-            `${sourceState.source.name} has caught up to block ${blockNumber->Int.toString} and is used for queries again.`,
+            `${sourceState.source.name} has moved past block ${heldAt->Int.toString} and is used for queries again.`,
             ~params={"source": sourceState.source.name, "height": height},
           )
         },
@@ -723,7 +720,7 @@ let retryBehindHead = async (
   }
   logger->Logger.logAt(level, msg, ~params={"retry": retry, "backOffMilliseconds": backoffMillis})
   if retry >= behindHeadFailoverRetries {
-    sourceManager->holdUntilHeightReaches(sourceState, ~blockNumber)
+    sourceManager->holdUntilHeightMoves(sourceState)
   }
   await sourceManager->backoffBeforeRetry(
     sourceState,
