@@ -112,18 +112,20 @@ type Trade @index(fields: ["poolId", ["date", "DESC"]], include: ["volume"]) {
 
 ## @config
 
-Customize precision for numeric types:
+Bound the digits of a numeric field:
 
 ```graphql
 type Token {
   id: ID!
-  totalSupply: BigInt! @config(precision: 100)
+  totalSupply: BigInt! @config(precision: 76)
   price: BigDecimal! @config(precision: 30, scale: 15)
 }
 ```
 
-- `BigInt` default precision: 76 digits
-- `BigDecimal` default: precision 76, scale 32
+- Without `@config`, `BigInt` and `BigDecimal` are unbounded (`NUMERIC` in Postgres): every uint256 and int256 fits. Leave raw token amounts unbounded unless you know their range
+- With `@config`, Postgres rounds a value to `scale` fractional digits and refuses one whose whole part has more than `precision − scale` digits
+- In ClickHouse, a precision of 1–76 stores a numeric `Decimal(P, S)` column, which sorts and aggregates as a number. An unbounded field, or one past 76 digits, stores a `String` column: cast it in SQL (`toUInt256(amount)`, `toInt256(amount)`, `toDecimal256(price, 18)`), list it in no `clickhouse.orderBy`, and give a ClickHouse entity whose `BigInt` id is unbounded an `orderBy` of other fields
+- 76 digits doesn't hold every uint256: its maximum, 2^256 − 1, has 78 digits
 
 ## Array Rules
 
