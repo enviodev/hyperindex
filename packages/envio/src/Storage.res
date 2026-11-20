@@ -1,3 +1,7 @@
+// Prototype: a supervisor resumes only to read where its workers' chains
+// stand, so it skips their registered addresses.
+let skipResumedAddresses = ref(false)
+
 let storeName = (store: StorageClient.store) =>
   switch store {
   | Postgres => "postgres"
@@ -437,7 +441,7 @@ let make = (
   let resumeInitialState = async (~chainIds, ~contractMapping): Persistence.initialState => {
     let (cache, resumed) = await Promise.all2((
       restoreEffectCache(~withUpload=false),
-      client->StorageClient.resume(chainIds),
+      client->StorageClient.resume(chainIds, !skipResumedAddresses.contents),
     ))
     let addressRowsByChainId = resumed.addresses->readAddressRows->AddressRows.group
     let stored =

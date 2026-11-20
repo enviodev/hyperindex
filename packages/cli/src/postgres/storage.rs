@@ -688,11 +688,11 @@ impl Storage {
             .collect()
     }
 
-    pub async fn resume(&self) -> Result<Resumed> {
+    pub async fn resume(&self, address_chain_ids: &[i64]) -> Result<Resumed> {
         let schema = self.schema();
         let (read_chains, read_addresses, read_checkpoints) = (
             internal::read_resumed_chains(schema),
-            internal::read_addresses(schema, false),
+            internal::read_addresses_of_chains(schema, address_chain_ids),
             internal::read_reorg_checkpoints(schema),
         );
         let ((chains, _), (addresses, address_columns), (checkpoints, _), ()) = futures_util::try_join!(

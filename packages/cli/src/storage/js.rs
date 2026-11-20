@@ -646,8 +646,16 @@ impl JsStorage {
 
     /// Resumes the chains this run drives.
     #[napi]
-    pub async fn resume(&self, chain_ids: Vec<i64>) -> napi::Result<ResumedOutput> {
-        let resumed = self.inner.resume(&chain_ids).await.map_err(to_napi)?;
+    pub async fn resume(
+        &self,
+        chain_ids: Vec<i64>,
+        with_addresses: bool,
+    ) -> napi::Result<ResumedOutput> {
+        let resumed = self
+            .inner
+            .resume(&chain_ids, with_addresses)
+            .await
+            .map_err(to_napi)?;
         Ok(ResumedOutput {
             chains: resumed
                 .chains

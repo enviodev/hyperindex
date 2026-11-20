@@ -68,7 +68,7 @@ impl Live {
             .initialize(clickhouse::live_tests::initialize_input())
             .await
             .unwrap();
-        self.storage.resume(&[1]).await.unwrap();
+        self.storage.resume(&[1], true).await.unwrap();
     }
 
     /// Where Postgres and ClickHouse each hold chain 1's frontier.

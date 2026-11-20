@@ -24,6 +24,8 @@ let maxWorkers = 4
 // or `per-chain`), ignoring the connection budget, for measuring layouts.
 @val external prototypeWorkers: Nullable.t<string> = "process.env.ENVIO_PROTOTYPE_WORKERS"
 @val external prototypeTransport: Nullable.t<string> = "process.env.ENVIO_PROTOTYPE_TRANSPORT"
+@val
+external prototypeSkipAddresses: Nullable.t<string> = "process.env.ENVIO_PROTOTYPE_CHAIN_ADDRESSES"
 @val external prototypeSharedPool: Nullable.t<string> = "process.env.ENVIO_PROTOTYPE_SHARED_PG_POOL"
 
 let plan = (~chainIds: array<ChainId.t>, ~maxConnections: int): option<array<worker>> => {
@@ -494,6 +496,9 @@ let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) =>
   // chains and leave the chains it skipped with nothing to resume. It is the
   // same initialization an unsplit run does, and the supervisor hands the
   // connections it used to its workers.
+  if prototypeSkipAddresses->Nullable.toOption->Option.isSome {
+    Storage.skipResumedAddresses := true
+  }
   let persistence = Storage.makePersistenceFromConfig(~config, ~logger)
   // Checked here once, so the workers don't each check the same handlers.
   let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)

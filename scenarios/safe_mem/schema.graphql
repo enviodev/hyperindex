@@ -1,0 +1,26 @@
+type Global {
+  id: ID!
+  totalSafes: Int!
+  totalSafeTransactions: Int!
+  totalSuccessfulExecutions: Int!
+  totalFailedExecutions: Int!
+}
+
+type Safe {
+  id: ID!
+  owners: [String!]!
+  numberOfOwners: Int!
+  threshold: Int!
+  numberOfSuccessfulExecutions: Int!
+  numberOfFailedExecutions: Int!
+  createdAt: BigInt!
+}
+
+type SafeTransaction {
+  id: ID!
+  safe: Safe!
+  txHash: String!
+  payment: BigInt!
+  success: Boolean!
+  executionDate: BigInt!
+}

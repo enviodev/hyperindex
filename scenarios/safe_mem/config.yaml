@@ -1,0 +1,97 @@
+# yaml-language-server: $schema=../../packages/envio/evm.schema.json
+name: safe_mem
+description: Safe-shaped indexer, factories registering every proxy as a dynamic contract
+disable_default_cross_chain: true
+storage:
+  postgres:
+    column_name_format: snake_case
+contracts:
+  - name: SafeProxyFactory130
+    events:
+      - event: "ProxyCreation(address proxy, address singleton)"
+  - name: SafeProxyFactory141
+    events:
+      - event: "ProxyCreation(address indexed proxy, address singleton)"
+  - name: Safe130
+    events:
+      - event: "SafeSetup(address indexed initiator, address[] owners, uint256 threshold, address initializer, address fallbackHandler)"
+      - event: "ExecutionSuccess(bytes32 txHash, uint256 payment)"
+      - event: "ExecutionFailure(bytes32 txHash, uint256 payment)"
+  - name: Safe141
+    events:
+      - event: "SafeSetup(address indexed initiator, address[] owners, uint256 threshold, address initializer, address fallbackHandler)"
+      - event: "ExecutionSuccess(bytes32 indexed txHash, uint256 payment)"
+      - event: "ExecutionFailure(bytes32 indexed txHash, uint256 payment)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: SafeProxyFactory130
+        address: ["0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2", "0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC"]
+      - name: SafeProxyFactory141
+        address: ["0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67"]
+      - name: Safe130
+      - name: Safe141
+  - id: 8453
+    start_block: 0
+    contracts:
+      - name: SafeProxyFactory130
+        address: ["0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2", "0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC"]
+      - name: SafeProxyFactory141
+        address: ["0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67"]
+      - name: Safe130
+      - name: Safe141
+  - id: 137
+    start_block: 0
+    contracts:
+      - name: SafeProxyFactory130
+        address: ["0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2", "0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC"]
+      - name: SafeProxyFactory141
+        address: ["0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67"]
+      - name: Safe130
+      - name: Safe141
+  - id: 42161
+    start_block: 0
+    contracts:
+      - name: SafeProxyFactory130
+        address: ["0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2", "0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC"]
+      - name: SafeProxyFactory141
+        address: ["0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67"]
+      - name: Safe130
+      - name: Safe141
+  - id: 10
+    start_block: 0
+    contracts:
+      - name: SafeProxyFactory130
+        address: ["0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2", "0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC"]
+      - name: SafeProxyFactory141
+        address: ["0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67"]
+      - name: Safe130
+      - name: Safe141
+  - id: 100
+    start_block: 0
+    contracts:
+      - name: SafeProxyFactory130
+        address: ["0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2", "0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC"]
+      - name: SafeProxyFactory141
+        address: ["0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67"]
+      - name: Safe130
+      - name: Safe141
+  - id: 56
+    start_block: 0
+    contracts:
+      - name: SafeProxyFactory130
+        address: ["0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2", "0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC"]
+      - name: SafeProxyFactory141
+        address: ["0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67"]
+      - name: Safe130
+      - name: Safe141
+  - id: 43114
+    start_block: 0
+    contracts:
+      - name: SafeProxyFactory130
+        address: ["0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2", "0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC"]
+      - name: SafeProxyFactory141
+        address: ["0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67"]
+      - name: Safe130
+      - name: Safe141

@@ -273,6 +273,25 @@ pub fn delete_addresses(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
     )
 }
 
+/// The registered addresses of `chain_ids` alone.
+pub fn read_addresses_of_chains(pg_schema: &str, chain_ids: &[i64]) -> String {
+    let ids = chain_ids
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let filter = if ids.is_empty() {
+        "FALSE".to_string()
+    } else {
+        format!("\"chain_id\" IN ({ids})")
+    };
+    format!(
+        "SELECT \"chain_id\" as \"chainId\",\n\"address\" as \"address\",\n\"contract_id\" as \
+         \"contractId\",\n\"registration_block\" as \"registrationBlock\"\nFROM \
+         \"{pg_schema}\".\"{ADDRESSES}\" WHERE {filter};"
+    )
+}
+
 /// Plain rows rather than an aggregate per chain: one chain's `json_agg` can
 /// outgrow the longest string V8 will hold.
 pub fn read_addresses(pg_schema: &str, only_config: bool) -> String {
