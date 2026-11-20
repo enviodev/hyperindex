@@ -304,33 +304,47 @@ impl StoreInner {
     /// Infallible: `register_all` has already rejected every unknown contract
     /// name and out-of-range block, so nothing here can fail partway through a
     /// batch.
+    ///
+    /// An address is kept from its earliest registration, whatever order
+    /// registrations arrive in: partitions fetch at their own pace, so a later
+    /// block's registration can land first. An earlier one retires the entry
+    /// and adds a fresh one rather than moving its block, because sets are
+    /// ordered by start block and must stay so while they hold the retired id.
+    ///
+    /// Registration blocks are compared, not start blocks: below the contract's
+    /// start block two registrations start at the same block, yet only the
+    /// earlier survives a rollback to between them.
+    ///
+    /// The retired entry can't have been written yet: the earlier block is
+    /// still on the contractRegister backlog, which holds processing, and so
+    /// every batch write, below both blocks. A config address (block -1) is
+    /// never retired.
+    /// Sets `retired` when it retires an entry, whose pending write the caller
+    /// then drops: once per batch, not once per retirement.
     fn register_one(
         &mut self,
         reg: &AddressRegistration,
         track_unwritten: bool,
+        retired: &mut bool,
     ) -> RegistrationVerdict {
         let Some(key) = address_key(self.ecosystem, &reg.address) else {
             return RegistrationVerdict {
                 kind: VERDICT_INVALID.to_string(),
                 fetchable: false,
-                effective_start_block: 0,
-                existing_effective_start_block: None,
             };
         };
         let contract_idx = self
             .contract_idx(&reg.contract_name)
             .expect("register_all validates every contract name before applying the batch");
-        let effective_start_block = derive_effective_start_block(
-            reg.registration_block,
-            self.contract_start_blocks[contract_idx as usize],
-        );
         if let Some(id) = self.live_id_for(&key, contract_idx) {
-            return RegistrationVerdict {
-                kind: VERDICT_DUPLICATE.to_string(),
-                fetchable: false,
-                effective_start_block,
-                existing_effective_start_block: Some(self.entry(id).effective_start_block),
-            };
+            if reg.registration_block >= self.entries.registration_block(id) {
+                return RegistrationVerdict {
+                    kind: VERDICT_DUPLICATE.to_string(),
+                    fetchable: false,
+                };
+            }
+            self.retire(id);
+            *retired = true;
         }
         let id = self.insert(&key, contract_idx, reg.registration_block);
         if track_unwritten {
@@ -339,8 +353,6 @@ impl StoreInner {
         RegistrationVerdict {
             kind: VERDICT_ADDED.to_string(),
             fetchable: self.contract_depends_on_addresses[contract_idx as usize],
-            effective_start_block,
-            existing_effective_start_block: None,
         }
     }
 
@@ -377,6 +389,16 @@ impl StoreInner {
         self.live_count_by_contract[contract_idx as usize] += 1;
         id
     }
+
+    /// Tombstones a live entry. Its id stays valid, so a set still holding it
+    /// keeps its order and still asks for the address. Only this registration
+    /// leaves the key's index: the same address registered for another
+    /// contract stays.
+    fn retire(&mut self, id: Id) {
+        self.index.remove(id, &self.entries);
+        self.entries.kill(id);
+        self.live_count_by_contract[self.entries.contract_idx(id) as usize] -= 1;
+    }
 }
 
 /// A registration block the columns hold: -1 for a config address, else a
@@ -410,8 +432,6 @@ pub struct AddressRegistration {
 pub struct RegistrationVerdict {
     pub kind: String,
     pub fetchable: bool,
-    pub effective_start_block: i64,
-    pub existing_effective_start_block: Option<i64>,
 }
 
 pub const VERDICT_ADDED: &str = "added";
@@ -496,8 +516,8 @@ impl AddressStore {
 
     /// Registers a batch of dynamic registrations, resolving each address
     /// against both the store and the batch's own earlier entries, so the same
-    /// address registered twice for one contract inside a single batch is a
-    /// duplicate just as it is across batches. What it adds is marked pending
+    /// address registered twice for one contract inside a single batch resolves
+    /// just as it does across batches. What it adds is marked pending
     /// persistence.
     #[napi]
     pub fn register_batch(
@@ -723,16 +743,11 @@ impl AddressStore {
             if store.entries.is_dead(id) || store.entries.registration_block(id) <= target_block {
                 continue;
             }
-            let contract_idx = store.entries.contract_idx(id);
-            // Only this registration leaves the key's index: the same address
-            // registered for another contract survives the rollback.
-            store.index.remove(id, &store.entries);
-            store.entries.kill(id);
-            store.live_count_by_contract[contract_idx as usize] -= 1;
+            store.retire(id);
             if !pending_insert.contains(&id) {
                 rolled_back.push(RolledBackAddress {
                     address: store.entries.key(id).to_vec().into(),
-                    contract_id: contract_idx,
+                    contract_id: store.entries.contract_idx(id),
                 });
             }
         }
@@ -844,7 +859,8 @@ impl AddressStore {
         registrations: Vec<AddressRegistration>,
         track_unwritten: bool,
     ) -> napi::Result<Vec<RegistrationVerdict>> {
-        let mut store = self.inner.write().unwrap();
+        let mut guard = self.inner.write().unwrap();
+        let store = &mut *guard;
         for reg in registrations.iter() {
             if store.contract_idx(&reg.contract_name).is_none() {
                 return Err(napi::Error::from_reason(format!(
@@ -854,10 +870,16 @@ impl AddressStore {
             }
             check_registration_block(reg.registration_block)?;
         }
-        Ok(registrations
+        let mut retired = false;
+        let verdicts = registrations
             .iter()
-            .map(|reg| store.register_one(reg, track_unwritten))
-            .collect())
+            .map(|reg| store.register_one(reg, track_unwritten, &mut retired))
+            .collect();
+        if retired {
+            let entries = &store.entries;
+            store.unwritten.retain(|&id| !entries.is_dead(id));
+        }
+        Ok(verdicts)
     }
 }
 
@@ -912,14 +934,17 @@ impl RenderedSet {
     }
 }
 
-/// A snapshot: the ids are fixed at construction, so a rollback that tombstones
-/// an entry leaves sets built before it still holding that id. Only
-/// `filter_by_registration_block` prunes those — everything else reports them,
-/// on purpose. A rollback rebuilds the fetch state's partitions from filtered
-/// sets straight after, and a stale set that outlives that still can't fetch a
-/// dead address: `is_indexed_at` answers `false` for it, so matching drops the
-/// items it would bring back. Pruning here instead would shift the offsets
-/// `start_block_groups` hands to `slice` mid-flight.
+/// A snapshot: the ids are fixed at construction, so a tombstoned entry stays
+/// in sets built before it died. Only `filter_by_registration_block` prunes
+/// those — everything else reports them, on purpose. Pruning here instead would
+/// shift the offsets `start_block_groups` hands to `slice` mid-flight.
+///
+/// A rollback rebuilds the fetch state's partitions from filtered sets straight
+/// after, and a stale set that outlives that still can't fetch a rolled-back
+/// address: `is_indexed_at` answers `false` for it, so matching drops the items
+/// it would bring back. An entry retired by an earlier registration is
+/// different: its address is live under the new entry, so a set holding the
+/// retired id still asks for it and matching keeps its items.
 #[napi]
 pub struct AddressSet {
     store: Arc<RwLock<StoreInner>>,
@@ -1061,9 +1086,16 @@ impl AddressSet {
                     ids.push(right[j]);
                     j += 1;
                 }
-                // Equal sort keys, including contract_idx: one id.
+                // Equal sort keys, including contract_idx: one address. The
+                // ids differ only when one retired the other with the same
+                // start block, and the live one must survive, or a rollback
+                // that prunes the dead one drops the address.
                 std::cmp::Ordering::Equal => {
-                    ids.push(left[i]);
+                    ids.push(if store.entries.is_dead(left[i]) {
+                        right[j]
+                    } else {
+                        left[i]
+                    });
                     i += 1;
                     j += 1;
                 }
