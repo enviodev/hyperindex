@@ -87,6 +87,29 @@ chains:
     )
   })
 
+  // https://github.com/enviodev/hyperindex/issues/1829
+  it("syncs XDC from an RPC given without a role, since HyperSync no longer follows it", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~env=dict{},
+      ~configYaml=`
+name: xdc-rpc
+chains:
+  - id: 50
+    rpc: https://rpc.example.test
+    start_block: 0
+`,
+    )
+
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    t.expect(
+      switch chain.sourceConfig {
+      | Config.EvmSourceConfig({hypersync, rpcs}) =>
+        Some((hypersync, rpcs->Array.map(rpc => (rpc.url, rpc.sourceFor))))
+      | _ => None
+      },
+    ).toEqual(Some((None, [("https://rpc.example.test", Source.Sync)])))
+  })
+
   it("keeps an RPC entry whose quoted ws interpolates to nothing, without the ws", t => {
     let {config} = InternalTestIndexer.fromUserApi(
       ~env=dict{"ENVIO_RPC_URL_1": "https://rpc.example.test"},
