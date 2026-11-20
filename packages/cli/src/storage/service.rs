@@ -85,11 +85,17 @@ impl Storage {
                 Holding::Nothing
             });
         }
-        if self.clickhouse.is_none() {
+        let Some(clickhouse) = &self.clickhouse else {
             return Ok(Holding::Initialized);
-        }
+        };
         Ok(match (self.postgres.instance().await?, built) {
-            (Some(instance), Some(built)) if instance == built => Holding::Initialized,
+            (Some(instance), Some(built)) if instance == built => {
+                if clickhouse.holds_outdated_columns().await? {
+                    Holding::Outdated
+                } else {
+                    Holding::Initialized
+                }
+            }
             (None, _) => Holding::Outdated,
             _ => Holding::Diverged,
         })

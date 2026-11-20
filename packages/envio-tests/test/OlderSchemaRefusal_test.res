@@ -25,18 +25,22 @@ chains:
   ~schema=`
 type Tally {
   id: ID!
+  wide: BigInt! @config(precision: 76)
 }
 `,
 )
 
+let alterPostgres = (indexer: IndexerRunner.t, alter) =>
+  indexer.usePostgresSql(async sql => {
+    let _ = await sql->Sql.queryForTests(alter(indexer.pgSchema))
+  })
+
 let expectOlderVersionRefusal = async (
   ~t: Vitest.testContext,
   ~indexer: IndexerRunner.t,
-  alter,
+  alter: unit => promise<unit>,
 ) => {
-  await indexer.usePostgresSql(async sql => {
-    let _ = await sql->Sql.queryForTests(alter(indexer.pgSchema))
-  })
+  await alter()
 
   let message = switch await indexer.restart() {
   | _ => "the restart to fail, but it succeeded"
@@ -63,7 +67,7 @@ describe("Restarting onto a schema an older envio wrote", () => {
       await expectOlderVersionRefusal(
         ~t,
         ~indexer,
-        pgSchema => `DROP TABLE "${pgSchema}"."envio_contracts";`,
+        () => indexer->alterPostgres(pgSchema => `DROP TABLE "${pgSchema}"."envio_contracts";`),
       ),
   )
 
@@ -83,7 +87,30 @@ describe("Restarting onto a schema an older envio wrote", () => {
       await expectOlderVersionRefusal(
         ~t,
         ~indexer,
-        pgSchema => `ALTER TABLE "${pgSchema}"."envio_info" DROP COLUMN "instance";`,
+        () =>
+          indexer->alterPostgres(
+            pgSchema => `ALTER TABLE "${pgSchema}"."envio_info" DROP COLUMN "instance";`,
+          ),
+      ),
+  )
+
+  // https://github.com/enviodev/hyperindex/issues/1816
+  // An older envio kept a number bounded past 38 digits as a String, and the
+  // 32 bytes of a Decimal written to that column would misalign every row
+  // after it.
+  scenario->Scenario.it(
+    "refuses a number bounded past 38 digits kept as a String, naming the older envio version",
+    ~unsupported=[{backend: #postgres, reason: "the column is ClickHouse's"}],
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source as _) =>
+      await expectOlderVersionRefusal(
+        ~t,
+        ~indexer,
+        async () => {
+          let _ = await TestClickHouse.query(
+            `ALTER TABLE \`${TestClickHouse.currentDatabase()}\`.\`envio_history_Tally\` MODIFY COLUMN \`wide\` String`,
+          )
+        },
       ),
   )
 })

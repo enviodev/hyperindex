@@ -348,15 +348,8 @@ fn row(cells: &[&str]) -> Vec<String> {
     cells.iter().map(|cell| cell.to_string()).collect()
 }
 
-/// What an `Account` whose balance is `balance_type` stores: the balance
-/// column's type, the accounts with each of `balances` that a balance above
-/// zero loads, and what writing `overflowing` as a balance fails with.
-async fn balances_stored_as(
-    balance_type: FieldType,
-    balances: &[&str],
-    overflowing: &str,
-) -> (String, Vec<Vec<String>>, String) {
-    let live = Live::with(vec![entity_input(
+fn account_with_balance(balance_type: FieldType) -> Entity {
+    entity_input(
         "Account",
         vec![
             column("id", "String"),
@@ -366,7 +359,18 @@ async fn balances_stored_as(
                 ..column("balance", "BigInt")
             },
         ],
-    )]);
+    )
+}
+
+/// What an `Account` whose balance is `balance_type` stores: the balance
+/// column's type, the accounts with each of `balances` that a balance above
+/// zero loads, and what writing `overflowing` as a balance fails with.
+async fn balances_stored_as(
+    balance_type: FieldType,
+    balances: &[&str],
+    overflowing: &str,
+) -> (String, Vec<Vec<String>>, String) {
+    let live = Live::with(vec![account_with_balance(balance_type)]);
     let account = live.account();
     initialize(&live).await;
     let ids = (0..balances.len())
@@ -423,6 +427,106 @@ async fn balances_stored_as(
 }
 
 // https://github.com/enviodev/hyperindex/issues/1816
+/// Whether a store of `schema` on `database` finds its Decimal columns
+/// outdated, and what it warns of on the way.
+async fn outdated_columns_seen(database: &str, schema: Arc<Schema>) -> (bool, Vec<String>) {
+    let warnings = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = warnings.clone();
+    let storage = Storage::new(
+        connection(database),
+        Tuning::default(),
+        Arc::new(move |warning: &str| seen.lock().unwrap().push(warning.to_string())),
+        Settings {
+            replicated: false,
+            database_engine: None,
+        },
+        schema,
+    )
+    .unwrap();
+    let outdated = storage.holds_outdated_columns().await.unwrap();
+    let warned = warnings.lock().unwrap().clone();
+    (outdated, warned)
+}
+
+/// An envio before 256-bit Decimals kept a number bounded past 38 digits as a
+/// String. A Decimal's 32 bytes sent to that column misalign every row after
+/// it, which the server reports as unreadable input at best, so the database
+/// counts as an older envio's, which a restart refuses.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_decimal_column_an_older_envio_kept_as_text_is_outdated() {
+    let older = Live::with(vec![account_with_balance(FieldType::BigInt {
+        precision: None,
+    })]);
+    initialize(&older).await;
+
+    let seen = outdated_columns_seen(
+        &older.database,
+        schema_of(vec![account_with_balance(FieldType::BigInt {
+            precision: Some(39),
+        })]),
+    )
+    .await;
+    older.drop_database().await;
+    assert_eq!(
+        seen,
+        (
+            true,
+            vec![format!(
+                "ClickHouse database \"{}\" was built by an older envio, which stores these \
+                 columns as other types: `envio_history_Account`.`balance` is String, where \
+                 this envio writes Decimal(39,0).",
+                older.database
+            )]
+        )
+    );
+}
+
+/// The server spells a Decimal its own way — `Decimal(39, 0)`, wrapped for a
+/// nullable or a list — and the check reads that as the type envio wrote,
+/// or no deployment with a bounded number could restart.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn no_decimal_column_this_envio_built_is_outdated() {
+    let live = Live::with(vec![entity_input(
+        "Account",
+        vec![
+            column("id", "String"),
+            Field {
+                field_type: FieldType::BigInt {
+                    precision: Some(18),
+                },
+                ..column("narrow", "BigInt")
+            },
+            Field {
+                field_type: FieldType::BigInt {
+                    precision: Some(76),
+                },
+                ..column("wide", "BigInt")
+            },
+            Field {
+                field_type: FieldType::BigDecimal {
+                    config: Some((60, 20)),
+                },
+                is_nullable: true,
+                ..column("price", "BigDecimal")
+            },
+            Field {
+                field_type: FieldType::BigInt {
+                    precision: Some(50),
+                },
+                is_array: true,
+                ..column("history", "BigInt")
+            },
+        ],
+    )]);
+    initialize(&live).await;
+    let seen = outdated_columns_seen(&live.database, live.schema.clone()).await;
+    live.drop_database().await;
+    assert_eq!(seen, (false, Vec::new()));
+}
+
+// https://github.com/enviodev/hyperindex/issues/1816
 /// Past 38 digits a bounded number needs ClickHouse's 256-bit Decimal, whose
 /// 32 bytes hold every value its precision allows, and sorts as a number
 /// rather than as text.
@@ -471,8 +575,8 @@ async fn a_number_bounded_past_38_digits_stores_as_a_256_bit_decimal() {
                 ],
                 format!(
                     "Failed encoding rows for ClickHouse table `envio_history_Account`: \
-                     encoding column `balance` row 0: 1{} is out of range for a Decimal {{ \
-                     precision: 76, scale: 0 }} column",
+                     encoding column `balance` row 0: 1{} is out of range for a Decimal(76,0) \
+                     column",
                     "0".repeat(76)
                 ),
             ),
@@ -484,8 +588,8 @@ async fn a_number_bounded_past_38_digits_stores_as_a_256_bit_decimal() {
                 ],
                 format!(
                     "Failed encoding rows for ClickHouse table `envio_history_Account`: \
-                     encoding column `balance` row 0: 1{} is out of range for a Decimal {{ \
-                     precision: 39, scale: 0 }} column",
+                     encoding column `balance` row 0: 1{} is out of range for a Decimal(39,0) \
+                     column",
                     "0".repeat(39)
                 ),
             ),
@@ -497,9 +601,10 @@ async fn a_number_bounded_past_38_digits_stores_as_a_256_bit_decimal() {
                 ],
                 format!(
                     "Failed encoding rows for ClickHouse table `envio_history_Account`: \
-                     encoding column `balance` row 0: 1{} is out of range for a Decimal {{ \
-                     precision: 76, scale: 20 }} column",
-                    "0".repeat(76)
+                     encoding column `balance` row 0: 1{}.{} is out of range for a \
+                     Decimal(76,20) column",
+                    "0".repeat(56),
+                    "0".repeat(20)
                 ),
             ),
         )

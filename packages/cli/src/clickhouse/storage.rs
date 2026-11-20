@@ -659,6 +659,75 @@ impl Storage {
         Ok(())
     }
 
+    /// Whether an older envio built the tables' Decimal columns: it kept a
+    /// number bounded past 38 digits as a String, and the bytes of a Decimal
+    /// written to that column misalign every row after it. Only Decimal columns
+    /// are compared: they are the ones whose type has changed between versions,
+    /// and the server spells every other type its own way. The columns that
+    /// differ are logged, since the refusal itself names none.
+    pub async fn holds_outdated_columns(&self) -> Result<bool> {
+        let expected = self
+            .all_tables()
+            .iter()
+            .flat_map(|table| {
+                table
+                    .columns()
+                    .iter()
+                    .filter(|column| column.ch_type.holds_decimal())
+                    .map(|column| {
+                        (
+                            (
+                                table.entity.history_table.clone(),
+                                column.ch_column().to_string(),
+                            ),
+                            column.ch_type.to_string(),
+                        )
+                    })
+            })
+            .collect::<HashMap<_, _>>();
+        if expected.is_empty() {
+            return Ok(false);
+        }
+        let answer = self
+            .client
+            .statement(format!(
+                "SELECT table, name, type FROM system.columns WHERE database = {} AND (table, \
+                 name) IN ({}) ORDER BY table, position FORMAT TabSeparated",
+                literal(self.database()),
+                expected
+                    .keys()
+                    .map(|(table, column)| format!("({}, {})", literal(table), literal(column)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+            .await?;
+        let without_spaces = |text: &str| text.replace(' ', "");
+        let differing = answer
+            .lines()
+            .filter_map(|line| {
+                let mut cells = line.splitn(3, '\t');
+                let key = (cells.next()?.to_string(), cells.next()?.to_string());
+                let held = cells.next()?;
+                let written = expected.get(&key)?;
+                (without_spaces(held) != without_spaces(written)).then(|| {
+                    format!(
+                        "`{}`.`{}` is {held}, where this envio writes {written}",
+                        key.0, key.1
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        if !differing.is_empty() {
+            (self.client.warn)(&format!(
+                "ClickHouse database \"{}\" was built by an older envio, which stores these \
+                 columns as other types: {}.",
+                self.database(),
+                differing.join("; ")
+            ));
+        }
+        Ok(!differing.is_empty())
+    }
+
     /// The last checkpoint below `below`, of the one chain if one is named.
     /// One a rollback reverted is never it while that rollback's own
     /// checkpoint, above it, is below `below` too.

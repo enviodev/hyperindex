@@ -55,6 +55,14 @@ impl ChType {
         }
     }
 
+    pub fn holds_decimal(&self) -> bool {
+        match self {
+            ChType::Decimal { .. } => true,
+            ChType::Nullable(inner) | ChType::Array(inner) => inner.holds_decimal(),
+            _ => false,
+        }
+    }
+
     pub fn enum_value(&self, name: &str) -> Option<i16> {
         match self {
             ChType::Enum { variants } => variants

@@ -63,8 +63,17 @@ fn decimal_to_i256(text: &str, scale: u32) -> Result<I256> {
     };
     let kept_frac =
         (i64::from(scale) + i64::from(exponent)).clamp(0, frac_part.len() as i64) as usize;
-    let ten = U256::from(10u8);
+    let overflow = || anyhow!("decimal `{text}` overflows Int256");
+    // Digits are gathered in a u64 and folded into the 256-bit magnitude 19 at
+    // a time: a 256-bit multiply per digit costs several times the whole parse
+    // of the 18-digit amounts most columns hold.
+    let fold = |magnitude: U256, chunk: u64, chunk_digits: usize| {
+        magnitude
+            .checked_mul(POWERS_OF_TEN[chunk_digits])
+            .and_then(|shifted| shifted.checked_add(U256::from(chunk)))
+    };
     let mut magnitude = U256::ZERO;
+    let (mut chunk, mut chunk_digits) = (0u64, 0usize);
     let mut digits = 0usize;
     for (part, kept) in [(int_part, int_part.len()), (frac_part, kept_frac)] {
         for (index, byte) in part.bytes().enumerate() {
@@ -75,12 +84,15 @@ fn decimal_to_i256(text: &str, scale: u32) -> Result<I256> {
             if index >= kept {
                 continue;
             }
-            magnitude = magnitude
-                .checked_mul(ten)
-                .and_then(|shifted| shifted.checked_add(U256::from(byte - b'0')))
-                .ok_or_else(|| anyhow!("decimal `{text}` overflows Int256"))?;
+            chunk = chunk * 10 + u64::from(byte - b'0');
+            chunk_digits += 1;
+            if chunk_digits == U64_DIGITS {
+                magnitude = fold(magnitude, chunk, chunk_digits).ok_or_else(overflow)?;
+                (chunk, chunk_digits) = (0, 0);
+            }
         }
     }
+    magnitude = fold(magnitude, chunk, chunk_digits).ok_or_else(overflow)?;
     if digits == 0 {
         bail!("`{text}` is not a decimal");
     }
@@ -92,17 +104,16 @@ fn decimal_to_i256(text: &str, scale: u32) -> Result<I256> {
         .as_bytes()
         .get(kept_frac)
         .is_some_and(|d| *d >= b'5');
+    let ten = U256::from(10u8);
     match shift.cmp(&0) {
-        std::cmp::Ordering::Greater => {
-            for _ in 0..shift {
-                if magnitude.is_zero() {
-                    break;
-                }
-                magnitude = magnitude
-                    .checked_mul(ten)
-                    .context("decimal overflows the column's precision")?;
-            }
+        std::cmp::Ordering::Greater if !magnitude.is_zero() => {
+            magnitude = usize::try_from(shift)
+                .ok()
+                .and_then(|shift| POWERS_OF_TEN.get(shift))
+                .and_then(|power| magnitude.checked_mul(*power))
+                .context("decimal overflows the column's precision")?;
         }
+        std::cmp::Ordering::Greater => {}
         std::cmp::Ordering::Less => {
             for _ in 0..-shift {
                 if magnitude.is_zero() {
@@ -133,6 +144,9 @@ fn put_int_raw(out: &mut Vec<u8>, value: i128, bytes: usize) {
     out.extend_from_slice(&value.to_le_bytes()[..bytes]);
 }
 
+/// The most decimal digits a u64 always holds.
+const U64_DIGITS: usize = 19;
+
 /// `10^n` for every `n` a Decimal's precision can be.
 static POWERS_OF_TEN: LazyLock<Vec<U256>> = LazyLock::new(|| {
     std::iter::successors(Some(U256::from(1u8)), |power| {
@@ -146,14 +160,17 @@ static POWERS_OF_TEN: LazyLock<Vec<U256>> = LazyLock::new(|| {
 /// width of two's complement. Nothing on the server checks the integer against
 /// the precision, so a wider one would be stored as given.
 fn put_decimal(out: &mut Vec<u8>, value: I256, ch_type: &ChType) -> Result<()> {
-    let ChType::Decimal { precision, .. } = ch_type else {
+    let ChType::Decimal { precision, scale } = ch_type else {
         bail!("{ch_type:?} is not a Decimal column");
     };
     let limit = POWERS_OF_TEN
         .get(*precision as usize)
         .context("Decimal precision is wider than ClickHouse's widest Decimal")?;
     if value.unsigned_abs() >= *limit {
-        bail!("{value} is out of range for a {ch_type:?} column");
+        bail!(
+            "{} is out of range for a {ch_type} column",
+            decimal_text(value, *scale)
+        );
     }
     out.extend_from_slice(&value.into_raw().to_le_bytes::<32>()[..decimal_bytes(*precision)?]);
     Ok(())
@@ -1008,6 +1025,24 @@ mod tests {
     // Postgres rounds a numeric(P, S) half away from zero, and an entity lands
     // in both stores: the value ClickHouse holds has to be the one Postgres
     // holds, not one ulp under it.
+    /// Digits are folded into the magnitude 19 at a time, so a length on
+    /// either side of every fold has to come out as the number it spells.
+    #[test]
+    fn parses_a_decimal_of_every_length_around_each_fold() {
+        let texts = [1, 18, 19, 20, 37, 38, 39, 57, 58, 76]
+            .map(|length| format!("-{}", &"1234567890".repeat(8)[..length]));
+        let parsed = texts
+            .clone()
+            .map(|text| decimal_to_i256(&text, 0).unwrap().to_string());
+        let scaled = decimal_to_i256("1.2345678901234567890123", 20)
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            (parsed, scaled),
+            (texts, "123456789012345678901".to_string())
+        );
+    }
+
     #[test]
     fn rounds_a_decimal_below_the_column_scale_as_postgres_does() {
         let scaled: Vec<String> = [
