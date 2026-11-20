@@ -10,13 +10,13 @@ contracts:
     events:
       - event: "Transfer(address indexed from, address indexed to, uint256 value)"
 chains:
-  - {id: 1, start_block: 26456306, contracts: [{name: ERC20, address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"}]}
-  - {id: 8453, start_block: 59936653, contracts: [{name: ERC20, address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"}]}
-  - {id: 42161, start_block: 525926745, contracts: [{name: ERC20, address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"}]}
-  - {id: 10, start_block: 159789464, contracts: [{name: ERC20, address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"}]}
-  - {id: 43114, start_block: 100876361, contracts: [{name: ERC20, address: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"}]}
-  - {id: 59144, start_block: 32662123, contracts: [{name: ERC20, address: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff"}]}
-  - {id: 534352, start_block: 35795094, contracts: [{name: ERC20, address: "0x06eFdBFf2a14a7c8E15944D1F4A48F9F95F663A4"}]}
-  - {id: 100, start_block: 49376650, contracts: [{name: ERC20, address: "0xDDAfbb505ad214D7b80b1f830fcCc89B60fb7A83"}]}
-  - {id: 81457, start_block: 42249449, contracts: [{name: ERC20, address: "0x4300000000000000000000000000000000000003"}]}
-  - {id: 324, start_block: 73034042, contracts: [{name: ERC20, address: "0x1d17CBcF0D6D143135aE902365D2E5e2A16538D4"}]}
+  - {id: 1, start_block: 26476431, contracts: [{name: ERC20, address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"}]}
+  - {id: 8453, start_block: 59964190, contracts: [{name: ERC20, address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"}]}
+  - {id: 42161, start_block: 525952537, contracts: [{name: ERC20, address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"}]}
+  - {id: 10, start_block: 159810218, contracts: [{name: ERC20, address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"}]}
+  - {id: 43114, start_block: 100898202, contracts: [{name: ERC20, address: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"}]}
+  - {id: 59144, start_block: 32682280, contracts: [{name: ERC20, address: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff"}]}
+  - {id: 534352, start_block: 35815228, contracts: [{name: ERC20, address: "0x06eFdBFf2a14a7c8E15944D1F4A48F9F95F663A4"}]}
+  - {id: 100, start_block: 49396946, contracts: [{name: ERC20, address: "0xDDAfbb505ad214D7b80b1f830fcCc89B60fb7A83"}]}
+  - {id: 81457, start_block: 42269449, contracts: [{name: ERC20, address: "0x4300000000000000000000000000000000000003"}]}
+  - {id: 324, start_block: 73054260, contracts: [{name: ERC20, address: "0x1d17CBcF0D6D143135aE902365D2E5e2A16538D4"}]}
