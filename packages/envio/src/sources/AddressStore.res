@@ -12,15 +12,14 @@ type registration = {
 type verdict =
   // False when nothing on this chain is fetched by address for the contract.
   // The address is still stored and persisted.
-  | Added({effectiveStartBlock: int, fetchable: bool})
-  | Duplicate({effectiveStartBlock: int, existingEffectiveStartBlock: int})
+  | Added({fetchable: bool})
+  // Already registered for the contract from this block or an earlier one.
+  | Duplicate
   | Invalid
 
 type rawVerdict = {
   kind: string,
   fetchable: bool,
-  effectiveStartBlock: int,
-  existingEffectiveStartBlock: Null.t<int>,
 }
 
 type rejectedRow = {
@@ -154,12 +153,8 @@ external contractAddresses: (t, string, ~shouldChecksum: bool) => array<Address.
 
 let toVerdict = (raw: rawVerdict): verdict =>
   switch raw.kind {
-  | "added" => Added({effectiveStartBlock: raw.effectiveStartBlock, fetchable: raw.fetchable})
-  | "duplicate" =>
-    Duplicate({
-      effectiveStartBlock: raw.effectiveStartBlock,
-      existingEffectiveStartBlock: raw.existingEffectiveStartBlock->Null.getUnsafe,
-    })
+  | "added" => Added({fetchable: raw.fetchable})
+  | "duplicate" => Duplicate
   | "invalid" => Invalid
   | kind => JsError.throwWithMessage(`Unexpected address registration verdict "${kind}"`)
   }

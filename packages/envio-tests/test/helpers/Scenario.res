@@ -326,17 +326,23 @@ let run = async (
     ~provideClickHouse?,
     ~chains?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
-    async indexer => {
-      mocks->Array.forEach(((chain, mock)) =>
+    ~onIndexerStarted=(indexer, ~chains) =>
+      mocks
+      ->Array.filter(((chain, _)) =>
+        chains->Option.mapOr(true, chainIds => chainIds->Array.includes(chain->ChainId.fromInt))
+      )
+      ->Array.forEach(((chain, mock)) =>
         mock.attachIndexer(
           ~waitUntilIdle=indexer.waitUntilIdle,
           ~isRegisteringContracts=indexer.isRegisteringContracts,
+          ~isIndexedAt=indexer.isIndexedAt(~chainId=chain, ...),
           ~progressBlock=async () =>
             (await indexer.metric("envio_progress_block"))
             ->Array.find(({labels}) => labels->Dict.get("chainId") === Some(chain->Int.toString))
             ->Option.flatMap(({value}) => value->Int.fromString),
         )
-      )
+      ),
+    async indexer => {
       switch {
         await body(~indexer, ~source)
         // Only after the body passed: a failing body has its own error to
@@ -557,10 +563,9 @@ let captureRefusal = () => {
 }
 
 // Answers whatever the reorg resolution asks for: block hashes for the depth
-// search (blocks past `validUpTo` come back re-orged), and empty responses for
-// the re-fetch queries the rollback schedules.
+// search (blocks past `validUpTo` come back re-orged), and, for every query up
+// to `head`, the `refetched` items of its range: what the new chain holds.
 let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetched=[]) => {
-  let refetched = ref(refetched)
   for _ in 0 to 300 {
     if source.getBlockHashesCalls->Array.length > 0 {
       let requested = source.getBlockHashesCalls->Array.copy
@@ -579,19 +584,29 @@ let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetc
       )
       source.getBlockHashesCalls->Utils.Array.clearInPlace
     }
-    if source.pendingItemsQueries->Array.length > 0 {
-      await source.expectItemsQueries([
-        {reply: Respond({items: refetched.contents, latestFetchedBlockNumber: head})},
-      ])
-      refetched := []
-    }
+    // Replied to one by one, so a query past `head` stays pending for the
+    // caller rather than failing a match that doesn't list it.
+    source.pendingItemsQueries
+    ->Array.filter(query => query.fromBlock <= head)
+    ->Array.forEach(query => {
+      let latest = switch query.toBlock {
+      | Bounded(toBlock) => Math.Int.min(toBlock, head)
+      | Unbounded => head
+      }
+      (query->MockSource.control).respond({
+        items: refetched->Array.filter((item: MockSource.itemMock) =>
+          item.blockNumber >= query.fromBlock && item.blockNumber <= latest
+        ),
+        latestFetchedBlockNumber: latest,
+      })
+    })
     await Utils.delay(0)
   }
 }
 
 // Reorgs the chain above `validUpTo`: the next response arrives with block
 // `head` re-orged, and the rollback that follows is driven to completion. The
-// first refetch after it answers with `refetched`.
+// new chain holds `refetched` up to `head`.
 let reorgAbove = async (
   ~indexer: IndexerRunner.t,
   ~source: MockSource.t,
