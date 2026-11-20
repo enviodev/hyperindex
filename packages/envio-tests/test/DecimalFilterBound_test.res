@@ -5,7 +5,8 @@ open Vitest
 // ClickHouse compares a Decimal against one of a wider scale by scaling the
 // column's value up, which wraps past 256 bits for a value near the top of a
 // precision-76 column and answers the comparison wrong. The same filters have
-// to find the same rows as they do in Postgres, which compares exactly.
+// to find the same rows as they do in Postgres, which compares exactly, on a
+// precision-38 column too, whose values ClickHouse compares as 256-bit ones.
 
 let scenario = Scenario.make(
   ~configYaml=`
@@ -26,11 +27,12 @@ chains:
 type Wide {
   id: ID!
   amount: BigDecimal! @config(precision: 76, scale: 2)
+  narrow: BigDecimal! @config(precision: 38, scale: 2)
 }
 `,
 )
 
-type wide = {id: string, amount: BigDecimal.t}
+type wide = {id: string, amount: BigDecimal.t, narrow: BigDecimal.t}
 type wideOps = {
   set: wide => unit,
   getWhere: dict<dict<BigDecimal.t>> => promise<array<wide>>,
@@ -46,6 +48,7 @@ let inHandler = (~block, run: handlerContext => promise<unit>): MockSource.itemM
 
 let decimal = BigDecimal.fromStringUnsafe
 let widest = `${"9"->String.repeat(74)}.99`
+let widestNarrow = `${"9"->String.repeat(36)}.99`
 
 let filters = [
   ("_gt", "0.001"),
@@ -73,9 +76,17 @@ describe("A getWhere bound finer than a Decimal column's scale", () => {
             inHandler(
               ~block=1,
               async context => {
-                context.wide.set({id: "top", amount: decimal(widest)})
-                context.wide.set({id: "bottom", amount: decimal(`-${widest}`)})
-                context.wide.set({id: "small", amount: decimal("0.01")})
+                context.wide.set({
+                  id: "top",
+                  amount: decimal(widest),
+                  narrow: decimal(widestNarrow),
+                })
+                context.wide.set({
+                  id: "bottom",
+                  amount: decimal(`-${widest}`),
+                  narrow: decimal(`-${widestNarrow}`),
+                })
+                context.wide.set({id: "small", amount: decimal("0.01"), narrow: decimal("0.01")})
               },
             ),
           ],
@@ -97,17 +108,20 @@ describe("A getWhere bound finer than a Decimal column's scale", () => {
             inHandler(
               ~block=2,
               async context =>
-                for at in 0 to filters->Array.length - 1 {
-                  let (operator, bound) = filters->Array.getUnsafe(at)
-                  let ids =
-                    (
-                      await context.wide.getWhere(
-                        dict{"amount": Dict.fromArray([(operator, decimal(bound))])},
+                for field in 0 to 1 {
+                  let field = ["amount", "narrow"]->Array.getUnsafe(field)
+                  for at in 0 to filters->Array.length - 1 {
+                    let (operator, bound) = filters->Array.getUnsafe(at)
+                    let ids =
+                      (
+                        await context.wide.getWhere(
+                          Dict.fromArray([(field, Dict.fromArray([(operator, decimal(bound))]))]),
+                        )
                       )
-                    )
-                    ->Array.map(wide => wide.id)
-                    ->Array.toSorted(String.compare)
-                  found->Array.push(ids)->ignore
+                      ->Array.map(wide => wide.id)
+                      ->Array.toSorted(String.compare)
+                    found->Array.push((field, ids))->ignore
+                  }
                 },
             ),
           ],
@@ -117,6 +131,9 @@ describe("A getWhere bound finer than a Decimal column's scale", () => {
     ])
     await indexer.getBatchWritePromise()
 
-    t.expect(found).toEqual([["small", "top"], ["top"], ["bottom"], ["bottom"], [], ["small"]])
+    let expected = [["small", "top"], ["top"], ["bottom"], ["bottom"], [], ["small"]]
+    t.expect(found).toEqual(
+      ["amount", "narrow"]->Array.flatMap(field => expected->Array.map(ids => (field, ids))),
+    )
   })
 })
