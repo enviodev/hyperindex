@@ -35,6 +35,15 @@ let getQueryFieldOrThrow = (~table: Table.table, ~entityName, ~apiFieldName, ~wh
     )
   }
 
+// Memoized per field: rescript-schema compiles and caches operations on the
+// schema instance, so a fresh S.array per `_in` filter would recompile the
+// serializer on every call.
+let arrayFieldSchema: Table.queryField => S.t<
+  unknown,
+> = Utils.WeakMap.memoize((queryField: Table.queryField) =>
+  S.array(queryField.fieldSchema)->S.toUnknown
+)
+
 // A raw-bytes value never passes through JSON, which has no spelling for it.
 // One value is handed to the driver as it is. A set is written as the array
 // literal Postgres parses, because the driver would declare it by its element
@@ -77,7 +86,7 @@ let bindOrThrow = (
   | Bytea => bindBytesOrThrow(~value, ~isArray, ~params, ~fail)
   | _ =>
     let json = try value->S.reverseConvertToJsonOrThrow(
-      isArray ? S.array(queryField.fieldSchema)->S.toUnknown : queryField.fieldSchema,
+      isArray ? queryField->arrayFieldSchema : queryField.fieldSchema,
     ) catch {
     | exn =>
       fail(
