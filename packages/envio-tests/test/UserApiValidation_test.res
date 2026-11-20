@@ -948,6 +948,17 @@ chains:
 `,
       "Failed to automatically find HyperSync endpoint for the chain 999999. If the chain is supported by HyperSync, provide the endpoint manually:\n\nchains:\n  - id: 999999\n    hypersync_config:\n      url: https://999999.hypersync.xyz\n\nOr use an RPC endpoint for historical sync:\n\nchains:\n  - id: 999999\n    rpc:\n      url: https://your-rpc-endpoint\n      for: sync\n\nRead more: https://docs.envio.dev/docs/HyperIndex/config-schema-reference#hypersyncconfig",
     ),
+    // https://github.com/enviodev/hyperindex/issues/1829
+    (
+      "rejects XDC without an explicit sync source, since HyperSync no longer follows it",
+      `
+name: xdc-without-source
+chains:
+  - id: 50
+    start_block: 0
+`,
+      "Failed to automatically find HyperSync endpoint for the chain 50. If the chain is supported by HyperSync, provide the endpoint manually:\n\nchains:\n  - id: 50\n    hypersync_config:\n      url: https://50.hypersync.xyz\n\nOr use an RPC endpoint for historical sync:\n\nchains:\n  - id: 50\n    rpc:\n      url: https://your-rpc-endpoint\n      for: sync\n\nRead more: https://docs.envio.dev/docs/HyperIndex/config-schema-reference#hypersyncconfig",
+    ),
     (
       "rejects duplicate transaction field selections",
       `

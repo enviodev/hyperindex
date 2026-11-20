@@ -433,7 +433,10 @@ pub enum Network {
 
     XLayerTestnet = 195,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    // HyperSync stopped following XDC at block 107807702 and it's gone from
+    // active_chains, so it's not a HypersyncChain.
+    // https://github.com/enviodev/hyperindex/issues/1829
+    #[subenum(NetworkWithExplorer)]
     Xdc = 50,
 
     #[subenum(NetworkWithExplorer)]
