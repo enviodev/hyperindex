@@ -1,9 +1,11 @@
 use std::borrow::Cow;
+use std::sync::LazyLock;
 
+use alloy_primitives::{Sign, I256, U256};
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 
-use super::ch_type::ChType;
+use super::ch_type::{decimal_bytes, ChType, MAX_DECIMAL_PRECISION};
 use super::table::Table;
 use crate::columnar::{self, ColumnKind};
 use crate::storage::changes::ChangeSet;
@@ -41,7 +43,7 @@ pub(super) fn put_string(out: &mut Vec<u8>, value: &str) {
     }
 }
 
-fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
+fn decimal_to_i256(text: &str, scale: u32) -> Result<I256> {
     let text = text.trim();
     if text.is_empty() {
         bail!("a Decimal column cannot hold an empty value");
@@ -61,7 +63,8 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
     };
     let kept_frac =
         (i64::from(scale) + i64::from(exponent)).clamp(0, frac_part.len() as i64) as usize;
-    let mut magnitude = 0u128;
+    let ten = U256::from(10u8);
+    let mut magnitude = U256::ZERO;
     let mut digits = 0usize;
     for (part, kept) in [(int_part, int_part.len()), (frac_part, kept_frac)] {
         for (index, byte) in part.bytes().enumerate() {
@@ -73,22 +76,15 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
                 continue;
             }
             magnitude = magnitude
-                .checked_mul(10)
-                .and_then(|shifted| shifted.checked_add(u128::from(byte - b'0')))
-                .ok_or_else(|| anyhow!("decimal `{text}` overflows Int128"))?;
+                .checked_mul(ten)
+                .and_then(|shifted| shifted.checked_add(U256::from(byte - b'0')))
+                .ok_or_else(|| anyhow!("decimal `{text}` overflows Int256"))?;
         }
     }
     if digits == 0 {
         bail!("`{text}` is not a decimal");
     }
     let shift = i64::from(scale) + i64::from(exponent) - kept_frac as i64;
-    // Parsed unsigned: i128::MIN's magnitude is one past i128::MAX, so parsing
-    // the digits as i128 and negating afterwards would reject a legal value.
-    let mut value = match negative {
-        true if magnitude <= (i128::MAX as u128) + 1 => (magnitude as i128).wrapping_neg(),
-        false if magnitude <= i128::MAX as u128 => magnitude as i128,
-        _ => bail!("decimal `{text}` overflows Int128"),
-    };
     // Rounded half away from zero on the first dropped digit, as Postgres
     // rounds a numeric(P, S) — the entity lands in both stores, and ClickHouse's
     // own cast, which truncates, would leave this one an ulp under the other.
@@ -99,47 +95,69 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
     match shift.cmp(&0) {
         std::cmp::Ordering::Greater => {
             for _ in 0..shift {
-                if value == 0 {
+                if magnitude.is_zero() {
                     break;
                 }
-                value = value
-                    .checked_mul(10)
+                magnitude = magnitude
+                    .checked_mul(ten)
                     .context("decimal overflows the column's precision")?;
             }
         }
         std::cmp::Ordering::Less => {
             for _ in 0..-shift {
-                if value == 0 {
+                if magnitude.is_zero() {
                     round_away = false;
                     break;
                 }
-                round_away = (value % 10).abs() >= 5;
-                value /= 10;
+                round_away = magnitude % ten >= U256::from(5u8);
+                magnitude /= ten;
             }
         }
         std::cmp::Ordering::Equal => {}
     }
     if round_away {
-        value = value
-            .checked_add(if negative { -1 } else { 1 })
+        magnitude = magnitude
+            .checked_add(U256::from(1u8))
             .context("decimal overflows the column's precision")?;
     }
-    Ok(value)
+    let sign = if negative {
+        Sign::Negative
+    } else {
+        Sign::Positive
+    };
+    I256::checked_from_sign_and_abs(sign, magnitude)
+        .context("decimal overflows the column's precision")
 }
 
 fn put_int_raw(out: &mut Vec<u8>, value: i128, bytes: usize) {
     out.extend_from_slice(&value.to_le_bytes()[..bytes]);
 }
 
-const POW10: [i128; 39] = {
-    let mut table = [1i128; 39];
-    let mut i = 1;
-    while i < table.len() {
-        table[i] = table[i - 1] * 10;
-        i += 1;
+/// `10^n` for every `n` a Decimal's precision can be.
+static POWERS_OF_TEN: LazyLock<Vec<U256>> = LazyLock::new(|| {
+    std::iter::successors(Some(U256::from(1u8)), |power| {
+        Some(*power * U256::from(10u8))
+    })
+    .take(MAX_DECIMAL_PRECISION as usize + 1)
+    .collect()
+});
+
+/// RowBinary carries a Decimal as the integer at its scale, in the column's
+/// width of two's complement. Nothing on the server checks the integer against
+/// the precision, so a wider one would be stored as given.
+fn put_decimal(out: &mut Vec<u8>, value: I256, ch_type: &ChType) -> Result<()> {
+    let ChType::Decimal { precision, .. } = ch_type else {
+        bail!("{ch_type:?} is not a Decimal column");
+    };
+    let limit = POWERS_OF_TEN
+        .get(*precision as usize)
+        .context("Decimal precision is wider than ClickHouse's widest Decimal")?;
+    if value.unsigned_abs() >= *limit {
+        bail!("{value} is out of range for a {ch_type:?} column");
     }
-    table
-};
+    out.extend_from_slice(&value.into_raw().to_le_bytes::<32>()[..decimal_bytes(*precision)?]);
+    Ok(())
+}
 
 /// What the column accepts. RowBinary is just the raw integer, so nothing on the
 /// server side rejects an out-of-range value: it wraps into whatever the bytes
@@ -153,12 +171,6 @@ fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
         ChType::UInt32 => (0, u32::MAX as i128),
         ChType::UInt64 => (0, u64::MAX as i128),
         ChType::DateTime64 => (DATETIME64_MIN_MS, DATETIME64_MAX_MS),
-        ChType::Decimal { precision, .. } => {
-            let limit = POW10
-                .get(*precision as usize)
-                .context("Decimal precision is wider than the value the encoder carries")?;
-            (1 - limit, limit - 1)
-        }
         ChType::Enum { variants } => {
             let width_max = if ChType::enum_bytes(variants) == 1 {
                 i8::MAX as i128
@@ -178,6 +190,10 @@ const DATETIME64_MIN_MS: i128 = -2_208_988_800_000;
 const DATETIME64_MAX_MS: i128 = 10_413_791_999_999;
 
 fn put_int(out: &mut Vec<u8>, value: i128, ch_type: &ChType) -> Result<()> {
+    if let ChType::Decimal { .. } = ch_type {
+        let value = I256::try_from(value).expect("every i128 fits an I256");
+        return put_decimal(out, value, ch_type);
+    }
     let (min, max) = int_bounds(ch_type)?;
     if value < min || value > max {
         if let (ChType::DateTime64, Ok(ticks)) = (ch_type, i64::try_from(value)) {
@@ -196,14 +212,19 @@ fn put_int(out: &mut Vec<u8>, value: i128, ch_type: &ChType) -> Result<()> {
 fn encode_text_scalar(out: &mut Vec<u8>, ch_type: &ChType, text: &str) -> Result<()> {
     match ch_type {
         ChType::String => put_string(out, text),
-        ChType::Decimal { scale, .. } => put_int(out, decimal_to_i128(text, *scale)?, ch_type)?,
+        ChType::Decimal { scale, .. } => put_decimal(out, decimal_to_i256(text, *scale)?, ch_type)?,
         ChType::Enum { .. } => {
             let numeric = ch_type
                 .enum_value(text)
                 .with_context(|| format!("`{text}` is not a variant of the enum column"))?;
             put_int(out, numeric as i128, ch_type)?;
         }
-        other => put_int(out, decimal_to_i128(text, 0)?, other)?,
+        other => {
+            let value = decimal_to_i256(text, 0)?;
+            let value = i128::try_from(value)
+                .map_err(|_| anyhow!("{value} is out of range for a {other:?} column"))?;
+            put_int(out, value, other)?
+        }
     }
     Ok(())
 }
@@ -272,18 +293,7 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
             encode_text_scalar(out, ch_type, text)?
         }
         (ChType::Decimal { scale, .. }, Value::Number(number)) => {
-            let scaled = match number
-                .as_i64()
-                .map(i128::from)
-                .or_else(|| number.as_u64().map(i128::from))
-            {
-                Some(value) => POW10
-                    .get(*scale as usize)
-                    .and_then(|factor| value.checked_mul(*factor))
-                    .context("decimal overflows the column's precision")?,
-                None => decimal_to_i128(&number.to_string(), *scale)?,
-            };
-            put_int(out, scaled, ch_type)?
+            put_decimal(out, decimal_to_i256(&number.to_string(), *scale)?, ch_type)?
         }
         (ChType::Enum { .. }, _) => {
             bail!("`{value}` is not a value a {ch_type:?} element can hold")
@@ -300,7 +310,7 @@ fn fixed_width(ch_type: &ChType) -> Result<usize> {
         ChType::Int32 | ChType::UInt32 => 4,
         ChType::Int64 | ChType::UInt64 | ChType::DateTime64 => 8,
         ChType::Float64 => 8,
-        ChType::Decimal { precision, .. } => super::ch_type::decimal_bytes(*precision)?,
+        ChType::Decimal { precision, .. } => decimal_bytes(*precision)?,
         ChType::Enum { variants } => ChType::enum_bytes(variants),
         other => bail!("{other:?} has no fixed width"),
     })
@@ -532,6 +542,16 @@ impl<'a> Reader<'a> {
         Ok(i128::from_le_bytes(padded))
     }
 
+    fn decimal(&mut self, width: usize) -> Result<I256> {
+        let bytes = self.take(width)?;
+        let mut padded = [0u8; 32];
+        padded[..width].copy_from_slice(bytes);
+        if bytes[width - 1] & 0x80 != 0 {
+            padded[width..].fill(0xFF);
+        }
+        Ok(I256::from_raw(U256::from_le_bytes(padded)))
+    }
+
     fn unsigned(&mut self, width: usize) -> Result<u128> {
         let bytes = self.take(width)?;
         let mut padded = [0u8; 16];
@@ -546,8 +566,8 @@ impl<'a> Reader<'a> {
 
 /// A Decimal's integer at its scale, rendered the way Postgres renders a
 /// `numeric(P, S)`: every one of its `scale` places written out.
-fn decimal_text(value: i128, scale: u32) -> String {
-    let negative = value < 0;
+fn decimal_text(value: I256, scale: u32) -> String {
+    let negative = value.is_negative();
     let digits = value.unsigned_abs().to_string();
     let scale = scale as usize;
     let mut rendered = String::with_capacity(digits.len() + scale + 2);
@@ -603,7 +623,7 @@ fn decode_value<'a>(reader: &mut Reader<'a>, ch_type: &ChType, kind: ReadKind) -
         )),
         ChType::DateTime64 => Cell::Timestamp(reader.signed(8)? as f64),
         ChType::Decimal { precision, scale } => Cell::Str(Cow::Owned(decimal_text(
-            reader.signed(super::ch_type::decimal_bytes(*precision)?)?,
+            reader.decimal(decimal_bytes(*precision)?)?,
             *scale,
         ))),
         ChType::Enum { variants } => {
@@ -939,6 +959,37 @@ mod tests {
     }
 
     #[test]
+    fn a_decimal_past_38_digits_takes_32_bytes_and_reads_back() {
+        let widest = "9".repeat(76);
+        let lowest = format!("-{widest}");
+        let encoded = encode(
+            &[text_column(
+                "a",
+                "Decimal(76, 0)",
+                &["-2", widest.as_str(), lowest.as_str()],
+            )],
+            3,
+        )
+        .unwrap();
+        let decoded = decode(
+            &encoded.body,
+            &[(parse_type("Decimal(76, 0)"), ReadKind::Text)],
+        )
+        .unwrap();
+        assert_eq!(
+            (&encoded.body[..32], decoded),
+            (
+                [[0xFEu8].as_slice(), &[0xFF; 31]].concat().as_slice(),
+                vec![
+                    Cell::Str(Cow::Borrowed("-2")),
+                    Cell::Str(Cow::Owned(widest.clone())),
+                    Cell::Str(Cow::Owned(lowest.clone())),
+                ]
+            )
+        );
+    }
+
+    #[test]
     fn encodes_decimal_in_exponential_notation() {
         let encoded = encode(&[text_column("a", "Decimal(18, 4)", &["1.5e3"])], 1).unwrap();
         assert_eq!(encoded.body, 15_000_000i64.to_le_bytes().to_vec());
@@ -959,14 +1010,17 @@ mod tests {
     // holds, not one ulp under it.
     #[test]
     fn rounds_a_decimal_below_the_column_scale_as_postgres_does() {
-        let scaled: Vec<i128> = [
+        let scaled: Vec<String> = [
             "1.29", "1.25", "-1.25", "1.24999", "0.05", "-0.05", "9.95", "2.5e-1", "1.25e-1",
             "5e-3",
         ]
         .into_iter()
-        .map(|text| decimal_to_i128(text, 1).unwrap())
+        .map(|text| decimal_to_i256(text, 1).unwrap().to_string())
         .collect();
-        assert_eq!(scaled, vec![13, 13, -13, 12, 1, -1, 100, 3, 1, 0]);
+        assert_eq!(
+            scaled,
+            ["13", "13", "-13", "12", "1", "-1", "100", "3", "1", "0"]
+        );
     }
 
     #[test]
@@ -1414,10 +1468,10 @@ mod tests {
 
     #[test]
     fn rejects_a_decimal_that_overflows_while_scaling() {
-        let err = encode(&[text_column("d", "Decimal(38, 8)", &["1e40"])], 1).unwrap_err();
-        assert!(
-            format!("{err:#}").contains("overflows"),
-            "expected an overflow error, got: {err:#}"
+        let err = encode(&[text_column("d", "Decimal(76, 8)", &["1e80"])], 1).unwrap_err();
+        assert_eq!(
+            format!("{err:#}"),
+            "encoding column `d` row 0: decimal overflows the column's precision"
         );
     }
 
@@ -1529,13 +1583,8 @@ mod tests {
     #[test]
     fn a_decimal_reads_with_every_place_its_scale_declares() {
         assert_eq!(
-            [
-                decimal_text(0, 2),
-                decimal_text(5, 2),
-                decimal_text(-5, 2),
-                decimal_text(150, 2),
-                decimal_text(-12345, 0),
-            ],
+            [(0, 2), (5, 2), (-5, 2), (150, 2), (-12345, 0)]
+                .map(|(value, scale)| decimal_text(I256::try_from(value).unwrap(), scale)),
             ["0.00", "0.05", "-0.05", "1.50", "-12345"].map(str::to_string)
         );
     }
