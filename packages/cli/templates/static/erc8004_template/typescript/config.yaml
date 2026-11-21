@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=./node_modules/envio/evm.schema.json
+name: erc8004-indexer
+description: ERC-8004 Trustless Agents indexer (Identity and Reputation registries)
+# Entities and effect caches are per-chain: the same id on two chains is two
+# independent rows. Recommended for multichain indexers since v3.6.0. Opt a
+# single entity back into a shared row with `@crossChain` in schema.graphql, or
+# an effect with `crossChain: true`.
+disable_default_cross_chain: true
+contracts:
+  - name: IdentityRegistry
+    events:
+      # The registry is ERC-721 based, so the mint and every later ownership
+      # change arrive as Transfer. tokenId is the agentId and it is indexed.
+      - event: "Transfer(address indexed from, address indexed to, uint256 indexed tokenId)"
+      # The ERC-8004 registration itself. agentURI is empty when the
+      # no-argument register() overload is used, so treat it as optional.
+      - event: "Registered(uint256 indexed agentId, string agentURI, address indexed owner)"
+  - name: ReputationRegistry
+    events:
+      # feedbackURI and feedbackHash are non-indexed here and readFeedback()
+      # does not return them, so the log is the only place the evidence pointer
+      # exists. That is the case for indexing this registry rather than reading
+      # it live.
+      - event: "NewFeedback(uint256 indexed agentId, address indexed clientAddress, uint64 feedbackIndex, int128 value, uint8 valueDecimals, string indexed indexedTag1, string tag1, string tag2, string endpoint, string feedbackURI, bytes32 feedbackHash)"
+chains:
+  # ERC-8004 registries on Monad mainnet. They are per-chain singletons: point
+  # this at the deployment on whichever chain you want to index.
+  - id: 143
+    # HyperSync fast-forwards to the first block carrying registry data, so 0 is
+    # a safe start without having to look up the deployment block.
+    start_block: 0
+    contracts:
+      - name: IdentityRegistry
+        address: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
+      - name: ReputationRegistry
+        address: "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"

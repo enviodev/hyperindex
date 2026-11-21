@@ -38,6 +38,11 @@ const TEMPLATES: TemplateConfig[] = [
     hasTests: true,
   },
   {
+    name: "evm-erc8004",
+    initArgs: ["template", "-t", "erc8004", "-l", "typescript"],
+    hasTests: true,
+  },
+  {
     name: "evm-factory",
     initArgs: ["template", "-t", "feature-factory", "-l", "typescript"],
     hasTests: true,
