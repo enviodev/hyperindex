@@ -357,6 +357,9 @@ type valueCompare = {
   // themselves; the object-shaped types have to collapse to a primitive or
   // equal values would miss each other on identity.
   key: unknown => unknown,
+  // Some constructors coerce the other operand (BigDecimal RANGE), so equal
+  // values need not project to the same key.
+  equalityKeysAreExact: bool,
 }
 
 // `>`/`<` on `unknown` would compile to the polymorphic Primitive_object path; the raw
@@ -368,7 +371,13 @@ let nativeEq = (a: unknown, b: unknown) => a === b
 let nativeGt: (unknown, unknown) => bool = %raw(`(a, b) => a != null && a > b`)
 let nativeLt: (unknown, unknown) => bool = %raw(`(a, b) => a != null && a < b`)
 let identityKey = (v: unknown) => v
-let native = {eq: nativeEq, gt: nativeGt, lt: nativeLt, key: identityKey}
+let native = {
+  eq: nativeEq,
+  gt: nativeGt,
+  lt: nativeLt,
+  key: identityKey,
+  equalityKeysAreExact: true,
+}
 
 // A nullable column holds null where a row has no value, and a comparison that
 // calls a method on it would throw. Matching nothing is what SQL does, and
@@ -379,6 +388,7 @@ let nullSafe = (compare: valueCompare): valueCompare => {
   gt: (a, b) => !(a->nullish) && compare.gt(a, b),
   lt: (a, b) => !(a->nullish) && compare.lt(a, b),
   key: compare.key,
+  equalityKeysAreExact: compare.equalityKeysAreExact,
 }
 
 let asBigDecimal = (v: unknown) => v->(Utils.magic: unknown => BigDecimal.t)
@@ -386,7 +396,8 @@ let bigDecimal = nullSafe({
   eq: (a, b) => BigDecimal.equals(a->asBigDecimal, b->asBigDecimal),
   gt: (a, b) => BigDecimal.gt(a->asBigDecimal, b->asBigDecimal),
   lt: (a, b) => BigDecimal.lt(a->asBigDecimal, b->asBigDecimal),
-  key: v => v->asBigDecimal->BigDecimal.toString->(Utils.magic: string => unknown),
+  key: v => v->asBigDecimal->BigDecimal.toExponential->(Utils.magic: string => unknown),
+  equalityKeysAreExact: false,
 })
 
 let getTime = (v: unknown) => v->(Utils.magic: unknown => Date.t)->Date.getTime
@@ -395,6 +406,7 @@ let date = nullSafe({
   gt: (a, b) => getTime(a) > getTime(b),
   lt: (a, b) => getTime(a) < getTime(b),
   key: v => v->getTime->(Utils.magic: float => unknown),
+  equalityKeysAreExact: true,
 })
 
 // Json has no meaningful ordering, so reuse the structural compare for every
@@ -404,6 +416,7 @@ let json = nullSafe({
   gt: (a, b) => a > b,
   lt: (a, b) => a < b,
   key: v => v->Sql.sortedDocument->(Utils.magic: string => unknown),
+  equalityKeysAreExact: true,
 })
 
 let asBytes = (v: unknown) => v->(Utils.magic: unknown => Uint8Array.t)
@@ -412,6 +425,7 @@ let bytes = nullSafe({
   gt: (a, b) => Utils.Bytes.compare(a->asBytes, b->asBytes) > 0.,
   lt: (a, b) => Utils.Bytes.compare(a->asBytes, b->asBytes) < 0.,
   key: v => v->asBytes->Utils.Bytes.toHex->(Utils.magic: string => unknown),
+  equalityKeysAreExact: true,
 })
 
 // Postgres orders an enum by the position its members were declared in, not
@@ -427,6 +441,7 @@ let enum_ = (config: Table.enumConfig<Table.enum>): valueCompare => {
     gt: (a, b) => !(a->nullish) && rank(a) > rank(b),
     lt: (a, b) => !(a->nullish) && rank(a) < rank(b),
     key: identityKey,
+    equalityKeysAreExact: true,
   }
 }
 
@@ -494,6 +509,7 @@ let arrayCompare = (element: valueCompare): valueCompare => {
     eq,
     gt: order(~gt=true),
     lt: order(~gt=false),
+    equalityKeysAreExact: element.equalityKeysAreExact,
     key: v => {
       let key = ref("")
       v->asArray->Array.forEach(item => key := key.contents ++ encodeValueKey(element.key(item)))
@@ -534,6 +550,12 @@ let fieldCompare = (~table: Table.table, fieldName) =>
 // Projects a field's values onto Map keys, so an index can be found by value
 // instead of by a serialized filter.
 let makeValueKey = (~table: Table.table, ~fieldName) => (fieldName->fieldCompare(~table)).key
+
+// Object fields can be mutated in place without another set. New filters must
+// keep scanning those live values rather than trusting a previously built key
+// map. Native scalar fields live on a frozen top-level set snapshot.
+let canUseEqualityBucket = (~table: Table.table, ~fieldName) =>
+  (fieldName->fieldCompare(~table)).eq === nativeEq
 
 // The cache key stands in for structural equality between filters. Values go
 // through the same per-field projection the equality buckets key by, so the
@@ -612,13 +634,38 @@ let makeMatcher = (filter: t, ~table: Table.table): matcher => {
         }
       | "_in" =>
         let fieldValues = fieldValue->asArray
-        if compare.eq === nativeEq {
+        if fieldValues->Array.length === 0 {
+          _entity => false
+        } else if compare.eq === nativeEq {
           let set = fieldValues->Utils.Set.fromArray
           entity => set->Utils.Set.has(entity->getField(fieldName))
-        } else {
+        } else if !compare.equalityKeysAreExact {
           entity => {
             let entityFieldValue = entity->getField(fieldName)
             fieldValues->Array.some(candidate => compare.eq(entityFieldValue, candidate))
+          }
+        } else {
+          let valuesByKey = Utils.Map.make()
+          fieldValues->Array.forEach(
+            candidate => {
+              let key = compare.key(candidate)
+              switch valuesByKey->Utils.Map.get(key) {
+              | Some(values) => values->Array.push(candidate)->ignore
+              | None => valuesByKey->Utils.Map.set(key, [candidate])->ignore
+              }
+            },
+          )
+          entity => {
+            let entityFieldValue = entity->getField(fieldName)
+            if entityFieldValue->nullish {
+              false
+            } else {
+              switch valuesByKey->Utils.Map.get(compare.key(entityFieldValue)) {
+              | None => false
+              | Some(values) =>
+                values->Array.some(candidate => compare.eq(entityFieldValue, candidate))
+              }
+            }
           }
         }
       | _ =>

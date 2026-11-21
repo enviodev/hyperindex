@@ -15,6 +15,10 @@ module Entity = {
   type eqBucket = {
     keyOf: unknown => unknown,
     byValue: Utils.Map.t<unknown, array<index>>,
+    // Scan the warm rows once per field, then seed new filters from its values.
+    entityIdsByValue: Utils.Map.t<unknown, Utils.Set.t<string>>,
+    // Remember the key for removal before a later explicit set.
+    valueByEntityId: dict<unknown>,
     // Values a completed query has already loaded every row for. A later
     // filter naming only these is answered from the table instead of a
     // second round trip for rows that are already in it.
@@ -60,6 +64,32 @@ module Entity = {
     | None => self.indexesByEntityId->Dict.set(entityId, Utils.Set.fromArray([index]))
     }
   }
+
+  let removeFromEqBucket = (bucket: eqBucket, entityId) =>
+    switch bucket.valueByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
+    | None => ()
+    | Some(valueKey) =>
+      switch bucket.entityIdsByValue->Utils.Map.get(valueKey) {
+      | None => ()
+      | Some(ids) =>
+        ids->Utils.Set.delete(entityId)->ignore
+        if ids->Utils.Set.size == 0 {
+          bucket.entityIdsByValue->Utils.Map.delete(valueKey)->ignore
+        }
+      }
+      bucket.valueByEntityId->Utils.Dict.deleteInPlace(entityId)
+    }
+
+  let addToEqBucket = (bucket: eqBucket, ~entityId, fieldValue) =>
+    if !(fieldValue->EntityFilter.nullish) {
+      let valueKey = bucket.keyOf(fieldValue)
+      bucket.valueByEntityId->Dict.set(entityId, valueKey)
+      switch bucket.entityIdsByValue->Utils.Map.get(valueKey) {
+      | Some(ids) => ids->Utils.Set.add(entityId)->ignore
+      | None =>
+        bucket.entityIdsByValue->Utils.Map.set(valueKey, Utils.Set.fromArray([entityId]))->ignore
+      }
+    }
 
   let make = (~entityIdToKey): t => {
     entityIdToKey,
@@ -156,6 +186,8 @@ module Entity = {
 
       self.eqBucketsByField->Utils.Dict.forEachWithKey((bucket, fieldName) => {
         let fieldValue = entity->EntityFilter.getField(fieldName)
+        bucket->removeFromEqBucket(entityId)
+        bucket->addToEqBucket(~entityId, fieldValue)
 
         // A nullish column matches no equality index, and the key projections
         // would throw on it.
@@ -174,15 +206,27 @@ module Entity = {
       )
     }
 
-  let deleteEntityFromIndexes = (self: t, ~entityId: string) =>
+  let deleteEntityFromIndexes = (self: t, ~entityId: string) => {
+    self.eqBucketsByField->Utils.Dict.forEach(bucket => bucket->removeFromEqBucket(entityId))
     switch self.indexesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | None => ()
     | Some(indexes) =>
       indexes->Utils.Set.forEach(index => index.ids->Utils.Set.delete(entityId)->ignore)
       self.indexesByEntityId->Utils.Dict.deleteInPlace(entityId)
     }
+  }
+
+  // Snapshot the readonly top-level record so changing the caller's object
+  // cannot silently invalidate scalar buckets. Nested objects remain live and
+  // use the existing scan path; freezing a Date would not freeze its time.
+  let snapshotEntity: Internal.entity => Internal.entity = %raw(`entity => Object.freeze({...entity})`)
 
   let set = (inMemTable: t, ~committedCheckpointId, change: Change.t<Internal.entity>) => {
+    let change: Change.t<Internal.entity> = switch change {
+    | Set({entityId, entity, checkpointId}) =>
+      Set({entityId, entity: snapshotEntity(entity), checkpointId})
+    | Delete(_) => change
+    }
     let entityKey = inMemTable.entityIdToKey(change->Change.getEntityId)
     switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityKey) {
     | Some(prev) =>
@@ -271,9 +315,18 @@ module Entity = {
       let bucket = {
         keyOf: EntityFilter.makeValueKey(~table, ~fieldName),
         byValue: Utils.Map.make(),
+        entityIdsByValue: Utils.Map.make(),
+        valueByEntityId: Dict.make(),
         loadedValues: Utils.Set.make(),
       }
+      inMemTable.latestEntityChangeById->Utils.Dict.forEachWithKey((change, entityId) =>
+        switch change->mapChangeToEntity {
+        | Some(entity) => bucket->addToEqBucket(~entityId, entity->EntityFilter.getField(fieldName))
+        | None => ()
+        }
+      )
       inMemTable.eqBucketsByField->Dict.set(fieldName, bucket)
+      inMemTable.hasIndexes = true
       bucket
     }
 
@@ -297,27 +350,45 @@ module Entity = {
       inMemTable.hasIndexes = true
 
       switch filter->singleFieldValues {
-      | Some((fieldName, fieldValues)) =>
+      | Some((fieldName, fieldValues)) if EntityFilter.canUseEqualityBucket(~table, ~fieldName) =>
         let bucket = inMemTable->getOrCreateEqBucket(~table, ~fieldName)
+        let visitedKeys = Utils.Set.make()
         fieldValues->Array.forEach(fieldValue => {
           let valueKey = bucket.keyOf(fieldValue)
-          switch bucket.byValue->Utils.Map.get(valueKey) {
-          | Some(indexes) => indexes->Array.push(index)->ignore
-          | None => bucket.byValue->Utils.Map.set(valueKey, [index])->ignore
+          if !(visitedKeys->Utils.Set.has(valueKey)) {
+            visitedKeys->Utils.Set.add(valueKey)->ignore
+            switch bucket.byValue->Utils.Map.get(valueKey) {
+            | Some(indexes) => indexes->Array.push(index)->ignore
+            | None => bucket.byValue->Utils.Map.set(valueKey, [index])->ignore
+            }
+            switch bucket.entityIdsByValue->Utils.Map.get(valueKey) {
+            | None => ()
+            | Some(ids) =>
+              ids->Utils.Set.forEach(entityId => {
+                let change = inMemTable.latestEntityChangeById->Dict.getUnsafe(entityId)
+                switch change->mapChangeToEntity {
+                | Some(entity) =>
+                  if index.matcher(entity) {
+                    inMemTable->addToIndex(~index, ~entityId)
+                  }
+                | None => ()
+                }
+              })
+            }
           }
         })
-      | None => inMemTable.scanIndexes->Array.push(index)->ignore
-      }
-
-      inMemTable.latestEntityChangeById->Utils.Dict.forEach(change => {
-        switch change->mapChangeToEntity {
-        | Some(entity) =>
-          if index.matcher(entity) {
-            inMemTable->addToIndex(~index, ~entityId=inMemTable->getEntityKeyUnsafe(entity))
+      | Some(_) | None =>
+        inMemTable.scanIndexes->Array.push(index)->ignore
+        inMemTable.latestEntityChangeById->Utils.Dict.forEach(change => {
+          switch change->mapChangeToEntity {
+          | Some(entity) =>
+            if index.matcher(entity) {
+              inMemTable->addToIndex(~index, ~entityId=inMemTable->getEntityKeyUnsafe(entity))
+            }
+          | None => ()
           }
-        | None => ()
-        }
-      })
+        })
+      }
     }
   }
 
@@ -325,12 +396,12 @@ module Entity = {
   // values could match is now in memory.
   let recordLoadedValues = (inMemTable: t, ~filter: EntityFilter.t, ~table: Table.table) =>
     switch filter->singleFieldValues {
-    | Some((fieldName, fieldValues)) =>
+    | Some((fieldName, fieldValues)) if EntityFilter.canUseEqualityBucket(~table, ~fieldName) =>
       let bucket = inMemTable->getOrCreateEqBucket(~table, ~fieldName)
       fieldValues->Array.forEach(fieldValue =>
         bucket.loadedValues->Utils.Set.add(bucket.keyOf(fieldValue))->ignore
       )
-    | None => ()
+    | Some(_) | None => ()
     }
 
   let isFullyLoaded = (inMemTable: t, ~filter: EntityFilter.t) =>
