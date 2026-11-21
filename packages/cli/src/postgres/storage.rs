@@ -237,6 +237,10 @@ fn frontier_params(frontier: &Frontier) -> Vec<Param> {
     ]
 }
 
+fn chain_ids_param(chain_ids: &[i64]) -> Param {
+    array_literal(chain_ids.iter().map(|id| Some(id.to_string())))
+}
+
 fn address_params(addresses: &Addresses, with_registration_blocks: bool) -> Vec<Param> {
     let mut params = vec![
         array_literal(addresses.chain_ids.iter().map(|id| Some(id.to_string()))),
@@ -649,7 +653,7 @@ impl Storage {
         }
         let (read_chains, read_addresses) = (
             internal::read_stored_chains(schema),
-            internal::read_addresses(schema, true),
+            internal::read_config_addresses(schema),
         );
         let ((chains, _), (addresses, address_columns)) = futures_util::try_join!(
             self.client.query(&read_chains, &[]),
@@ -688,17 +692,22 @@ impl Storage {
             .collect()
     }
 
-    pub async fn resume(&self) -> Result<Resumed> {
+    /// `address_chain_ids` are the chains whose registered addresses come
+    /// back: a process holds those of the chains it indexes, and a table of
+    /// tens of millions of them costs every process that reads it whole.
+    pub async fn resume(&self, chain_ids: &[i64], address_chain_ids: &[i64]) -> Result<Resumed> {
         let schema = self.schema();
         let (read_chains, read_addresses, read_checkpoints) = (
             internal::read_resumed_chains(schema),
-            internal::read_addresses(schema, false),
+            internal::read_addresses_of_chains(schema),
             internal::read_reorg_checkpoints(schema),
         );
+        let chain_ids = [chain_ids_param(chain_ids)];
+        let address_chain_ids = [chain_ids_param(address_chain_ids)];
         let ((chains, _), (addresses, address_columns), (checkpoints, _), ()) = futures_util::try_join!(
-            self.client.query(&read_chains, &[]),
-            self.client.query(&read_addresses, &[]),
-            self.client.query(&read_checkpoints, &[]),
+            self.client.query(&read_chains, &chain_ids),
+            self.client.query(&read_addresses, &address_chain_ids),
+            self.client.query(&read_checkpoints, &chain_ids),
             self.indexes.reload(),
         )?;
         Ok(Resumed {

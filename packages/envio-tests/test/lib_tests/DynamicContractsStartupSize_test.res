@@ -58,6 +58,7 @@ describe("Dynamic contracts startup size", () => {
               let storage = Storage.make(~client=TestPgSchema.client(~pgSchema), ~ecosystem=Evm)
               let resumed = await storage.resumeInitialState(
                 ~chainIds=[chainId],
+                ~addressChainIds=[chainId],
                 ~contractMapping=ContractMapping.empty,
               )
               await storage.close()

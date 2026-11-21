@@ -162,17 +162,12 @@ impl Storage {
     /// Resumes Postgres, and then ClickHouse to what Postgres committed for
     /// the chains this run drives: a batch ClickHouse landed but Postgres
     /// never committed is trimmed away.
-    pub async fn resume(&self, chain_ids: &[i64]) -> Result<Resumed> {
-        let resumed = self.postgres.resume().await?;
+    pub async fn resume(&self, chain_ids: &[i64], address_chain_ids: &[i64]) -> Result<Resumed> {
+        let resumed = self.postgres.resume(chain_ids, address_chain_ids).await?;
         if let Some(clickhouse) = &self.clickhouse {
             clickhouse
                 .resume(&Resume {
-                    committed: resumed
-                        .chains
-                        .iter()
-                        .filter(|chain| chain_ids.contains(&chain.id))
-                        .cloned()
-                        .collect(),
+                    committed: resumed.chains.clone(),
                 })
                 .await?;
         }

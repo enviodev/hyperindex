@@ -275,17 +275,25 @@ pub fn delete_addresses(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
 
 /// Plain rows rather than an aggregate per chain: one chain's `json_agg` can
 /// outgrow the longest string V8 will hold.
-pub fn read_addresses(pg_schema: &str, only_config: bool) -> String {
-    let filter = if only_config {
-        format!(" WHERE \"registration_block\" = {CONFIG_REGISTRATION_BLOCK}")
-    } else {
-        String::new()
-    };
+fn read_addresses(pg_schema: &str, filter: &str) -> String {
     format!(
         "SELECT \"chain_id\" as \"chainId\",\n\"address\" as \"address\",\n\"contract_id\" as \
          \"contractId\",\n\"registration_block\" as \"registrationBlock\"\nFROM \
-         \"{pg_schema}\".\"{ADDRESSES}\"{filter};"
+         \"{pg_schema}\".\"{ADDRESSES}\" WHERE {filter};"
     )
+}
+
+/// Every chain's: a resume plan compares them against the whole config.
+pub fn read_config_addresses(pg_schema: &str) -> String {
+    read_addresses(
+        pg_schema,
+        &format!("\"registration_block\" = {CONFIG_REGISTRATION_BLOCK}"),
+    )
+}
+
+/// Takes the chain ids as an `int8[]` in `$1`.
+pub fn read_addresses_of_chains(pg_schema: &str) -> String {
+    read_addresses(pg_schema, "\"chain_id\" = ANY($1::int8[])")
 }
 
 pub fn read_stored_chains(pg_schema: &str) -> String {
@@ -305,7 +313,8 @@ pub fn read_resumed_chains(pg_schema: &str) -> String {
          \"first_event_block\", (extract(epoch from \"ready_at\") * 1000)::float8, \
          \"events_processed\"::float8, \"progress_block\", \
          extract(epoch from \"progress_block_time\")::float8, \"source_block\", \
-         \"checkpoint_id\"::int8 FROM \"{pg_schema}\".\"{CHAINS}\";"
+         \"checkpoint_id\"::int8 FROM \"{pg_schema}\".\"{CHAINS}\" \
+         WHERE \"id\" = ANY($1::int8[]);"
     )
 }
 
@@ -370,7 +379,8 @@ pub fn read_reorg_checkpoints(pg_schema: &str) -> String {
         "WITH reorg_chains AS (\n  \
          SELECT \"id\" as id, \"source_block\" - \"max_reorg_depth\" - 1 AS safe_block\n  \
          FROM \"{pg_schema}\".\"{CHAINS}\"\n  \
-         WHERE \"max_reorg_depth\" > 0\n    \
+         WHERE \"id\" = ANY($1::int8[])\n    \
+         AND \"max_reorg_depth\" > 0\n    \
          AND \"progress_block\" > \"source_block\" - \"max_reorg_depth\" - 1\n\
          )\n\
          SELECT cp.\"id\"::int8, cp.\"chain_id\"::int8, cp.\"block_number\", cp.\"block_hash\"\n\

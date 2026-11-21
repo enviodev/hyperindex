@@ -434,16 +434,17 @@ let make = (
       ->addressColumns,
     })
 
-  let resumeInitialState = async (~chainIds, ~contractMapping): Persistence.initialState => {
+  let resumeInitialState = async (
+    ~chainIds,
+    ~addressChainIds,
+    ~contractMapping,
+  ): Persistence.initialState => {
     let (cache, resumed) = await Promise.all2((
       restoreEffectCache(~withUpload=false),
-      client->StorageClient.resume(chainIds),
+      client->StorageClient.resume(chainIds, addressChainIds),
     ))
     let addressRowsByChainId = resumed.addresses->readAddressRows->AddressRows.group
-    let stored =
-      resumed.chains
-      ->Array.map(chain => (chain.id->ChainId.normalizeOrThrow, chain))
-      ->Array.filter(((id, _)) => chainIds->Array.includes(id))
+    let stored = resumed.chains->Array.map(chain => (chain.id->ChainId.normalizeOrThrow, chain))
     let chains = stored->Array.map(((id, chain)): Persistence.initialChainState => {
       id,
       startBlock: chain.startBlock,

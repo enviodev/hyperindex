@@ -352,8 +352,10 @@ type holding =
 
 @send external readStoredConfig: t => promise<storedConfig> = "readStoredConfig"
 
-// Resumes the chains this run drives, the only ones ClickHouse trims.
-@send external resume: (t, array<ChainId.t>) => promise<resumed> = "resume"
+// Resumes the chains this run drives, the only ones ClickHouse trims, with the
+// registered addresses of the chains in the second array.
+@send
+external resume: (t, array<ChainId.t>, array<ChainId.t>) => promise<resumed> = "resume"
 
 @send external setChainMeta: (t, array<chainMeta>) => promise<unit> = "setChainMeta"
 

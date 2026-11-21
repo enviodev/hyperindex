@@ -9,8 +9,8 @@ use pretty_assertions::assert_eq;
 
 use super::batch::EffectCacheWrite;
 use super::schema::{ClickHouseOptions, Entity, Schema};
-use super::types::{Frontier, Progress};
-use super::{Batch, Holding, Storage};
+use super::types::{Addresses, ChainConfig, Frontier, Progress};
+use super::{Batch, Holding, Initialize, Storage};
 use crate::clickhouse;
 use crate::columnar::{Arena, ColumnKind};
 use crate::postgres;
@@ -68,7 +68,7 @@ impl Live {
             .initialize(clickhouse::live_tests::initialize_input())
             .await
             .unwrap();
-        self.storage.resume(&[1]).await.unwrap();
+        self.storage.resume(&[1], &[1]).await.unwrap();
     }
 
     /// Where Postgres and ClickHouse each hold chain 1's frontier.
@@ -235,6 +235,62 @@ async fn a_table_clickhouse_refuses_leaves_postgres_unset() {
 
     live.drop_all().await;
     assert_eq!((initialized, holding), (false, Ok(Holding::Nothing)));
+}
+
+// https://github.com/enviodev/hyperindex/issues/1862
+/// A process of a split run resumes only the chains it drives, and holds the
+/// registered addresses only of those it indexes: a worker reads its own, and
+/// its supervisor, which indexes none, reads none.
+#[tokio::test]
+#[ignore = "needs a Postgres and a ClickHouse server"]
+async fn a_resume_reads_only_the_chains_it_drives() {
+    let live = Live::new("resume_scoped");
+    let chain = |id| ChainConfig {
+        id,
+        ..clickhouse::live_tests::initialize_input().chains[0].clone()
+    };
+    live.storage
+        .initialize(Initialize {
+            chains: vec![chain(1), chain(137)],
+            contract_names: vec!["Token".to_string()],
+            addresses: Addresses {
+                chain_ids: vec![1, 137, 137],
+                addresses: vec![vec![1; 20], vec![2; 20], vec![3; 20]],
+                contract_ids: vec![0, 0, 0],
+                registration_blocks: vec![5, 5, 6],
+            },
+            ..clickhouse::live_tests::initialize_input()
+        })
+        .await
+        .unwrap();
+    let read = |resumed: super::Resumed| {
+        let columns = resumed.addresses.arena.columns();
+        (
+            resumed
+                .chains
+                .iter()
+                .map(|chain| chain.id)
+                .collect::<Vec<_>>(),
+            (0..resumed.addresses.arena.rows())
+                .map(|row| (columns[0].f64_at(row), columns[1].bytes_at(row).to_vec()))
+                .collect::<Vec<_>>(),
+        )
+    };
+
+    let worker = live.storage.resume(&[1], &[1]).await.map(read);
+    let supervisor = live.storage.resume(&[1, 137], &[]).await.map(read);
+
+    live.drop_all().await;
+    assert_eq!(
+        (
+            worker.map_err(|error| format!("{error:#}")),
+            supervisor.map_err(|error| format!("{error:#}")),
+        ),
+        (
+            Ok((vec![1], vec![(1.0, vec![1; 20])])),
+            Ok((vec![1, 137], vec![])),
+        )
+    );
 }
 
 /// Every store is checked before any is reset, as before an initialize: a

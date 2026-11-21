@@ -131,8 +131,11 @@ type storage = {
   // `chainIds` is what this run drives. An isolated run resumes a subset of
   // the stored chains, and ClickHouse's resume trims past each resumed chain's
   // checkpoint, so chains a sibling process is still writing must stay out.
+  // `addressChainIds` are the chains whose registered addresses are read: a
+  // chain can hold tens of millions, so only a process indexing it reads them.
   resumeInitialState: (
     ~chainIds: array<ChainId.t>,
+    ~addressChainIds: array<ChainId.t>,
     ~contractMapping: ContractMapping.t,
   ) => promise<initialState>,
   // Returns rows matching the filter.
@@ -287,6 +290,10 @@ let init = {
     // resuming takes ClickHouse back to what Postgres committed, fencing off and
     // trimming whatever a run still indexing goes on writing.
     ~resume=true,
+    // Off for a supervisor: it resumes every chain to hold and draw its
+    // workers, and indexes none of them, so their addresses are the workers'
+    // to read.
+    ~indexing=true,
     // Set for a per-chain schema, which can take a new chain under its own
     // `envio start --chain` process.
     ~addChainCommand: option<ChainId.t => string>=?,
@@ -423,8 +430,10 @@ let init = {
             )
           }
           if resume {
+            let chainIds = chainConfigs->Array.map(chain => chain.id)
             let initialState = await persistence.storage.resumeInitialState(
-              ~chainIds=chainConfigs->Array.map(chain => chain.id),
+              ~chainIds,
+              ~addressChainIds=indexing ? chainIds : [],
               ~contractMapping=stored.contractMapping,
             )
             persistence.storageStatus = Ready(initialState)
@@ -462,12 +471,14 @@ let initForRun = (
   ~reset,
   ~isDevelopmentMode,
   ~announceResume=!Worker.isEnabled,
+  ~indexing=?,
   ~startBlockRetry=?,
   ~sourceTiming=?,
 ) =>
   persistence->init(
     ~logger,
     ~announceResume,
+    ~indexing?,
     ~startBlockRetry?,
     ~sourceTiming?,
     ~reset,

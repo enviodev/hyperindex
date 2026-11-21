@@ -89,6 +89,7 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
         JsError.throwWithMessage("Not implemented"),
       resumeInitialState: implement(#resumeInitialState, (
         ~chainIds as _,
+        ~addressChainIds as _,
         ~contractMapping as _,
       ) => {
         resumeInitialStateCalls->Array.push(true)->ignore
