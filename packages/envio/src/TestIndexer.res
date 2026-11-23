@@ -583,7 +583,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     JsError.throwWithMessage(
       "TestIndexer: resumeInitialState should not be called; the initial state is derived from config.",
     ),
-  takeOver: async (~chainIds as _) =>
+  takeOver: async (~committed as _) =>
     JsError.throwWithMessage(
       "TestIndexer: takeOver should not be called; the initial state is derived from config.",
     ),

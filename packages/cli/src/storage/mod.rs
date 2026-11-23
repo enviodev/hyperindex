@@ -77,7 +77,7 @@ pub struct AddChain {
 /// drives. Only their rows are trimmed: a sibling process driving another
 /// chain may be mid-write above its frontier.
 pub struct Resume {
-    pub committed: Vec<ResumedChain>,
+    pub committed: types::Frontier,
 }
 
 pub struct Resumed {

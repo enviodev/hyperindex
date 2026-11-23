@@ -80,7 +80,7 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
         JsError.throwWithMessage("Not implemented"),
       resumeInitialState: (~chainIds as _, ~contractMapping as _) =>
         JsError.throwWithMessage("Not implemented"),
-      takeOver: (~chainIds as _) => JsError.throwWithMessage("Not implemented"),
+      takeOver: (~committed as _) => JsError.throwWithMessage("Not implemented"),
       readChainProgress: (~chainIds as _) => JsError.throwWithMessage("Not implemented"),
       dumpEffectCache: implement(#dumpEffectCache, () => Promise.resolve()),
       loadOrThrow: (~filter, ~table: Table.table) => {

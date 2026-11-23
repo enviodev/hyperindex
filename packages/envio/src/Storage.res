@@ -46,10 +46,12 @@ let makeClient = (
     ~logger,
   )
 
-let bounds = ({byChain}: CheckpointSequence.checkpointBoundsByChain): StorageClient.bounds => {
-  chainIds: byChain->Frontier.chainIds,
-  checkpointIds: byChain->Frontier.chainIds->Array.map(chainId => byChain->Frontier.get(chainId)),
+let boundsOfFrontier = (frontier: Frontier.t): StorageClient.bounds => {
+  chainIds: frontier->Frontier.chainIds,
+  checkpointIds: frontier->Frontier.chainIds->Array.map(chainId => frontier->Frontier.get(chainId)),
 }
+
+let bounds = ({byChain}: CheckpointSequence.checkpointBoundsByChain) => byChain->boundsOfFrontier
 
 let progress = (chain: InternalTable.Chains.progressedChain): StorageClient.progress => {
   chainId: chain.chainId,
@@ -435,7 +437,8 @@ let make = (
       ->addressColumns,
     })
 
-  let takeOver = (~chainIds) => client->StorageClient.takeOverClickhouse(chainIds)
+  let takeOver = (~committed) =>
+    client->StorageClient.takeOverClickhouse(committed->boundsOfFrontier)
 
   let readChainProgress = async (~chainIds) =>
     (await client->StorageClient.readChainProgress(chainIds))->Array.map(chainProgressOf)

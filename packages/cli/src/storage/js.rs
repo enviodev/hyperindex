@@ -702,9 +702,10 @@ impl JsStorage {
     }
 
     #[napi]
-    pub async fn take_over_clickhouse(&self, chain_ids: Vec<i64>) -> napi::Result<()> {
+    pub async fn take_over_clickhouse(&self, committed: FrontierInput) -> napi::Result<()> {
+        let committed = frontier("committed frontier", committed)?;
         self.inner
-            .take_over_clickhouse(&chain_ids)
+            .take_over_clickhouse(committed)
             .await
             .map_err(to_napi)
     }

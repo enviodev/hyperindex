@@ -355,10 +355,10 @@ type holding =
 // What the chains this process indexes resume from. Only reads.
 @send external resume: (t, array<ChainId.t>) => promise<resumed> = "resume"
 
-// Trims ClickHouse back to what Postgres committed for the chains, and fences
-// off writes another process still makes to them.
+// Trims ClickHouse back to the frontier a resume read for its chains, and
+// fences off writes another process still makes to them.
 @send
-external takeOverClickhouse: (t, array<ChainId.t>) => promise<unit> = "takeOverClickhouse"
+external takeOverClickhouse: (t, bounds) => promise<unit> = "takeOverClickhouse"
 
 @send
 external readChainProgress: (t, array<ChainId.t>) => promise<array<resumedChain>> =

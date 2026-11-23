@@ -167,14 +167,15 @@ impl Storage {
         self.postgres.resume(chain_ids).await
     }
 
-    /// Takes ClickHouse back to what Postgres committed for the chains this
-    /// process indexes: a batch ClickHouse landed but Postgres never committed
-    /// is trimmed away, and writes another process still makes are fenced off.
-    pub async fn take_over_clickhouse(&self, chain_ids: &[i64]) -> Result<()> {
+    /// Takes ClickHouse back to `committed`, the frontier the resume read for
+    /// the chains this process indexes: a batch ClickHouse landed but Postgres
+    /// never committed is trimmed away, and writes another process still makes
+    /// are fenced off. Not read again here: the run issues checkpoint ids from
+    /// that frontier, so ClickHouse must hold nothing above it.
+    pub async fn take_over_clickhouse(&self, committed: Frontier) -> Result<()> {
         let Some(clickhouse) = &self.clickhouse else {
             return Ok(());
         };
-        let committed = self.postgres.read_chain_progress(chain_ids).await?;
         clickhouse.resume(&Resume { committed }).await
     }
 

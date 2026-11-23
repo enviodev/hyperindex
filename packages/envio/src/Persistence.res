@@ -148,9 +148,10 @@ type storage = {
     ~contractMapping: ContractMapping.t,
   ) => promise<initialState>,
   // Takes the chains over once their resume is accepted: ClickHouse is trimmed
-  // past each one's checkpoint, so chains a sibling process is still writing
-  // must stay out.
-  takeOver: (~chainIds: array<ChainId.t>) => promise<unit>,
+  // past `committed`, the frontier the resume read, which is where the run's
+  // checkpoint ids continue. Chains a sibling process is still writing must
+  // stay out of it.
+  takeOver: (~committed: Frontier.t) => promise<unit>,
   // Where the chains stand, for a supervisor, which indexes none of them.
   readChainProgress: (~chainIds: array<ChainId.t>) => promise<array<chainProgress>>,
   // Returns rows matching the filter.
@@ -453,7 +454,7 @@ let resume = async (
         ),
       )
     }
-    await storage.takeOver(~chainIds)
+    await storage.takeOver(~committed=initialState.checkpointFrontier)
     logger->logResumed(
       ~announceResume,
       ~chains=initialState.chains->Array.map(chain => (chain :> chainProgress)),

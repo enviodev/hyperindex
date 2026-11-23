@@ -9,7 +9,7 @@ use pretty_assertions::assert_eq;
 
 use super::batch::EffectCacheWrite;
 use super::schema::{ClickHouseOptions, Entity, Schema};
-use super::types::{Addresses, ChainConfig, Frontier, Progress, ResumedChain};
+use super::types::{Addresses, ChainConfig, Checkpoints, Frontier, Progress, ResumedChain};
 use super::{Batch, Holding, Initialize, Storage};
 use crate::clickhouse;
 use crate::columnar::{Arena, ColumnKind};
@@ -68,8 +68,17 @@ impl Live {
             .initialize(clickhouse::live_tests::initialize_input())
             .await
             .unwrap();
-        self.storage.resume(&[1]).await.unwrap();
-        self.storage.take_over_clickhouse(&[1]).await.unwrap();
+        let resumed = self.storage.resume(&[1]).await.unwrap();
+        self.storage
+            .take_over_clickhouse(
+                resumed
+                    .chains
+                    .iter()
+                    .map(|chain| (chain.id, chain.checkpoint_id))
+                    .collect(),
+            )
+            .await
+            .unwrap();
     }
 
     /// Where Postgres and ClickHouse each hold chain 1's frontier.
@@ -154,6 +163,58 @@ async fn a_clickhouse_without_its_postgres_is_stranded() {
     assert_eq!(
         holding.map_err(|error| format!("{error:#}")),
         Ok(Holding::Stranded)
+    );
+}
+
+/// The run starts its checkpoint sequence where its resume read the frontier,
+/// so ClickHouse is taken back to that same frontier: a batch committed after
+/// the read is one whose ids the run issues again.
+#[tokio::test]
+#[ignore = "needs a Postgres and a ClickHouse server"]
+async fn a_take_over_trims_to_the_frontier_its_resume_read() {
+    let live = Live::new("take_over_frontier");
+    live.initialize().await;
+    let resumed = live.storage.resume(&[1]).await.unwrap();
+    let written = live
+        .storage
+        .write_batch(Batch {
+            progress: vec![Progress {
+                chain_id: 1,
+                progress_block: 10,
+                progress_block_time: None,
+                events_processed: 1.0,
+                source_block: 10,
+            }],
+            frontier: Frontier::from([(1, 1)]),
+            checkpoints: Checkpoints {
+                ids: vec![1],
+                chain_ids: vec![1],
+                block_numbers: vec![10],
+                block_hashes: vec![None],
+                events_processed: vec![1],
+                keeps_history: vec![false],
+            },
+            ..Batch::default()
+        })
+        .await
+        .is_ok();
+
+    live.storage
+        .take_over_clickhouse(
+            resumed
+                .chains
+                .iter()
+                .map(|chain| (chain.id, chain.checkpoint_id))
+                .collect(),
+        )
+        .await
+        .unwrap();
+    let frontiers = live.frontiers().await;
+
+    live.drop_all().await;
+    assert_eq!(
+        (written, frontiers),
+        (true, ("1".to_string(), "0".to_string()))
     );
 }
 
