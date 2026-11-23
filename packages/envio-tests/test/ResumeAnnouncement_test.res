@@ -30,7 +30,10 @@ type Tally {
 let resumeLines = (indexer: IndexerRunner.t) =>
   indexer.infoAndAboveLogs()
   ->Array.map(entry => entry.msg)
-  ->Array.filter(msg => msg->String.toLowerCase->String.includes("resum"))
+  ->Array.filter(msg =>
+    msg->String.toLowerCase->String.includes("resum") ||
+      msg->String.includes("existing indexer storage")
+  )
 
 describe("Announcing a resume", () => {
   scenario->Scenario.it(
@@ -49,7 +52,7 @@ describe("Announcing a resume", () => {
       )).toEqual((
         [],
         [
-          "Found existing indexer storage. Resuming indexing state...",
+          "Found existing indexer storage.",
           "Successfully resumed indexing state! Continuing from the last checkpoint.",
         ],
       ))

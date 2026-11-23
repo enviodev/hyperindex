@@ -66,6 +66,19 @@ let addressColumns = (rows: array<AddressRows.row>): StorageClient.addresses => 
   registrationBlocks: rows->Array.map(row => row.registrationBlock),
 }
 
+let chainProgressOf = (chain: StorageClient.resumedChain): Persistence.chainProgress => {
+  id: chain.id->ChainId.normalizeOrThrow,
+  startBlock: chain.startBlock,
+  endBlock: chain.endBlock,
+  maxReorgDepth: chain.maxReorgDepth,
+  firstEventBlockNumber: chain.firstEventBlock,
+  timestampCaughtUpToHeadOrEndblock: chain.readyAt->Option.map(Date.fromTime),
+  numEventsProcessed: chain.eventsProcessed,
+  progressBlockNumber: chain.progressBlock,
+  progressBlockTime: chain.progressBlockTime->Option.map(Float.toInt),
+  sourceBlockNumber: chain.sourceBlock,
+}
+
 let toChainConfig = (chainConfig: Config.chain): StorageClient.chainConfig => {
   id: chainConfig.id,
   ecosystem: (chainConfig.ecosystem: Ecosystem.name :> string),
@@ -234,12 +247,9 @@ let make = (
 
   let holding = () => client->StorageClient.holding
 
-  let restoreEffectCache = async (~withUpload) => {
+  let effectCacheRecordsByTable = (stored: array<StorageClient.storedEffectCache>) => {
     let cache = Dict.make()
-
-    (
-      await client->StorageClient.restoreEffectCache(cacheDirPath->NodeJs.Path.toString, withUpload)
-    )->Array.forEach(({effectName, ?chainId, tableName, rows}) =>
+    stored->Array.forEach(({effectName, ?chainId, tableName, rows}) =>
       cache->Dict.set(
         tableName,
         (
@@ -275,7 +285,13 @@ let make = (
       addresses: rowsByChain->Array.flat->addressColumns,
     })
 
-    let cache = await restoreEffectCache(~withUpload=true)
+    let cache =
+      (
+        await client->StorageClient.uploadEffectCache(
+          cacheDirPath->NodeJs.Path.toString,
+          chainConfigs->Array.map(chain => chain.id),
+        )
+      )->effectCacheRecordsByTable
 
     // Integration with other tools like Hasura
     switch onInitialize {
@@ -434,34 +450,22 @@ let make = (
       ->addressColumns,
     })
 
-  let resumeInitialState = async (
-    ~chainIds,
-    ~addressChainIds,
-    ~contractMapping,
-  ): Persistence.initialState => {
-    let (cache, resumed) = await Promise.all2((
-      restoreEffectCache(~withUpload=false),
-      client->StorageClient.resume(chainIds, addressChainIds),
-    ))
+  let readChainProgress = async (~chainIds) =>
+    (await client->StorageClient.readChainProgress(chainIds))->Array.map(chainProgressOf)
+
+  let resumeInitialState = async (~chainIds, ~contractMapping): Persistence.initialState => {
+    let resumed = await client->StorageClient.resume(chainIds)
     let addressRowsByChainId = resumed.addresses->readAddressRows->AddressRows.group
-    let stored = resumed.chains->Array.map(chain => (chain.id->ChainId.normalizeOrThrow, chain))
-    let chains = stored->Array.map(((id, chain)): Persistence.initialChainState => {
-      id,
-      startBlock: chain.startBlock,
-      endBlock: chain.endBlock,
-      maxReorgDepth: chain.maxReorgDepth,
-      firstEventBlockNumber: chain.firstEventBlock,
-      timestampCaughtUpToHeadOrEndblock: chain.readyAt->Option.map(Date.fromTime),
-      numEventsProcessed: chain.eventsProcessed,
-      progressBlockNumber: chain.progressBlock,
-      progressBlockTime: chain.progressBlockTime->Option.map(Float.toInt),
-      addressRows: addressRowsByChainId
-      ->Utils.Dict.dangerouslyGetNonOption(id->ChainId.toString)
-      ->Option.getOr(AddressRows.emptySeedRows()),
-      sourceBlockNumber: chain.sourceBlock,
+    let chains = resumed.chains->Array.map(chain => {
+      let progress = chain->chainProgressOf
+      progress->Persistence.withAddressRows(
+        addressRowsByChainId
+        ->Utils.Dict.dangerouslyGetNonOption(progress.id->ChainId.toString)
+        ->Option.getOr(AddressRows.emptySeedRows()),
+      )
     })
     let checkpointFrontier = Frontier.fromEntries(
-      stored->Array.map(((id, chain)) => (id, chain.checkpointId)),
+      resumed.chains->Array.map(chain => (chain.id->ChainId.normalizeOrThrow, chain.checkpointId)),
     )
     let reorgCheckpoints = resumed.reorgCheckpoints->Array.map((
       checkpoint
@@ -475,7 +479,7 @@ let make = (
     {
       cleanRun: false,
       reorgCheckpoints,
-      cache,
+      cache: resumed.caches->effectCacheRecordsByTable,
       chains,
       checkpointFrontier,
       contractMapping,
@@ -792,6 +796,7 @@ let make = (
     readStoredConfig,
     addChain,
     resumeInitialState,
+    readChainProgress,
     loadOrThrow,
     ensureQueryIndexes,
     ensureSchemaIndexes,
@@ -868,5 +873,5 @@ let makePersistenceFromConfig = (
   ~logger,
   ~storage=makeStorageFromEnv(~config, ~logger),
 ) => {
-  Persistence.make(~userEntities=config.userEntities, ~allEnums=config.allEnums, ~storage)
+  Persistence.make(~allEntities=config.userEntities, ~storage)
 }

@@ -6,21 +6,13 @@ let setIndexerState = (state: IndexerState.t) =>
 // Persistence is set by Main.start before handler modules load, so that
 // the exported indexer value can lazily expose DB state (startBlock,
 // endBlock, isRealtime, dynamic contract addresses) once it's ready.
-let getGlobalPersistence = () =>
-  EnvioGlobal.value.persistence->(Utils.magic: option<unknown> => option<Persistence.t>)
-let setGlobalPersistence = (persistence: Persistence.t) =>
-  EnvioGlobal.value.persistence = Some(persistence->(Utils.magic: Persistence.t => unknown))
-
-let getInitialState = (): option<Persistence.initialState> => {
-  switch getGlobalPersistence() {
-  | Some(persistence) =>
-    switch persistence.storageStatus {
-    | Ready(initialState) => Some(initialState)
-    | _ => None
-    }
-  | None => None
-  }
-}
+let getInitialState = () =>
+  EnvioGlobal.value.initialState->(Utils.magic: option<unknown> => option<Persistence.initialState>)
+// None while a run is starting, so the getters read the config rather than a
+// previous run's state.
+let setGlobalInitialState = (initialState: option<Persistence.initialState>) =>
+  EnvioGlobal.value.initialState =
+    initialState->(Utils.magic: option<Persistence.initialState> => option<unknown>)
 
 let getInitialChainState = (~chainId: ChainId.t): option<Persistence.initialChainState> =>
   getInitialState()->Option.flatMap(initialState =>
@@ -412,8 +404,8 @@ let getGlobalIndexer = (): 'indexer => {
   Utils.Proxy.make(Utils.Object.createNullObject(), traps)->(Utils.magic: {..} => 'indexer)
 }
 
-let migrateStorage = (persistence, ~config: Config.t, ~logger, ~reset) =>
-  persistence->Persistence.init(
+let migrateStorage = async (persistence, ~config: Config.t, ~logger, ~reset) => {
+  let _: Persistence.prepared = await persistence->Persistence.prepare(
     ~logger,
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
@@ -426,8 +418,8 @@ let migrateStorage = (persistence, ~config: Config.t, ~logger, ~reset) =>
     // A migration command runs once and exits, with nobody watching it recover:
     // an unreachable chain should say so now rather than hold the command open.
     ~startBlockRetry=StartBlockResolver.Once,
-    ~resume=false,
   )
+}
 
 let migrate = async (~logger, ~reset) => {
   let config = Config.load()
@@ -464,14 +456,11 @@ exception FatalError(exn)
     // Set by `envio dev` via the public config's `isDev` field; `envio start`
     // leaves it false so the process exits cleanly when indexing completes.
     let isDevelopmentMode = !isTest && config.isDev
-    // Initialized first so the exported indexer value contains state from the
-    // database when handler files are loaded (they may access the indexer at
-    // module top level).
     let persistence = switch persistence {
     | Some(p) => p
     | None => Storage.makePersistenceFromConfig(~config, ~logger)
     }
-    setGlobalPersistence(persistence)
+    setGlobalInitialState(None)
     let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
     // A worker's supervisor has checked the handlers already, and the test
     // indexer leaves type checking to the user's test setup.
@@ -479,10 +468,13 @@ exception FatalError(exn)
       isTest || Worker.isEnabled
         ? Promise.resolve()
         : HandlerLoader.typeCheck(~config, ~logger, ~autoLoadFiles)
-    let _ = await Promise.all2((
+    let (initialState, ()) = await Promise.all2((
       persistence->Persistence.initForRun(~logger, ~config, ~reset, ~isDevelopmentMode),
       typeCheck,
     ))
+    // Before handler files load: they may read the indexer's chains at module
+    // top level, which should show the database's state.
+    setGlobalInitialState(Some(initialState))
 
     // Loads user handler files, which register handler/contractRegister/where
     // state into the global `HandlerRegister` registry as a side effect; this
@@ -522,8 +514,7 @@ exception FatalError(exn)
     let envioVersion = Utils.EnvioPackage.value.version
 
     let getMetrics = () => getIndexerState()->Option.map(IndexerState.toMetrics)
-    let dumpEffectCache = () =>
-      (persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
+    let dumpEffectCache = () => persistence.storage.dumpEffectCache()
 
     // A worker reports through its supervisor, which owns the one server and the
     // one display the run has.
@@ -543,7 +534,7 @@ exception FatalError(exn)
       ~config,
       ~logger,
       ~persistence,
-      ~initialState=persistence->Persistence.getInitializedState,
+      ~initialState,
       ~registrationsByChainId,
       ~isDevelopmentMode,
       ~shouldUseTui,

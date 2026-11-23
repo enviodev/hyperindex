@@ -565,9 +565,8 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   name: "test-inmemory",
   entityStoreName: _ => "test-inmemory",
   holding: async () => Persistence.Initialized,
-  // The runner injects the config-derived initial state by setting
-  // `persistence.storageStatus = Ready(...)` directly, bypassing `Persistence.init`,
-  // so none of these is reached.
+  // The runner hands the loop a config-derived initial state rather than
+  // preparing a storage, so none of these is reached.
   initialize: async (~chainConfigs as _=?, ~contractMapping as _, ~envioInfo as _) =>
     JsError.throwWithMessage(
       "TestIndexer: initialize should not be called; the initial state is derived from config.",
@@ -580,9 +579,13 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     JsError.throwWithMessage(
       "TestIndexer: addChain should not be called; the initial state is derived from config.",
     ),
-  resumeInitialState: async (~chainIds as _, ~addressChainIds as _, ~contractMapping as _) =>
+  resumeInitialState: async (~chainIds as _, ~contractMapping as _) =>
     JsError.throwWithMessage(
       "TestIndexer: resumeInitialState should not be called; the initial state is derived from config.",
+    ),
+  readChainProgress: async (~chainIds as _) =>
+    JsError.throwWithMessage(
+      "TestIndexer: readChainProgress should not be called; the initial state is derived from config.",
     ),
   loadOrThrow: async (~filter, ~table: Table.table) =>
     state
@@ -715,11 +718,7 @@ let createTestIndexer = (): t<'processConfig> => {
   // get separate storages, so independent indexers run in parallel without
   // shared mutable state.
   let storage = makeInMemoryStorage(~state)
-  let persistence = Persistence.make(
-    ~userEntities=config.userEntities,
-    ~allEnums=config.allEnums,
-    ~storage,
-  )
+  let persistence = Persistence.make(~allEntities=config.userEntities, ~storage)
 
   // Build entity operations for each user entity
   let entityOpsDict: dict<entityOperations> = Dict.make()
@@ -924,11 +923,6 @@ let createTestIndexer = (): t<'processConfig> => {
           )
           let runConfig = {...patchedConfig, shouldRollbackOnReorg: false}
           let runConfig = exitAfterFirstEventBlock ? {...runConfig, batchSize: 1} : runConfig
-
-          // Bypass Persistence.init: hand the loop the config-derived initial
-          // state directly (never a real DB) and mark the storage Ready so
-          // writes go through.
-          persistence.storageStatus = Ready(initialState)
 
           let indexerStateRef = ref(None)
           // Stop the loop and let any in-flight processing/write settle, so a

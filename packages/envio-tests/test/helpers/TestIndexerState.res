@@ -23,19 +23,8 @@ let defaultPersistence = (~config=config) =>
     persistence
   }
 
-// A persistence over `storage` that reports itself already initialized, so the
-// state writes through it instead of stalling on the init handshake.
-let readyPersistence = (~config=config, ~storage) => {
-  ...Storage.makePersistenceFromConfig(~logger=Logger.makeInMemory(), ~config, ~storage),
-  storageStatus: Persistence.Ready({
-    cleanRun: false,
-    contractMapping: config.contractMapping,
-    cache: Dict.make(),
-    chains: [],
-    reorgCheckpoints: [],
-    checkpointFrontier: Frontier.empty(),
-  }),
-}
+let persistenceOver = (~config=config, ~storage) =>
+  Storage.makePersistenceFromConfig(~logger=Logger.makeInMemory(), ~config, ~storage)
 
 let setEntity = (
   indexerState,

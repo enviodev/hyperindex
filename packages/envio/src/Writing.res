@@ -33,7 +33,8 @@ let waitForCommit = (state: IndexerState.t): promise<unit> =>
 
 // Captures the cache:true outputs to persist. The dict is left intact — entries
 // stay warm and are reclaimed later by dropCommittedEffects once committed.
-let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updatedEffectCache> => {
+let snapshotEffects = (state: IndexerState.t): array<Persistence.updatedEffectCache> => {
+  let cache = state->IndexerState.storedEffectCaches
   let acc = []
   state
   ->IndexerState.effectState
@@ -121,12 +122,6 @@ let hasBatchLanded = async (state: IndexerState.t, ~moved) => {
 let runOneWrite = async (state: IndexerState.t) => {
   let persistence = state->IndexerState.persistence
   let config = state->IndexerState.config
-  let cache = switch persistence.storageStatus {
-  | Unknown
-  | Initializing(_) =>
-    JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
-  | Ready({cache}) => cache
-  }
 
   // Snapshot before the await: the batch write reads this later, in-transaction.
   let chainMetaData = state->IndexerState.takeChainMetaSnapshot
@@ -172,7 +167,7 @@ let runOneWrite = async (state: IndexerState.t) => {
         )
       }
     })
-    let updatedEffectsCache = snapshotEffects(state, ~cache)
+    let updatedEffectsCache = snapshotEffects(state)
     let registeredAddresses = batch.registeredAddresses
 
     let writtenEntityNames = Utils.Set.make()

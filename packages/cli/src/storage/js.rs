@@ -10,11 +10,12 @@ use serde_json::json;
 
 use super::batch::{Batch, EffectCacheWrite, RollbackWrite};
 use super::changes::{self, ChangeSet};
-use super::effect_cache::{CacheEvent, Scope};
+use super::effect_cache::{CacheEvent, Scope, StoredCache};
 use super::rows::ResultSet;
 use super::schema::{effect_cache_fields, raw_event_fields, Encoding, Field, Schema};
 use super::types::{
     Addresses, Bounds, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Frontier, Progress,
+    ResumedChain,
 };
 use super::{AddChain, Holding, Initialize, Store, WriteError};
 use crate::clickhouse;
@@ -194,6 +195,35 @@ pub struct ResumedOutput {
     pub chains: Vec<ResumedChainOutput>,
     pub addresses: QueryResult,
     pub reorg_checkpoints: Vec<ReorgCheckpointOutput>,
+    pub caches: Vec<StoredEffectCache>,
+}
+
+fn resumed_chain_output(chain: ResumedChain) -> ResumedChainOutput {
+    ResumedChainOutput {
+        id: chain.id,
+        start_block: chain.start_block,
+        end_block: chain.end_block,
+        max_reorg_depth: chain.max_reorg_depth,
+        first_event_block: chain.first_event_block,
+        ready_at: chain.ready_at,
+        events_processed: chain.events_processed,
+        progress_block: chain.progress_block,
+        progress_block_time: chain.progress_block_time,
+        source_block: chain.source_block,
+        checkpoint_id: BigInt::from(chain.checkpoint_id),
+    }
+}
+
+fn stored_effect_cache(stored: StoredCache) -> StoredEffectCache {
+    StoredEffectCache {
+        table_name: stored.cache.table_name(),
+        chain_id: match stored.cache.scope {
+            Scope::CrossChain => None,
+            Scope::Chain(chain_id) => Some(chain_id as f64),
+        },
+        effect_name: stored.cache.effect_name,
+        rows: stored.rows,
+    }
 }
 
 #[napi(object)]
@@ -644,36 +674,15 @@ impl JsStorage {
         })
     }
 
-    /// Resumes the chains this run drives, with the registered addresses of
-    /// the ones among them it indexes.
+    /// Resumes the chains this process indexes.
     #[napi]
-    pub async fn resume(
-        &self,
-        chain_ids: Vec<i64>,
-        address_chain_ids: Vec<i64>,
-    ) -> napi::Result<ResumedOutput> {
-        let resumed = self
-            .inner
-            .resume(&chain_ids, &address_chain_ids)
-            .await
-            .map_err(to_napi)?;
+    pub async fn resume(&self, chain_ids: Vec<i64>) -> napi::Result<ResumedOutput> {
+        let resumed = self.inner.resume(&chain_ids).await.map_err(to_napi)?;
         Ok(ResumedOutput {
             chains: resumed
                 .chains
                 .into_iter()
-                .map(|chain| ResumedChainOutput {
-                    id: chain.id,
-                    start_block: chain.start_block,
-                    end_block: chain.end_block,
-                    max_reorg_depth: chain.max_reorg_depth,
-                    first_event_block: chain.first_event_block,
-                    ready_at: chain.ready_at,
-                    events_processed: chain.events_processed,
-                    progress_block: chain.progress_block,
-                    progress_block_time: chain.progress_block_time,
-                    source_block: chain.source_block,
-                    checkpoint_id: BigInt::from(chain.checkpoint_id),
-                })
+                .map(resumed_chain_output)
                 .collect(),
             addresses: self.hold(resumed.addresses),
             reorg_checkpoints: resumed
@@ -686,7 +695,25 @@ impl JsStorage {
                     block_hash: checkpoint.block_hash,
                 })
                 .collect(),
+            caches: resumed
+                .caches
+                .into_iter()
+                .map(stored_effect_cache)
+                .collect(),
         })
+    }
+
+    #[napi]
+    pub async fn read_chain_progress(
+        &self,
+        chain_ids: Vec<i64>,
+    ) -> napi::Result<Vec<ResumedChainOutput>> {
+        let chains = self
+            .inner
+            .read_chain_progress(&chain_ids)
+            .await
+            .map_err(to_napi)?;
+        Ok(chains.into_iter().map(resumed_chain_output).collect())
     }
 
     #[napi]
@@ -815,33 +842,22 @@ impl JsStorage {
         })
     }
 
-    /// The caches the store holds, after uploading the ones saved under
-    /// `cacheDir` when `upload` says to.
+    /// Uploads the caches saved under `cacheDir`, then returns those serving
+    /// the chains.
     #[napi]
-    pub async fn restore_effect_cache(
+    pub async fn upload_effect_cache(
         &self,
         cache_dir: String,
-        upload: bool,
+        chain_ids: Vec<i64>,
     ) -> napi::Result<Vec<StoredEffectCache>> {
         let cache_dir = PathBuf::from(cache_dir);
         let report = |event: CacheEvent| event.log(&self.logger, &cache_dir);
         let stored = self
             .inner
-            .restore_effect_cache(&cache_dir, upload, &report)
+            .upload_effect_cache(&cache_dir, &chain_ids, &report)
             .await
             .map_err(to_napi)?;
-        Ok(stored
-            .into_iter()
-            .map(|stored| StoredEffectCache {
-                table_name: stored.cache.table_name(),
-                chain_id: match stored.cache.scope {
-                    Scope::CrossChain => None,
-                    Scope::Chain(chain_id) => Some(chain_id as f64),
-                },
-                effect_name: stored.cache.effect_name,
-                rows: stored.rows,
-            })
-            .collect())
+        Ok(stored.into_iter().map(stored_effect_cache).collect())
     }
 
     /// Never rejects: a dump that doesn't finish is logged.

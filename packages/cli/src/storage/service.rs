@@ -15,7 +15,7 @@ use super::effect_cache::{self, CacheEvent, CacheFile, EffectCache, StoredCache}
 use super::handoff::{Failure, Gate, Handoff, WriteError};
 use super::rows::ResultSet;
 use super::schema::{Entity, Schema};
-use super::types::{Bounds, ChainMeta, Frontier, ProgressDiff, Sequence};
+use super::types::{Bounds, ChainMeta, Frontier, ProgressDiff, ResumedChain, Sequence};
 use super::{AddChain, Holding, Initialize, Resume, Resumed, Store, StoredConfigRead};
 use crate::clickhouse;
 use crate::entity_filter::Condition;
@@ -162,8 +162,8 @@ impl Storage {
     /// Resumes Postgres, and then ClickHouse to what Postgres committed for
     /// the chains this run drives: a batch ClickHouse landed but Postgres
     /// never committed is trimmed away.
-    pub async fn resume(&self, chain_ids: &[i64], address_chain_ids: &[i64]) -> Result<Resumed> {
-        let resumed = self.postgres.resume(chain_ids, address_chain_ids).await?;
+    pub async fn resume(&self, chain_ids: &[i64]) -> Result<Resumed> {
+        let resumed = self.postgres.resume(chain_ids).await?;
         if let Some(clickhouse) = &self.clickhouse {
             clickhouse
                 .resume(&Resume {
@@ -172,6 +172,11 @@ impl Storage {
                 .await?;
         }
         Ok(resumed)
+    }
+
+    /// Postgres holds the chains' progress of record.
+    pub async fn read_chain_progress(&self, chain_ids: &[i64]) -> Result<Vec<ResumedChain>> {
+        self.postgres.read_chain_progress(chain_ids).await
     }
 
     /// Postgres holds the frontier of record; ClickHouse follows it.
@@ -272,49 +277,34 @@ impl Storage {
         self.clickhouse()?.history(entity).await
     }
 
-    async fn stored_caches(&self) -> Result<Vec<StoredCache>> {
-        Ok(self
-            .postgres
-            .effect_cache_tables()
-            .await?
-            .into_iter()
-            .filter_map(|table| {
-                Some(StoredCache {
-                    cache: EffectCache::from_table_name(&table.table_name)?,
-                    rows: table.rows,
-                })
-            })
-            .collect())
-    }
-
-    /// The caches the store holds, after uploading the ones saved under
-    /// `cache_dir` when `upload` says to. A failed upload is reported, and the
-    /// run goes on without them.
-    pub async fn restore_effect_cache(
+    /// Uploads the caches saved under `cache_dir`, then counts those serving
+    /// the chains. A failed upload is reported, and the run goes on without
+    /// them.
+    pub async fn upload_effect_cache(
         &self,
         cache_dir: &Path,
-        upload: bool,
+        chain_ids: &[i64],
         report: &(dyn Fn(CacheEvent) + Sync),
     ) -> Result<Vec<StoredCache>> {
-        if upload {
-            let files = effect_cache::saved(cache_dir)
-                .await?
-                .into_iter()
-                .map(|(cache, path)| CacheFile {
-                    table: cache.table_name(),
-                    path: path.to_string_lossy().into_owned(),
-                })
-                .collect::<Vec<_>>();
-            report(if files.is_empty() {
-                CacheEvent::NothingSaved
-            } else {
-                match self.postgres.upload_effect_cache(&files).await {
-                    Ok(()) => CacheEvent::Uploaded,
-                    Err(error) => CacheEvent::UploadFailed(error),
-                }
-            });
-        }
-        self.stored_caches().await
+        let files = effect_cache::saved(cache_dir)
+            .await?
+            .into_iter()
+            .map(|(cache, path)| CacheFile {
+                table: cache.table_name(),
+                path: path.to_string_lossy().into_owned(),
+            })
+            .collect::<Vec<_>>();
+        report(if files.is_empty() {
+            CacheEvent::NothingSaved
+        } else {
+            match self.postgres.upload_effect_cache(&files).await {
+                Ok(()) => CacheEvent::Uploaded,
+                Err(error) => CacheEvent::UploadFailed(error),
+            }
+        });
+        self.postgres
+            .effect_caches(|cache| cache.serves(chain_ids))
+            .await
     }
 
     /// Saves every cache holding an output under `cache_dir`. Never fails: a
@@ -323,7 +313,8 @@ impl Storage {
     pub async fn dump_effect_cache(&self, cache_dir: &Path, report: &(dyn Fn(CacheEvent) + Sync)) {
         let dumped = async {
             let caches = self
-                .stored_caches()
+                .postgres
+                .effect_caches(|_| true)
                 .await?
                 .into_iter()
                 .filter(|stored| stored.rows > 0)

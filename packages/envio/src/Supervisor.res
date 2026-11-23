@@ -379,7 +379,7 @@ let releaseIfAtHead = group =>
 // worker it hasn't heard from yet, and its first sight of a chain is what it
 // measures the sync pace from, so a resumed chain drawn from its start block
 // would pass the earlier runs' progress off as this one's.
-let resumedChains = (config: Config.t, ~resumed: array<Persistence.initialChainState>): array<
+let resumedChains = (config: Config.t, ~resumed: array<Persistence.chainProgress>): array<
   Metrics.chainMetrics,
 > =>
   config.chainMap
@@ -473,17 +473,30 @@ let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) =>
   // chains and leave the chains it skipped with nothing to resume. It is the
   // same initialization an unsplit run does, and the supervisor hands the
   // connections it used to its workers.
+  // It indexes none of the chains, so it resumes none either: each worker
+  // resumes its own, and all the supervisor reads is where they stand.
   let persistence = Storage.makePersistenceFromConfig(~config, ~logger)
-  // Checked here once, so the workers don't each check the same handlers.
-  let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
-  let _ = await Promise.all2((
-    persistence->Persistence.initForRun(
+  let readChainProgress = async () =>
+    switch await persistence->Persistence.prepareForRun(
       ~logger,
       ~config,
       ~reset,
       ~isDevelopmentMode=config.isDev,
-      ~indexing=false,
-    ),
+      ~announceResume=true,
+    ) {
+    | Created(initialState) =>
+      initialState.chains->Array.map(chain => (chain :> Persistence.chainProgress))
+    | Existing(_) =>
+      let chains = await persistence.storage.readChainProgress(
+        ~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id),
+      )
+      logger->Persistence.logResumed(~announceResume=true, ~chains)
+      chains
+    }
+  // Checked here once, so the workers don't each check the same handlers.
+  let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
+  let (resumed, ()) = await Promise.all2((
+    readChainProgress(),
     HandlerLoader.typeCheck(~config, ~logger, ~autoLoadFiles),
   ))
   await persistence.storage.close()
@@ -508,7 +521,6 @@ let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) =>
   let shouldUseTui = Tui.shouldUse()
   // A run that resumed with every chain already caught up owes nobody a wait:
   // its workers start realtime and there is no barrier to open.
-  let resumed = (persistence->Persistence.getInitializedState).chains
   let holdRealtime =
     resumed->Array.some(chain => chain.timestampCaughtUpToHeadOrEndblock->Option.isNone)
   let group = {running: [], stopping: false, holdingRealtime: holdRealtime}

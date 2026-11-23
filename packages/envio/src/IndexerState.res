@@ -59,6 +59,9 @@ type t = {
   // per-chain ones.
   mutable entities: EntityTables.t,
   effectState: EffectState.t,
+  // The effect cache tables the storage holds, by table name, each with its
+  // row count as this process has written it.
+  storedEffectCaches: dict<Persistence.effectCacheRecord>,
   mutable rollback: option<Persistence.rollback>,
   // Last checkpoint each chain has persisted to the db.
   mutable committedFrontier: Frontier.t,
@@ -165,6 +168,7 @@ let make = (
   ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
   ~holdRealtime=false,
   ~committedFrontier=Frontier.empty(),
+  ~storedEffectCaches=Dict.make(),
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
@@ -193,6 +197,7 @@ let make = (
     allEntities: persistence.allEntities,
     entities: EntityTables.make(persistence.allEntities->EntityTables.crossChain),
     effectState: EffectState.make(~clock, ()),
+    storedEffectCaches,
     rollback: None,
     committedFrontier,
     processedFrontier: committedFrontier->Frontier.copy,
@@ -321,6 +326,7 @@ let makeFromDbState = (
     ~targetBufferSize,
     ~holdRealtime,
     ~committedFrontier=initialState.checkpointFrontier,
+    ~storedEffectCaches=initialState.cache,
     ~isDevelopmentMode,
     ~shouldUseTui,
     ~exitAfterFirstEventBlock,
@@ -551,6 +557,7 @@ let eachEntityTable = (
   )
 }
 let effectState = (state: t) => state.effectState
+let storedEffectCaches = (state: t) => state.storedEffectCaches
 let committedFrontier = (state: t) => state.committedFrontier
 let processedFrontier = (state: t) => state.processedFrontier
 

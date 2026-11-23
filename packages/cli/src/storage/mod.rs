@@ -84,6 +84,7 @@ pub struct Resumed {
     pub chains: Vec<ResumedChain>,
     pub addresses: ResultSet,
     pub reorg_checkpoints: Vec<types::ReorgCheckpoint>,
+    pub caches: Vec<effect_cache::StoredCache>,
 }
 
 pub struct StoredConfigRead {

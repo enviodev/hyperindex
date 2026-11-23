@@ -36,7 +36,7 @@ let loadById = (
   | None =>
     let key = `${entityConfig.name}.get${scope->scopeKeySuffix}`
     let load = async (idsToLoad, ~onError as _) => {
-      let storage = persistence->Persistence.getInitializedStorageOrThrow
+      let storage = persistence.storage
       let storageName = storage.entityStoreName(entityConfig)
       let timerRef =
         indexerState->IndexerState.startStorageLoad(~storage=storageName, ~operation=key)
@@ -262,13 +262,8 @@ let loadEffect = (
     let idsToLoad = args->Array.map((arg: Internal.effectArgs) => arg.cacheKey)
     let idsFromCache = Utils.Set.make()
 
-    if (
-      switch persistence.storageStatus {
-      | Ready({cache}) => cache->Dict.has(tableName)
-      | _ => false
-      }
-    ) {
-      let storage = persistence->Persistence.getInitializedStorageOrThrow
+    if indexerState->IndexerState.storedEffectCaches->Dict.has(tableName) {
+      let storage = persistence.storage
       let timerRef =
         indexerState->IndexerState.startStorageLoad(~storage=storage.name, ~operation=key)
       let {outputSchema} = effect.storageMeta
@@ -365,7 +360,7 @@ let loadByParsedFilter = (
   let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
 
   let load = async (filters: array<EntityFilter.t>, ~onError as _) => {
-    let storage = persistence->Persistence.getInitializedStorageOrThrow
+    let storage = persistence.storage
     let storageName = storage.entityStoreName(entityConfig)
 
     let timerRef = indexerState->IndexerState.startStorageLoad(~storage=storageName, ~operation=key)

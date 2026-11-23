@@ -416,7 +416,7 @@ ${storageLines}
         [
           (
             {
-              msg: "Found existing indexer storage. Resuming indexing state...",
+              msg: "Found existing indexer storage.",
               params: dict{},
             }: IndexerRunner.logEntry
           ),

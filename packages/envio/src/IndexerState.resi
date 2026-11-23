@@ -19,6 +19,7 @@ let make: (
   ~targetBufferSize: int=?,
   ~holdRealtime: bool=?,
   ~committedFrontier: Frontier.t=?,
+  ~storedEffectCaches: dict<Persistence.effectCacheRecord>=?,
   ~isDevelopmentMode: bool=?,
   ~shouldUseTui: bool=?,
   ~exitAfterFirstEventBlock: bool=?,
@@ -91,6 +92,7 @@ let eachEntityTable: (
   ) => unit,
 ) => unit
 let effectState: t => EffectState.t
+let storedEffectCaches: t => dict<Persistence.effectCacheRecord>
 let committedFrontier: t => Frontier.t
 let processedFrontier: t => Frontier.t
 let committedCheckpointIdFor: (t, ~scope: Internal.chainScope) => Internal.checkpointId

@@ -2,7 +2,6 @@ type method = [
   | #holding
   | #initialize
   | #readStoredConfig
-  | #resumeInitialState
   | #dumpEffectCache
   | #loadOrThrow
 ]
@@ -12,8 +11,6 @@ type t = {
   resolveHolding: Persistence.holding => unit,
   initializeCalls: array<{"chainConfigs": array<Config.chain>, "envioInfo": JSON.t}>,
   resolveInitialize: Persistence.initialState => unit,
-  resumeInitialStateCalls: array<bool>,
-  resolveLoadInitialState: Persistence.initialState => unit,
   loadOrThrowCalls: array<{"filter": dict<dict<unknown>>, "tableName": string}>,
   storage: Persistence.storage,
 }
@@ -47,17 +44,11 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
   let holdingResolveFns = []
   let initializeResolveFns = []
   let loadOrThrowCalls = []
-  let resumeInitialStateCalls = []
-  let resumeInitialStateResolveFns = []
 
   {
     holdingCalls,
     initializeCalls,
     loadOrThrowCalls,
-    resumeInitialStateCalls,
-    resolveLoadInitialState: (initialState: Persistence.initialState) => {
-      resumeInitialStateResolveFns->Array.forEach(resolve => resolve(initialState))
-    },
     resolveHolding: holding => {
       holdingResolveFns->Array.forEach(resolve => resolve(holding))
     },
@@ -87,16 +78,9 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
       readStoredConfig: implement(#readStoredConfig, () => Promise.resolve(stored)),
       addChain: (~chainConfig as _, ~contractMapping as _) =>
         JsError.throwWithMessage("Not implemented"),
-      resumeInitialState: implement(#resumeInitialState, (
-        ~chainIds as _,
-        ~addressChainIds as _,
-        ~contractMapping as _,
-      ) => {
-        resumeInitialStateCalls->Array.push(true)->ignore
-        Promise.make((resolve, _reject) => {
-          resumeInitialStateResolveFns->Array.push(resolve)->ignore
-        })
-      }),
+      resumeInitialState: (~chainIds as _, ~contractMapping as _) =>
+        JsError.throwWithMessage("Not implemented"),
+      readChainProgress: (~chainIds as _) => JsError.throwWithMessage("Not implemented"),
       dumpEffectCache: implement(#dumpEffectCache, () => Promise.resolve()),
       loadOrThrow: (~filter, ~table: Table.table) => {
         implementBody(#loadOrThrow, () => {
@@ -145,20 +129,9 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
   }
 }
 
-let toPersistence = (storageMock: t, ~config: Config.t) => {
-  {
-    ...Storage.makePersistenceFromConfig(
-      ~logger=Logger.makeInMemory(),
-      ~config,
-      ~storage=storageMock.storage,
-    ),
-    storageStatus: Ready({
-      cleanRun: false,
-      contractMapping: config.contractMapping,
-      cache: Dict.make(),
-      chains: [],
-      reorgCheckpoints: [],
-      checkpointFrontier: Frontier.empty(),
-    }),
-  }
-}
+let toPersistence = (storageMock: t, ~config: Config.t) =>
+  Storage.makePersistenceFromConfig(
+    ~logger=Logger.makeInMemory(),
+    ~config,
+    ~storage=storageMock.storage,
+  )

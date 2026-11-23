@@ -72,6 +72,14 @@ impl EffectCache {
         }
     }
 
+    /// A cross-chain cache serves every chain; a chain's, that chain alone.
+    pub fn serves(&self, chain_ids: &[i64]) -> bool {
+        match self.scope {
+            Scope::CrossChain => true,
+            Scope::Chain(chain_id) => chain_ids.iter().any(|id| *id as u64 == chain_id),
+        }
+    }
+
     pub fn file(&self, cache_dir: &Path) -> PathBuf {
         let file_name = format!("{}.tsv", self.effect_name);
         match self.scope {

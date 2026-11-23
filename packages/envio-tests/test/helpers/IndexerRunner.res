@@ -354,17 +354,14 @@ let run = async (
       )->countStorageCalls(~inFlight=storageCallsInFlight)
     storages->Array.push(storage)
     let persistence = Storage.makePersistenceFromConfig(~config, ~logger, ~storage)
-    // `Main.start` does this before handler modules load, so the exported
-    // indexer can expose persisted state. Without it every `indexer.chains[N]`
-    // getter silently falls back to static config.
-    Main.setGlobalPersistence(persistence)
+    Main.setGlobalInitialState(None)
 
     let onError = switch onError {
     | Some(onError) => onError
     | None => failWith
     }
 
-    await persistence->Persistence.initForRun(
+    let initialState = await persistence->Persistence.initForRun(
       ~logger,
       ~config,
       ~reset,
@@ -373,6 +370,10 @@ let run = async (
       ~startBlockRetry?,
       ~sourceTiming=?startupTiming,
     )
+    // `Main.start` does this before handler modules load, so the exported
+    // indexer can expose persisted state. Without it every `indexer.chains[N]`
+    // getter silently falls back to static config.
+    Main.setGlobalInitialState(Some(initialState))
 
     // Same order as `Main.start`: storage is initialized - which is where a
     // `start_block: latest` chain reads its head - before handler modules load,
@@ -403,7 +404,7 @@ let run = async (
       None
     }
     let state = IndexerState.makeFromDbState(
-      ~initialState=persistence->Persistence.getInitializedState,
+      ~initialState,
       ~config,
       ~logger,
       ~persistence,
