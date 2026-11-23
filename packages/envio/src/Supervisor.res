@@ -470,33 +470,14 @@ let displayedSnapshots = (
 let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) => {
   // Every chain's state has to exist before a worker resumes it: an isolated
   // run refuses to initialize, precisely so it can't create rows for its own
-  // chains and leave the chains it skipped with nothing to resume. It is the
-  // same initialization an unsplit run does, and the supervisor hands the
-  // connections it used to its workers.
-  // It indexes none of the chains, so it resumes none either: each worker
-  // resumes its own, and all the supervisor reads is where they stand.
+  // chains and leave the chains it skipped with nothing to resume. The
+  // supervisor closes its connections before forking, so its workers get the
+  // whole budget.
   let persistence = Storage.makePersistenceFromConfig(~config, ~logger)
-  let readChainProgress = async () =>
-    switch await persistence->Persistence.prepareForRun(
-      ~logger,
-      ~config,
-      ~reset,
-      ~isDevelopmentMode=config.isDev,
-      ~announceResume=true,
-    ) {
-    | Created(initialState) =>
-      initialState.chains->Array.map(chain => (chain :> Persistence.chainProgress))
-    | Existing(_) =>
-      let chains = await persistence.storage.readChainProgress(
-        ~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id),
-      )
-      logger->Persistence.logResumed(~announceResume=true, ~chains)
-      chains
-    }
   // Checked here once, so the workers don't each check the same handlers.
   let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
   let (resumed, ()) = await Promise.all2((
-    readChainProgress(),
+    persistence->Persistence.initForSupervisor(~logger, ~config, ~reset),
     HandlerLoader.typeCheck(~config, ~logger, ~autoLoadFiles),
   ))
   await persistence.storage.close()

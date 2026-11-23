@@ -266,14 +266,13 @@ exception Refused(string)
 
 let make = (~allEntities, ~storage) => {allEntities, storage}
 
-let failedToInitializeMessage = `Failed to initialize the indexer storage.`
-
 // A refusal is all the operator needs to read; anything else is logged with
 // what it was doing.
 let refusedOrLogged = (exn, ~logger) =>
   switch exn {
   | Refused(message) => JsError.throwWithMessage(message)
-  | exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=failedToInitializeMessage)
+  | exn =>
+    exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to initialize the indexer storage.`)
   }
 
 // The level a process says it resumed at. A supervisor says it once for the
@@ -291,9 +290,9 @@ let logResumed = (logger, ~announceResume, ~chains: array<chainProgress>) => {
 }
 
 // Makes the storage fit the config: builds it when there is none, refuses one
-// the config can't continue, and adds a chain the config only gained. Reads
-// nothing a run indexes from: that is `resume`'s, for the chains of the
-// process indexing them.
+// the config can't continue, and adds a chain the config only gained. It reads
+// none of the state indexing starts from: that is `resume`'s, for the chains
+// of the process indexing them.
 let prepare = async (
   persistence,
   ~logger,
@@ -427,7 +426,7 @@ let prepare = async (
 // Resuming takes ClickHouse back to what Postgres committed for them, so it is
 // only for a process about to index them: a supervisor or a migration must
 // leave a sibling's or a running indexer's chains alone.
-let resume = async (persistence, ~logger, ~chainIds, ~contractMapping, ~announceResume=true) =>
+let resume = async (persistence, ~logger, ~chainIds, ~contractMapping, ~announceResume) =>
   try {
     let initialState = await persistence.storage.resumeInitialState(~chainIds, ~contractMapping)
     logger->logResumed(
@@ -501,4 +500,27 @@ let initForRun = async (
       ~contractMapping,
       ~announceResume,
     )
+  }
+
+// Where every chain of a split run stands. The supervisor indexes none of them,
+// so it resumes none either: each worker resumes its own.
+let initForSupervisor = async (persistence, ~logger, ~config: Config.t, ~reset) =>
+  switch await persistence->prepareForRun(
+    ~logger,
+    ~config,
+    ~reset,
+    ~isDevelopmentMode=config.isDev,
+    ~announceResume=true,
+  ) {
+  | Created(initialState) => initialState.chains->Array.map(chain => (chain :> chainProgress))
+  | Existing(_) =>
+    try {
+      let chains = await persistence.storage.readChainProgress(
+        ~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id),
+      )
+      logger->logResumed(~announceResume=true, ~chains)
+      chains
+    } catch {
+    | exn => exn->refusedOrLogged(~logger)
+    }
   }

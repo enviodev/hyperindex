@@ -232,8 +232,9 @@ let merge = (snapshots: array<t>, ~startTime, ~metricTime, ~elapsedSeconds, ~tar
         queueCount: a.queueCount + b.queueCount,
         queueWaitSeconds: a.queueWaitSeconds +. b.queueWaitSeconds,
         invalidationsCount: a.invalidationsCount +. b.invalidationsCount,
-        // An effect's cache rows are per chain, so worker counts are disjoint.
-        // Absent unless some worker persists the cache at all.
+        // A chain's cache rows are counted by the one worker driving it. A
+        // cross-chain cache's are counted whole by every worker, so this sum
+        // overstates them. Absent unless some worker persists the cache at all.
         cacheCount: switch (a.cacheCount, b.cacheCount) {
         | (Some(x), Some(y)) => Some(x + y)
         | (Some(x), None) => Some(x)

@@ -59,8 +59,8 @@ type t = {
   // per-chain ones.
   mutable entities: EntityTables.t,
   effectState: EffectState.t,
-  // The effect cache tables the storage holds, by table name, each with its
-  // row count as this process has written it.
+  // The effect cache tables the storage holds, by table name, each with the
+  // row count read at startup plus what this process has written since.
   storedEffectCaches: dict<Persistence.effectCacheRecord>,
   mutable rollback: option<Persistence.rollback>,
   // Last checkpoint each chain has persisted to the db.
