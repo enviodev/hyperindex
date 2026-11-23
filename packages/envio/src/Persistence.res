@@ -264,7 +264,7 @@ exception Refused(string)
 
 // A refusal is all the operator needs to read; anything else is logged with
 // what it was doing.
-let refusedOrLogged = (exn, ~logger) =>
+let throwRefusalOrLoggedFailure = (exn, ~logger) =>
   switch exn {
   | Refused(message) => JsError.throwWithMessage(message)
   | exn =>
@@ -403,7 +403,7 @@ let prepare = async (
       Existing({contractMapping: stored.contractMapping})
     }
   } catch {
-  | exn => exn->refusedOrLogged(~logger)
+  | exn => exn->throwRefusalOrLoggedFailure(~logger)
   }
 
 // The commands a refusal names, for the command the operator ran.
@@ -460,7 +460,7 @@ let resume = async (
     )
     initialState
   } catch {
-  | exn => exn->refusedOrLogged(~logger)
+  | exn => exn->throwRefusalOrLoggedFailure(~logger)
   }
 
 // Brings the schema up to date for a run that is about to start, as opposed to
@@ -537,6 +537,6 @@ let initForSupervisor = async (storage: storage, ~logger, ~config: Config.t, ~re
       logger->logResumed(~announceResume=true, ~chains)
       chains
     } catch {
-    | exn => exn->refusedOrLogged(~logger)
+    | exn => exn->throwRefusalOrLoggedFailure(~logger)
     }
   }

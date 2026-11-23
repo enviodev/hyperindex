@@ -3,7 +3,7 @@ let getIndexerState = () =>
 let setIndexerState = (state: IndexerState.t) =>
   EnvioGlobal.value.indexerState = Some(state->(Utils.magic: IndexerState.t => unknown))
 
-// Persistence is set by Main.start before handler modules load, so that
+// The initial state is set by Main.start before handler modules load, so that
 // the exported indexer value can lazily expose DB state (startBlock,
 // endBlock, isRealtime, dynamic contract addresses) once it's ready.
 let getInitialState = () =>

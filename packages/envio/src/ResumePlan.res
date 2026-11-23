@@ -1,6 +1,5 @@
 // A chain as its storage holds it: what its `envio_chains` row keeps of its
-// config. The addresses the config declared for it are checked apart, by
-// `changedConfigAddressPaths`, against the rows its resume reads.
+// config.
 type storedChain = {
   id: ChainId.t,
   ecosystem: string,

@@ -247,7 +247,7 @@ let make = (
 
   let holding = () => client->StorageClient.holding
 
-  let effectCacheRecordsByTable = (stored: array<StorageClient.storedEffectCache>) => {
+  let effectCacheRecordsByTableOfStored = (stored: array<StorageClient.storedEffectCache>) => {
     let cache = Dict.make()
     stored->Array.forEach(({effectName, ?chainId, tableName, rows}) =>
       cache->Dict.set(
@@ -291,7 +291,7 @@ let make = (
           cacheDirPath->NodeJs.Path.toString,
           chainConfigs->Array.map(chain => chain.id),
         )
-      )->effectCacheRecordsByTable
+      )->effectCacheRecordsByTableOfStored
 
     // Integration with other tools like Hasura
     switch onInitialize {
@@ -466,7 +466,7 @@ let make = (
     {
       cleanRun: false,
       reorgCheckpoints,
-      cache: resumed.caches->effectCacheRecordsByTable,
+      cache: resumed.caches->effectCacheRecordsByTableOfStored,
       chains,
       checkpointFrontier,
       contractMapping,
