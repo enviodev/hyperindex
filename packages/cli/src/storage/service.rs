@@ -170,12 +170,25 @@ impl Storage {
     /// Takes ClickHouse back to `committed`, the frontier the resume read for
     /// the chains this process indexes: a batch ClickHouse landed but Postgres
     /// never committed is trimmed away, and writes another process still makes
-    /// are fenced off. Not read again here: the run issues checkpoint ids from
-    /// that frontier, so ClickHouse must hold nothing above it.
+    /// are fenced off. The run issues checkpoint ids from that frontier, and
+    /// ClickHouse must keep every batch Postgres holds, so a frontier another
+    /// process moved since the read is refused rather than trimmed below.
     pub async fn take_over_clickhouse(&self, committed: Frontier) -> Result<()> {
         let Some(clickhouse) = &self.clickhouse else {
             return Ok(());
         };
+        let chain_ids = committed.keys().copied().collect::<Vec<_>>();
+        let now = self.postgres.read_chain_progress(&chain_ids).await?;
+        if let Some(moved) = now
+            .iter()
+            .find(|chain| committed.get(&chain.id) != Some(&chain.checkpoint_id))
+        {
+            bail!(
+                "Another process committed to chain {} after this one read where it stands. Stop \
+                 the other indexer writing to this database, then start this one again.",
+                moved.id
+            );
+        }
         clickhouse.resume(&Resume { committed }).await
     }
 

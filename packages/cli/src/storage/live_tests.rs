@@ -167,11 +167,13 @@ async fn a_clickhouse_without_its_postgres_is_stranded() {
 }
 
 /// The run starts its checkpoint sequence where its resume read the frontier,
-/// so ClickHouse is taken back to that same frontier: a batch committed after
-/// the read is one whose ids the run issues again.
+/// so ClickHouse could only be taken back to that same frontier. A batch
+/// another process committed after the read would then be trimmed from
+/// ClickHouse while Postgres keeps it, so the takeover refuses and trims
+/// nothing.
 #[tokio::test]
 #[ignore = "needs a Postgres and a ClickHouse server"]
-async fn a_take_over_trims_to_the_frontier_its_resume_read() {
+async fn a_take_over_refuses_a_frontier_another_process_moved() {
     let live = Live::new("take_over_frontier");
     live.initialize().await;
     let resumed = live.storage.resume(&[1]).await.unwrap();
@@ -199,7 +201,8 @@ async fn a_take_over_trims_to_the_frontier_its_resume_read() {
         .await
         .is_ok();
 
-    live.storage
+    let taken_over = live
+        .storage
         .take_over_clickhouse(
             resumed
                 .chains
@@ -208,13 +211,31 @@ async fn a_take_over_trims_to_the_frontier_its_resume_read() {
                 .collect(),
         )
         .await
-        .unwrap();
-    let frontiers = live.frontiers().await;
+        .map_err(|error| format!("{error:#}"));
+    let clickhouse_checkpoints = live
+        .clickhouse_statement(format!(
+            "SELECT id FROM `{}`.envio_checkpoints WHERE chain_id = 1 ORDER BY id FORMAT \
+             TabSeparated",
+            live.name
+        ))
+        .await;
 
     live.drop_all().await;
     assert_eq!(
-        (written, frontiers),
-        (true, ("1".to_string(), "0".to_string()))
+        (
+            written,
+            taken_over,
+            clickhouse_checkpoints.trim().to_string()
+        ),
+        (
+            true,
+            Err(
+                "Another process committed to chain 1 after this one read where it stands. \
+                 Stop the other indexer writing to this database, then start this one again."
+                    .to_string()
+            ),
+            "1".to_string()
+        )
     );
 }
 
