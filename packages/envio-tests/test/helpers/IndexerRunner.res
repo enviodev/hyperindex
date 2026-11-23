@@ -99,6 +99,8 @@ type rec t = {
     ~scope: Internal.chainScope,
   ) => promise<array<{"id": string, "output": JSON.t}>>,
   metric: string => promise<array<metric>>,
+  // The snapshot a worker reports to its supervisor.
+  snapshot: unit => Metrics.t,
   pgSchema: string,
   // Skipped, without calling back, when the run's config keeps no entity in
   // Postgres, as the harness ClickHouse leg does.
@@ -844,6 +846,7 @@ let run = async (
         ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName))
         ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string, "output": JSON.t}>>)
       },
+      snapshot: () => state->IndexerState.toMetrics,
       metric: async name => {
         // Parse the metric's samples back out of the rendered /metrics text.
         Metrics.collect(~metrics=Some(state->IndexerState.toMetrics))
