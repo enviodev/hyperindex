@@ -42,8 +42,7 @@ use crate::storage::types::{
     CHECKPOINT_ID_COLUMN, DELETE, SET,
 };
 use crate::storage::{
-    AddChain, Batch, Failure, Handoff, Initialize, Resumed, RollbackWrite, StoredConfigRead,
-    WriteError,
+    AddChain, Batch, Failure, Handoff, Initialize, Resumed, RollbackWrite, WriteError,
 };
 
 pub struct Settings {
@@ -621,9 +620,9 @@ impl Storage {
         }
     }
 
-    /// The record a resume is checked against, and the config addresses it was
-    /// written with.
-    pub async fn read_stored_config(&self) -> Result<StoredConfigRead> {
+    /// The record a resume is checked against. A chain's config addresses are
+    /// checked by the process that resumes it, from the rows it reads anyway.
+    pub async fn read_stored_config(&self) -> Result<StoredConfig> {
         let schema = self.schema();
         let (read_info, read_contracts) = (
             internal::read_info(schema),
@@ -642,41 +641,31 @@ impl Storage {
         // Both join the schema in one transaction. Without either, an older
         // envio wrote it, and the address rows are shaped differently.
         if envio_info.is_none() || contract_names.is_none() {
-            return Ok(StoredConfigRead {
-                config: StoredConfig {
-                    envio_info: None,
-                    contract_names: None,
-                    chains: vec![],
-                },
-                config_addresses: into_result(&[], &[])?,
+            return Ok(StoredConfig {
+                envio_info: None,
+                contract_names: None,
+                chains: vec![],
             });
         }
-        let (read_chains, read_addresses) = (
-            internal::read_stored_chains(schema),
-            internal::read_config_addresses(schema),
-        );
-        let ((chains, _), (addresses, address_columns)) = futures_util::try_join!(
-            self.client.query(&read_chains, &[]),
-            self.client.query(&read_addresses, &[]),
-        )?;
-        Ok(StoredConfigRead {
-            config: StoredConfig {
-                envio_info,
-                contract_names,
-                chains: chains
-                    .iter()
-                    .map(|row| {
-                        Ok(ChainConfig {
-                            id: cell(row, 0)?,
-                            ecosystem: cell(row, 1)?,
-                            start_block: cell(row, 2)?,
-                            end_block: cell(row, 3)?,
-                            max_reorg_depth: cell(row, 4)?,
-                        })
+        let (chains, _) = self
+            .client
+            .query(&internal::read_stored_chains(schema), &[])
+            .await?;
+        Ok(StoredConfig {
+            envio_info,
+            contract_names,
+            chains: chains
+                .iter()
+                .map(|row| {
+                    Ok(ChainConfig {
+                        id: cell(row, 0)?,
+                        ecosystem: cell(row, 1)?,
+                        start_block: cell(row, 2)?,
+                        end_block: cell(row, 3)?,
+                        max_reorg_depth: cell(row, 4)?,
                     })
-                    .collect::<Result<_>>()?,
-            },
-            config_addresses: into_result(&addresses, &address_columns)?,
+                })
+                .collect::<Result<_>>()?,
         })
     }
 

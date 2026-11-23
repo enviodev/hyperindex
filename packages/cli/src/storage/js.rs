@@ -162,7 +162,6 @@ pub struct StoredConfigOutput {
     pub envio_info: Option<String>,
     pub contract_names: Option<Vec<String>>,
     pub chains: Vec<ChainConfig>,
-    pub config_addresses: QueryResult,
 }
 
 #[napi(object)]
@@ -665,12 +664,11 @@ impl JsStorage {
 
     #[napi]
     pub async fn read_stored_config(&self) -> napi::Result<StoredConfigOutput> {
-        let read = self.inner.read_stored_config().await.map_err(to_napi)?;
+        let stored = self.inner.read_stored_config().await.map_err(to_napi)?;
         Ok(StoredConfigOutput {
-            envio_info: read.config.envio_info,
-            contract_names: read.config.contract_names,
-            chains: read.config.chains,
-            config_addresses: self.hold(read.config_addresses),
+            envio_info: stored.envio_info,
+            contract_names: stored.contract_names,
+            chains: stored.chains,
         })
     }
 
@@ -701,6 +699,14 @@ impl JsStorage {
                 .map(stored_effect_cache)
                 .collect(),
         })
+    }
+
+    #[napi]
+    pub async fn take_over_clickhouse(&self, chain_ids: Vec<i64>) -> napi::Result<()> {
+        self.inner
+            .take_over_clickhouse(&chain_ids)
+            .await
+            .map_err(to_napi)
     }
 
     #[napi]

@@ -69,6 +69,7 @@ impl Live {
             .await
             .unwrap();
         self.storage.resume(&[1]).await.unwrap();
+        self.storage.take_over_clickhouse(&[1]).await.unwrap();
     }
 
     /// Where Postgres and ClickHouse each hold chain 1's frontier.
@@ -318,6 +319,91 @@ async fn a_resume_reads_only_the_chains_it_indexes() {
             )),
             Ok(vec![1, 137]),
         )
+    );
+}
+
+// https://github.com/enviodev/hyperindex/issues/1862
+/// The address table can hold tens of millions of rows, and its config rows
+/// have no index of their own. A worker reads it once, for its own chains, and
+/// finds the config's addresses among them. Its supervisor never reads it.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn startup_reads_the_address_table_only_to_resume_a_chain() {
+    let name = format!("envio_address_scans_{}", std::process::id());
+    let client = postgres::live_tests::pinned_client();
+    let schema: Arc<Schema> = clickhouse::live_tests::schema_of(Vec::new());
+    let storage = Storage {
+        schema: schema.clone(),
+        postgres: Arc::new(
+            postgres::storage::Storage::new(
+                client.clone(),
+                postgres::storage::Settings {
+                    pg_schema: name.clone(),
+                    pg_user: "postgres".to_string(),
+                    numeric_array_as_text: false,
+                    isolated: false,
+                },
+                schema,
+                Arc::new(|_| ()),
+            )
+            .unwrap(),
+        ),
+        clickhouse: None,
+    };
+    let chain = |id| ChainConfig {
+        id,
+        ..clickhouse::live_tests::initialize_input().chains[0].clone()
+    };
+    storage
+        .initialize(Initialize {
+            chains: vec![chain(1), chain(137)],
+            contract_names: vec!["Token".to_string()],
+            addresses: Addresses {
+                chain_ids: vec![1, 137],
+                addresses: vec![vec![1; 20], vec![2; 20]],
+                contract_ids: vec![0, 0],
+                registration_blocks: vec![-1, -1],
+            },
+            ..clickhouse::live_tests::initialize_input()
+        })
+        .await
+        .unwrap();
+    // The one connection is the backend that ran the reads: its counts reach
+    // the shared statistics at the next transaction boundary once forced.
+    let scans = || async {
+        client
+            .query("SELECT pg_stat_force_next_flush()", &[])
+            .await
+            .unwrap();
+        client.query("SELECT 1", &[]).await.unwrap();
+        let (rows, _) = client
+            .query(
+                &format!(
+                    "SELECT (seq_scan + coalesce(idx_scan, 0))::int8 FROM pg_stat_user_tables \
+                     WHERE schemaname = '{name}' AND relname = 'envio_addresses'"
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+        rows[0].get::<_, i64>(0)
+    };
+
+    let before = scans().await;
+    storage.read_stored_config().await.unwrap();
+    storage.resume(&[1]).await.unwrap();
+    let after_worker = scans().await;
+    storage.read_stored_config().await.unwrap();
+    storage.read_chain_progress(&[1, 137]).await.unwrap();
+    let after_supervisor = scans().await;
+
+    client
+        .batch(&format!("DROP SCHEMA IF EXISTS \"{name}\" CASCADE"))
+        .await
+        .unwrap();
+    assert_eq!(
+        (after_worker - before, after_supervisor - after_worker),
+        (1, 0)
     );
 }
 

@@ -408,33 +408,18 @@ let make = (
 
   let readStoredConfig = async (): ResumePlan.stored => {
     let stored = await client->StorageClient.readStoredConfig
-    let configAddresses = stored.configAddresses->readAddressRows
     // Both are written in one transaction. A missing mapping means an older
     // envio wrote this schema, so the record is unreadable rather than decoded
     // against ids nothing assigned.
     switch (stored.envioInfo, stored.contractNames) {
-    | (Some(envioInfo), Some(contractNames)) =>
-      let configAddressesByChain = Dict.make()
-      configAddresses->Array.forEach(row =>
-        configAddressesByChain->Utils.Dict.push(
-          row.chainId->ChainId.normalizeOrThrow->ChainId.toString,
-          row,
-        )
-      )
-      {
+    | (Some(envioInfo), Some(contractNames)) => {
         envioInfo: Some(envioInfo->JSON.parseOrThrow),
         chains: stored.chains->Array.map((chain): ResumePlan.storedChain => {
-          let id = chain.id->ChainId.normalizeOrThrow
-          {
-            id,
-            ecosystem: chain.ecosystem,
-            startBlock: chain.startBlock,
-            endBlock: chain.endBlock,
-            maxReorgDepth: chain.maxReorgDepth,
-            configAddresses: configAddressesByChain
-            ->Utils.Dict.dangerouslyGetNonOption(id->ChainId.toString)
-            ->Option.getOr([]),
-          }
+          id: chain.id->ChainId.normalizeOrThrow,
+          ecosystem: chain.ecosystem,
+          startBlock: chain.startBlock,
+          endBlock: chain.endBlock,
+          maxReorgDepth: chain.maxReorgDepth,
         }),
         contractMapping: ContractMapping.fromStoredNames(contractNames),
       }
@@ -449,6 +434,8 @@ let make = (
       ->ChainState.configStorageRows(~ecosystem, ~contractMapping)
       ->addressColumns,
     })
+
+  let takeOver = (~chainIds) => client->StorageClient.takeOverClickhouse(chainIds)
 
   let readChainProgress = async (~chainIds) =>
     (await client->StorageClient.readChainProgress(chainIds))->Array.map(chainProgressOf)
@@ -796,6 +783,7 @@ let make = (
     readStoredConfig,
     addChain,
     resumeInitialState,
+    takeOver,
     readChainProgress,
     loadOrThrow,
     ensureQueryIndexes,

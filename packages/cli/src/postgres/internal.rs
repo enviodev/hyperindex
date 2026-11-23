@@ -14,10 +14,6 @@ pub const ADDRESSES: &str = "envio_addresses";
 pub const META_VIEW: &str = "_meta";
 pub const CHAIN_METADATA_VIEW: &str = "chain_metadata";
 
-/// The registration block a config-declared address is stored with, which
-/// tells it apart from one a handler registered.
-pub const CONFIG_REGISTRATION_BLOCK: i32 = -1;
-
 fn column(name: &str, field_type: FieldType) -> ColumnSpec {
     ColumnSpec {
         name: name.to_string(),
@@ -274,26 +270,14 @@ pub fn delete_addresses(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
 }
 
 /// Plain rows rather than an aggregate per chain: one chain's `json_agg` can
-/// outgrow the longest string V8 will hold.
-fn read_addresses(pg_schema: &str, filter: &str) -> String {
+/// outgrow the longest string V8 will hold. Takes the chain ids as an `int8[]`
+/// in `$1`.
+pub fn read_addresses_of_chains(pg_schema: &str) -> String {
     format!(
         "SELECT \"chain_id\" as \"chainId\",\n\"address\" as \"address\",\n\"contract_id\" as \
          \"contractId\",\n\"registration_block\" as \"registrationBlock\"\nFROM \
-         \"{pg_schema}\".\"{ADDRESSES}\" WHERE {filter};"
+         \"{pg_schema}\".\"{ADDRESSES}\" WHERE \"chain_id\" = ANY($1::int8[]);"
     )
-}
-
-/// Every chain's: a resume plan compares them against the whole config.
-pub fn read_config_addresses(pg_schema: &str) -> String {
-    read_addresses(
-        pg_schema,
-        &format!("\"registration_block\" = {CONFIG_REGISTRATION_BLOCK}"),
-    )
-}
-
-/// Takes the chain ids as an `int8[]` in `$1`.
-pub fn read_addresses_of_chains(pg_schema: &str) -> String {
-    read_addresses(pg_schema, "\"chain_id\" = ANY($1::int8[])")
 }
 
 pub fn read_stored_chains(pg_schema: &str) -> String {

@@ -15,8 +15,10 @@ use super::effect_cache::{self, CacheEvent, CacheFile, EffectCache, StoredCache}
 use super::handoff::{Failure, Gate, Handoff, WriteError};
 use super::rows::ResultSet;
 use super::schema::{Entity, Schema};
-use super::types::{Bounds, ChainMeta, Frontier, ProgressDiff, ResumedChain, Sequence};
-use super::{AddChain, Holding, Initialize, Resume, Resumed, Store, StoredConfigRead};
+use super::types::{
+    Bounds, ChainMeta, Frontier, ProgressDiff, ResumedChain, Sequence, StoredConfig,
+};
+use super::{AddChain, Holding, Initialize, Resume, Resumed, Store};
 use crate::clickhouse;
 use crate::entity_filter::Condition;
 use crate::postgres;
@@ -123,7 +125,7 @@ impl Storage {
         self.postgres.add_chain(&input).await
     }
 
-    pub async fn read_stored_config(&self) -> Result<StoredConfigRead> {
+    pub async fn read_stored_config(&self) -> Result<StoredConfig> {
         self.postgres.read_stored_config().await
     }
 
@@ -159,19 +161,21 @@ impl Storage {
         self.postgres.rollback_progress_diff(bounds).await
     }
 
-    /// Resumes Postgres, and then ClickHouse to what Postgres committed for
-    /// the chains this run drives: a batch ClickHouse landed but Postgres
-    /// never committed is trimmed away.
+    /// What the chains resume from. Only reads, so a resume refused on what it
+    /// finds leaves every store as it was.
     pub async fn resume(&self, chain_ids: &[i64]) -> Result<Resumed> {
-        let resumed = self.postgres.resume(chain_ids).await?;
-        if let Some(clickhouse) = &self.clickhouse {
-            clickhouse
-                .resume(&Resume {
-                    committed: resumed.chains.clone(),
-                })
-                .await?;
-        }
-        Ok(resumed)
+        self.postgres.resume(chain_ids).await
+    }
+
+    /// Takes ClickHouse back to what Postgres committed for the chains this
+    /// process indexes: a batch ClickHouse landed but Postgres never committed
+    /// is trimmed away, and writes another process still makes are fenced off.
+    pub async fn take_over_clickhouse(&self, chain_ids: &[i64]) -> Result<()> {
+        let Some(clickhouse) = &self.clickhouse else {
+            return Ok(());
+        };
+        let committed = self.postgres.read_chain_progress(chain_ids).await?;
+        clickhouse.resume(&Resume { committed }).await
     }
 
     /// Postgres holds the chains' progress of record.

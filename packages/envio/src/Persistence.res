@@ -142,12 +142,15 @@ type storage = {
   addChain: (~chainConfig: Config.chain, ~contractMapping: ContractMapping.t) => promise<unit>,
   // `chainIds` is what this process indexes, and all it reads: a split run's
   // sibling reads its own chains, whose addresses can number tens of millions.
-  // ClickHouse's resume trims past each resumed chain's checkpoint, so chains a
-  // sibling process is still writing must stay out.
+  // Only reads, so a resume refused on what it found leaves the stores alone.
   resumeInitialState: (
     ~chainIds: array<ChainId.t>,
     ~contractMapping: ContractMapping.t,
   ) => promise<initialState>,
+  // Takes the chains over once their resume is accepted: ClickHouse is trimmed
+  // past each one's checkpoint, so chains a sibling process is still writing
+  // must stay out.
+  takeOver: (~chainIds: array<ChainId.t>) => promise<unit>,
   // Where the chains stand, for a supervisor, which indexes none of them.
   readChainProgress: (~chainIds: array<ChainId.t>) => promise<array<chainProgress>>,
   // Returns rows matching the filter.
@@ -367,21 +370,13 @@ let prepare = async (
               ~envioInfo,
               ~chainConfigs,
               ~contractMapping,
-              ~lowercaseAddresses,
             )
             ->Array.map(addChainCommand)
           | None => []
           },
         ),
       )
-      switch ResumePlan.make(
-        ~stored,
-        ~envioInfo,
-        ~chainConfigs,
-        ~contractMapping,
-        ~lowercaseAddresses,
-        ~isolated,
-      ) {
+      switch ResumePlan.make(~stored, ~envioInfo, ~chainConfigs, ~contractMapping, ~isolated) {
       | Incompatible(changedPaths) => throw(incompatible(changedPaths))
       // After Incompatible: a config change is reported first, since its message names what to revert.
       | _ if holding === Diverged => throw(Refused(Config.divergedMessage(~resetCommand)))
@@ -411,13 +406,54 @@ let prepare = async (
   | exn => exn->refusedOrLogged(~logger)
   }
 
+// The commands a refusal names, for the command the operator ran.
+let resetCommandForRun = (~config, ~isDevelopmentMode) =>
+  (isDevelopmentMode ? "envio dev -r" : "envio start -r")->Config.withProjectFlags(~config)
+let runCommandForRun = (~config, ~isDevelopmentMode) =>
+  (isDevelopmentMode ? "envio dev" : "envio start")->Config.withProjectFlags(~config)
+
 // Takes over the chains this process indexes from what earlier runs stored.
-// Resuming takes ClickHouse back to what Postgres committed for them, so it is
-// only for a process about to index them: a supervisor or a migration must
-// leave a sibling's or a running indexer's chains alone.
-let resume = async (storage: storage, ~logger, ~chainIds, ~contractMapping, ~announceResume) =>
+// Taking over trims ClickHouse back to what Postgres committed for them, so it
+// is only for a process about to index them, and only once what it read holds
+// up. The config's addresses are checked here rather than in `prepare`: they
+// sit in the address table among every registered one, which only the resume
+// of their chain reads.
+let resume = async (
+  storage: storage,
+  ~logger,
+  ~config: Config.t,
+  ~isDevelopmentMode,
+  ~contractMapping,
+  ~announceResume,
+) =>
   try {
+    let chainConfigs = config.chainMap->ChainMap.values
+    let chainIds = chainConfigs->Array.map(chain => chain.id)
     let initialState = await storage.resumeInitialState(~chainIds, ~contractMapping)
+    switch chainConfigs
+    ->Array.filterMap(chainConfig =>
+      initialState.chains
+      ->Array.find(chain => chain.id === chainConfig.id)
+      ->Option.map(chain => (chainConfig, chain.addressRows))
+    )
+    ->ResumePlan.changedConfigAddressPaths(
+      ~ecosystem=(config.ecosystem.name :> string),
+      ~contractMapping,
+      ~lowercaseAddresses=config.lowercaseAddresses,
+    ) {
+    | [] => ()
+    | changedPaths =>
+      throw(
+        Refused(
+          changedPaths->ResumePlan.incompatibleMessage(
+            ~envioInfo=config.envioInfo,
+            ~resetCommand=resetCommandForRun(~config, ~isDevelopmentMode),
+            ~runCommand=Some(runCommandForRun(~config, ~isDevelopmentMode)),
+          ),
+        ),
+      )
+    }
+    await storage.takeOver(~chainIds)
     logger->logResumed(
       ~announceResume,
       ~chains=initialState.chains->Array.map(chain => (chain :> chainProgress)),
@@ -450,12 +486,8 @@ let prepareForRun = (
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
     ~envioInfo=config.envioInfo,
-    ~resetCommand=(isDevelopmentMode ? "envio dev -r" : "envio start -r")->Config.withProjectFlags(
-      ~config,
-    ),
-    ~runCommand=Some(
-      (isDevelopmentMode ? "envio dev" : "envio start")->Config.withProjectFlags(~config),
-    ),
+    ~resetCommand=resetCommandForRun(~config, ~isDevelopmentMode),
+    ~runCommand=Some(runCommandForRun(~config, ~isDevelopmentMode)),
     ~lowercaseAddresses=config.lowercaseAddresses,
     ~isolated=config.isolated,
     ~addChainCommand=?config->Config.addChainCommand,
@@ -483,12 +515,7 @@ let initForRun = async (
   ) {
   | Created(initialState) => initialState
   | Existing({contractMapping}) =>
-    await storage->resume(
-      ~logger,
-      ~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id),
-      ~contractMapping,
-      ~announceResume,
-    )
+    await storage->resume(~logger, ~config, ~isDevelopmentMode, ~contractMapping, ~announceResume)
   }
 
 // Where every chain of a split run stands. The supervisor indexes none of them,

@@ -132,7 +132,6 @@ type storedConfig = {
   envioInfo?: string,
   contractNames?: array<string>,
   chains: array<storedChain>,
-  configAddresses: queryResult,
 }
 
 type resumedChain = {
@@ -353,8 +352,13 @@ type holding =
 
 @send external readStoredConfig: t => promise<storedConfig> = "readStoredConfig"
 
-// Resumes the chains this process indexes, the only ones ClickHouse trims.
+// What the chains this process indexes resume from. Only reads.
 @send external resume: (t, array<ChainId.t>) => promise<resumed> = "resume"
+
+// Trims ClickHouse back to what Postgres committed for the chains, and fences
+// off writes another process still makes to them.
+@send
+external takeOverClickhouse: (t, array<ChainId.t>) => promise<unit> = "takeOverClickhouse"
 
 @send
 external readChainProgress: (t, array<ChainId.t>) => promise<array<resumedChain>> =
