@@ -404,8 +404,8 @@ let getGlobalIndexer = (): 'indexer => {
   Utils.Proxy.make(Utils.Object.createNullObject(), traps)->(Utils.magic: {..} => 'indexer)
 }
 
-let migrateStorage = async (persistence, ~config: Config.t, ~logger, ~reset) => {
-  let _: Persistence.prepared = await persistence->Persistence.prepare(
+let migrateStorage = async (storage, ~config: Config.t, ~logger, ~reset) => {
+  let _: Persistence.prepared = await storage->Persistence.prepare(
     ~logger,
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
@@ -423,16 +423,16 @@ let migrateStorage = async (persistence, ~config: Config.t, ~logger, ~reset) => 
 
 let migrate = async (~logger, ~reset) => {
   let config = Config.load()
-  let persistence = Storage.makePersistenceFromConfig(~config, ~logger)
-  await persistence->migrateStorage(~config, ~logger, ~reset)
-  await persistence.storage.close()
+  let storage = Storage.makeStorageFromEnv(~config, ~logger)
+  await storage->migrateStorage(~config, ~logger, ~reset)
+  await storage.close()
 }
 
 let dropSchema = async (~logger) => {
   let config = Config.load()
-  let persistence = Storage.makePersistenceFromConfig(~config, ~logger)
-  await persistence.storage.reset()
-  await persistence.storage.close()
+  let storage = Storage.makeStorageFromEnv(~config, ~logger)
+  await storage.reset()
+  await storage.close()
 }
 
 // Rejection carried by `onError`: the failure is already logged with full
@@ -443,7 +443,6 @@ exception FatalError(exn)
   let startIndexer = async (
     ~config: Config.t,
     ~logger,
-    ~persistence: option<Persistence.t>=?,
     ~reset=false,
     ~isTest=false,
     ~exitAfterFirstEventBlock=false,
@@ -456,10 +455,7 @@ exception FatalError(exn)
     // Set by `envio dev` via the public config's `isDev` field; `envio start`
     // leaves it false so the process exits cleanly when indexing completes.
     let isDevelopmentMode = !isTest && config.isDev
-    let persistence = switch persistence {
-    | Some(p) => p
-    | None => Storage.makePersistenceFromConfig(~config, ~logger)
-    }
+    let storage = Storage.makeStorageFromEnv(~config, ~logger)
     setGlobalInitialState(None)
     let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
     // A worker's supervisor has checked the handlers already, and the test
@@ -469,7 +465,7 @@ exception FatalError(exn)
         ? Promise.resolve()
         : HandlerLoader.typeCheck(~config, ~logger, ~autoLoadFiles)
     let (initialState, ()) = await Promise.all2((
-      persistence->Persistence.initForRun(~logger, ~config, ~reset, ~isDevelopmentMode),
+      storage->Persistence.initForRun(~logger, ~config, ~reset, ~isDevelopmentMode),
       typeCheck,
     ))
     // Before handler files load: they may read the indexer's chains at module
@@ -514,7 +510,7 @@ exception FatalError(exn)
     let envioVersion = Utils.EnvioPackage.value.version
 
     let getMetrics = () => getIndexerState()->Option.map(IndexerState.toMetrics)
-    let dumpEffectCache = () => persistence.storage.dumpEffectCache()
+    let dumpEffectCache = () => storage.dumpEffectCache()
 
     // A worker reports through its supervisor, which owns the one server and the
     // one display the run has.
@@ -533,7 +529,7 @@ exception FatalError(exn)
     let state = IndexerState.makeFromDbState(
       ~config,
       ~logger,
-      ~persistence,
+      ~storage,
       ~initialState,
       ~registrationsByChainId,
       ~isDevelopmentMode,
@@ -561,7 +557,6 @@ exception FatalError(exn)
 // again — `planForRun` refuses an isolated config.
 let start = async (
   ~logger,
-  ~persistence: option<Persistence.t>=?,
   ~reset=false,
   ~isTest=false,
   ~exitAfterFirstEventBlock=false,
@@ -584,14 +579,6 @@ let start = async (
   switch isTest ? None : Supervisor.planForRun(~config) {
   | Some(workers) => await Supervisor.run(~config, ~logger, ~workers, ~reset)
   | None =>
-    await startIndexer(
-      ~config,
-      ~logger,
-      ~persistence?,
-      ~reset,
-      ~isTest,
-      ~exitAfterFirstEventBlock,
-      ~patchConfig?,
-    )
+    await startIndexer(~config, ~logger, ~reset, ~isTest, ~exitAfterFirstEventBlock, ~patchConfig?)
   }
 }

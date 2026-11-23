@@ -867,11 +867,3 @@ let makeStorageFromEnv = (
       : None,
   )
 }
-
-let makePersistenceFromConfig = (
-  ~config: Config.t,
-  ~logger,
-  ~storage=makeStorageFromEnv(~config, ~logger),
-) => {
-  Persistence.make(~allEntities=config.userEntities, ~storage)
-}

@@ -12,8 +12,8 @@ let freshState: Persistence.initialState = {
   checkpointFrontier: Frontier.empty(),
 }
 
-let prepareEmpty = (persistence, ~reset=?) =>
-  persistence->Persistence.prepare(
+let prepareEmpty = (storage, ~reset=?) =>
+  storage->Persistence.prepare(
     ~logger=Logger.makeInMemory(),
     ~reset?,
     ~chainConfigs=[],
@@ -26,9 +26,8 @@ let prepareEmpty = (persistence, ~reset=?) =>
 describe("Persistence.prepare", () => {
   Async.it("Builds a storage holding nothing, and a reset builds it over again", async t => {
     let storageMock = MockStorage.make([#holding, #initialize])
-    let persistence = Persistence.make(~allEntities=[], ~storage=storageMock.storage)
 
-    let created = persistence->prepareEmpty
+    let created = storageMock.storage->prepareEmpty
     storageMock.resolveHolding(Nothing)
     // Resolving "latest" start blocks (a no-op here, chainConfigs is empty)
     // runs between the holding check and the storage.initialize call; drain
@@ -37,7 +36,7 @@ describe("Persistence.prepare", () => {
     storageMock.resolveInitialize(freshState)
     let first = await created
 
-    let recreated = persistence->prepareEmpty(~reset=true)
+    let recreated = storageMock.storage->prepareEmpty(~reset=true)
     await Utils.delay(0)
     storageMock.resolveInitialize(freshState)
     let second = await recreated
@@ -60,7 +59,6 @@ describe("Persistence.prepare", () => {
   // takes to answer, and another indexer can set the storage up meanwhile.
   Async.it("Refuses storage another indexer set up while a start block resolved", async t => {
     let storageMock = MockStorage.make([#holding, #initialize])
-    let persistence = Persistence.make(~allEntities=[], ~storage=storageMock.storage)
     let config = Scenario.make(
       ~configYaml=`
 name: set-up-meanwhile
@@ -81,7 +79,7 @@ chains:
     )
 
     let initialized =
-      persistence->Persistence.prepare(
+      storageMock.storage->Persistence.prepare(
         ~logger=Logger.makeInMemory(),
         ~chainConfigs=config.chainMap->ChainMap.values,
         ~contractMapping=ContractMapping.empty,
@@ -112,9 +110,8 @@ chains:
     // The stored snapshot matches the running one, so the compat gate no-ops.
     // A resume would throw: the mock leaves it unimplemented.
     let storageMock = MockStorage.make([#holding, #readStoredConfig])
-    let persistence = Persistence.make(~allEntities=[], ~storage=storageMock.storage)
 
-    let prepared = persistence->prepareEmpty
+    let prepared = storageMock.storage->prepareEmpty
     storageMock.resolveHolding(Initialized)
 
     t.expect((await prepared, storageMock.initializeCalls->Array.length)).toEqual((
@@ -135,12 +132,11 @@ chains:
       [#holding, #readStoredConfig],
       ~stored={envioInfo: storedEnvioInfo, chains: [], contractMapping: ContractMapping.empty},
     )
-    let persistence = Persistence.make(~allEntities=[], ~storage=storageMock.storage)
     // Attach before resolving the mock: an incompatible config rejects this
     // promise, and an unattached rejection would surface as unhandled.
     let settled = (
       async () =>
-        switch await persistence->Persistence.prepare(
+        switch await storageMock.storage->Persistence.prepare(
           ~logger=Logger.makeInMemory(),
           ~chainConfigs=[],
           ~contractMapping=ContractMapping.empty,

@@ -237,11 +237,6 @@ type storage = {
   close: unit => promise<unit>,
 }
 
-type t = {
-  allEntities: array<Internal.entityConfig>,
-  storage: storage,
-}
-
 // What `prepare` found the storage holding once it is fit for the config.
 type prepared =
   // Nothing: it built the storage, and there is nothing to resume.
@@ -263,8 +258,6 @@ exception CommitUncertain(string)
 // A start the operator has to act on, not a failure: what it says is all they
 // need, so it's printed once, without a stack trace.
 exception Refused(string)
-
-let make = (~allEntities, ~storage) => {allEntities, storage}
 
 // A refusal is all the operator needs to read; anything else is logged with
 // what it was doing.
@@ -294,7 +287,7 @@ let logResumed = (logger, ~announceResume, ~chains: array<chainProgress>) => {
 // none of the state indexing starts from: that is `resume`'s, for the chains
 // of the process indexing them.
 let prepare = async (
-  persistence,
+  storage: storage,
   ~logger,
   ~chainConfigs: array<Config.chain>,
   ~contractMapping,
@@ -316,7 +309,7 @@ let prepare = async (
   ~addChainCommand: option<ChainId.t => string>=?,
 ): prepared =>
   try {
-    let holding = reset ? Nothing : await persistence.storage.holding()
+    let holding = reset ? Nothing : await storage.holding()
     if holding === Stranded {
       throw(Refused(Config.strandedMessage(~resetCommand)))
     }
@@ -348,19 +341,15 @@ let prepare = async (
 
       // The RPC answers when it does, and another indexer can set the
       // storage up meanwhile: it's checked again before it's built over.
-      if waitsOnAnRpc && !reset && (await persistence.storage.holding()) !== Nothing {
+      if waitsOnAnRpc && !reset && (await storage.holding()) !== Nothing {
         throw(Refused(Config.setUpMeanwhileMessage))
       }
-      let initialState = await persistence.storage.initialize(
-        ~chainConfigs,
-        ~contractMapping,
-        ~envioInfo,
-      )
+      let initialState = await storage.initialize(~chainConfigs, ~contractMapping, ~envioInfo)
       logger->Logger.info(`The indexer storage is ready. Starting indexing!`)
       Created(initialState)
     } else {
       logger->Logger.logAt(resumeLogLevel(~announceResume), `Found existing indexer storage.`)
-      let stored = await persistence.storage.readStoredConfig()
+      let stored = await storage.readStoredConfig()
       let incompatible = paths => Refused(
         ResumePlan.incompatibleMessage(
           paths,
@@ -414,7 +403,7 @@ let prepare = async (
               ~timing=?sourceTiming,
             )
           )->Array.getUnsafe(0)
-        await persistence.storage.addChain(~chainConfig, ~contractMapping=stored.contractMapping)
+        await storage.addChain(~chainConfig, ~contractMapping=stored.contractMapping)
       }
       Existing({contractMapping: stored.contractMapping})
     }
@@ -426,9 +415,9 @@ let prepare = async (
 // Resuming takes ClickHouse back to what Postgres committed for them, so it is
 // only for a process about to index them: a supervisor or a migration must
 // leave a sibling's or a running indexer's chains alone.
-let resume = async (persistence, ~logger, ~chainIds, ~contractMapping, ~announceResume) =>
+let resume = async (storage: storage, ~logger, ~chainIds, ~contractMapping, ~announceResume) =>
   try {
-    let initialState = await persistence.storage.resumeInitialState(~chainIds, ~contractMapping)
+    let initialState = await storage.resumeInitialState(~chainIds, ~contractMapping)
     logger->logResumed(
       ~announceResume,
       ~chains=initialState.chains->Array.map(chain => (chain :> chainProgress)),
@@ -443,7 +432,7 @@ let resume = async (persistence, ~logger, ~chainIds, ~contractMapping, ~announce
 // operator ran, and an unreachable chain is waited on rather than reported,
 // since somebody is watching the run come up.
 let prepareForRun = (
-  persistence,
+  storage: storage,
   ~logger,
   ~config: Config.t,
   ~reset,
@@ -452,7 +441,7 @@ let prepareForRun = (
   ~startBlockRetry=?,
   ~sourceTiming=?,
 ) =>
-  persistence->prepare(
+  storage->prepare(
     ~logger,
     ~announceResume,
     ~startBlockRetry?,
@@ -474,7 +463,7 @@ let prepareForRun = (
 
 // What a process indexing the config's chains starts from.
 let initForRun = async (
-  persistence,
+  storage: storage,
   ~logger,
   ~config: Config.t,
   ~reset,
@@ -483,7 +472,7 @@ let initForRun = async (
   ~startBlockRetry=?,
   ~sourceTiming=?,
 ) =>
-  switch await persistence->prepareForRun(
+  switch await storage->prepareForRun(
     ~logger,
     ~config,
     ~reset,
@@ -494,7 +483,7 @@ let initForRun = async (
   ) {
   | Created(initialState) => initialState
   | Existing({contractMapping}) =>
-    await persistence->resume(
+    await storage->resume(
       ~logger,
       ~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id),
       ~contractMapping,
@@ -504,8 +493,8 @@ let initForRun = async (
 
 // Where every chain of a split run stands. The supervisor indexes none of them,
 // so it resumes none either: each worker resumes its own.
-let initForSupervisor = async (persistence, ~logger, ~config: Config.t, ~reset) =>
-  switch await persistence->prepareForRun(
+let initForSupervisor = async (storage: storage, ~logger, ~config: Config.t, ~reset) =>
+  switch await storage->prepareForRun(
     ~logger,
     ~config,
     ~reset,
@@ -515,7 +504,7 @@ let initForSupervisor = async (persistence, ~logger, ~config: Config.t, ~reset) 
   | Created(initialState) => initialState.chains->Array.map(chain => (chain :> chainProgress))
   | Existing(_) =>
     try {
-      let chains = await persistence.storage.readChainProgress(
+      let chains = await storage.readChainProgress(
         ~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id),
       )
       logger->logResumed(~announceResume=true, ~chains)

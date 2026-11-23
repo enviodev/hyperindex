@@ -36,7 +36,7 @@ let runOnce = async (state: IndexerState.t) => {
   // A failed write already surfaced through onError; committing ready_at on top
   // of an incomplete write would claim progress that isn't durable.
   if !(state->IndexerState.hasFailedWrite) {
-    let storage = (state->IndexerState.persistence).storage
+    let storage = state->IndexerState.storage
     let readyAt = Date.make()
 
     await storage.finalizeBackfill(~chainIds, ~readyAt)
@@ -67,7 +67,7 @@ let run = (state: IndexerState.t) =>
 // Best-effort and not awaited by the loop: indexing is already live and correct
 // without the index, just slower.
 let repairSchemaIndexes = (state: IndexerState.t) => {
-  let storage = (state->IndexerState.persistence).storage
+  let storage = state->IndexerState.storage
   storage.ensureSchemaIndexes(
     ~chainIds=state->IndexerState.crossChainState->CrossChainState.chainIds,
   )

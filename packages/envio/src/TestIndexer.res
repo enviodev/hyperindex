@@ -718,7 +718,6 @@ let createTestIndexer = (): t<'processConfig> => {
   // get separate storages, so independent indexers run in parallel without
   // shared mutable state.
   let storage = makeInMemoryStorage(~state)
-  let persistence = Persistence.make(~allEntities=config.userEntities, ~storage)
 
   // Build entity operations for each user entity
   let entityOpsDict: dict<entityOperations> = Dict.make()
@@ -950,7 +949,7 @@ let createTestIndexer = (): t<'processConfig> => {
               let indexerState = IndexerState.makeFromDbState(
                 ~config=runConfig,
                 ~logger,
-                ~persistence,
+                ~storage,
                 ~initialState,
                 ~registrationsByChainId,
                 ~exitAfterFirstEventBlock,

@@ -122,8 +122,8 @@ type rec t = {
     unit,
   ) => promise<t>,
   // Another process on the same schema, started while this one keeps running,
-  // the way the workers of a split run share one. The global persistence is the
-  // last one started's, so a handler can't tell siblings apart.
+  // the way the workers of a split run share one. The global initial state is
+  // the last one started's, so a handler can't tell siblings apart.
   sibling: (~chains: array<ChainId.t>) => promise<t>,
   // Writes the effect cache out to this run's own cache directory, where the
   // next initialize uploads it from.
@@ -355,7 +355,6 @@ let run = async (
         Storage.make(~client, ~cacheDir, ~ecosystem=config.ecosystem.name),
       )->countStorageCalls(~inFlight=storageCallsInFlight)
     storages->Array.push(storage)
-    let persistence = Storage.makePersistenceFromConfig(~config, ~logger, ~storage)
     Main.setGlobalInitialState(None)
 
     let onError = switch onError {
@@ -363,7 +362,7 @@ let run = async (
     | None => failWith
     }
 
-    let initialState = await persistence->Persistence.initForRun(
+    let initialState = await storage->Persistence.initForRun(
       ~logger,
       ~config,
       ~reset,
@@ -409,7 +408,7 @@ let run = async (
       ~initialState,
       ~config,
       ~logger,
-      ~persistence,
+      ~storage,
       ~registrationsByChainId,
       ~sourceTiming?,
       ~targetBufferSize?,
@@ -907,7 +906,7 @@ let run = async (
       },
       restart: async (~config=baseConfig, ~chains=?, ~reset=false, ~asWorker=?, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
-        // shared persistence, else the two race against the same db.
+        // shared storage, else the two race against the same db.
         await stop()
         onIndexerStopped()
         let indexer = await make(~reset, ~config, ~chains?, ~asWorker?)

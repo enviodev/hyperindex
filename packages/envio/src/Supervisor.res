@@ -473,14 +473,14 @@ let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) =>
   // chains and leave the chains it skipped with nothing to resume. The
   // supervisor closes its connections before forking, so its workers get the
   // whole budget.
-  let persistence = Storage.makePersistenceFromConfig(~config, ~logger)
+  let storage = Storage.makeStorageFromEnv(~config, ~logger)
   // Checked here once, so the workers don't each check the same handlers.
   let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
   let (resumed, ()) = await Promise.all2((
-    persistence->Persistence.initForSupervisor(~logger, ~config, ~reset),
+    storage->Persistence.initForSupervisor(~logger, ~config, ~reset),
     HandlerLoader.typeCheck(~config, ~logger, ~autoLoadFiles),
   ))
-  await persistence.storage.close()
+  await storage.close()
 
   let startTime = Date.make()
   let startTimeRef = Performance.now()

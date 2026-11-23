@@ -16,7 +16,7 @@ describe("Finalizing the backfill", () => {
         gate.wait()
       },
     }
-    let state = TestIndexerState.make(~persistence=TestIndexerState.persistenceOver(~storage))
+    let state = TestIndexerState.make(~storage)
 
     let first = FinalizeBackfill.run(state)
     let second = FinalizeBackfill.run(state)

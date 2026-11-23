@@ -128,10 +128,3 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
     },
   }
 }
-
-let toPersistence = (storageMock: t, ~config: Config.t) =>
-  Storage.makePersistenceFromConfig(
-    ~logger=Logger.makeInMemory(),
-    ~config,
-    ~storage=storageMock.storage,
-  )

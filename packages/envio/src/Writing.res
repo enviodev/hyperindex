@@ -107,7 +107,7 @@ let landingUnknownMsg = "The connection to the database was lost while a batch w
 // its checkpoint or none does. Anything else means another writer, and the
 // batch is neither written again nor taken as saved.
 let hasBatchLanded = async (state: IndexerState.t, ~moved) => {
-  let stored = await (state->IndexerState.persistence).storage.readFrontier()
+  let stored = await (state->IndexerState.storage).readFrontier()
   let landed =
     moved->Array.filter(((chainId, checkpointId)) =>
       stored->Frontier.find(chainId)->Option.mapOr(false, storedId => storedId == checkpointId)
@@ -120,7 +120,7 @@ let hasBatchLanded = async (state: IndexerState.t, ~moved) => {
 }
 
 let runOneWrite = async (state: IndexerState.t) => {
-  let persistence = state->IndexerState.persistence
+  let storage = state->IndexerState.storage
   let config = state->IndexerState.config
 
   // Snapshot before the await: the batch write reads this later, in-transaction.
@@ -132,7 +132,7 @@ let runOneWrite = async (state: IndexerState.t) => {
     switch chainMetaData {
     | Some(chainsData) =>
       let _ = await state->writeUntilCommitted(~operation="chain metadata write", () =>
-        persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
+        storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
       )
     | None => ()
     }
@@ -196,7 +196,7 @@ let runOneWrite = async (state: IndexerState.t) => {
         if mayHaveLanded.contents && (await state->hasBatchLanded(~moved)) {
           ()
         } else {
-          switch await persistence.storage.writeBatch(
+          switch await storage.writeBatch(
             ~batch,
             ~rollback,
             ~config,

@@ -70,11 +70,7 @@ describe("A migration beside a run that is indexing", () => {
       ~pgSchema=indexer.pgSchema,
       ~isHasuraEnabled=false,
     )
-    await Storage.makePersistenceFromConfig(~config, ~logger, ~storage)->Main.migrateStorage(
-      ~config,
-      ~logger,
-      ~reset=false,
-    )
+    await storage->Main.migrateStorage(~config, ~logger, ~reset=false)
     await storage.close()
 
     await source.expectItemsQueries([
