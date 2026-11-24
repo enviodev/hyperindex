@@ -52,6 +52,7 @@ let deployment = (
   ~name="migration",
   ~chains,
   ~contracts=["Token"],
+  ~events=["Transfer()"],
   ~schema=schema,
   ~addressFormat="checksum",
   ~storage="",
@@ -67,8 +68,12 @@ contracts:${contracts
       ->Array.map(contract =>
         `
   - name: ${contract}
-    events:
-      - event: Transfer()`
+    events:${events
+          ->Array.map(event =>
+            `
+      - event: ${event}`
+          )
+          ->Array.join("")}`
       )
       ->Array.join("")}
 chains:${chains->Array.join("")}${storage}`,
@@ -286,6 +291,48 @@ describe("Changing the chains of a deployment", () => {
     ~edited=with137Moved,
     ~chains=[137],
     ~expected=Refused(["chains.137.startBlock"]),
+  )
+})
+
+describe("Changing the events a contract indexes", () => {
+  // Events and ABI entries are compared by position, and the ABI is held in
+  // name order, so an added event is also reported as a change to the one
+  // already indexed: here `Approval` sorts ahead of `Transfer`.
+  // https://github.com/enviodev/hyperindex/issues/1878
+  Migration.it(
+    "Refuses an event added to a contract",
+    ~deployed,
+    ~edited=deployment(~chains=[chain(1)], ~events=["Transfer()", "Approval()"]),
+    ~expected=Refused([
+      "evm.contracts.Token.abi[0].name",
+      "evm.contracts.Token.abi[1]",
+      "evm.contracts.Token.events[1]",
+    ]),
+  )
+
+  // https://github.com/enviodev/hyperindex/issues/1878
+  Migration.it(
+    "Refuses an event added ahead of the existing one",
+    ~deployed,
+    ~edited=deployment(~chains=[chain(1)], ~events=["Approval()", "Transfer()"]),
+    ~expected=Refused([
+      "evm.contracts.Token.abi[0].name",
+      "evm.contracts.Token.abi[1]",
+      "evm.contracts.Token.events[0].name",
+      "evm.contracts.Token.events[0].sighash",
+      "evm.contracts.Token.events[1]",
+    ]),
+  )
+
+  Migration.it(
+    "Refuses a removed event",
+    ~deployed=deployment(~chains=[chain(1)], ~events=["Transfer()", "Approval()"]),
+    ~edited=deployed,
+    ~expected=Refused([
+      "evm.contracts.Token.abi[0].name",
+      "evm.contracts.Token.abi[1]",
+      "evm.contracts.Token.events[1]",
+    ]),
   )
 })
 
