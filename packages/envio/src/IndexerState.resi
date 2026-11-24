@@ -13,12 +13,13 @@ type t
 let make: (
   ~config: Config.t,
   ~logger: Logger.t,
-  ~persistence: Persistence.t,
+  ~storage: Persistence.storage,
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
   ~targetBufferSize: int=?,
   ~holdRealtime: bool=?,
   ~committedFrontier: Frontier.t=?,
+  ~storedEffectCaches: dict<Persistence.effectCacheRecord>=?,
   ~isDevelopmentMode: bool=?,
   ~shouldUseTui: bool=?,
   ~exitAfterFirstEventBlock: bool=?,
@@ -31,7 +32,7 @@ let make: (
 let makeFromDbState: (
   ~config: Config.t,
   ~logger: Logger.t,
-  ~persistence: Persistence.t,
+  ~storage: Persistence.storage,
   ~initialState: Persistence.initialState,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~isDevelopmentMode: bool=?,
@@ -80,7 +81,7 @@ let getSafeCheckpointIdByChain: t => array<(ChainId.t, option<Internal.checkpoin
 let config: t => Config.t
 let logger: t => Logger.t
 let clock: t => Clock.t
-let persistence: t => Persistence.t
+let storage: t => Persistence.storage
 let entities: t => EntityTables.t
 let eachEntityTable: (
   t,
@@ -91,6 +92,7 @@ let eachEntityTable: (
   ) => unit,
 ) => unit
 let effectState: t => EffectState.t
+let storedEffectCaches: t => dict<Persistence.effectCacheRecord>
 let committedFrontier: t => Frontier.t
 let processedFrontier: t => Frontier.t
 let committedCheckpointIdFor: (t, ~scope: Internal.chainScope) => Internal.checkpointId

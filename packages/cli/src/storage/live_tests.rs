@@ -9,8 +9,8 @@ use pretty_assertions::assert_eq;
 
 use super::batch::EffectCacheWrite;
 use super::schema::{ClickHouseOptions, Entity, Schema};
-use super::types::{Frontier, Progress};
-use super::{Batch, Holding, Storage};
+use super::types::{Addresses, ChainConfig, Checkpoints, Frontier, Progress, ResumedChain};
+use super::{Batch, Holding, Initialize, Storage};
 use crate::clickhouse;
 use crate::columnar::{Arena, ColumnKind};
 use crate::postgres;
@@ -68,7 +68,17 @@ impl Live {
             .initialize(clickhouse::live_tests::initialize_input())
             .await
             .unwrap();
-        self.storage.resume(&[1]).await.unwrap();
+        let resumed = self.storage.resume(&[1]).await.unwrap();
+        self.storage
+            .take_over_clickhouse(
+                resumed
+                    .chains
+                    .iter()
+                    .map(|chain| (chain.id, chain.checkpoint_id))
+                    .collect(),
+            )
+            .await
+            .unwrap();
     }
 
     /// Where Postgres and ClickHouse each hold chain 1's frontier.
@@ -156,6 +166,119 @@ async fn a_clickhouse_without_its_postgres_is_stranded() {
     );
 }
 
+/// The run starts its checkpoint sequence where its resume read the frontier,
+/// so ClickHouse could only be taken back to that same frontier. A batch
+/// another process committed after the read would then be trimmed from
+/// ClickHouse while Postgres keeps it, so the takeover refuses and trims
+/// nothing.
+#[tokio::test]
+#[ignore = "needs a Postgres and a ClickHouse server"]
+async fn a_take_over_refuses_a_frontier_another_process_moved() {
+    let live = Live::new("take_over_frontier");
+    live.initialize().await;
+    let resumed = live.storage.resume(&[1]).await.unwrap();
+    let written = live
+        .storage
+        .write_batch(Batch {
+            progress: vec![Progress {
+                chain_id: 1,
+                progress_block: 10,
+                progress_block_time: None,
+                events_processed: 1.0,
+                source_block: 10,
+            }],
+            frontier: Frontier::from([(1, 1)]),
+            checkpoints: Checkpoints {
+                ids: vec![1],
+                chain_ids: vec![1],
+                block_numbers: vec![10],
+                block_hashes: vec![None],
+                events_processed: vec![1],
+                keeps_history: vec![false],
+            },
+            ..Batch::default()
+        })
+        .await
+        .is_ok();
+
+    let taken_over = live
+        .storage
+        .take_over_clickhouse(
+            resumed
+                .chains
+                .iter()
+                .map(|chain| (chain.id, chain.checkpoint_id))
+                .collect(),
+        )
+        .await
+        .map_err(|error| format!("{error:#}"));
+    let clickhouse_checkpoints = live
+        .clickhouse_statement(format!(
+            "SELECT id FROM `{}`.envio_checkpoints WHERE chain_id = 1 ORDER BY id FORMAT \
+             TabSeparated",
+            live.name
+        ))
+        .await;
+
+    live.drop_all().await;
+    assert_eq!(
+        (
+            written,
+            taken_over,
+            clickhouse_checkpoints.trim().to_string()
+        ),
+        (
+            true,
+            Err(
+                "Another process changed chain 1 after this one read where it stands. \
+                 Stop the other indexer writing to this database, then start this one again."
+                    .to_string()
+            ),
+            "1".to_string()
+        )
+    );
+}
+
+/// A chain the resume read and Postgres no longer holds, as when another
+/// process reset the schema meanwhile, is refused as well: its frontier would
+/// otherwise be written to ClickHouse for a chain Postgres has forgotten.
+#[tokio::test]
+#[ignore = "needs a Postgres and a ClickHouse server"]
+async fn a_take_over_refuses_a_chain_postgres_dropped_since_the_resume() {
+    let live = Live::new("take_over_dropped");
+    live.initialize().await;
+    let resumed = live.storage.resume(&[1]).await.unwrap();
+    postgres::live_tests::client()
+        .batch(&format!(
+            "DELETE FROM \"{}\".\"envio_chains\" WHERE \"id\" = 1",
+            live.name
+        ))
+        .await
+        .unwrap();
+
+    let taken_over = live
+        .storage
+        .take_over_clickhouse(
+            resumed
+                .chains
+                .iter()
+                .map(|chain| (chain.id, chain.checkpoint_id))
+                .collect(),
+        )
+        .await
+        .map_err(|error| format!("{error:#}"));
+
+    live.drop_all().await;
+    assert_eq!(
+        taken_over,
+        Err(
+            "Another process changed chain 1 after this one read where it stands. Stop the \
+             other indexer writing to this database, then start this one again."
+                .to_string()
+        )
+    );
+}
+
 /// ClickHouse commits once Postgres has: an effect cache write failing after
 /// the transaction committed fails the batch, not ClickHouse's half of it.
 #[tokio::test]
@@ -235,6 +358,175 @@ async fn a_table_clickhouse_refuses_leaves_postgres_unset() {
 
     live.drop_all().await;
     assert_eq!((initialized, holding), (false, Ok(Holding::Nothing)));
+}
+
+// https://github.com/enviodev/hyperindex/issues/1862
+/// A process of a split run resumes only the chains it indexes: their rows,
+/// addresses and effect caches, and every cross-chain cache. Its supervisor,
+/// which indexes none, reads only where every chain stands.
+#[tokio::test]
+#[ignore = "needs a Postgres and a ClickHouse server"]
+async fn a_resume_reads_only_the_chains_it_indexes() {
+    let live = Live::new("resume_scoped");
+    let chain = |id| ChainConfig {
+        id,
+        ..clickhouse::live_tests::initialize_input().chains[0].clone()
+    };
+    live.storage
+        .initialize(Initialize {
+            chains: vec![chain(1), chain(137)],
+            contract_names: vec!["Token".to_string()],
+            addresses: Addresses {
+                chain_ids: vec![1, 137, 137],
+                addresses: vec![vec![1; 20], vec![2; 20], vec![3; 20]],
+                contract_ids: vec![0, 0, 0],
+                registration_blocks: vec![5, 5, 6],
+            },
+            ..clickhouse::live_tests::initialize_input()
+        })
+        .await
+        .unwrap();
+    for (table, rows) in [
+        ("envio_1_effect_price", 1),
+        ("envio_137_effect_price", 2),
+        ("envio_effect_price", 3),
+    ] {
+        postgres::live_tests::client()
+            .batch(&format!(
+                "CREATE TABLE \"{schema}\".\"{table}\" (\"id\" TEXT PRIMARY KEY, \"output\" JSONB); \
+                 INSERT INTO \"{schema}\".\"{table}\" SELECT g::text, '1' FROM generate_series(1, {rows}) g",
+                schema = live.name
+            ))
+            .await
+            .unwrap();
+    }
+    let chain_ids =
+        |chains: &[ResumedChain]| chains.iter().map(|chain| chain.id).collect::<Vec<_>>();
+    let read = |resumed: super::Resumed| {
+        let columns = resumed.addresses.arena.columns();
+        (
+            chain_ids(&resumed.chains),
+            (0..resumed.addresses.arena.rows())
+                .map(|row| (columns[0].f64_at(row), columns[1].bytes_at(row).to_vec()))
+                .collect::<Vec<_>>(),
+            resumed
+                .caches
+                .iter()
+                .map(|stored| (stored.cache.table_name(), stored.rows))
+                .collect::<Vec<_>>(),
+        )
+    };
+
+    let worker = live.storage.resume(&[1]).await.map(read);
+    let supervisor = live
+        .storage
+        .read_chain_progress(&[1, 137])
+        .await
+        .map(|chains| chain_ids(&chains));
+
+    live.drop_all().await;
+    assert_eq!(
+        (
+            worker.map_err(|error| format!("{error:#}")),
+            supervisor.map_err(|error| format!("{error:#}")),
+        ),
+        (
+            Ok((
+                vec![1],
+                vec![(1.0, vec![1; 20])],
+                vec![
+                    ("envio_1_effect_price".to_string(), 1),
+                    ("envio_effect_price".to_string(), 3),
+                ],
+            )),
+            Ok(vec![1, 137]),
+        )
+    );
+}
+
+// https://github.com/enviodev/hyperindex/issues/1862
+/// The address table can hold tens of millions of rows, and its config rows
+/// have no index of their own. A worker reads it once, for its own chains, and
+/// finds the config's addresses among them. Its supervisor never reads it.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn startup_reads_the_address_table_only_to_resume_a_chain() {
+    let name = format!("envio_address_scans_{}", std::process::id());
+    let client = postgres::live_tests::pinned_client();
+    let schema: Arc<Schema> = clickhouse::live_tests::schema_of(Vec::new());
+    let storage = Storage {
+        schema: schema.clone(),
+        postgres: Arc::new(
+            postgres::storage::Storage::new(
+                client.clone(),
+                postgres::storage::Settings {
+                    pg_schema: name.clone(),
+                    pg_user: "postgres".to_string(),
+                    numeric_array_as_text: false,
+                    isolated: false,
+                },
+                schema,
+                Arc::new(|_| ()),
+            )
+            .unwrap(),
+        ),
+        clickhouse: None,
+    };
+    let chain = |id| ChainConfig {
+        id,
+        ..clickhouse::live_tests::initialize_input().chains[0].clone()
+    };
+    storage
+        .initialize(Initialize {
+            chains: vec![chain(1), chain(137)],
+            contract_names: vec!["Token".to_string()],
+            addresses: Addresses {
+                chain_ids: vec![1, 137],
+                addresses: vec![vec![1; 20], vec![2; 20]],
+                contract_ids: vec![0, 0],
+                registration_blocks: vec![-1, -1],
+            },
+            ..clickhouse::live_tests::initialize_input()
+        })
+        .await
+        .unwrap();
+    // The one connection is the backend that ran the reads: its counts reach
+    // the shared statistics at the next transaction boundary once forced.
+    let scans = || async {
+        client
+            .query("SELECT pg_stat_force_next_flush()", &[])
+            .await
+            .unwrap();
+        client.query("SELECT 1", &[]).await.unwrap();
+        let (rows, _) = client
+            .query(
+                &format!(
+                    "SELECT (seq_scan + coalesce(idx_scan, 0))::int8 FROM pg_stat_user_tables \
+                     WHERE schemaname = '{name}' AND relname = 'envio_addresses'"
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+        rows[0].get::<_, i64>(0)
+    };
+
+    let before = scans().await;
+    storage.read_stored_config().await.unwrap();
+    storage.resume(&[1]).await.unwrap();
+    let after_worker = scans().await;
+    storage.read_stored_config().await.unwrap();
+    storage.read_chain_progress(&[1, 137]).await.unwrap();
+    let after_supervisor = scans().await;
+
+    client
+        .batch(&format!("DROP SCHEMA IF EXISTS \"{name}\" CASCADE"))
+        .await
+        .unwrap();
+    assert_eq!(
+        (after_worker - before, after_supervisor - after_worker),
+        (1, 0)
+    );
 }
 
 /// Every store is checked before any is reset, as before an initialize: a

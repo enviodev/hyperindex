@@ -24,7 +24,7 @@ pub(crate) fn client() -> PgClient {
 }
 
 /// One connection, so that what happens to it is what the next statement finds.
-fn pinned_client() -> PgClient {
+pub(crate) fn pinned_client() -> PgClient {
     client_with(1)
 }
 

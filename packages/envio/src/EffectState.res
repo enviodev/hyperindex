@@ -36,6 +36,9 @@ type effectStats = {
   // zero-valued gauge sample.
   mutable cacheCount: int,
   mutable hasCache: bool,
+  // The rows the storage held when this process started. Every worker of a
+  // split run starts from the same rows of a cross-chain cache.
+  mutable cacheCountAtStart: int,
 }
 
 // A handler output, stamped with the checkpoint that produced it on the chain
@@ -156,6 +159,7 @@ let statsToMetrics = (stats: effectStats): Metrics.effectMetrics => {
   queueWaitSeconds: stats.queueWaitSeconds,
   invalidationsCount: stats.invalidationsCount,
   cacheCount: stats.hasCache ? Some(stats.cacheCount) : None,
+  cacheCountAtStart: stats.cacheCountAtStart,
 }
 
 // Full per-effect metrics for every live table, plus a cache-only entry for
@@ -177,6 +181,7 @@ let toMetrics = (self: t): array<Metrics.effectMetrics> => {
       queueWaitSeconds: 0.,
       invalidationsCount: 0.,
       cacheCount: Some(count),
+      cacheCountAtStart: count,
     })
     ->ignore
   })
@@ -206,10 +211,12 @@ let getTable = (self: t, ~effect: Internal.effect, ~scope: Internal.chainScope) 
       invalidationsCount: 0.,
       cacheCount: 0,
       hasCache: false,
+      cacheCountAtStart: 0,
     }
     switch self.unregisteredCacheCounts->Utils.Dict.dangerouslyGetNonOption(tableName) {
     | Some({count}) =>
       stats.cacheCount = count
+      stats.cacheCountAtStart = count
       stats.hasCache = true
       self.unregisteredCacheCounts->Utils.Dict.deleteInPlace(tableName)
     | None => ()
