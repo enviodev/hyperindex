@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=../../../envio/evm.schema.json
+name: bytes-events-config
+schema: ../schemas/schema.graphql
+description: Event params holding bytes, which contract-import gives a hex default in the generated test
+strict_hex_type: true
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+    contracts:
+      - name: L1StandardBridge
+        handler: ./src/EventHandler.js
+        address: "0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1"
+        events:
+          - event: ETHDepositInitiated(address indexed _from, address indexed _to, uint256 _amount, bytes _extraData)
+          - event: MessageSent((address target, bytes payload) message)
