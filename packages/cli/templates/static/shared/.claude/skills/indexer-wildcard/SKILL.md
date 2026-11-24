@@ -18,10 +18,11 @@ Index all events matching an event signature across all contract addresses on a 
 contracts:
   - name: ERC20
     events:
-      - event: Transfer(indexed address from, indexed address to, uint256 value)
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
 
 chains:
   - id: 1
+    start_block: 0
     contracts:
       - name: ERC20
         # No address = wildcard (indexes ALL matching events on the chain)
