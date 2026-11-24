@@ -69,7 +69,7 @@ A new indexer has no deployments until the next push (an empty commit works).
    | not listed | Wait. Still missing after a few minutes: it was pushed before the indexer existed, or to another branch (`indexer settings get`) |
    | `pending`, `deploy` | Wait |
    | `active` | Deployed: go to step 3 |
-   | `inactive` | With auto-deploy on, usually the deployment limit. `npx -y envio-cloud deployment deploy <indexer> <commit> <org> --yes`. If it fails at the limit, it lists the deployments and marks production: ask before `deployment delete <indexer> <old-commit> <org> --yes` on one that isn't. Each deployment's own URL works until it is deleted, so an old one may still have clients: tell the user which URL goes away. Still `inactive` after a deploy that started: the indexing-hour limit (ask the user to check the dashboard), or push a new commit |
+   | `inactive` | With auto-deploy on, usually the deployment limit. `npx -y envio-cloud deployment deploy <indexer> <commit> <org> --yes`. If it fails at the limit, it lists the deployments and marks production: ask before `deployment delete <indexer> <old-commit> <org> --yes` on one that isn't. Each deployment's own URL works until it is deleted, so an old one may still have clients: tell the user which URL goes away. A deploy sent right after a delete can be accepted and dropped: if the commit is still `inactive` a minute later, run `deployment deploy` again. Still `inactive` after that: the indexing-hour limit (ask the user to check the dashboard), or push a new commit |
    | `deletingDeploymemt` (spelled so) | Push a new commit |
    | anything else | The name says what's wrong (`versionNotSupported`, `configFileMissing`, ...): fix it and push |
 
