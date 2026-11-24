@@ -87,19 +87,24 @@ fn malformed(block_number: u64, message: impl std::fmt::Display) -> EnrichError 
     ))
 }
 
-/// A hex field: `None` when the transaction has none (null or absent), an
-/// error when it has one that won't decode, which would otherwise read as
-/// absent and silently match no filter.
-fn hex_field(
+/// An address field: `None` when the transaction has none (null or absent),
+/// an error when it has one that isn't 20 bytes, which would otherwise match
+/// no filter and silently drop the transaction.
+fn address_field(
     block_number: u64,
     response: &Json,
     name: &str,
 ) -> Result<Option<Vec<u8>>, EnrichError> {
     match response.get(name) {
         None | Some(Json::Null) => Ok(None),
-        Some(Json::String(text)) => crate::hex::decode_prefixed(text, name)
-            .map(Some)
-            .map_err(|error| malformed(block_number, format!("{error:#}"))),
+        Some(Json::String(text)) => match crate::hex::decode_prefixed(text, name) {
+            Ok(bytes) if bytes.len() == 20 => Ok(Some(bytes)),
+            Ok(bytes) => Err(malformed(
+                block_number,
+                format!("a transaction's \"{name}\" is {} bytes", bytes.len()),
+            )),
+            Err(error) => Err(malformed(block_number, format!("{error:#}"))),
+        },
         Some(other) => Err(malformed(
             block_number,
             format!("a transaction's \"{name}\" is {other}"),
@@ -132,14 +137,14 @@ fn calls_of(block_number: u64, block: &Json) -> Result<Vec<Call<'_>>, EnrichErro
                 .and_then(Json::as_str)
                 .and_then(|hash| format::Hash::decode_hex(hash).ok())
                 .ok_or_else(|| malformed(block_number, "a transaction has no hash"))?;
-            let from = hex_field(block_number, response, "from")?
+            let from = address_field(block_number, response, "from")?
                 .ok_or_else(|| malformed(block_number, "a transaction has no sender"))?;
             Ok(Call {
                 response,
                 index,
                 hash,
                 from,
-                to: hex_field(block_number, response, "to")?,
+                to: address_field(block_number, response, "to")?,
             })
         })
         .collect()

@@ -1,18 +1,21 @@
 open Vitest
 
 // An RPC answer a transaction page can't trust is retried rather than read: a
-// recipient that won't decode would otherwise match no filter, and a receipt
+// recipient that isn't a 20-byte address would otherwise match no filter and
+// drop its transaction, and a receipt
 // from another block than the one its transaction was read from would decide
 // a `status` filter on another fork's outcome. Each kind is answered badly
 // once, then well.
 
 let alice = "0x1111111111111111111111111111111111111111"
 let bob = "0x2222222222222222222222222222222222222222"
+let carol = "0x3333333333333333333333333333333333333333"
 let rpcPort = 18771
 let height = 3
 
 let transactions: array<ServedEvmChain.transaction> = [
-  {blockNumber: 2, transactionIndex: 0, from: alice, to: bob},
+  // Only the \`to\` filter matches it, so nothing else reads it in full.
+  {blockNumber: 2, transactionIndex: 0, from: carol, to: bob},
   {blockNumber: 3, transactionIndex: 0, from: alice, to: bob, status: 1},
 ]
 
@@ -22,12 +25,15 @@ let movedReceipt = ref(false)
 let getResult = (~method, ~params) => {
   let result = ServedEvmChain.rpcResult(~logs=[], ~transactions, ~height, ~method, ~params)
   switch (method, result) {
-  | ("eth_getBlockByNumber", JSON.Object(block)) if !corruptedRecipient.contents =>
+  // After the moved receipt fails the first read, so no other retry re-reads
+  // the block for it.
+  | ("eth_getBlockByNumber", JSON.Object(block))
+    if movedReceipt.contents && !corruptedRecipient.contents =>
     switch block->Dict.get("transactions") {
     | Some(JSON.Array([JSON.Object(transaction)]))
       if block->Dict.get("number") == Some(JSON.String("0x2")) =>
       corruptedRecipient := true
-      transaction->Dict.set("to", JSON.String(bob ++ "0"))
+      transaction->Dict.set("to", JSON.String(bob ++ "00"))
     | _ => ()
     }
     result
@@ -122,7 +128,6 @@ describe("onTransaction over RPC answers it can't trust", () => {
           true,
           true,
           [
-            {id: "succeeded 2", to: bob, runs: 1},
             {id: "succeeded 3", to: bob, runs: 1},
             {id: "to-bob 2", to: bob, runs: 1},
             {id: "to-bob 3", to: bob, runs: 1},
