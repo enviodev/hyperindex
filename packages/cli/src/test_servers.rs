@@ -9,6 +9,7 @@ use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -122,12 +123,8 @@ fn postgres_bin() -> PathBuf {
 
 fn start_clickhouse(mut port_to_listen_on: impl FnMut() -> u16) -> ClickHouse {
     let binary = clickhouse_binary();
-    start_with_retries("ClickHouse", |attempt| {
-        start_clickhouse_cluster(
-            &binary,
-            &scratch_dir(&format!("clickhouse-{attempt}")),
-            &mut port_to_listen_on,
-        )
+    start_with_retries("ClickHouse", |_| {
+        start_clickhouse_cluster(&binary, &scratch_dir("clickhouse"), &mut port_to_listen_on)
     })
 }
 
@@ -317,8 +314,15 @@ fn is_root() -> bool {
     unsafe { libc::geteuid() == 0 }
 }
 
+/// A new directory on every call: a test may start a server of its own next to
+/// the one the other tests share, and must not wipe that one's files.
 fn scratch_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("envio-live-{name}-{}", std::process::id()));
+    static CREATED: AtomicUsize = AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "envio-live-{name}-{}-{}",
+        std::process::id(),
+        CREATED.fetch_add(1, Ordering::Relaxed)
+    ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
