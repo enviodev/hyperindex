@@ -28,7 +28,7 @@ use super::write::{self, Render, Source};
 use crate::columnar::{Arena, Column, ColumnKind};
 use crate::entity_filter::Condition;
 use crate::storage::changes::ChangeSet;
-use crate::storage::effect_cache::CacheFile;
+use crate::storage::effect_cache::{CacheFile, EffectCache, StoredCache};
 use crate::storage::rows::{self, ResultSet};
 use crate::storage::schema::Direction;
 use crate::storage::schema::FieldType;
@@ -37,13 +37,12 @@ use crate::storage::schema::{
     RAW_EVENTS_TABLE,
 };
 use crate::storage::types::{
-    Addresses, Bounds, CacheTable, ChainConfig, ChainMeta, Checkpoints, Frontier, Progress,
-    ProgressDiff, ReorgCheckpoint, ResumedChain, Sequence, StoredConfig, CHAINS_TABLE,
-    CHANGE_COLUMN, CHECKPOINT_ID_COLUMN, DELETE, SET,
+    Addresses, Bounds, ChainConfig, ChainMeta, Checkpoints, Frontier, Progress, ProgressDiff,
+    ReorgCheckpoint, ResumedChain, Sequence, StoredConfig, CHAINS_TABLE, CHANGE_COLUMN,
+    CHECKPOINT_ID_COLUMN, DELETE, SET,
 };
 use crate::storage::{
-    AddChain, Batch, Failure, Handoff, Initialize, Resumed, RollbackWrite, StoredConfigRead,
-    WriteError,
+    AddChain, Batch, Failure, Handoff, Initialize, Resumed, RollbackWrite, WriteError,
 };
 
 pub struct Settings {
@@ -235,6 +234,10 @@ fn frontier_params(frontier: &Frontier) -> Vec<Param> {
         array_literal(frontier.keys().map(|id| Some(id.to_string()))),
         array_literal(frontier.values().map(|id| Some(id.to_string()))),
     ]
+}
+
+fn chain_ids_param(chain_ids: &[i64]) -> Param {
+    array_literal(chain_ids.iter().map(|id| Some(id.to_string())))
 }
 
 fn address_params(addresses: &Addresses, with_registration_blocks: bool) -> Vec<Param> {
@@ -617,9 +620,9 @@ impl Storage {
         }
     }
 
-    /// The record a resume is checked against, and the config addresses it was
-    /// written with.
-    pub async fn read_stored_config(&self) -> Result<StoredConfigRead> {
+    /// The record a resume is checked against. A chain's config addresses are
+    /// checked by the process that resumes it, from the rows it reads anyway.
+    pub async fn read_stored_config(&self) -> Result<StoredConfig> {
         let schema = self.schema();
         let (read_info, read_contracts) = (
             internal::read_info(schema),
@@ -638,41 +641,31 @@ impl Storage {
         // Both join the schema in one transaction. Without either, an older
         // envio wrote it, and the address rows are shaped differently.
         if envio_info.is_none() || contract_names.is_none() {
-            return Ok(StoredConfigRead {
-                config: StoredConfig {
-                    envio_info: None,
-                    contract_names: None,
-                    chains: vec![],
-                },
-                config_addresses: into_result(&[], &[])?,
+            return Ok(StoredConfig {
+                envio_info: None,
+                contract_names: None,
+                chains: vec![],
             });
         }
-        let (read_chains, read_addresses) = (
-            internal::read_stored_chains(schema),
-            internal::read_addresses(schema, true),
-        );
-        let ((chains, _), (addresses, address_columns)) = futures_util::try_join!(
-            self.client.query(&read_chains, &[]),
-            self.client.query(&read_addresses, &[]),
-        )?;
-        Ok(StoredConfigRead {
-            config: StoredConfig {
-                envio_info,
-                contract_names,
-                chains: chains
-                    .iter()
-                    .map(|row| {
-                        Ok(ChainConfig {
-                            id: cell(row, 0)?,
-                            ecosystem: cell(row, 1)?,
-                            start_block: cell(row, 2)?,
-                            end_block: cell(row, 3)?,
-                            max_reorg_depth: cell(row, 4)?,
-                        })
+        let (chains, _) = self
+            .client
+            .query(&internal::read_stored_chains(schema), &[])
+            .await?;
+        Ok(StoredConfig {
+            envio_info,
+            contract_names,
+            chains: chains
+                .iter()
+                .map(|row| {
+                    Ok(ChainConfig {
+                        id: cell(row, 0)?,
+                        ecosystem: cell(row, 1)?,
+                        start_block: cell(row, 2)?,
+                        end_block: cell(row, 3)?,
+                        max_reorg_depth: cell(row, 4)?,
                     })
-                    .collect::<Result<_>>()?,
-            },
-            config_addresses: into_result(&addresses, &address_columns)?,
+                })
+                .collect::<Result<_>>()?,
         })
     }
 
@@ -688,38 +681,54 @@ impl Storage {
             .collect()
     }
 
-    pub async fn resume(&self) -> Result<Resumed> {
+    /// Where each of the chains stands, without anything a process indexing
+    /// them needs besides.
+    pub async fn read_chain_progress(&self, chain_ids: &[i64]) -> Result<Vec<ResumedChain>> {
+        let (rows, _) = self
+            .client
+            .query(
+                &internal::read_resumed_chains(self.schema()),
+                &[chain_ids_param(chain_ids)],
+            )
+            .await?;
+        rows.iter()
+            .map(|row| {
+                Ok(ResumedChain {
+                    id: cell(row, 0)?,
+                    start_block: cell(row, 1)?,
+                    end_block: cell(row, 2)?,
+                    max_reorg_depth: cell(row, 3)?,
+                    first_event_block: cell(row, 4)?,
+                    ready_at: cell(row, 5)?,
+                    events_processed: cell(row, 6)?,
+                    progress_block: cell(row, 7)?,
+                    progress_block_time: cell(row, 8)?,
+                    source_block: cell(row, 9)?,
+                    checkpoint_id: cell(row, 10)?,
+                })
+            })
+            .collect()
+    }
+
+    /// Everything a process indexing the chains starts from, and nothing of
+    /// the chains it doesn't: a sibling process reads its own, and a table of
+    /// tens of millions of addresses costs every process that reads it whole.
+    pub async fn resume(&self, chain_ids: &[i64]) -> Result<Resumed> {
         let schema = self.schema();
-        let (read_chains, read_addresses, read_checkpoints) = (
-            internal::read_resumed_chains(schema),
-            internal::read_addresses(schema, false),
+        let (read_addresses, read_checkpoints) = (
+            internal::read_addresses_of_chains(schema),
             internal::read_reorg_checkpoints(schema),
         );
-        let ((chains, _), (addresses, address_columns), (checkpoints, _), ()) = futures_util::try_join!(
-            self.client.query(&read_chains, &[]),
-            self.client.query(&read_addresses, &[]),
-            self.client.query(&read_checkpoints, &[]),
+        let params = [chain_ids_param(chain_ids)];
+        let (chains, (addresses, address_columns), (checkpoints, _), caches, ()) = futures_util::try_join!(
+            self.read_chain_progress(chain_ids),
+            self.client.query(&read_addresses, &params),
+            self.client.query(&read_checkpoints, &params),
+            self.effect_caches(|cache| cache.serves(chain_ids)),
             self.indexes.reload(),
         )?;
         Ok(Resumed {
-            chains: chains
-                .iter()
-                .map(|row| {
-                    Ok(ResumedChain {
-                        id: cell(row, 0)?,
-                        start_block: cell(row, 1)?,
-                        end_block: cell(row, 2)?,
-                        max_reorg_depth: cell(row, 3)?,
-                        first_event_block: cell(row, 4)?,
-                        ready_at: cell(row, 5)?,
-                        events_processed: cell(row, 6)?,
-                        progress_block: cell(row, 7)?,
-                        progress_block_time: cell(row, 8)?,
-                        source_block: cell(row, 9)?,
-                        checkpoint_id: cell(row, 10)?,
-                    })
-                })
-                .collect::<Result<_>>()?,
+            chains,
             addresses: into_result(&addresses, &address_columns)?,
             reorg_checkpoints: checkpoints
                 .iter()
@@ -732,6 +741,7 @@ impl Storage {
                     })
                 })
                 .collect::<Result<_>>()?,
+            caches,
         })
     }
 
@@ -923,28 +933,37 @@ impl Storage {
         )
     }
 
-    pub async fn effect_cache_tables(&self) -> Result<Vec<CacheTable>> {
+    /// The effect caches the schema holds that `wanted` keeps, each with its
+    /// row count. Only those are counted: a count is a scan of the table.
+    pub async fn effect_caches(
+        &self,
+        wanted: impl Fn(&EffectCache) -> bool,
+    ) -> Result<Vec<StoredCache>> {
         let schema = self.schema();
         let (rows, _) = self
             .client
             .query(&internal::effect_cache_tables(schema), &[])
             .await?;
-        let names = rows
+        let caches = rows
             .iter()
             .map(|row| cell::<String>(row, 0))
-            .collect::<Result<Vec<_>>>()?;
-        let counts_sql = names
+            .collect::<Result<Vec<_>>>()?
             .iter()
-            .map(|name| internal::count_rows(schema, name))
+            .filter_map(|table_name| EffectCache::from_table_name(table_name))
+            .filter(|cache| wanted(cache))
+            .collect::<Vec<_>>();
+        let counts_sql = caches
+            .iter()
+            .map(|cache| internal::count_rows(schema, &cache.table_name()))
             .collect::<Vec<_>>();
         let counts = join_all(counts_sql.iter().map(|sql| self.client.query(sql, &[]))).await;
-        names
+        caches
             .into_iter()
             .zip(counts)
-            .map(|(table_name, counted)| {
+            .map(|(cache, counted)| {
                 let (rows, _) = counted?;
-                Ok(CacheTable {
-                    table_name,
+                Ok(StoredCache {
+                    cache,
                     rows: rows.first().map_or(Ok(0), |row| cell(row, 0))?,
                 })
             })

@@ -33,7 +33,8 @@ let waitForCommit = (state: IndexerState.t): promise<unit> =>
 
 // Captures the cache:true outputs to persist. The dict is left intact — entries
 // stay warm and are reclaimed later by dropCommittedEffects once committed.
-let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updatedEffectCache> => {
+let snapshotEffects = (state: IndexerState.t): array<Persistence.updatedEffectCache> => {
+  let cache = state->IndexerState.storedEffectCaches
   let acc = []
   state
   ->IndexerState.effectState
@@ -106,7 +107,7 @@ let landingUnknownMsg = "The connection to the database was lost while a batch w
 // its checkpoint or none does. Anything else means another writer, and the
 // batch is neither written again nor taken as saved.
 let hasBatchLanded = async (state: IndexerState.t, ~moved) => {
-  let stored = await (state->IndexerState.persistence).storage.readFrontier()
+  let stored = await (state->IndexerState.storage).readFrontier()
   let landed =
     moved->Array.filter(((chainId, checkpointId)) =>
       stored->Frontier.find(chainId)->Option.mapOr(false, storedId => storedId == checkpointId)
@@ -119,14 +120,8 @@ let hasBatchLanded = async (state: IndexerState.t, ~moved) => {
 }
 
 let runOneWrite = async (state: IndexerState.t) => {
-  let persistence = state->IndexerState.persistence
+  let storage = state->IndexerState.storage
   let config = state->IndexerState.config
-  let cache = switch persistence.storageStatus {
-  | Unknown
-  | Initializing(_) =>
-    JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
-  | Ready({cache}) => cache
-  }
 
   // Snapshot before the await: the batch write reads this later, in-transaction.
   let chainMetaData = state->IndexerState.takeChainMetaSnapshot
@@ -137,7 +132,7 @@ let runOneWrite = async (state: IndexerState.t) => {
     switch chainMetaData {
     | Some(chainsData) =>
       let _ = await state->writeUntilCommitted(~operation="chain metadata write", () =>
-        persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
+        storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
       )
     | None => ()
     }
@@ -172,7 +167,7 @@ let runOneWrite = async (state: IndexerState.t) => {
         )
       }
     })
-    let updatedEffectsCache = snapshotEffects(state, ~cache)
+    let updatedEffectsCache = snapshotEffects(state)
     let registeredAddresses = batch.registeredAddresses
 
     let writtenEntityNames = Utils.Set.make()
@@ -201,7 +196,7 @@ let runOneWrite = async (state: IndexerState.t) => {
         if mayHaveLanded.contents && (await state->hasBatchLanded(~moved)) {
           ()
         } else {
-          switch await persistence.storage.writeBatch(
+          switch await storage.writeBatch(
             ~batch,
             ~rollback,
             ~config,

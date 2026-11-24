@@ -379,7 +379,7 @@ let releaseIfAtHead = group =>
 // worker it hasn't heard from yet, and its first sight of a chain is what it
 // measures the sync pace from, so a resumed chain drawn from its start block
 // would pass the earlier runs' progress off as this one's.
-let resumedChains = (config: Config.t, ~resumed: array<Persistence.initialChainState>): array<
+let resumedChains = (config: Config.t, ~resumed: array<Persistence.chainProgress>): array<
   Metrics.chainMetrics,
 > =>
   config.chainMap
@@ -470,17 +470,17 @@ let displayedSnapshots = (
 let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) => {
   // Every chain's state has to exist before a worker resumes it: an isolated
   // run refuses to initialize, precisely so it can't create rows for its own
-  // chains and leave the chains it skipped with nothing to resume. It is the
-  // same initialization an unsplit run does, and the supervisor hands the
-  // connections it used to its workers.
-  let persistence = Storage.makePersistenceFromConfig(~config, ~logger)
+  // chains and leave the chains it skipped with nothing to resume. The
+  // supervisor closes its connections before forking, so its workers get the
+  // whole budget.
+  let storage = Storage.makeStorageFromEnv(~config, ~logger)
   // Checked here once, so the workers don't each check the same handlers.
   let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
-  let _ = await Promise.all2((
-    persistence->Persistence.initForRun(~logger, ~config, ~reset, ~isDevelopmentMode=config.isDev),
+  let (resumed, ()) = await Promise.all2((
+    storage->Persistence.initForSupervisor(~logger, ~config, ~reset),
     HandlerLoader.typeCheck(~config, ~logger, ~autoLoadFiles),
   ))
-  await persistence.storage.close()
+  await storage.close()
 
   let startTime = Date.make()
   let startTimeRef = Performance.now()
@@ -502,7 +502,6 @@ let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) =>
   let shouldUseTui = Tui.shouldUse()
   // A run that resumed with every chain already caught up owes nobody a wait:
   // its workers start realtime and there is no barrier to open.
-  let resumed = (persistence->Persistence.getInitializedState).chains
   let holdRealtime =
     resumed->Array.some(chain => chain.timestampCaughtUpToHeadOrEndblock->Option.isNone)
   let group = {running: [], stopping: false, holdingRealtime: holdRealtime}

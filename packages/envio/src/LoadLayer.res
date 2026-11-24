@@ -16,7 +16,6 @@ let loadUntilReachable = async (indexerState, ~operation, load) =>
 
 let loadById = (
   ~loadManager,
-  ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
   ~scope: Internal.chainScope,
   ~indexerState,
@@ -36,7 +35,7 @@ let loadById = (
   | None =>
     let key = `${entityConfig.name}.get${scope->scopeKeySuffix}`
     let load = async (idsToLoad, ~onError as _) => {
-      let storage = persistence->Persistence.getInitializedStorageOrThrow
+      let storage = indexerState->IndexerState.storage
       let storageName = storage.entityStoreName(entityConfig)
       let timerRef =
         indexerState->IndexerState.startStorageLoad(~storage=storageName, ~operation=key)
@@ -239,7 +238,6 @@ let rec executeWithRateLimit = (
 
 let loadEffect = (
   ~loadManager,
-  ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs: Internal.effectArgs,
   ~scope: Internal.chainScope,
@@ -262,13 +260,8 @@ let loadEffect = (
     let idsToLoad = args->Array.map((arg: Internal.effectArgs) => arg.cacheKey)
     let idsFromCache = Utils.Set.make()
 
-    if (
-      switch persistence.storageStatus {
-      | Ready({cache}) => cache->Dict.has(tableName)
-      | _ => false
-      }
-    ) {
-      let storage = persistence->Persistence.getInitializedStorageOrThrow
+    if indexerState->IndexerState.storedEffectCaches->Dict.has(tableName) {
+      let storage = indexerState->IndexerState.storage
       let timerRef =
         indexerState->IndexerState.startStorageLoad(~storage=storage.name, ~operation=key)
       let {outputSchema} = effect.storageMeta
@@ -353,7 +346,6 @@ let loadEffect = (
 
 let loadByParsedFilter = (
   ~loadManager,
-  ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
   ~scope: Internal.chainScope,
   ~indexerState,
@@ -365,7 +357,7 @@ let loadByParsedFilter = (
   let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
 
   let load = async (filters: array<EntityFilter.t>, ~onError as _) => {
-    let storage = persistence->Persistence.getInitializedStorageOrThrow
+    let storage = indexerState->IndexerState.storage
     let storageName = storage.entityStoreName(entityConfig)
 
     let timerRef = indexerState->IndexerState.startStorageLoad(~storage=storageName, ~operation=key)
@@ -464,7 +456,6 @@ let loadByParsedFilter = (
 
 let loadByFilter = (
   ~loadManager,
-  ~persistence,
   ~entityConfig: Internal.entityConfig,
   ~scope,
   ~indexerState,
@@ -476,7 +467,6 @@ let loadByFilter = (
   try {
     loadByParsedFilter(
       ~loadManager,
-      ~persistence,
       ~entityConfig,
       ~scope,
       ~indexerState,
