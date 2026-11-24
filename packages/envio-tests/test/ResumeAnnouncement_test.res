@@ -1,9 +1,5 @@
 open Vitest
 
-// The supervisor says it once for the whole run, so a worker it forked has
-// nothing to add. Every other process resuming is somebody's only window onto
-// it, `envio start --chain` included.
-
 let scenario = Scenario.make(
   ~supervised=false,
   ~configYaml=`
@@ -36,25 +32,46 @@ let resumeLines = (indexer: IndexerRunner.t) =>
   )
 
 describe("Announcing a resume", () => {
+  // A supervisor resumes no chain: each worker resumes and announces its own,
+  // which is the process a refusal would come from.
   scenario->Scenario.it(
-    "is quiet for a forked worker, and not for anyone else",
+    "is the resuming process's to announce, not its supervisor's",
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       source(1337).setAutoHeight(100)
       let beforeResuming = indexer->resumeLines
-      let worker = await indexer.restart(~asWorker=true, ())
-      let afterWorker = worker->resumeLines
-      let standalone = await worker.restart()
+      let resumed = await indexer.restart()
+      let supervisorLogger = Logger.makeInMemory()
+      let storage = Storage.makeStorageFromEnv(
+        ~config=scenario.config,
+        ~logger=supervisorLogger,
+        ~pgSchema=resumed.pgSchema,
+        ~isHasuraEnabled=false,
+      )
+      let _ = await storage->Persistence.initForSupervisor(
+        ~logger=supervisorLogger,
+        ~config=scenario.config,
+        ~reset=false,
+      )
+      await storage.close()
 
       t.expect((
-        afterWorker->Array.slice(~start=beforeResuming->Array.length),
-        standalone->resumeLines->Array.slice(~start=afterWorker->Array.length),
+        resumed->resumeLines->Array.slice(~start=beforeResuming->Array.length),
+        supervisorLogger
+        ->Logger.inMemoryLines
+        ->Array.filterMap(
+          line =>
+            switch line->Dict.get("msg") {
+            | Some(String(msg)) if msg->String.toLowerCase->String.includes("resum") => Some(msg)
+            | _ => None
+            },
+        ),
       )).toEqual((
-        [],
         [
           "Found existing indexer storage.",
           "Successfully resumed indexing state! Continuing from the last checkpoint.",
         ],
+        [],
       ))
     },
   )

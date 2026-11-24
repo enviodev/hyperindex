@@ -112,15 +112,7 @@ type rec t = {
   // `envio start --chain` does. The chains left out keep their stored state.
   // `~config` resumes under an edited config.yaml, and later restarts keep it.
   // `~reset` starts over on an emptied schema, the way `envio dev -r` does.
-  // `~asWorker` leaves the resume unannounced, as a process a supervisor forked
-  // does.
-  restart: (
-    ~config: Config.t=?,
-    ~chains: array<ChainId.t>=?,
-    ~reset: bool=?,
-    ~asWorker: bool=?,
-    unit,
-  ) => promise<t>,
+  restart: (~config: Config.t=?, ~chains: array<ChainId.t>=?, ~reset: bool=?, unit) => promise<t>,
   // Another process on the same schema, started while this one keeps running,
   // the way the workers of a split run share one. The global initial state is
   // the last one started's, so a handler can't tell siblings apart.
@@ -325,7 +317,7 @@ let run = async (
 
   // The builder is only reachable here and from `restart`, so it takes just
   // what differs between them and reads the rest off this call.
-  let rec make = async (~reset, ~config as baseConfig, ~chains=?, ~asWorker=false) => {
+  let rec make = async (~reset, ~config as baseConfig, ~chains=?) => {
     throwIfClosing()
     // Startup runs on the real clock, a restart's included.
     Clock.refuseReal := false
@@ -367,7 +359,6 @@ let run = async (
       ~config,
       ~reset,
       ~isDevelopmentMode=true,
-      ~announceResume=!asWorker,
       ~startBlockRetry?,
       ~sourceTiming=?startupTiming,
     )
@@ -904,12 +895,12 @@ let run = async (
         onIndexerStarted(indexer, ~chains=Some(chains))
         indexer
       },
-      restart: async (~config=baseConfig, ~chains=?, ~reset=false, ~asWorker=?, ()) => {
+      restart: async (~config=baseConfig, ~chains=?, ~reset=false, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared storage, else the two race against the same db.
         await stop()
         onIndexerStopped()
-        let indexer = await make(~reset, ~config, ~chains?, ~asWorker?)
+        let indexer = await make(~reset, ~config, ~chains?)
         onIndexerStarted(indexer, ~chains)
         indexer
       },

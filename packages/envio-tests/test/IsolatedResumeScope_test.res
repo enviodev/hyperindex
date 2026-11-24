@@ -121,7 +121,7 @@ describe("A process resuming part of a split run", () => {
       ))
       await indexer.waitUntilIdle()
 
-      let worker = await indexer.restart(~chains=[ChainId.fromInt(1)], ~asWorker=true, ())
+      let worker = await indexer.restart(~chains=[ChainId.fromInt(1)], ())
 
       t.expect(await worker.metric("envio_effect_cache")).toEqual([
         {value: "1", labels: dict{"effect": "lookup", "scope": "1"}},
@@ -157,9 +157,9 @@ describe("A process resuming part of a split run", () => {
       ))
       await indexer.waitUntilIdle()
 
-      let worker1 = await indexer.restart(~chains=[ChainId.fromInt(1)], ~asWorker=true, ())
+      let worker1 = await indexer.restart(~chains=[ChainId.fromInt(1)], ())
       let snapshot1 = worker1.snapshot()
-      let worker137 = await worker1.restart(~chains=[ChainId.fromInt(137)], ~asWorker=true, ())
+      let worker137 = await worker1.restart(~chains=[ChainId.fromInt(137)], ())
       let merged = Metrics.merge(
         [snapshot1, worker137.snapshot()],
         ~startTime=Date.make(),

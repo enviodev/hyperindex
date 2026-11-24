@@ -272,20 +272,6 @@ let throwRefusalOrLoggedFailure = (exn, ~logger) =>
     exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to initialize the indexer storage.`)
   }
 
-// The level a process says it resumed at. A supervisor says it once for the
-// whole run, so the workers it forked keep it to their own log files.
-let resumeLogLevel = (~announceResume) => announceResume ? #info : #trace
-
-let logResumed = (logger, ~announceResume, ~chains: array<chainProgress>) => {
-  let progress = Dict.make()
-  chains->Array.forEach(chain => progress->ChainId.Dict.set(chain.id, chain.progressBlockNumber))
-  logger->Logger.logAt(
-    resumeLogLevel(~announceResume),
-    `Successfully resumed indexing state! Continuing from the last checkpoint.`,
-    ~params={"progress": progress},
-  )
-}
-
 // Makes the storage fit the config: builds it when there is none, refuses one
 // the config can't continue, and adds a chain the config only gained. It reads
 // none of the state indexing starts from: that is `resume`'s, for the chains
@@ -305,7 +291,6 @@ let prepare = async (
   // leaving the ones it skipped with no state for their own processes to
   // resume. It is also the one run that may add its chain to the schema.
   ~isolated=false,
-  ~announceResume=true,
   ~startBlockRetry=StartBlockResolver.UntilItAnswers,
   ~sourceTiming=?,
   // Set for a per-chain schema, which can take a new chain under its own
@@ -352,7 +337,7 @@ let prepare = async (
       logger->Logger.info(`The indexer storage is ready. Starting indexing!`)
       Created(initialState)
     } else {
-      logger->Logger.logAt(resumeLogLevel(~announceResume), `Found existing indexer storage.`)
+      logger->Logger.info(`Found existing indexer storage.`)
       let stored = await storage.readStoredConfig()
       let incompatible = paths => Refused(
         ResumePlan.incompatibleMessage(
@@ -425,7 +410,6 @@ let resume = async (
   ~config: Config.t,
   ~isDevelopmentMode,
   ~contractMapping,
-  ~announceResume,
 ) =>
   try {
     let chainConfigs = config.chainMap->ChainMap.values
@@ -455,9 +439,13 @@ let resume = async (
       )
     }
     await storage.takeOver(~committed=initialState.checkpointFrontier)
-    logger->logResumed(
-      ~announceResume,
-      ~chains=initialState.chains->Array.map(chain => (chain :> chainProgress)),
+    let progress = Dict.make()
+    initialState.chains->Array.forEach(chain =>
+      progress->ChainId.Dict.set(chain.id, chain.progressBlockNumber)
+    )
+    logger->Logger.info(
+      `Successfully resumed indexing state! Continuing from the last checkpoint.`,
+      ~params={"progress": progress},
     )
     initialState
   } catch {
@@ -474,13 +462,11 @@ let prepareForRun = (
   ~config: Config.t,
   ~reset,
   ~isDevelopmentMode,
-  ~announceResume,
   ~startBlockRetry=?,
   ~sourceTiming=?,
 ) =>
   storage->prepare(
     ~logger,
-    ~announceResume,
     ~startBlockRetry?,
     ~sourceTiming?,
     ~reset,
@@ -501,7 +487,6 @@ let initForRun = async (
   ~config: Config.t,
   ~reset,
   ~isDevelopmentMode,
-  ~announceResume=!Worker.isEnabled,
   ~startBlockRetry=?,
   ~sourceTiming=?,
 ) =>
@@ -510,33 +495,24 @@ let initForRun = async (
     ~config,
     ~reset,
     ~isDevelopmentMode,
-    ~announceResume,
     ~startBlockRetry?,
     ~sourceTiming?,
   ) {
   | Created(initialState) => initialState
   | Existing({contractMapping}) =>
-    await storage->resume(~logger, ~config, ~isDevelopmentMode, ~contractMapping, ~announceResume)
+    await storage->resume(~logger, ~config, ~isDevelopmentMode, ~contractMapping)
   }
 
 // Where every chain of a split run stands. The supervisor indexes none of them,
 // so it resumes none either: each worker resumes its own.
 let initForSupervisor = async (storage: storage, ~logger, ~config: Config.t, ~reset) =>
-  switch await storage->prepareForRun(
-    ~logger,
-    ~config,
-    ~reset,
-    ~isDevelopmentMode=config.isDev,
-    ~announceResume=true,
-  ) {
+  switch await storage->prepareForRun(~logger, ~config, ~reset, ~isDevelopmentMode=config.isDev) {
   | Created(initialState) => initialState.chains->Array.map(chain => (chain :> chainProgress))
   | Existing(_) =>
     try {
-      let chains = await storage.readChainProgress(
+      await storage.readChainProgress(
         ~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id),
       )
-      logger->logResumed(~announceResume=true, ~chains)
-      chains
     } catch {
     | exn => exn->throwRefusalOrLoggedFailure(~logger)
     }
