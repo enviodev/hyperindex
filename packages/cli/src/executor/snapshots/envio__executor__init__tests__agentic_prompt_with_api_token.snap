@@ -13,7 +13,7 @@ Leave the rest to your favorite agent:
 pnpx envio init contract-import explorer \
   -n ${indexer-name} \
   -c ${address} \
-  -b ${chainId} \
+  -b ${network-name} \
   --single-contract \
   --all-events \
   -d ${directory}

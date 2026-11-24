@@ -447,7 +447,7 @@ fn agentic_init_prompt(has_api_token: bool) -> String {
     out.push_str("pnpx envio init contract-import explorer \\\n");
     out.push_str("  -n ${indexer-name} \\\n");
     out.push_str("  -c ${address} \\\n");
-    out.push_str("  -b ${chainId} \\\n");
+    out.push_str("  -b ${network-name} \\\n");
     out.push_str("  --single-contract \\\n");
     out.push_str("  --all-events \\\n");
     out.push_str("  -d ${directory}\n");
