@@ -2,7 +2,6 @@
 // config.
 type storedChain = {
   id: ChainId.t,
-  ecosystem: string,
   startBlock: int,
   endBlock: option<int>,
   maxReorgDepth: int,

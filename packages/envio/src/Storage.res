@@ -418,7 +418,6 @@ let make = (
         envioInfo: Some(envioInfo->JSON.parseOrThrow),
         chains: stored.chains->Array.map((chain): ResumePlan.storedChain => {
           id: chain.id->ChainId.normalizeOrThrow,
-          ecosystem: chain.ecosystem,
           startBlock: chain.startBlock,
           endBlock: chain.endBlock,
           maxReorgDepth: chain.maxReorgDepth,

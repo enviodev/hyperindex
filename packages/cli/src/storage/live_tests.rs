@@ -230,11 +230,51 @@ async fn a_take_over_refuses_a_frontier_another_process_moved() {
         (
             true,
             Err(
-                "Another process committed to chain 1 after this one read where it stands. \
+                "Another process changed chain 1 after this one read where it stands. \
                  Stop the other indexer writing to this database, then start this one again."
                     .to_string()
             ),
             "1".to_string()
+        )
+    );
+}
+
+/// A chain the resume read and Postgres no longer holds, as when another
+/// process reset the schema meanwhile, is refused as well: its frontier would
+/// otherwise be written to ClickHouse for a chain Postgres has forgotten.
+#[tokio::test]
+#[ignore = "needs a Postgres and a ClickHouse server"]
+async fn a_take_over_refuses_a_chain_postgres_dropped_since_the_resume() {
+    let live = Live::new("take_over_dropped");
+    live.initialize().await;
+    let resumed = live.storage.resume(&[1]).await.unwrap();
+    postgres::live_tests::client()
+        .batch(&format!(
+            "DELETE FROM \"{}\".\"envio_chains\" WHERE \"id\" = 1",
+            live.name
+        ))
+        .await
+        .unwrap();
+
+    let taken_over = live
+        .storage
+        .take_over_clickhouse(
+            resumed
+                .chains
+                .iter()
+                .map(|chain| (chain.id, chain.checkpoint_id))
+                .collect(),
+        )
+        .await
+        .map_err(|error| format!("{error:#}"));
+
+    live.drop_all().await;
+    assert_eq!(
+        taken_over,
+        Err(
+            "Another process changed chain 1 after this one read where it stands. Stop the \
+             other indexer writing to this database, then start this one again."
+                .to_string()
         )
     );
 }
