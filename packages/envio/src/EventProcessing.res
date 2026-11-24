@@ -19,22 +19,8 @@ let invokeHandler = (runtime: HandlerRuntime.t, item: Internal.item) => {
   switch item {
   | Block({onBlockRegistration: {handler}, blockNumber, ?block}) =>
     handler(Ecosystem.makeOnBlockArgs(~blockNumber, ~block, ~ecosystem, ~context))
-  | Transaction({onTransactionRegistration: {handler}, ?transaction, ?block}) =>
-    // A copy: the transaction object is shared with its events'
-    // `event.transaction`, which carries no block.
-    let transaction =
-      transaction
-      ->Option.getUnsafe
-      ->(Utils.magic: Internal.eventTransaction => dict<unknown>)
-      ->Dict.copy
-    transaction->Dict.set(
-      "block",
-      block->Option.getUnsafe->(Utils.magic: Internal.eventBlock => unknown),
-    )
-    handler({
-      transaction: transaction->(Utils.magic: dict<unknown> => Internal.eventTransaction),
-      context,
-    })
+  | Transaction({onTransactionRegistration: {handler}, ?transaction}) =>
+    handler({transaction: transaction->Option.getUnsafe, context})
   | Event(_) =>
     let handler = (item->Internal.castUnsafeEventItem).onEventRegistration.handler->Option.getUnsafe
     handler({event: item->Ecosystem.getItemEvent(~ecosystem), context})

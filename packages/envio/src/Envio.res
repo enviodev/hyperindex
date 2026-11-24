@@ -139,9 +139,8 @@ type onBlockOptions<'chain> = {
   where?: onBlockWhereArgs<'chain> => unknown,
 }
 
-// `where` returns `false` to skip the chain, `true` to run on every
-// transaction, or `{transaction: {from?, to?, status?}}` (see
-// `EvmOnTransactionFilter` in `packages/envio/index.d.ts`).
+// `where` returns `false` to skip the chain, `true` to run on every succeeded
+// transaction, or `{transaction: {from?, to?, status?}}`.
 type onTransactionOptions<'chain> = {
   name: string,
   where: onBlockWhereArgs<'chain> => unknown,

@@ -871,26 +871,9 @@ let make = (
       if transactions->Utils.Array.notEmpty {
         page->BufferPage.append(
           BufferPage.fromEvmJs(
-            ~transactions=transactions->Array.map(({blockNumber, transactionIndex, fields}) => {
-              let row = fields->SimulateItems.toRpcObject(~isBlock=false)
-              row->Dict.set("blockNumber", JSON.String(`0x${blockNumber->Int.toString(~radix=16)}`))
-              row->Dict.set(
-                "transactionIndex",
-                JSON.String(`0x${transactionIndex->Int.toString(~radix=16)}`),
-              )
-              if row->Dict.get("hash")->Option.isNone {
-                row->Dict.set(
-                  "hash",
-                  JSON.String(
-                    SimulateItems.defaultTransactionHash(~blockNumber, ~transactionIndex),
-                  ),
-                )
-              }
-              if row->Dict.get("status")->Option.isNone {
-                row->Dict.set("status", JSON.String("0x1"))
-              }
-              row
-            }),
+            ~transactions=transactions->Array.map(({blockNumber, transactionIndex, fields}) =>
+              fields->SimulateItems.transactionRow(~blockNumber, ~transactionIndex)
+            ),
             ~blocks=[],
           ),
         )

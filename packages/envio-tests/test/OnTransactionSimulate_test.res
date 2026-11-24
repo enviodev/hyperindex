@@ -80,7 +80,7 @@ indexer.onTransaction(
     await record(context, \`from-alice \${transaction.block.number}/\${transaction.transactionIndex}\`);
     if (!context.isPreload && transaction.value !== undefined) {
       context.Sent.set({
-        id: transaction.hash ?? "no hash",
+        id: transaction.hash,
         value: transaction.value,
         input: transaction.input,
         miner: transaction.block.miner,
@@ -315,6 +315,31 @@ describe("onTransaction under simulate", () => {
       .rejects.toThrow(
         "simulate: 1 item you passed to simulate never reached a handler, so nothing ran for them. Each was filtered out before the handler, usually by a non-wildcard srcAddress that isn't indexed for the contract, a where/block filter that excluded the event, or, for a transaction, no onTransaction filter matching the fields it gives. Unrouted items, by index in each chain's simulate array:\\n  - chain 1: 1",
       );
+  });
+
+  it("names an unrouted event by its index in the simulate array, past a transaction", async (t) => {
+    const indexer = createTestIndexer();
+    await t
+      .expect(
+        indexer.process({
+          chains: {
+            1: {
+              startBlock: 0,
+              endBlock: 5,
+              simulate: [
+                { transaction: { from: alice } },
+                {
+                  contract: "Token",
+                  event: "Transfer",
+                  srcAddress: "0x00000000000000000000000000000000000000ab",
+                  params: { from: alice, to: bob, value: 1n },
+                },
+              ],
+            },
+          },
+        }),
+      )
+      .rejects.toThrow("Unrouted items, by index in each chain's simulate array:\\n  - chain 1: 1");
   });
 
   it("refuses a transaction field it doesn't know", async (t) => {

@@ -339,7 +339,8 @@ let getGlobalIndexer = (): 'indexer => {
     | Some(k) => k
     | None => {
         let keys = switch Config.load().ecosystem.name {
-        | Evm => [
+        | (Evm | Fuel) as ecosystem =>
+          [
             "name",
             "description",
             "chainIds",
@@ -347,17 +348,7 @@ let getGlobalIndexer = (): 'indexer => {
             "onEvent",
             "contractRegister",
             "onBlock",
-            "onTransaction",
-            "~internalAndWillBeRemovedSoon_onRollbackCommit",
-          ]
-        | Fuel => [
-            "name",
-            "description",
-            "chainIds",
-            "chains",
-            "onEvent",
-            "contractRegister",
-            "onBlock",
+            ...ecosystem === Evm ? ["onTransaction"] : [],
             "~internalAndWillBeRemovedSoon_onRollbackCommit",
           ]
         | Svm => [

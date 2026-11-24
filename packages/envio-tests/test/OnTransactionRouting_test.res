@@ -129,10 +129,10 @@ describe("onTransaction routing", () => {
       scenario,
       async indexer => {
         let warning = (~name, ~chainId, ~rpcCost) =>
-          `\`indexer.onTransaction("${name}")\` runs on every transaction of chain ${chainId->Int.toString}: its filter names no \`from\` or \`to\`.${rpcCost}`
+          `\`indexer.onTransaction("${name}")\` runs on every succeeded transaction of chain ${chainId->Int.toString}: its filter names no \`from\` or \`to\`.${rpcCost}`
         t.expect(
           indexer.infoAndAboveLogs()
-          ->Array.filter(({msg}) => msg->String.includes("runs on every transaction"))
+          ->Array.filter(({msg}) => msg->String.includes("runs on every"))
           ->Array.map(({msg}) => msg),
         ).toEqual([
           warning(~name="succeeded", ~chainId=1, ~rpcCost=""),

@@ -32,11 +32,11 @@ let makeFromConfig = (config: Config.t): option<t> => {
     ->ChainMap.values
     ->Array.flatMap(chainConfig =>
       switch chainConfig.sourceConfig {
-      | Config.SimulateSourceConfig({items, transactions}) =>
+      | Config.SimulateSourceConfig({items, itemSimulateIndexes, transactions}) =>
         Array.concat(
-          items->Array.mapWithIndex((item, index) => {
+          items->Array.mapWithIndex((item, position) => {
             chainId: chainConfig.id,
-            index,
+            index: itemSimulateIndexes->Array.getUnsafe(position),
             key: itemKey(item),
           }),
           transactions->Array.map(({simulateIndex, blockNumber, transactionIndex}) => {
@@ -68,7 +68,9 @@ let unroutedByChain = (t: t): array<(ChainId.t, array<int>)> => {
     if indicesByChain->Dict.get(key)->Option.isNone {
       chainOrder->Array.push(entry.chainId)->ignore
     }
-    indicesByChain->Utils.Dict.push(key, entry.index)
+    if !(indicesByChain->Dict.get(key)->Option.getOr([])->Array.includes(entry.index)) {
+      indicesByChain->Utils.Dict.push(key, entry.index)
+    }
   })
   chainOrder->Array.map(chainId => (
     chainId,

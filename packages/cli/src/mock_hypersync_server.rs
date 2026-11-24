@@ -400,7 +400,6 @@ fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
     };
     let transactions: Vec<Value> = rows("transactions")
         .into_iter()
-        .map(with_sighash)
         .filter(|transaction| {
             number(transaction, "block_number")
                 .is_some_and(|block| block >= from_block && block < next_block)
@@ -460,19 +459,6 @@ fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
     })
 }
 
-/// A transaction row with the selector HyperSync derives from its calldata.
-fn with_sighash(mut transaction: Value) -> Value {
-    let sighash = transaction
-        .get("input")
-        .and_then(Value::as_str)
-        .filter(|input| input.len() >= 10)
-        .map(|input| input[..10].to_string());
-    if let (Some(sighash), Some(row)) = (sighash, transaction.as_object_mut()) {
-        row.entry("sighash").or_insert(Value::String(sighash));
-    }
-    transaction
-}
-
 /// HyperSync's transaction filter: every listed field must match one of its
 /// values, an empty list matches anything, and a row without the field
 /// matches no list.
@@ -497,7 +483,7 @@ fn transaction_matches(transaction: &Value, selection: &Value) -> bool {
         None => true,
         Some(status) => transaction.get("status").and_then(Value::as_u64) == Some(status),
     };
-    any_of("from") && any_of("to") && any_of("sighash") && status_matches
+    any_of("from") && any_of("to") && status_matches
 }
 
 /// HyperSync's log filter: every listed address and topic position must match
@@ -1126,11 +1112,11 @@ mod tests {
                 }],
                 "transactions": [{
                     "from": ["0x00000000000000000000000000000000000000CC"],
-                    "sighash": ["0xa9059cbb"],
+                    "status": 1,
                 }],
                 "field_selection": {
                     "block": ["number"],
-                    "transaction": ["block_number", "transaction_index", "sighash"],
+                    "transaction": ["block_number", "transaction_index", "from"],
                     "log": ["block_number", "address"],
                 },
             }),
@@ -1142,8 +1128,8 @@ mod tests {
                 "nextBlock": 8,
                 "blocks": [{"number": 5}, {"number": 7}],
                 "transactions": [
-                    {"block_number": 5, "transaction_index": 0},
-                    {"block_number": 7, "transaction_index": 1, "sighash": "0xa9059cbb"},
+                    {"block_number": 5, "transaction_index": 0, "from": "0x00000000000000000000000000000000000000cc"},
+                    {"block_number": 7, "transaction_index": 1, "from": "0x00000000000000000000000000000000000000cc"},
                 ],
                 "logs": [{
                     "block_number": 5,

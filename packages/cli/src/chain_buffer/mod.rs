@@ -642,21 +642,41 @@ impl ChainBuffer {
                 .block_number_of_row_at(from, row_offset as usize)
                 .map(|block| block as i64);
         }
-        // The lowest block whose rows from `from` outnumber the offset.
-        let rows_through = |to: u64| self.count_rows_in_block_range(&tables, from, to);
-        if rows_through(LAST_BLOCK) <= row_offset as usize {
-            return None;
-        }
-        let (mut low, mut high) = (from, LAST_BLOCK);
-        while low < high {
-            let middle = low + (high - low) / 2;
-            if rows_through(middle) > row_offset as usize {
-                high = middle;
+        let mut events = tables
+            .events
+            .rows_in_block_range(from, LAST_BLOCK)
+            .map(|row| row.block_number())
+            .peekable();
+        let decoded = tables.decoded.copy_range(from, LAST_BLOCK);
+        let mut decoded = decoded.iter().map(|event| event.block_number).peekable();
+        let mut transactions = tables
+            .transactions
+            .rows_in_block_range(from, LAST_BLOCK)
+            .take(if self.counts_transaction_rows() {
+                usize::MAX
             } else {
-                low = middle + 1;
+                0
+            })
+            .map(|row| row.block_number())
+            .peekable();
+        let mut remaining = row_offset;
+        loop {
+            let next = [events.peek(), decoded.peek(), transactions.peek()]
+                .into_iter()
+                .enumerate()
+                .filter_map(|(stream, block)| block.map(|block| (*block, stream)))
+                .min()
+                .and_then(|(_, stream)| match stream {
+                    0 => events.next(),
+                    1 => decoded.next(),
+                    _ => transactions.next(),
+                });
+            match next {
+                None => return None,
+                Some(block) if remaining == 0 => return Some(block as i64),
+                Some(_) => remaining -= 1,
             }
         }
-        Some(low as i64)
     }
 
     /// The bytes the buffer's tables hold.

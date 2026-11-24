@@ -37,35 +37,18 @@ pub(crate) struct TransactionFilter {
     pub(crate) status: Option<u8>,
 }
 
-/// A field of a transaction as matching reads it: `Unheld` when the row was
-/// not fetched with it, `Absent` when it was and the transaction has none (a
-/// contract creation's `to`, a receipt predating `status`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Held<T> {
-    Unheld,
-    Absent,
-    Value(T),
-}
-
-impl<T> Held<T> {
-    pub(crate) fn new(held: bool, value: Option<T>) -> Self {
-        match (held, value) {
-            (false, _) => Held::Unheld,
-            (true, None) => Held::Absent,
-            (true, Some(value)) => Held::Value(value),
-        }
-    }
-}
-
-/// A transaction's fields as matching reads them.
+/// A transaction's fields as matching reads them. A field is `None` when the
+/// transaction has none (a contract creation's `to`, a receipt predating
+/// `status`) or the row wasn't fetched with it: either way no filter on it
+/// matches.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TransactionView<'a> {
-    pub(crate) from: Held<&'a [u8]>,
-    pub(crate) to: Held<&'a [u8]>,
-    pub(crate) status: Held<u64>,
+    pub(crate) from: Option<&'a [u8]>,
+    pub(crate) to: Option<&'a [u8]>,
+    pub(crate) status: Option<u64>,
 }
 
-const fn bit(field: EvmTxField) -> u64 {
+pub(crate) const fn bit(field: EvmTxField) -> u64 {
     1 << field as u32
 }
 
@@ -73,43 +56,45 @@ impl<'a> TransactionView<'a> {
     pub(crate) fn of_row(row: &RowRef<'a>) -> Self {
         let row = *row;
         let fetched = row.fetched();
-        let held =
-            |field: EvmTxField| Held::new(fetched & bit(field) != 0, row.bytes_at(field as usize));
+        let fetched_with = |field: EvmTxField| fetched & bit(field) != 0;
         TransactionView {
-            from: held(EvmTxField::From),
-            to: held(EvmTxField::To),
-            status: Held::new(
-                fetched & bit(EvmTxField::Status) != 0,
-                row.u64_at(EvmTxField::Status as usize),
-            ),
+            from: row
+                .bytes_at(EvmTxField::From as usize)
+                .filter(|_| fetched_with(EvmTxField::From)),
+            to: row
+                .bytes_at(EvmTxField::To as usize)
+                .filter(|_| fetched_with(EvmTxField::To)),
+            status: row
+                .u64_at(EvmTxField::Status as usize)
+                .filter(|_| fetched_with(EvmTxField::Status)),
         }
     }
 
     /// A source's transaction, read for the fields of `fetched`.
     pub(crate) fn of_transaction(transaction: &'a Transaction, fetched: u64) -> Self {
-        let held = |field: EvmTxField, value: Option<&'a [u8]>| {
-            Held::new(fetched & bit(field) != 0, value)
-        };
+        let fetched_with = |field: EvmTxField| fetched & bit(field) != 0;
         TransactionView {
-            from: held(
-                EvmTxField::From,
-                transaction.from.as_deref().map(|from| from.as_slice()),
-            ),
-            to: held(
-                EvmTxField::To,
-                transaction.to.as_deref().map(|to| to.as_slice()),
-            ),
-            status: Held::new(
-                fetched & bit(EvmTxField::Status) != 0,
-                transaction.status.map(|status| status.to_u8() as u64),
-            ),
+            from: transaction
+                .from
+                .as_deref()
+                .map(|from| from.as_slice())
+                .filter(|_| fetched_with(EvmTxField::From)),
+            to: transaction
+                .to
+                .as_deref()
+                .map(|to| to.as_slice())
+                .filter(|_| fetched_with(EvmTxField::To)),
+            status: transaction
+                .status
+                .map(|status| status.to_u8() as u64)
+                .filter(|_| fetched_with(EvmTxField::Status)),
         }
     }
 }
 
-fn any_of<const N: usize>(values: &[[u8; N]], actual: Held<&[u8]>) -> bool {
+fn any_of(values: &[[u8; 20]], actual: Option<&[u8]>) -> bool {
     values.is_empty()
-        || matches!(actual, Held::Value(actual) if values.iter().any(|value| value.as_slice() == actual))
+        || actual.is_some_and(|actual| values.iter().any(|value| value.as_slice() == actual))
 }
 
 impl TransactionFilter {
@@ -127,11 +112,9 @@ impl TransactionFilter {
         any_of(&self.from, view.from) && any_of(&self.to, view.to)
     }
 
-    pub(crate) fn matches_status(&self, status: Held<u64>) -> bool {
-        match self.status {
-            None => true,
-            Some(expected) => status == Held::Value(expected as u64),
-        }
+    pub(crate) fn matches_status(&self, status: Option<u64>) -> bool {
+        self.status
+            .is_none_or(|expected| status == Some(u64::from(expected)))
     }
 
     pub(crate) fn matches(&self, view: &TransactionView) -> bool {
@@ -139,18 +122,18 @@ impl TransactionFilter {
     }
 }
 
-fn parse_values<const N: usize>(values: &Option<Vec<String>>, name: &str) -> Result<Vec<[u8; N]>> {
+fn parse_addresses(values: &Option<Vec<String>>, name: &str) -> Result<Vec<[u8; 20]>> {
     let Some(values) = values else {
         return Ok(Vec::new());
     };
     ensure!(!values.is_empty(), "`{name}` lists no value");
-    let mut parsed: Vec<[u8; N]> = values
+    let mut parsed: Vec<[u8; 20]> = values
         .iter()
         .map(|value| {
             let bytes = crate::hex::decode_prefixed(value, name)?;
-            <[u8; N]>::try_from(bytes.as_slice()).map_err(|_| {
+            <[u8; 20]>::try_from(bytes.as_slice()).map_err(|_| {
                 anyhow::anyhow!(
-                    "`{name}` value {value} must be {N} bytes, got {}",
+                    "`{name}` value {value} must be 20 bytes, got {}",
                     bytes.len()
                 )
             })
@@ -183,8 +166,8 @@ impl OnTransactionRegistration {
         Ok(OnTransactionRegistration {
             index: u32::try_from(input.index).context("a negative registration index")?,
             filter: TransactionFilter {
-                from: parse_values(&input.from, "from")?,
-                to: parse_values(&input.to, "to")?,
+                from: parse_addresses(&input.from, "from")?,
+                to: parse_addresses(&input.to, "to")?,
                 status,
             },
             transaction_mask: input.transaction_field_mask as u64,
@@ -228,22 +211,14 @@ impl TransactionMatcher {
         self.registrations.get(index as usize)
     }
 
-    /// The registrations `indexes` names, in index order.
-    pub(crate) fn select(&self, indexes: &[i64]) -> Result<Vec<&OnTransactionRegistration>> {
-        let mut selected = indexes
-            .iter()
-            .map(|index| {
-                u32::try_from(*index)
-                    .ok()
-                    .and_then(|index| self.registration(index))
-                    .with_context(|| {
-                        format!("Unknown transaction registration index {index} in query selection")
-                    })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        selected.sort_unstable_by_key(|registration| registration.index);
-        selected.dedup_by_key(|registration| registration.index);
-        Ok(selected)
+    /// The registrations a query fetches for: all of them when it selects any,
+    /// as the chain's transaction handlers share one partition.
+    pub(crate) fn selected(&self, any: bool) -> Vec<&OnTransactionRegistration> {
+        if any {
+            self.registrations.iter().collect()
+        } else {
+            Vec::new()
+        }
     }
 
     /// Calls `f` with every registration the transaction belongs to, in
@@ -286,9 +261,9 @@ mod tests {
     }
 
     fn view<'a>(
-        from: Held<&'a [u8]>,
-        to: Held<&'a [u8]>,
-        status: Held<u64>,
+        from: Option<&'a [u8]>,
+        to: Option<&'a [u8]>,
+        status: Option<u64>,
     ) -> TransactionView<'a> {
         TransactionView { from, to, status }
     }
@@ -300,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn fields_are_anded_values_ored_and_an_unheld_field_never_matches() {
+    fn fields_are_anded_values_ored_and_a_missing_field_never_matches() {
         let a = [0u8; 19].into_iter().chain([0xaa]).collect::<Vec<_>>();
         let b = [0u8; 19].into_iter().chain([0xbb]).collect::<Vec<_>>();
         let matcher = TransactionMatcher::new(&[
@@ -318,15 +293,9 @@ mod tests {
         .unwrap();
         assert_eq!(
             (
-                matched(
-                    &matcher,
-                    &view(Held::Value(&a), Held::Value(&b), Held::Value(1))
-                ),
-                matched(
-                    &matcher,
-                    &view(Held::Value(&a), Held::Absent, Held::Value(0))
-                ),
-                matched(&matcher, &view(Held::Unheld, Held::Value(&b), Held::Unheld)),
+                matched(&matcher, &view(Some(&a), Some(&b), Some(1))),
+                matched(&matcher, &view(Some(&a), None, Some(0))),
+                matched(&matcher, &view(None, Some(&b), None)),
             ),
             (vec![0, 1, 2], vec![2], vec![0, 2])
         );

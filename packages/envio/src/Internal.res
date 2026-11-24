@@ -755,7 +755,6 @@ external getItemBlockNumber: item => int = "blockNumber"
 external getItemLogIndex: item => int = "logIndex"
 @get
 external getItemOrderPath: item => Nullable.t<array<int>> = "orderPath"
-// The variant tag, read without a `switch`.
 @get
 external getItemKind: item => int = "kind"
 

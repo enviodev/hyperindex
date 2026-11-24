@@ -151,7 +151,7 @@ describe("onTransaction falling back from HyperSync to RPC", () => {
           sent->Array.toSorted((a, b) => String.compare(a.id, b.id)),
           rpcFullBlockReads,
           indexer.infoAndAboveLogs()
-          ->Array.filter(({msg}) => msg->String.includes("runs on every transaction"))
+          ->Array.filter(({msg}) => msg->String.includes("runs on every"))
           ->Array.map(({msg}) => msg),
         )).toEqual((
           Array.fromInitializer(
@@ -163,7 +163,7 @@ describe("onTransaction falling back from HyperSync to RPC", () => {
           ),
           ["0x3", "0x4", "0x5", "0x6"],
           [
-            "`indexer.onTransaction(\"reverted\")` runs on every transaction of chain 1: its filter names no `from` or `to`.",
+            "`indexer.onTransaction(\"reverted\")` runs on every reverted transaction of chain 1: its filter names no `from` or `to`.",
           ],
         ))
       },

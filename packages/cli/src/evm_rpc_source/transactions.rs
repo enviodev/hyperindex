@@ -16,12 +16,8 @@ use super::enrich::{collect_worst, require, EnrichError, FetchKey, Fetches};
 use super::fields::{tx_fields_in, tx_mask_of, Carrier};
 use super::responses;
 use crate::chain_buffer::evm::{push_transaction, EvmTxField};
-use crate::chain_buffer::matching_transactions::{
-    Held, OnTransactionRegistration, TransactionView,
-};
+use crate::chain_buffer::matching_transactions::{bit, OnTransactionRegistration, TransactionView};
 use crate::chain_buffer::page::PageData;
-
-const STATUS_BIT: u64 = 1 << EvmTxField::Status as u32;
 
 /// The transaction fields a registration needs a row to hold: what its
 /// handler reads and what its filter compares.
@@ -61,10 +57,7 @@ impl<'a> TransactionRead<'a> {
 
     /// The needed fields the transaction's own response fills.
     fn transaction_fields(&self) -> u64 {
-        self.transaction_mask
-            & (tx_mask_of(Carrier::Log)
-                | tx_mask_of(Carrier::Transaction)
-                | tx_mask_of(Carrier::Either))
+        self.transaction_mask & !tx_mask_of(Carrier::Receipt)
     }
 
     /// The needed fields a receipt fills, when one of `matched` needs any:
@@ -152,14 +145,6 @@ fn calls_of(block_number: u64, block: &Json) -> Result<Vec<Call<'_>>, EnrichErro
         .collect()
 }
 
-/// A field a full block's transaction always holds, present or not.
-fn held_or_absent(value: &Option<Vec<u8>>) -> Held<&[u8]> {
-    match value {
-        Some(value) => Held::Value(value),
-        None => Held::Absent,
-    }
-}
-
 /// Reads the transactions of `blocks` the registrations run on into `page`,
 /// and returns the blocks holding one.
 pub(crate) async fn read(
@@ -175,9 +160,9 @@ pub(crate) async fn read(
     for &block_number in block_numbers {
         for call in calls_of(block_number, &blocks[&block_number])? {
             let view = TransactionView {
-                from: Held::Value(&call.from),
-                to: held_or_absent(&call.to),
-                status: Held::Unheld,
+                from: Some(&call.from),
+                to: call.to.as_deref(),
+                status: None,
             };
             let matched: Vec<&OnTransactionRegistration> = read
                 .registrations
@@ -242,21 +227,13 @@ pub(crate) async fn read(
             }
             responses::check_transaction(&transaction, &fields)
                 .map_err(|error| EnrichError::from_response(block_number, error))?;
-            let status = match receipt_fields {
-                // A receipt from before status existed holds none.
-                Some(fields) if fields & STATUS_BIT != 0 => {
-                    Held::new(true, transaction.status.map(|status| status.to_u8() as u64))
-                }
-                _ => Held::Unheld,
-            };
-            let view = TransactionView {
-                from: Held::Value(&call.from),
-                to: held_or_absent(&call.to),
-                status,
-            };
+            let status = receipt_fields
+                .filter(|fields| fields & bit(EvmTxField::Status) != 0)
+                .and(transaction.status)
+                .map(|status| status.to_u8() as u64);
             let runs = matched
                 .iter()
-                .any(|registration| registration.filter.matches_status(view.status));
+                .any(|registration| registration.filter.matches_status(status));
             Ok(runs.then_some((transaction, fetched)))
         },
     ))

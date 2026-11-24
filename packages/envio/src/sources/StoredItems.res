@@ -150,6 +150,21 @@ type links = {
         )
       | Null => ()
       }
+      switch item {
+      // A copy: the transaction object is shared with its events'
+      // `event.transaction`, which carries no block.
+      | Transaction({?transaction, ?block}) =>
+        item->Internal.setItemTransaction(
+          transaction
+          ->Option.getUnsafe
+          ->(Utils.magic: Internal.eventTransaction => dict<unknown>)
+          ->Utils.Dict.merge(
+            dict{"block": block->Option.getUnsafe->(Utils.magic: Internal.eventBlock => unknown)},
+          )
+          ->(Utils.magic: dict<unknown> => Internal.eventTransaction),
+        )
+      | Event(_) | Block(_) => ()
+      }
     })
 )
 

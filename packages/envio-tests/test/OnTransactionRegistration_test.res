@@ -44,13 +44,11 @@ describe("onTransaction registration errors", () => {
     t.expect({
       outer: errorOf(() => ({ from: ["0x1111111111111111111111111111111111111111"] })),
       inner: errorOf(() => ({ transaction: { value: [1n] } })),
-      sighash: errorOf(() => ({ transaction: { sighash: ["0xa9059cbb"] } })),
       returned: errorOf(() => undefined),
       notAFunction: errorOf({ transaction: {} }),
     }).toEqual({
       outer: invalid(shape),
       inner: invalid(\`Unknown field \\\`value\\\`. \${shape}\`),
-      sighash: invalid(\`Unknown field \\\`sighash\\\`. \${shape}\`),
       returned:
         '\\\`indexer.onTransaction("bad")\\\` \\\`where\\\` returned an invalid value of type undefined. Expected \\\`true\\\`, \\\`false\\\` or a filter object.',
       notAFunction:

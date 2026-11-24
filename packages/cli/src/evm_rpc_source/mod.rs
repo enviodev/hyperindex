@@ -562,8 +562,7 @@ impl EvmRpcClient {
         let transaction_read = TransactionRead::new(
             self.chain
                 .transaction_matcher
-                .select(&params.on_transaction_registration_indexes)
-                .map_err(map_err)?,
+                .selected(!params.on_transaction_registration_indexes.is_empty()),
         );
         // A page selecting only blocks, where no handler runs, reads nothing:
         // over a final range it has no reorg observation to make either, so it

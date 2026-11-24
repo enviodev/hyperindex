@@ -45,6 +45,10 @@ type sourceConfig =
   // like every other source, so it can apply the same gates.
   | SimulateSourceConfig({
       items: array<Internal.item>,
+      // The index in the `simulate` array each of `items` came from: an event
+      // fans out to one item per registration, and a transaction or a block
+      // given on its own makes none.
+      itemSimulateIndexes: array<int>,
       // The block a block handler selecting fields reads at a number, if the
       // simulated chain has one there.
       getBlock: int => option<Internal.eventBlock>,

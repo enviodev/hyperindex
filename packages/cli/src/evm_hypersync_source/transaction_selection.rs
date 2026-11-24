@@ -3,6 +3,7 @@
 
 use napi::bindgen_prelude::Either;
 
+use super::push_unique;
 use super::query::{BlockField, TransactionField, TransactionFilter, TransactionSelection};
 use crate::chain_buffer::matching_transactions::OnTransactionRegistration;
 use crate::evm_rpc_source::fields::tx_fields_in;
@@ -22,19 +23,13 @@ impl BuiltTransactionSelection {
     }
 }
 
-fn hex_list<const N: usize>(values: &[[u8; N]]) -> Option<Vec<String>> {
+fn hex_list(values: &[[u8; 20]]) -> Option<Vec<String>> {
     (!values.is_empty()).then(|| {
         values
             .iter()
             .map(|value| crate::hex::to_hex(value))
             .collect()
     })
-}
-
-fn push_unique<T: PartialEq>(values: &mut Vec<T>, value: T) {
-    if !values.contains(&value) {
-        values.push(value);
-    }
 }
 
 pub(crate) fn build(registrations: &[&OnTransactionRegistration]) -> BuiltTransactionSelection {
@@ -113,7 +108,7 @@ mod tests {
             },
         ])
         .unwrap();
-        let built = build(&matcher.select(&[0, 1, 2]).unwrap());
+        let built = build(&matcher.selected(true));
         assert_eq!(
             built,
             BuiltTransactionSelection {

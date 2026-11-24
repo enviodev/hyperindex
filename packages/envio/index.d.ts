@@ -2157,7 +2157,7 @@ type EvmSimulateItem<Config extends IndexerConfigTypes = GlobalConfig> =
 
 /** A simulated transaction, which runs the transaction handlers whose filter
  * matches it. Only the fields given are set, so a filter on a field left out
- * doesn't match. */
+ * doesn't match; `status` defaults to `1`. */
 type EvmSimulateTransaction = {
   /** `transactionIndex` defaults to the block's next free index, and `hash`
    * to one made from the block number and that index. */

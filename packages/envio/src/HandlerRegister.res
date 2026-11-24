@@ -879,10 +879,10 @@ let parseTransactionFilterOrThrow = (
       fail(`Unknown field \`${key}\`. ${shape}`)
     }
   )
+  let given = key => inner->Dict.get(key)->Option.filter(value => value !== %raw(`undefined`))
   let addresses = key =>
-    switch inner->Dict.get(key) {
+    switch given(key) {
     | None => None
-    | Some(value) if value === %raw(`undefined`) => None
     | Some(value) =>
       if !Array.isArray(value) {
         fail(`\`${key}\` must be an array of 20-byte hex addresses.`)
@@ -894,7 +894,7 @@ let parseTransactionFilterOrThrow = (
       Some(
         values->Array.map(value =>
           switch value->(Utils.magic: unknown => JSON.t) {
-          | JSON.String(text) if addressPattern->RegExp.test(text) => text->String.toLowerCase
+          | JSON.String(text) if addressPattern->RegExp.test(text) => text
           | _ =>
             fail(
               `\`${key}\` value ${value
@@ -905,9 +905,8 @@ let parseTransactionFilterOrThrow = (
         ),
       )
     }
-  let status = switch inner->Dict.get("status") {
+  let status = switch given("status") {
   | None => succeeded
-  | Some(value) if value === %raw(`undefined`) => succeeded
   | Some(value) =>
     if !Array.isArray(value) {
       fail("`status` must be an array of 0 (reverted) and 1 (succeeded).")
@@ -938,12 +937,8 @@ let parseTransactionFilterOrThrow = (
   }
 }
 
-// Mirrors `Envio.onBlockWhereArgs` without depending on the module.
-type onTransactionWhereArgs = {chain: unknown}
-
 // `where` is evaluated once per configured chain at registration time, like a
-// block handler's. Deferred via `withRegistration` so the per-chain loop sees
-// the registration's config.
+// block handler's.
 let registerOnTransaction = (
   ~name: string,
   ~where: unknown,
@@ -979,7 +974,7 @@ let registerOnTransaction = (
           ) :> string)}.`,
       )
     }
-    let where = where->(Utils.magic: unknown => onTransactionWhereArgs => unknown)
+    let where = where->(Utils.magic: unknown => onBlockWhereArgs => unknown)
     let (transactionFieldMask, blockFieldMask) = EventConfigBuilder.resolveOnTransactionFieldMasks(
       fields,
       ~name,
@@ -1020,7 +1015,11 @@ let registerOnTransaction = (
           | _ => false
           }
           logger->Logger.warn(
-            `\`indexer.onTransaction("${name}")\` runs on every transaction of chain ${chainId->ChainId.toString}: its filter names no \`from\` or \`to\`.${readsOverRpc
+            `\`indexer.onTransaction("${name}")\` runs on every ${switch filter.status {
+              | Some(1) => "succeeded "
+              | Some(_) => "reverted "
+              | None => ""
+              }}transaction of chain ${chainId->ChainId.toString}: its filter names no \`from\` or \`to\`.${readsOverRpc
                 ? ` Over RPC that reads every block in full${filter.status === None
                       ? ""
                       : ", and a receipt for every transaction to check its status"}.`

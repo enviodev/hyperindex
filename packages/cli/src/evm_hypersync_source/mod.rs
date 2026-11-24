@@ -162,8 +162,7 @@ impl EvmHyperSyncClient {
         let transaction_registrations = self
             .chain
             .transaction_matcher
-            .select(&params.on_transaction_registration_indexes)
-            .map_err(map_err)?;
+            .selected(!params.on_transaction_registration_indexes.is_empty());
         let selects_transactions = !transaction_registrations.is_empty();
         let built_transactions = transaction_selection::build(&transaction_registrations);
         let built = self
@@ -203,9 +202,7 @@ impl EvmHyperSyncClient {
 
         let mut requested_transaction_fields = built.transaction_fields;
         for &field in &built_transactions.transaction_fields {
-            if !requested_transaction_fields.contains(&field) {
-                requested_transaction_fields.push(field);
-            }
+            push_unique(&mut requested_transaction_fields, field);
         }
         let mut block_fields = built.block_fields;
         // Force-add the always-required block fields, then validate the full
@@ -415,9 +412,9 @@ fn add_rollback_guard_blocks(page: &mut PageData, guard: &RollbackGuard) -> Resu
     Ok(())
 }
 
-fn push_unique(missing: &mut Vec<String>, name: String) {
-    if !missing.contains(&name) {
-        missing.push(name);
+pub(super) fn push_unique<T: PartialEq>(values: &mut Vec<T>, value: T) {
+    if !values.contains(&value) {
+        values.push(value);
     }
 }
 
