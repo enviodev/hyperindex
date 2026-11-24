@@ -1,5 +1,5 @@
 // Sits below `ChainState`/`Persistence` in the module graph so that
-// `StartBlockResolver` (called from `Persistence.init`) can build a chain's
+// `StartBlockResolver` (called from `Persistence.prepare`) can build a chain's
 // sources without a dependency cycle.
 let make = (
   ~chainConfig: Config.chain,

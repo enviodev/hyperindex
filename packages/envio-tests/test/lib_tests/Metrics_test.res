@@ -89,6 +89,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           queueWaitSeconds: 0.,
           invalidationsCount: 0.,
           cacheCount: None,
+          cacheCountAtStart: 0,
         },
       ],
     }
@@ -291,6 +292,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           queueWaitSeconds: 1.75,
           invalidationsCount: 3.,
           cacheCount: Some(128),
+          cacheCountAtStart: 0,
         },
       ],
       storageLoads: [
@@ -674,7 +676,7 @@ describe("Metrics.merge", () => {
     preloadSecondsTotal: 3.,
   }
 
-  let effect = (~cacheCount): Metrics.effectMetrics => {
+  let effect = (~cacheCount, ~cacheCountAtStart=0): Metrics.effectMetrics => {
     effect: "getMetadata",
     scope: "crossChain",
     callSeconds: 1.,
@@ -685,7 +687,29 @@ describe("Metrics.merge", () => {
     queueWaitSeconds: 0.25,
     invalidationsCount: 1.,
     cacheCount,
+    cacheCountAtStart,
   }
+
+  // https://github.com/enviodev/hyperindex/issues/1862
+  it("Counts the rows workers of a cross-chain cache started from once", t => {
+    let worker = (~cacheCount): Metrics.t => {
+      ...baseMetrics,
+      effects: [effect(~cacheCount=Some(cacheCount), ~cacheCountAtStart=5)],
+    }
+
+    t.expect(
+      (
+        Metrics.merge(
+          [worker(~cacheCount=7), worker(~cacheCount=6)],
+          ~startTime,
+          ~metricTime,
+          ~elapsedSeconds=9.,
+          ~targetBufferSize=100,
+        ).effects->Array.getUnsafe(0)
+      ).cacheCount,
+      ~message="5 stored rows, then 2 and 1 written by each",
+    ).toEqual(Some(8))
+  })
 
   it("Returns one worker's snapshot unchanged, taking the clock from the caller", t => {
     let only: Metrics.t = {

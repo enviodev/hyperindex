@@ -73,6 +73,9 @@ type effectMetrics = {
   invalidationsCount: float,
   // None for effects that don't persist their cache.
   cacheCount: option<int>,
+  // How many of `cacheCount`'s rows the storage already held when the process
+  // started, so siblings that read the same rows count them once.
+  cacheCountAtStart: int,
 }
 
 type storageLoadMetrics = {
@@ -232,13 +235,22 @@ let merge = (snapshots: array<t>, ~startTime, ~metricTime, ~elapsedSeconds, ~tar
         queueCount: a.queueCount + b.queueCount,
         queueWaitSeconds: a.queueWaitSeconds +. b.queueWaitSeconds,
         invalidationsCount: a.invalidationsCount +. b.invalidationsCount,
-        // An effect's cache rows are per chain, so worker counts are disjoint.
-        // Absent unless some worker persists the cache at all.
+        // Every worker of a cross-chain cache starts from the rows it already
+        // held: those count once, and each worker's own writes on top. Absent
+        // unless some worker persists the cache at all.
         cacheCount: switch (a.cacheCount, b.cacheCount) {
-        | (Some(x), Some(y)) => Some(x + y)
+        | (Some(x), Some(y)) =>
+          Some(
+            Pervasives.max(a.cacheCountAtStart, b.cacheCountAtStart) +
+            x -
+            a.cacheCountAtStart +
+            y -
+            b.cacheCountAtStart,
+          )
         | (Some(x), None) => Some(x)
         | (None, y) => y
         },
+        cacheCountAtStart: Pervasives.max(a.cacheCountAtStart, b.cacheCountAtStart),
       },
     ),
     storageLoads: concat(s => s.storageLoads)->sumByKey(
