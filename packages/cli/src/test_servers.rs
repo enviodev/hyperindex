@@ -4,11 +4,12 @@
 //! Postgres comes from the binaries on `PATH`, or from where Debian and Ubuntu
 //! install them. ClickHouse comes from `PATH`, or is downloaded once on Linux.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 pub(crate) const PASSWORD: &str = "testing";
@@ -247,18 +248,8 @@ fn start_clickhouse_cluster(
             .zip(&urls)
             .zip(&mut servers)
             .try_for_each(|(((name, ..), url), server)| {
-                // Answering isn't enough: replicated DDL also needs Keeper to have
-                // elected itself, which it does a moment after the servers come up.
                 wait_for(&root.join(name).join("error.log"), server, || {
-                    Command::new("curl")
-                        .args(["-sf", "-u", &format!("default:{PASSWORD}"), url])
-                        .args([
-                            "--data-binary",
-                            "SELECT count() FROM system.zookeeper WHERE path = '/'",
-                        ])
-                        .stdout(Stdio::null())
-                        .status()
-                        .is_ok_and(|status| status.success())
+                    clickhouse_answers_through_keeper(url)
                 })
             });
     if let Err(log) = started {
@@ -269,6 +260,20 @@ fn start_clickhouse_cluster(
         return Err(log);
     }
     Ok(ClickHouse { replicas: urls })
+}
+
+/// Answering isn't enough: replicated DDL also needs Keeper to have elected
+/// itself, which it does a moment after the servers come up.
+fn clickhouse_answers_through_keeper(url: &str) -> bool {
+    Command::new("curl")
+        .args(["-sf", "-u", &format!("default:{PASSWORD}"), url])
+        .args([
+            "--data-binary",
+            "SELECT count() FROM system.zookeeper WHERE path = '/'",
+        ])
+        .stdout(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 fn clickhouse_binary() -> PathBuf {
@@ -319,11 +324,19 @@ fn scratch_dir(name: &str) -> PathBuf {
     dir
 }
 
+/// The kernel can answer a port it gave out a moment ago, once that listener
+/// has let it go, and a cluster handed one port twice refuses its own config.
 fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .and_then(|listener| listener.local_addr())
-        .unwrap()
-        .port()
+    static HANDED_OUT: Mutex<BTreeSet<u16>> = Mutex::new(BTreeSet::new());
+    loop {
+        let port = TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .unwrap()
+            .port();
+        if HANDED_OUT.lock().unwrap().insert(port) {
+            return port;
+        }
+    }
 }
 
 fn succeed(command: &mut Command) {
@@ -394,13 +407,14 @@ fn wait_for(log: &Path, server: &mut Child, ready: impl Fn() -> bool) -> Result<
     Ok(())
 }
 
-mod live_tests {
+mod tests {
     use super::*;
     use std::net::TcpStream;
 
     /// Free ports, except that the one at `taken_index` is the local end of
     /// an outgoing connection, as when the kernel hands a just-freed port to a
     /// client socket before the server binds it.
+    ///
     /// The sockets live as long as the port source, so through the server's
     /// whole startup.
     fn ports_with_one_taken(taken_index: usize) -> (u16, impl FnMut() -> u16) {
@@ -418,6 +432,18 @@ mod live_tests {
             }
         };
         (taken_port, ports)
+    }
+
+    #[test]
+    fn free_port_never_hands_out_a_port_twice() {
+        let mut ports: Vec<u16> = (0..2000).map(|_| free_port()).collect();
+        ports.sort_unstable();
+        let repeated: Vec<u16> = ports
+            .windows(2)
+            .filter(|pair| pair[0] == pair[1])
+            .map(|pair| pair[0])
+            .collect();
+        assert_eq!(repeated, Vec::<u16>::new());
     }
 
     #[test]
