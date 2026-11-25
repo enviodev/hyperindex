@@ -109,6 +109,7 @@ let applyPage = async (
     ~buffer,
     ~context={
       chainId: 1->ChainId.fromInt,
+      ecosystem: Evm,
       onEventRegistrations,
       onBlockRegistrations: [],
       onTransactionRegistrations: [],

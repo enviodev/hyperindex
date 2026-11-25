@@ -5,6 +5,7 @@
 // carry.
 type context = {
   chainId: ChainId.t,
+  ecosystem: Ecosystem.name,
   onEventRegistrations: array<Internal.onEventRegistration>,
   onBlockRegistrations: array<Internal.onBlockRegistration>,
   onTransactionRegistrations: array<Internal.onTransactionRegistration>,
@@ -116,7 +117,7 @@ type links = {
     toRead: links,
     ~transactions,
     ~blocks,
-    ~isEvmRow: int => bool,
+    ~ecosystem: Ecosystem.name,
   ) =>
     items->Array.forEachWithIndex((item, row) => {
       let transaction = switch toRead.transactionRows
@@ -145,7 +146,9 @@ type links = {
         Some(transaction)
       | Null => None
       }
-      switch toRead.blockRows->valueAt(row)->(Utils.magic: unknown => Null.t<float>) {
+      let block = switch toRead.blockRows
+      ->valueAt(row)
+      ->(Utils.magic: unknown => Null.t<float>) {
       | Value(link) =>
         let block =
           link < 0.
@@ -158,14 +161,23 @@ type links = {
         | Block(_) => item->Internal.itemBlockHolder->Internal.setHolderBlock(block)
         | Transaction(_) => ()
         }
-        switch transaction {
-        | Some(transaction) if isEvmRow(row) =>
-          transaction
-          ->(Utils.magic: Internal.eventTransaction => Internal.blockHolder)
-          ->Internal.setHolderBlock(block)
-        | _ => ()
-        }
-      | Null => ()
+        Some(block)
+      | Null => None
+      }
+      // An event's transaction and block may also be its own, inline.
+      let (transaction, block) = switch item {
+      | Event({payload}) => (
+          payload->Internal.getPayloadTransaction->Nullable.toOption,
+          payload->Internal.getPayloadBlock->Nullable.toOption,
+        )
+      | Transaction(_) | Block(_) => (transaction, block)
+      }
+      switch (ecosystem, transaction, block) {
+      | (Evm, Some(transaction), Some(block)) =>
+        transaction
+        ->(Utils.magic: Internal.eventTransaction => Internal.blockHolder)
+        ->Internal.setHolderBlock(block)
+      | _ => ()
       }
     })
 )
@@ -304,15 +316,7 @@ let read = (rows: ChainBuffer.builtItems, ~context: context): array<Internal.ite
       {transactionRows: linkColumn("transactionRow"), blockRows: linkColumn("blockRow")},
       ~transactions,
       ~blocks,
-      ~isEvmRow=row =>
-        switch details
-        ->numberAt(row)
-        ->Float.toInt
-        ->Int.bitwiseAnd(7)
-        ->(Utils.magic: int => format) {
-        | EvmLog | Transaction => true
-        | _ => false
-        },
+      ~ecosystem=context.ecosystem,
     )
     items
   })

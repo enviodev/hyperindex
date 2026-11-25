@@ -100,9 +100,11 @@ rows are written for events only.
 Testing: simulate a transaction as `{ transaction: {...}, block: {...} }`. Only
 the fields given are set, so a filter on a field left out doesn't match;
 `status` defaults to 1. `transactionIndex` defaults to the block's next free index and `hash` to one
-made from the block number and that index; an event's
-`transaction.transactionIndex`, settable when the event selects it, places it
-among them (0 by default).
+made from the block number and that index. An event belongs to the block's
+transaction at its `transaction.transactionIndex` (0 by default, settable when
+the event selects it): it runs after that transaction's handlers and reads the
+fields the transaction item and the transaction's other events give; a field
+given twice must agree.
 
 ```ts
 await indexer.process({

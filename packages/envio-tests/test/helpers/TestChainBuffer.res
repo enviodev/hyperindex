@@ -40,6 +40,7 @@ let itemsOf = async (
     ~buffer,
     ~context={
       chainId: ChainId.fromInt(0),
+      ecosystem,
       onEventRegistrations,
       onBlockRegistrations,
       onTransactionRegistrations: [],
@@ -95,6 +96,7 @@ let evmLogsOf = async (
       ~buffer,
       ~context={
         chainId: ChainId.fromInt(0),
+        ecosystem: Evm,
         onEventRegistrations,
         onBlockRegistrations: [],
         onTransactionRegistrations: [],

@@ -89,6 +89,7 @@ let getItems = async (
       ~buffer=TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
       ~context={
         chainId,
+        ecosystem: Evm,
         onEventRegistrations,
         onBlockRegistrations: [],
         onTransactionRegistrations: [],

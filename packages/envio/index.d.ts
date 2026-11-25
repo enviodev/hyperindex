@@ -2123,9 +2123,10 @@ type EvmSimulateItem<Config extends IndexerConfigTypes = GlobalConfig> =
             logIndex?: number;
             /** Override block fields. */
             block?: Partial<Contracts[C][E]["block"]>;
-            /** Override transaction fields. A selected `transactionIndex`, 0 by
-             * default, places the event among the block's simulated
-             * transactions. */
+            /** Override transaction fields. The event belongs to the block's
+             * transaction at `transactionIndex` (0 by default, settable when
+             * selected), sharing its fields with a simulated transaction and
+             * other events there; a field given twice must agree. */
             transaction?: Partial<Omit<Contracts[C][E]["transaction"], "block">>;
             /** Event parameters. Keys match the event's parameter names. */
             params?: Partial<Contracts[C][E]["params"]>;

@@ -9,6 +9,7 @@ let registration = {
 
 let context: StoredItems.context = {
   chainId,
+  ecosystem: Evm,
   onEventRegistrations: [registration],
   onBlockRegistrations: [],
   onTransactionRegistrations: [],
@@ -46,8 +47,9 @@ describe("BufferPage.fromItems", () => {
     )
 
     // A payload without its own transaction and block reads them from the
-    // chain's buffer; with no field selected, each is an empty object.
-    payload->Dict.set("transaction", %raw(`{}`))
+    // chain's buffer; with no field selected, each is an empty object, and the
+    // transaction carries the block.
+    payload->Dict.set("transaction", %raw(`{"block": {}}`))
     payload->Dict.set("block", %raw(`{}`))
     t.expect(taken).toEqual([eventWithPayload(payload)])
   })

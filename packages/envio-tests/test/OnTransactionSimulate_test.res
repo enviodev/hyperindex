@@ -14,6 +14,7 @@ contracts:
         field_selection:
           transaction_fields:
             - transactionIndex
+            - from
 chains:
   - id: 1
     start_block: 0
@@ -130,7 +131,10 @@ indexer.onTransaction(
   },
 );
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) =>
-  record(context, \`Transfer \${event.transaction.block.number}/\${event.logIndex}\`),
+  record(
+    context,
+    \`Transfer \${event.transaction.block.number}/\${event.logIndex} from \${event.transaction.from}\`,
+  ),
 );
 `,
   ~test=`
@@ -188,7 +192,7 @@ describe("onTransaction under simulate", () => {
         "succeeded 3/0",
         "to-bob 3/1",
         "succeeded 3/1",
-        "Transfer 3/0",
+        "Transfer 3/0 from 0x3333333333333333333333333333333333333333",
         "to-bob 3/2",
         "succeeded 3/2",
         "from-alice 3/3",
@@ -200,7 +204,7 @@ describe("onTransaction under simulate", () => {
         "succeeded 3/0",
         "to-bob 3/1",
         "succeeded 3/1",
-        "Transfer 3/0",
+        "Transfer 3/0 from 0x3333333333333333333333333333333333333333",
         "to-bob 3/2",
         "succeeded 3/2",
         "from-alice 3/3",
@@ -347,6 +351,28 @@ describe("onTransaction under simulate", () => {
         }),
       )
       .rejects.toThrow("Unrouted items, by index in each chain's simulate array:\\n  - chain 1: 1");
+  });
+
+  it("refuses an event that gives its transaction another value than the transaction", async (t) => {
+    const indexer = createTestIndexer();
+    await t
+      .expect(
+        indexer.process({
+          chains: {
+            1: {
+              startBlock: 0,
+              endBlock: 5,
+              simulate: [
+                { transaction: { from: alice } },
+                { contract: "Token", event: "Transfer", params: { from: alice, to: bob, value: 1n }, transaction: { from: bob } },
+              ],
+            },
+          },
+        }),
+      )
+      .rejects.toThrow(
+        'simulate: event at index 1 on chain 1: block 0 already has a transaction at index 0 with another "from"',
+      );
   });
 
   it("refuses a transaction field it doesn't know", async (t) => {

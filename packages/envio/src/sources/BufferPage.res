@@ -21,9 +21,6 @@ type decodedEvent = {
   // Its transaction's key in the buffer, when the item doesn't carry the
   // transaction itself.
   transactionIndex?: int,
-  // The index of the transaction it carries itself, which places it among the
-  // block's transactions.
-  inlineTransactionIndex?: int,
   blockFromStore: bool,
 }
 
@@ -71,19 +68,6 @@ let fromItems = (items: array<Internal.item>, ~blocks, ~ecosystem: Ecosystem.nam
             | Some(_) => None
             | None => Some(transactionIndex)
             },
-            inlineTransactionIndex: ?(
-              payload
-              ->Internal.getPayloadTransaction
-              ->Nullable.toOption
-              ->Option.flatMap(transaction =>
-                transaction
-                ->(Utils.magic: Internal.eventTransaction => dict<unknown>)
-                ->Dict.get("transactionIndex")
-                ->Option.flatMap(
-                  index => index->(Utils.magic: unknown => Nullable.t<int>)->Nullable.toOption,
-                )
-              )
-            ),
             blockFromStore: payload->Internal.getPayloadBlock->Nullable.toOption->Option.isNone,
           }
         | Block({onBlockRegistration, blockNumber, ?block, ?skipped}) =>
