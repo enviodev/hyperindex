@@ -175,10 +175,17 @@ let shouldPoll = (feed: t) =>
 // from anywhere, including from things that have just made the loop's job
 // smaller: the loop re-reads `shouldPoll` when it wakes and stops if there is
 // nothing left to do.
+//
+// Waiters that only poll behind the stream want a steady, slow poll, so while
+// they are all the loop has, a wake that leaves it something to do would only
+// send a request early: a held source whose stream pushes each height it
+// reaches would be asked for its height on every push.
 let wakeCadence = (feed: t) =>
   switch feed.sleeping {
-  | Some({kind: Cadence, wake}) => wake()
-  | Some({kind: Backoff}) | None => ()
+  | Some({kind: Cadence, wake})
+    if !(feed->shouldPoll) || !(feed.waiters->Array.every(waiter => waiter.pollsBehindStream)) =>
+    wake()
+  | Some({kind: Cadence}) | Some({kind: Backoff}) | None => ()
   }
 
 // The source answered, so the wait its failures earned is no longer owed —

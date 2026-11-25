@@ -707,6 +707,40 @@ describe("Height subscription", () => {
     },
   )
 
+  // https://github.com/enviodev/hyperindex/issues/1829
+  scenario->Scenario.it(
+    "Doesn't poll a held source for each height its stream pushes",
+    ~sources=[
+      {chain: 1337, methods: streaming},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 5},
+    ],
+    ~sourceTiming={
+      newBlockStallTimeoutRealtime: 20,
+      stalledPollingInterval: 50,
+      reducedPollingInterval: 1_000,
+    },
+    async (~t as _, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      await reachRealtime(~sync)
+      await sync->goLive(~indexer)
+      // Sync stops at 101, far behind the fallback's 1000, which holds it.
+      sync.setAutoHeight(101)
+      fallback.setAutoHeight(1000)
+      await indexer.advanceTime(20)
+      await fallback->answerQuery(~fromBlock=102, ~toBlock=1000)
+      await sync.expectNewHeightCallsAtLeast(1)
+
+      // Resyncing: its stream pushes every height it reaches, all still far
+      // behind. Each push is a height already, so none should cost a poll.
+      for height in 102 to 106 {
+        sync.triggerHeightSubscription(height)
+        await indexer.advanceTime(1)
+      }
+      await sync.expectNewHeightCalls(0)
+    },
+  )
+
   scenario->Scenario.it(
     "Reports height stream connects and disconnects as metrics",
     ~sources=[{chain: 1337, methods: streaming}],
