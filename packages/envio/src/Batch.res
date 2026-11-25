@@ -403,7 +403,7 @@ let findFirstEventBlockNumber = (batch: t, ~chainId) => {
 }
 
 // The block of the chain's last item that carries one in the batch: an
-// event's, or a transaction handler's, which always reads the block's time.
+// event's or a transaction handler's.
 let findLastItemBlock = (batch: t, ~chainId) => {
   let idx = ref(batch.items->Array.length - 1)
   let result = ref(None)

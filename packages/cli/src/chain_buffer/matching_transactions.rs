@@ -22,7 +22,7 @@ pub struct OnTransactionRegistrationInput {
     pub to: Option<Vec<String>>,
     pub status: Option<i64>,
     /// The transaction fields the handler reads, as the transactions table's
-    /// bitmask, the always-carried ones included.
+    /// bitmask.
     pub transaction_field_mask: f64,
     /// The block fields the handler reads, as the blocks table's bitmask.
     pub block_field_mask: f64,

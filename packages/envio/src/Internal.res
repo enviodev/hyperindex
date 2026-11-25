@@ -696,8 +696,7 @@ type onTransactionRegistration = {
   name: string,
   chainId: ChainId.t,
   filter: transactionFilter,
-  // The fields the handler reads as the tables' bitmasks, the always-carried
-  // ones included.
+  // The fields the handler reads as the tables' bitmasks.
   transactionFieldMask: float,
   blockFieldMask: float,
   handler: onTransactionArgs => promise<unit>,

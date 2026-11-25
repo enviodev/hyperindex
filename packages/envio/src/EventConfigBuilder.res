@@ -490,7 +490,13 @@ let resolveOnTransactionFieldMasks = (fields: unknown, ~name) => {
     )
   }
   transactionFields->Utils.Set.add("transactionIndex")->ignore
-  blockFields->Utils.Set.add("number")->ignore
+  // Types expose only `number`, as for events, but the progress latency reads
+  // a batch's last block's timestamp.
+  blockFields
+  ->Utils.Set.addMany(
+    alwaysIncludedBlockFields->(Utils.magic: array<Internal.evmBlockField> => array<string>),
+  )
+  ->ignore
   (Evm.eventTransactionFieldMask(transactionFields), Evm.eventBlockFieldMask(blockFields))
 }
 
