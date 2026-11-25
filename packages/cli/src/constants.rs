@@ -132,7 +132,6 @@ pub mod reserved_keywords {
         "EvmOnEventWhereArgs",
         "EvmOnEventWhereChain",
         "EvmOnEventWhereFilter",
-        "EvmOnTransactionBlock",
         "EvmOnTransactionFilter",
         "EvmOnTransactionHandler",
         "EvmOnTransactionHandlerArgs",
