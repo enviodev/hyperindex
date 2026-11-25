@@ -101,7 +101,8 @@ Testing: simulate a transaction as `{ transaction: {...}, block: {...} }`. Only
 the fields given are set, so a filter on a field left out doesn't match;
 `status` defaults to 1. `transactionIndex` defaults to the block's next free index and `hash` to one
 made from the block number and that index; an event's
-`transaction.transactionIndex` (0 by default) places it among them.
+`transaction.transactionIndex`, settable when the event selects it, places it
+among them (0 by default).
 
 ```ts
 await indexer.process({

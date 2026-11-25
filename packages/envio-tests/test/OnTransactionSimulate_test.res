@@ -11,6 +11,9 @@ contracts:
   - name: Token
     events:
       - event: Transfer(address indexed from, address indexed to, uint256 value)
+        field_selection:
+          transaction_fields:
+            - transactionIndex
 chains:
   - id: 1
     start_block: 0
