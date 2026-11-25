@@ -419,6 +419,26 @@ describe("resolver /hasura-action", () => {
     });
   });
 
+  it("reads a null Hasura sends for a nullable argument as the argument being absent", async () => {
+    // What Hasura delivers when the query's variables are declared and the
+    // caller provides none of them: each one arrives as an explicit null.
+    expect(
+      await action({
+        action: { name: "marketsAprByPeriod" },
+        input: {
+          where: { periodStart: 1735689600, marketAddresses: null },
+          codeTiersAsc: null,
+        },
+        session_variables: { "x-hasura-role": "public" },
+        request_query:
+          "query($markets: [String!], $tiers: [CodeTierRuleInput!]) { marketsAprByPeriod(where: { periodStart: 1735689600, marketAddresses: $markets }, codeTiersAsc: $tiers) }",
+      })
+    ).toEqual({
+      status: 200,
+      body: JSON.stringify({ where: { periodStart: 1735689600 } }),
+    });
+  });
+
   it("rejects an argument the declared input type refuses", async () => {
     const answer = await action({
       action: { name: "marketsAprByPeriod" },

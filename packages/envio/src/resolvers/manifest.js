@@ -27,7 +27,7 @@ const BUILTIN_SCALARS = {
   boolean: "Boolean",
 };
 
-const NAMED = Symbol.for("envio.resolvers.graphqlType");
+export const NAMED = Symbol.for("envio.resolvers.graphqlType");
 
 // `S.bigint` and `S.bigDecimal` are transformed strings, so the tag walk below
 // would call them String -- turning a 30-digit PnL figure into an untyped one
@@ -139,7 +139,7 @@ export function unwrapNullableOutput(schema) {
   return { inner: schema, nullable: false };
 }
 
-function tagOf(schema) {
+export function tagOf(schema) {
   const t = schema.t;
   if (typeof t === "string") return { kind: t };
   if (t && typeof t === "object" && t.TAG) return { kind: t.TAG, node: t };
