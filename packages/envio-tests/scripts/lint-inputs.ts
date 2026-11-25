@@ -338,7 +338,6 @@ for (const path of [...resFiles(sourcesRoot), ...clockedModules]) {
 // the reason given; a new one needs a reason as good.
 const performanceRead = /\bPerformance\.(?:now|secondsSince|secondsBetween)\b/;
 const realWork = "it times real I/O or CPU work, which virtual time would report as instant";
-const notMigrated = "not moved onto the run's clock yet";
 const performanceAllowed: Record<string, string> = {
   "Clock.res": "it is the real clock",
   "Batch.res": realWork,
@@ -351,10 +350,9 @@ const performanceAllowed: Record<string, string> = {
   "sources/FuelHyperSyncSource.res": realWork,
   "sources/RpcSource.res": realWork,
   "Supervisor.res": "it reports the process's uptime",
-  "Writing.res": notMigrated,
-  "LoadLayer.res": notMigrated,
-  "EffectState.res": notMigrated,
-  "sources/SourceManager.res": notMigrated,
+  // The stall on storage writes only starts past ENVIO_IN_MEMORY_OBJECTS_TARGET
+  // changes, read once per process, so no scenario can reach it to set its time.
+  "Writing.res": "it waits on storage writes past a limit no scenario reaches",
 };
 const runtimeRoot = fileURLToPath(new URL("../../envio/src", import.meta.url));
 for (const path of resFiles(runtimeRoot)) {

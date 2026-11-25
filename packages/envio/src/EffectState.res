@@ -27,7 +27,8 @@ type effectStats = {
   mutable callSecondsTotal: float,
   mutable callCount: float,
   mutable activeCallsCount: int,
-  mutable prevCallStartTimerRef: Performance.timeRef,
+  mutable prevCallStartTimerRef: float,
+  clock: Clock.t,
   mutable queueCount: int,
   mutable queueWaitSeconds: float,
   mutable invalidationsCount: float,
@@ -102,31 +103,32 @@ let setUnregisteredCacheCount = (self: t, ~effectName, ~scope, ~count) => {
 // --- Metric mutations. The stats records are opaque outside this module, so
 // every counter change goes through these. ---
 
-// Track a call starting at timerRef: bump the active count and extend the
-// wall-clock callSeconds, which counts overlapping calls once.
-let startCall = (stats: effectStats, ~timerRef) => {
+// Bump the active count and extend the wall-clock callSeconds, which counts
+// overlapping calls once. Returns the call's start, for `endCall`.
+let startCall = (stats: effectStats) => {
+  let timerRef = stats.clock.now()
   let hadActiveCalls = stats.activeCallsCount > 0
   stats.activeCallsCount = stats.activeCallsCount + 1
   if hadActiveCalls {
-    let elapsed = Performance.secondsBetween(~from=stats.prevCallStartTimerRef, ~to=timerRef)
+    let elapsed = (timerRef -. stats.prevCallStartTimerRef) /. 1000.
     if elapsed > 0. {
       stats.callSeconds = stats.callSeconds +. elapsed
     }
   }
   stats.prevCallStartTimerRef = timerRef
+  timerRef
 }
 
 // Finish a call started at startTimerRef: close the wall-clock interval and
 // record the call's own cumulative duration.
 let endCall = (stats: effectStats, ~startTimerRef) => {
   stats.activeCallsCount = stats.activeCallsCount - 1
-  let newTimer = Performance.now()
-  stats.callSeconds =
-    stats.callSeconds +. Performance.secondsBetween(~from=stats.prevCallStartTimerRef, ~to=newTimer)
-  stats.prevCallStartTimerRef = newTimer
+  let endedAt = stats.clock.now()
+  stats.callSeconds = stats.callSeconds +. (endedAt -. stats.prevCallStartTimerRef) /. 1000.
+  stats.prevCallStartTimerRef = endedAt
 
   stats.callCount = stats.callCount +. 1.
-  stats.callSecondsTotal = stats.callSecondsTotal +. startTimerRef->Performance.secondsSince
+  stats.callSecondsTotal = stats.callSecondsTotal +. stats.clock->Clock.secondsSince(startTimerRef)
 }
 
 let queueEnqueued = (stats: effectStats, ~count) => stats.queueCount = stats.queueCount + count
@@ -206,6 +208,7 @@ let getTable = (self: t, ~effect: Internal.effect, ~scope: Internal.chainScope) 
       callCount: 0.,
       activeCallsCount: 0,
       prevCallStartTimerRef: %raw(`null`),
+      clock: self.clock,
       queueCount: 0,
       queueWaitSeconds: 0.,
       invalidationsCount: 0.,
