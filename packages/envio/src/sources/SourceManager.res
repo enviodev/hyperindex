@@ -539,15 +539,17 @@ let highestKnownHeight = (sourceManager: t) =>
 // following its chain again, but one resyncing from far behind would only fail
 // the queries at the head it is handed. Polls at the reduced interval: nothing
 // waits on the source while it is held, and a source that stopped following its
-// chain can stay stopped for weeks. Polls behind a live height stream too: a
-// source that stopped following its chain is exactly the one whose stream can
-// keep its keep-alives flowing while its heights stop, and while the fallback
-// answers every wait, nothing else would ever ask it again.
+// chain can stay stopped for weeks. Polls behind its height stream too, through
+// every drop and reconnect: a source that stopped following its chain is exactly
+// the one whose stream can keep its keep-alives flowing while its heights stop,
+// and while the fallback answers every wait, nothing else would ever ask it
+// again.
 let holdUntilCaughtUp = (sourceManager: t, sourceState: sourceState) => {
   let rec hold = (~failedAt) => {
     let subscription = sourceState.feed->HeightFeed.onHeightAbove(
       ~knownHeight=sourceState.feed->HeightFeed.knownHeight,
       ~interval=() => sourceManager.reducedPollingInterval,
+      ~pollsBehindStream=true,
       ~onHeight=height =>
         sourceState.health = if (
           sourceManager->highestKnownHeight - height <= FetchState.headClientFilteringDistance
@@ -564,7 +566,6 @@ let holdUntilCaughtUp = (sourceManager: t, sourceState: sourceState) => {
           )
         },
     )
-    subscription.distrustStream()
     Held({release: subscription, failedAt})
   }
   // A query can fail on a source after another one benched it, and nothing

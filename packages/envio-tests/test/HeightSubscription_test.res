@@ -668,6 +668,45 @@ describe("Height subscription", () => {
     },
   )
 
+  // https://github.com/enviodev/hyperindex/issues/1829
+  scenario->Scenario.it(
+    "Keeps polling a held source after its stream reconnects and goes quiet again",
+    ~sources=[
+      {chain: 1337, methods: streaming},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 5},
+    ],
+    ~sourceTiming={
+      newBlockStallTimeoutRealtime: 20,
+      stalledPollingInterval: 50,
+      reducedPollingInterval: 10,
+    },
+    async (~t as _, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      await reachRealtime(~sync)
+      await sync->goLive(~indexer)
+      sync.setAutoHeight(101)
+      fallback.setAutoHeight(103)
+      await indexer.advanceTime(20)
+      await fallback->answerQuery(~fromBlock=102, ~toBlock=103)
+
+      // The held source's stream drops and comes back. The catch-up poll on
+      // reconnect answers the same height, which proves the new connection.
+      sync.setHeightSubscriptionStatus(Down({reason: Closed}))
+      sync.setHeightSubscriptionStatus(Live)
+      await indexer.advanceTime(0)
+      await sync.expectNewHeightCallsAtLeast(1)
+
+      // Sync moves on without a word from its stream.
+      sync.setAutoHeight(150)
+      await indexer.advanceTime(10)
+      await sync.expectNewHeightCallsAtLeast(1)
+      fallback.setAutoHeight(104)
+      await indexer.advanceTime(5)
+      await sync.expectItemsQueries([{fromBlock: 104, reply: LeavePending}])
+    },
+  )
+
   scenario->Scenario.it(
     "Reports height stream connects and disconnects as metrics",
     ~sources=[{chain: 1337, methods: streaming}],
