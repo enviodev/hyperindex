@@ -122,7 +122,25 @@ type Noop {
   // A handler reads \`block.number\` and what it lists, as an event handler
   // does.
   ~handlers=`
-import { indexer } from "envio";
+import {
+  indexer,
+  type EvmOnTransactionContext,
+  type EvmOnTransactionHandler,
+  type EvmOnTransactionOptions,
+  type EvmOnTransactionWhere,
+  type EvmOnTransactionWhereFilter,
+} from "envio";
+
+// The exported types are named as onEvent's are.
+const fields = { transaction: ["hash"] } as const;
+const filter: EvmOnTransactionWhereFilter = { transaction: { status: [0, 1] } };
+const where: EvmOnTransactionWhere = ({ chain }) => chain.id === 1 && filter;
+const options: EvmOnTransactionOptions<typeof fields> = { name: "exported", where, fields };
+const handler: EvmOnTransactionHandler<typeof fields> = async ({ transaction, context }) => {
+  const sameContext: EvmOnTransactionContext = context;
+  void transaction.hash, sameContext;
+};
+indexer.onTransaction(options, handler);
 
 indexer.onTransaction(
   {

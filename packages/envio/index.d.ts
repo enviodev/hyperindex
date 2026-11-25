@@ -1168,12 +1168,16 @@ export type EvmOnBlockOptions<Fields extends EvmOnBlockFieldsSelection = {}> =
 
 // ============== EVM onTransaction types ==============
 
+/** Context for onTransaction handlers in EVM ecosystem. */
+export type EvmOnTransactionContext<Config extends IndexerConfigTypes = GlobalConfig> =
+  EvmOnEventContext<Config>;
+
 /**
  * The filter an EVM `indexer.onTransaction` `where` returns for a chain.
  * Fields are ANDed and the values within a field are ORed; an absent `from` or
  * `to` matches any value.
  */
-export type EvmOnTransactionFilter = {
+export type EvmOnTransactionWhereFilter = {
   readonly transaction: {
     /** Senders. */
     readonly from?: readonly Address[];
@@ -1189,14 +1193,6 @@ export type EvmOnTransactionFilter = {
   };
 };
 
-/**
- * Return type of an EVM `indexer.onTransaction` `where` predicate.
- * - `false` → skip this chain.
- * - `true` → run on every succeeded transaction of the chain.
- * - {@link EvmOnTransactionFilter} → run on the transactions it matches.
- */
-export type EvmOnTransactionWhereResult = boolean | EvmOnTransactionFilter;
-
 /** Argument passed to an EVM `indexer.onTransaction` `where` predicate. Filter
  * values are static, so a contract's `addresses` can't be read here: list the
  * addresses instead. */
@@ -1207,32 +1203,30 @@ export type EvmOnTransactionWhereArgs<Config extends IndexerConfigTypes = Global
   };
 };
 
-type EvmOnTransactionArgsFor<Fields extends EvmFieldsSelection, Config extends IndexerConfigTypes> = {
-  readonly transaction: EvmTransaction<Fields>;
-  /** Handler context: entity operations, logger, effect caller, chain state. */
-  readonly context: EvmOnEventContext<Config>;
-};
+/**
+ * An EVM `indexer.onTransaction` `where` predicate, evaluated once per
+ * configured chain at registration time. It returns:
+ * - `false` → skip this chain.
+ * - `true` → run on every succeeded transaction of the chain.
+ * - {@link EvmOnTransactionWhereFilter} → run on the transactions it matches.
+ */
+export type EvmOnTransactionWhere<Config extends IndexerConfigTypes = GlobalConfig> = (
+  args: EvmOnTransactionWhereArgs<Config>,
+) => EvmOnTransactionWhereFilter | boolean;
 
-type EvmOnTransactionHandlerFor<Fields extends EvmFieldsSelection, Config extends IndexerConfigTypes> = (
-  args: EvmOnTransactionArgsFor<Fields, Config>,
-) => Promise<void>;
-
-type EvmOnTransactionOptionsFor<Fields extends EvmFieldsSelection, Config extends IndexerConfigTypes> = {
+/** Options for an EVM `indexer.onTransaction` registration. */
+export type EvmOnTransactionOptions<
+  Fields extends EvmFieldsSelection = {},
+  Config extends IndexerConfigTypes = GlobalConfig,
+> = {
   /** Unique name for this transaction handler. Used in logs and error
       messages. */
   readonly name: string;
-  /** Evaluated once per configured chain at registration time. Return `false`
-      to skip a chain, `true` to run on every succeeded transaction, or a
-      filter. */
-  readonly where: (args: EvmOnTransactionWhereArgs<Config>) => EvmOnTransactionWhereResult;
+  readonly where: EvmOnTransactionWhere<Config>;
   /** Block and transaction fields this handler reads besides `block.number`,
       with the same names as an event handler's `fields`. */
   readonly fields?: Fields & FieldsLiteralCheck<Fields>;
 };
-
-/** Arguments passed to an EVM transaction handler. */
-export type EvmOnTransactionHandlerArgs<Fields extends EvmFieldsSelection> =
-  EvmOnTransactionArgsFor<Fields, GlobalConfig>;
 
 /** Handler function for an EVM `indexer.onTransaction` registration. Takes the
  * registration's fields selection, so a standalone handler needs a single
@@ -1241,12 +1235,10 @@ export type EvmOnTransactionHandlerArgs<Fields extends EvmFieldsSelection> =
  *     const handleTransaction: EvmOnTransactionHandler<typeof fields> =
  *       async ({ transaction, context }) => { ... };
  */
-export type EvmOnTransactionHandler<Fields extends EvmFieldsSelection> =
-  EvmOnTransactionHandlerFor<Fields, GlobalConfig>;
-
-/** Options for an EVM `indexer.onTransaction` registration. */
-export type EvmOnTransactionOptions<Fields extends EvmFieldsSelection = {}> =
-  EvmOnTransactionOptionsFor<Fields, GlobalConfig>;
+export type EvmOnTransactionHandler<
+  Fields extends EvmFieldsSelection = {},
+  Context = EvmOnTransactionContext,
+> = (args: { transaction: EvmTransaction<Fields>; context: Context }) => Promise<void>;
 
 // ============== Fuel event fields ==============
 
@@ -1872,11 +1864,11 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
              * transaction its filter matches, whether or not it emitted a
              * log. `where` is evaluated once per configured chain at
              * registration time; return `false` to skip a chain, `true` to
-             * run on every succeeded transaction, or an {@link EvmOnTransactionFilter}.
+             * run on every succeeded transaction, or an {@link EvmOnTransactionWhereFilter}.
              */
             readonly onTransaction: <const F extends EvmFieldsSelection = {}>(
-              options: EvmOnTransactionOptionsFor<F, Config>,
-              handler: EvmOnTransactionHandlerFor<F, Config>,
+              options: EvmOnTransactionOptions<F, Config>,
+              handler: EvmOnTransactionHandler<F, EvmOnTransactionContext<Config>>,
             ) => void;
           } & (Config["evm"] extends {
             contracts: infer Contracts extends Record<string, Record<string, any>>;
