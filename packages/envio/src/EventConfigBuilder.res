@@ -295,8 +295,9 @@ let resolveFieldSelection = (
   )
 }
 
-// `block.number` is the item's own key, so an inline selection carries it
-// whether or not the handler listed it. Nothing else is added: dropping
+// `block.number` is the item's own key, so an inline selection, an event's or
+// a transaction handler's, carries it whether or not the handler listed it.
+// Nothing else is added: dropping
 // `timestamp`/`hash` is the point of naming fields inline, and the two things
 // that read them off the payload cope — the progress-latency metric
 // (`ChainState.applyBatchProgress`) skips a batch whose last block has no
@@ -390,16 +391,9 @@ let parseFieldsOrThrow = (
   seen
 }
 
-// Resolve an inline `fields` option into a selection. Depends only on the
-// option itself (the names are for error messages), never on the chain, so one
-// `onEvent` call resolves once and shares the result across every chain.
-let resolveInlineFieldSelection = (
-  fields: unknown,
-  ~contractName: string,
-  ~eventName: string,
-  ~enableRawEvents: bool,
-): Internal.fieldSelection => {
-  let registration = `the "${eventName}" event registration on contract "${contractName}"`
+// The block and transaction fields an EVM `fields` option lists, the block's
+// key included.
+let parseEvmFieldsOrThrow = (fields: unknown, ~registration) => {
   validateFieldsShapeOrThrow(
     fields,
     ~registration,
@@ -419,6 +413,22 @@ let resolveInlineFieldSelection = (
     ~registration,
   )
   blockFields->Utils.Set.addMany(internalBlockFields)
+  (blockFields, transactionFields)
+}
+
+// Resolve an inline `fields` option into a selection. Depends only on the
+// option itself (the names are for error messages), never on the chain, so one
+// `onEvent` call resolves once and shares the result across every chain.
+let resolveInlineFieldSelection = (
+  fields: unknown,
+  ~contractName: string,
+  ~eventName: string,
+  ~enableRawEvents: bool,
+): Internal.fieldSelection => {
+  let (blockFields, transactionFields) =
+    fields->parseEvmFieldsOrThrow(
+      ~registration=`the "${eventName}" event registration on contract "${contractName}"`,
+    )
   if enableRawEvents {
     blockFields->Utils.Set.addMany(rawEventBlockFields)
   }
@@ -464,38 +474,10 @@ let resolveOnBlockFieldMask = (fields: unknown, ~name, ~ecosystem: Ecosystem.t):
 // Resolve a transaction handler's `fields` option, the shape `onEvent` takes,
 // into the transaction and block tables' bitmasks.
 let resolveOnTransactionFieldMasks = (fields: unknown, ~name) => {
-  let registration = `\`indexer.onTransaction("${name}")\``
-  let (blockFields, transactionFields) = if typeof(fields) === #undefined {
-    (Utils.Set.make(), Utils.Set.make())
-  } else {
-    validateFieldsShapeOrThrow(
-      fields,
-      ~registration,
-      ~validKeys=evmSelectionKinds,
-      ~shapeNoun="block and transaction",
-    )
-    (
-      parseFieldsOrThrow(
-        selectionList(fields, "block"),
-        ~valid=validBlockFields,
-        ~kind="block",
-        ~registration,
-      ),
-      parseFieldsOrThrow(
-        selectionList(fields, "transaction"),
-        ~valid=validTransactionFields,
-        ~kind="transaction",
-        ~registration,
-      ),
-    )
-  }
-  // Types expose only `number`, as for events, but the progress latency reads
-  // a batch's last block's timestamp.
-  blockFields
-  ->Utils.Set.addMany(
-    alwaysIncludedBlockFields->(Utils.magic: array<Internal.evmBlockField> => array<string>),
-  )
-  ->ignore
+  let (blockFields, transactionFields) =
+    typeof(fields) === #undefined
+      ? (Utils.Set.fromArray(internalBlockFields), Utils.Set.make())
+      : fields->parseEvmFieldsOrThrow(~registration=`\`indexer.onTransaction("${name}")\``)
   (Evm.eventTransactionFieldMask(transactionFields), Evm.eventBlockFieldMask(blockFields))
 }
 

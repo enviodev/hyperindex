@@ -295,6 +295,7 @@ type eventPayload
 // store-backed ecosystems (HyperSync) and present inline otherwise.
 @get external getPayloadTransaction: eventPayload => Nullable.t<eventTransaction> = "transaction"
 @set external setPayloadTransaction: (eventPayload, eventTransaction) => unit = "transaction"
+@get external getTransactionBlock: eventTransaction => Nullable.t<eventBlock> = "block"
 
 // Generic access to the payload's `block`: written/enriched at batch prep for
 // store-backed ecosystems (EVM/SVM HyperSync) and present inline otherwise.
@@ -737,9 +738,8 @@ type item =
       blockNumber: int,
       transactionIndex: int,
       // Joined by the build from the chain buffer's rows, for the
-      // registration's selected fields.
+      // registration's selected fields, with its block as `block`.
       transaction?: eventTransaction,
-      block?: eventBlock,
     })
 
 external castUnsafeEventItem: item => eventItem = "%identity"

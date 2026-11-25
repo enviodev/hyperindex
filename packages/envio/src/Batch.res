@@ -413,7 +413,11 @@ let findLastItemBlock = (batch: t, ~chainId) => {
       switch item {
       | Internal.Event({payload}) =>
         result := Some(payload->Internal.getPayloadBlock->Nullable.toOption)
-      | Internal.Transaction({?block}) => result := Some(block)
+      | Internal.Transaction({?transaction}) =>
+        result :=
+          transaction->Option.map(transaction =>
+            transaction->Internal.getTransactionBlock->Nullable.toOption
+          )
       | Internal.Block(_) => ()
       }
     }

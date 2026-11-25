@@ -153,11 +153,11 @@ type links = {
             : blocks
               ->Array.getUnsafe(link->Float.toInt)
               ->(Utils.magic: dict<unknown> => Internal.eventBlock)
-        let holder = switch item {
-        | Event({payload}) => payload->Internal.payloadBlockHolder
-        | Block(_) | Transaction(_) => item->Internal.itemBlockHolder
+        switch item {
+        | Event({payload}) => payload->Internal.payloadBlockHolder->Internal.setHolderBlock(block)
+        | Block(_) => item->Internal.itemBlockHolder->Internal.setHolderBlock(block)
+        | Transaction(_) => ()
         }
-        holder->Internal.setHolderBlock(block)
         switch transaction {
         | Some(transaction) if isEvmRow(row) =>
           transaction
