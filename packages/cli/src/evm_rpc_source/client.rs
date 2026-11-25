@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 use tokio::sync::{Semaphore, SemaphorePermit};
 
+use super::classify::is_rate_limited;
 use crate::request_stats::{RequestStat, Stats};
 
 /// JSON-RPC level errors are kept separate from transport/parse failures:
@@ -19,6 +20,14 @@ pub enum RpcError {
     JsonRpc {
         code: i64,
         message: String,
+    },
+    /// The provider refused the request for how often it is being asked.
+    RateLimited {
+        /// The JSON-RPC code, when the refusal came as a JSON-RPC error.
+        code: Option<i64>,
+        message: String,
+        /// The provider's `Retry-After`, when it sent one in seconds.
+        retry_after_millis: Option<u64>,
     },
     /// No answer within the request timeout.
     Timeout(anyhow::Error),
@@ -33,6 +42,12 @@ impl std::fmt::Display for RpcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RpcError::JsonRpc { code, message } => write!(f, "JSON-RPC error {code}: {message}"),
+            RpcError::RateLimited {
+                code: Some(code),
+                message,
+                ..
+            } => write!(f, "rate limited, JSON-RPC error {code}: {message}"),
+            RpcError::RateLimited { message, .. } => write!(f, "rate limited: {message}"),
             RpcError::Timeout(err) | RpcError::MalformedResponse(err) | RpcError::Other(err) => {
                 write!(f, "{err:#}")
             }
@@ -194,6 +209,17 @@ impl JsonRpcClient {
             })?;
 
         let status = response.status();
+        // An HTTP-date `Retry-After` would need the wall clock, so only the
+        // delta-seconds form is read; the configured backoff covers the rest.
+        // Zero is left to it too, or a provider repeating it would be asked
+        // again with no wait at all.
+        let retry_after_millis = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .filter(|seconds| *seconds > 0)
+            .map(|seconds| seconds.saturating_mul(1000));
         let bytes = response.bytes().await.map_err(|err| {
             let timed_out = err.is_timeout();
             let err = anyhow::Error::new(err).context(format!("read {method} response body"));
@@ -209,11 +235,26 @@ impl JsonRpcClient {
 
         // Providers report JSON-RPC errors under non-200 statuses too (e.g.
         // 429/400), so parse the body first and fall back to the HTTP status
-        // only when there's no JSON-RPC envelope to read.
+        // only when there's no JSON-RPC envelope to read. A 429 is still
+        // throttling either way, unless its message limits the request itself.
+        let snippet = || String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).into_owned();
+        // For a body that is no JSON-RPC envelope, whether parseable or not.
+        let rate_limited_by_status = |snippet: &str| {
+            (!status.is_success() && is_rate_limited(status.as_u16(), None, snippet)).then(|| {
+                RpcError::RateLimited {
+                    code: None,
+                    message: format!("HTTP {status} for {method}: {snippet}"),
+                    retry_after_millis,
+                }
+            })
+        };
         let parsed: JsonRpcResponse = match serde_json::from_slice(&bytes) {
             Ok(parsed) => parsed,
             Err(e) => {
-                let snippet = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).into_owned();
+                let snippet = snippet();
+                if let Some(rate_limited) = rate_limited_by_status(&snippet) {
+                    return Err(rate_limited);
+                }
                 let err = anyhow::anyhow!(
                     "invalid JSON-RPC response for {method} (HTTP {status}): {e}; body: {snippet}"
                 );
@@ -228,6 +269,13 @@ impl JsonRpcClient {
         };
 
         if let Some(error) = parsed.error {
+            if is_rate_limited(status.as_u16(), Some(error.code), &error.message) {
+                return Err(RpcError::RateLimited {
+                    code: Some(error.code),
+                    message: error.message,
+                    retry_after_millis,
+                });
+            }
             return Err(RpcError::JsonRpc {
                 code: error.code,
                 message: error.message,
@@ -237,9 +285,11 @@ impl JsonRpcClient {
             Some(result) => serde_json::from_str(result.get())
                 .with_context(|| format!("parse {method} result"))
                 .map_err(RpcError::MalformedResponse),
-            None => Err(RpcError::MalformedResponse(anyhow::anyhow!(
-                "JSON-RPC response for {method} (HTTP {status}) has neither result nor error"
-            ))),
+            None => Err(rate_limited_by_status(&snippet()).unwrap_or_else(|| {
+                RpcError::MalformedResponse(anyhow::anyhow!(
+                    "JSON-RPC response for {method} (HTTP {status}) has neither result nor error"
+                ))
+            })),
         }
     }
 

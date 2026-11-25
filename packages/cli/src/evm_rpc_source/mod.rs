@@ -27,8 +27,7 @@ use crate::evm_hypersync_source::selection::BuiltLogSelection;
 use crate::logger::{BoundLogger, Level, Logger};
 use crate::request_stats::RequestStat;
 use classify::{
-    is_rate_limited_message, is_response_too_large_message, is_unsupported_request,
-    suggested_block_interval_from_message,
+    is_response_too_large_message, is_unsupported_request, suggested_block_interval_from_message,
 };
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
 use enrich::{BlockRead, EnrichError, EnrichRequest, Fetches, PageRefs, SelectedFields};
@@ -638,6 +637,27 @@ impl EvmRpcClient {
                     Some(page),
                 )
             }
+            // Throttling says nothing about how dense the range is, and a
+            // narrower range would only take more requests to cover it, so the
+            // interval is left alone and the same range is asked again.
+            Err(PageError::Logs(RpcError::RateLimited {
+                message,
+                retry_after_millis,
+                ..
+            })) => (
+                NextPageResult {
+                    provider_message: Some(message),
+                    ..NextPageResult::backoff(
+                        "The RPC provider is rate limiting requests. Will retry the same block \
+                         range."
+                            .to_string(),
+                        self.rate_limit_backoff_millis(retry_after_millis),
+                        to_block,
+                        request_stats,
+                    )
+                },
+                None,
+            ),
             Err(PageError::Logs(err)) => {
                 let provider_message = match &err {
                     RpcError::JsonRpc { message, .. } => Some(message.clone()),
@@ -688,7 +708,12 @@ impl EvmRpcClient {
                         "Failed reading the blocks, transactions or head block re-checks \
                          behind the range's logs. Will retry the block range."
                             .to_string(),
-                        self.sync_config.backoff_millis as i64,
+                        match *err {
+                            RpcError::RateLimited {
+                                retry_after_millis, ..
+                            } => self.rate_limit_backoff_millis(retry_after_millis),
+                            _ => self.sync_config.backoff_millis as i64,
+                        },
                         to_block,
                         request_stats,
                     )
@@ -805,6 +830,14 @@ impl EvmRpcClient {
         )
         .await?;
         Ok(page)
+    }
+
+    fn rate_limit_backoff_millis(&self, retry_after_millis: Option<u64>) -> i64 {
+        // ReScript reads this as a 32-bit int; the source manager caps the wait
+        // far below that anyway.
+        retry_after_millis
+            .unwrap_or(self.sync_config.backoff_millis)
+            .min(i32::MAX as u64) as i64
     }
 
     /// Builds the retry decision for a page that could not be read, updating
@@ -1026,14 +1059,6 @@ impl EvmRpcClient {
                     && query.retry >= RETRIES_BEFORE_RECHECKING_BY_NUMBER =>
             {
                 message
-            }
-            // A throttled read says nothing about the block, and retrying it
-            // at the pace a node behind the head gets would only throttle more.
-            Err(RpcError::JsonRpc { code, message }) if is_rate_limited_message(&message) => {
-                return Err(EnrichError::Rpc(Arc::new(RpcError::JsonRpc {
-                    code,
-                    message,
-                })))
             }
             Err(RpcError::JsonRpc { .. } | RpcError::MalformedResponse(_)) => {
                 return Err(EnrichError::BehindHead {

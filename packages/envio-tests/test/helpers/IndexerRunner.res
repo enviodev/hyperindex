@@ -99,6 +99,8 @@ type rec t = {
     ~scope: Internal.chainScope,
   ) => promise<array<{"id": string, "output": JSON.t}>>,
   metric: string => promise<array<metric>>,
+  // The snapshot a worker reports to its supervisor.
+  snapshot: unit => Metrics.t,
   pgSchema: string,
   // Skipped, without calling back, when the run's config keeps no entity in
   // Postgres, as the harness ClickHouse leg does.
@@ -110,18 +112,10 @@ type rec t = {
   // `envio start --chain` does. The chains left out keep their stored state.
   // `~config` resumes under an edited config.yaml, and later restarts keep it.
   // `~reset` starts over on an emptied schema, the way `envio dev -r` does.
-  // `~asWorker` leaves the resume unannounced, as a process a supervisor forked
-  // does.
-  restart: (
-    ~config: Config.t=?,
-    ~chains: array<ChainId.t>=?,
-    ~reset: bool=?,
-    ~asWorker: bool=?,
-    unit,
-  ) => promise<t>,
+  restart: (~config: Config.t=?, ~chains: array<ChainId.t>=?, ~reset: bool=?, unit) => promise<t>,
   // Another process on the same schema, started while this one keeps running,
-  // the way the workers of a split run share one. The global persistence is the
-  // last one started's, so a handler can't tell siblings apart.
+  // the way the workers of a split run share one. The global initial state is
+  // the last one started's, so a handler can't tell siblings apart.
   sibling: (~chains: array<ChainId.t>) => promise<t>,
   // Writes the effect cache out to this run's own cache directory, where the
   // next initialize uploads it from.
@@ -323,7 +317,7 @@ let run = async (
 
   // The builder is only reachable here and from `restart`, so it takes just
   // what differs between them and reads the rest off this call.
-  let rec make = async (~reset, ~config as baseConfig, ~chains=?, ~asWorker=false) => {
+  let rec make = async (~reset, ~config as baseConfig, ~chains=?) => {
     throwIfClosing()
     // Startup runs on the real clock, a restart's included.
     Clock.refuseReal := false
@@ -353,26 +347,25 @@ let run = async (
         Storage.make(~client, ~cacheDir, ~ecosystem=config.ecosystem.name),
       )->countStorageCalls(~inFlight=storageCallsInFlight)
     storages->Array.push(storage)
-    let persistence = Storage.makePersistenceFromConfig(~config, ~logger, ~storage)
-    // `Main.start` does this before handler modules load, so the exported
-    // indexer can expose persisted state. Without it every `indexer.chains[N]`
-    // getter silently falls back to static config.
-    Main.setGlobalPersistence(persistence)
+    Main.setGlobalInitialState(None)
 
     let onError = switch onError {
     | Some(onError) => onError
     | None => failWith
     }
 
-    await persistence->Persistence.initForRun(
+    let initialState = await storage->Persistence.initForRun(
       ~logger,
       ~config,
       ~reset,
       ~isDevelopmentMode=true,
-      ~announceResume=!asWorker,
       ~startBlockRetry?,
       ~sourceTiming=?startupTiming,
     )
+    // `Main.start` does this before handler modules load, so the exported
+    // indexer can expose persisted state. Without it every `indexer.chains[N]`
+    // getter silently falls back to static config.
+    Main.setGlobalInitialState(Some(initialState))
 
     // Same order as `Main.start`: storage is initialized - which is where a
     // `start_block: latest` chain reads its head - before handler modules load,
@@ -403,10 +396,10 @@ let run = async (
       None
     }
     let state = IndexerState.makeFromDbState(
-      ~initialState=persistence->Persistence.getInitializedState,
+      ~initialState,
       ~config,
       ~logger,
-      ~persistence,
+      ~storage,
       ~registrationsByChainId,
       ~sourceTiming?,
       ~targetBufferSize?,
@@ -843,6 +836,7 @@ let run = async (
         ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName))
         ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string, "output": JSON.t}>>)
       },
+      snapshot: () => state->IndexerState.toMetrics,
       metric: async name => {
         // Parse the metric's samples back out of the rendered /metrics text.
         Metrics.collect(~metrics=Some(state->IndexerState.toMetrics))
@@ -901,12 +895,12 @@ let run = async (
         onIndexerStarted(indexer, ~chains=Some(chains))
         indexer
       },
-      restart: async (~config=baseConfig, ~chains=?, ~reset=false, ~asWorker=?, ()) => {
+      restart: async (~config=baseConfig, ~chains=?, ~reset=false, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
-        // shared persistence, else the two race against the same db.
+        // shared storage, else the two race against the same db.
         await stop()
         onIndexerStopped()
-        let indexer = await make(~reset, ~config, ~chains?, ~asWorker?)
+        let indexer = await make(~reset, ~config, ~chains?)
         onIndexerStarted(indexer, ~chains)
         indexer
       },

@@ -1,11 +1,11 @@
 // Resolves a chain's `start_block: latest` to a concrete block number, once,
 // right before the indexer's first-ever persisted state is written (see
-// `Persistence.init`). Never runs on a normal resume (crash recovery, a plain
+// `Persistence.prepare`). Never runs on a normal resume (crash recovery, a plain
 // restarted process): `envio_chains.start_block` is written once and read
 // back verbatim from then on, so a resolved "latest" naturally stays fixed
 // across downtime instead of jumping to a new head - any gap gets backfilled
 // rather than skipped. The CLI's `-r` (`--restart`) flag is the exception: it
-// forces `reset=true` in `Persistence.init`, which wipes the DB and runs this
+// forces `reset=true` in `Persistence.prepare`, which wipes the DB and runs this
 // again, the same as any other fresh deploy.
 
 // Sources built only to read the chain's height. No registrations exist yet at

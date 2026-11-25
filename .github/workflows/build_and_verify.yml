@@ -161,7 +161,7 @@ jobs:
       # Serially: some of these terminate a backend by pid, and a pid the
       # server has just freed is one it can hand to another test's connection.
       - name: Live storage tests
-        run: cargo test --lib -- --ignored --test-threads=1 postgres::live clickhouse::live storage::live
+        run: cargo test --lib -- --ignored --test-threads=1 postgres::live clickhouse::live storage::live test_servers::tests
 
   # Hypersync endpoint health check - non-blocking, external dependency
   hypersync-health-check:

@@ -74,6 +74,18 @@ type NumericArrays @crossChain @storage(postgres: true) {
   bigDecimals: [BigDecimal!]!
 }
 
+# Bounded past 38 digits, ClickHouse stores these as 256-bit Decimals rather
+# than as String. A transfer's amount is widened past 38 digits, since a real
+# one fits in fewer, and one row holds the widest values the precision allows.
+# https://github.com/enviodev/hyperindex/issues/1816
+type WideAmount @crossChain @storage(postgres: true, clickhouse: true) {
+  id: ID!
+  widened: BigInt! @config(precision: 76)
+  negated: BigInt! @config(precision: 76)
+  tokens: BigDecimal! @config(precision: 76, scale: 18)
+  both: [BigInt!]! @config(precision: 76)
+}
+
 # Per-chain entities: their tables carry a chain-id column in the primary key,
 # spelled per backend (snake_case in Postgres, original in ClickHouse). The
 # relationship between them must join on the chain too, or Hasura would resolve
