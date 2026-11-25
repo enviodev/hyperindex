@@ -17,7 +17,8 @@ type requestStatAgg = {
 type health =
   | Working
   | Recovering({failedAt: float})
-  | Held(HeightFeed.subscription)
+  // `failedAt` is when it last failed a query it was asked as the last resort.
+  | Held({release: HeightFeed.subscription, failedAt: option<float>})
 
 type sourceState = {
   source: Source.t,
@@ -498,7 +499,7 @@ let dispatch = async (
 // Stops the held source's height poll.
 let releaseHold = (sourceState: sourceState) =>
   switch sourceState.health {
-  | Held(subscription) => subscription.unsubscribe()
+  | Held({release}) => release.unsubscribe()
   | Working | Recovering(_) => ()
   }
 
@@ -512,10 +513,11 @@ let markAnswered = (sourceState: sourceState) =>
   }
 
 // A held source stays held: failing a query it was only asked as the last
-// resort says nothing new about it.
+// resort says nothing new about where it is. The time still counts, so the last
+// resort moves on to another source.
 let markFailed = (sourceState: sourceState, ~now) =>
   switch sourceState.health {
-  | Held(_) => ()
+  | Held({release}) => sourceState.health = Held({release, failedAt: Some(now)})
   | Working | Recovering(_) => sourceState.health = Recovering({failedAt: now})
   }
 
@@ -556,7 +558,7 @@ let holdUntilCaughtUp = (sourceManager: t, sourceState: sourceState) => {
         },
     )
     subscription.distrustStream()
-    Held(subscription)
+    Held({release: subscription, failedAt: None})
   }
   // A query can fail on a source after another one benched it, and nothing
   // would ever stop the poll of a hold taken then.
@@ -585,24 +587,24 @@ let disableSource = (sourceManager: t, sourceState: sourceState) => {
   }
 }
 
-// Closest to taking queries again first, and a held source last: nothing but
-// its own height can bring it back.
-let failedAtForOrder = (sourceState: sourceState) =>
+// The source that failed longest ago first, one that never failed before any.
+let lastFailedAt = (sourceState: sourceState) =>
   switch sourceState.health {
-  | Working => Float.Constants.negativeInfinity
-  | Recovering({failedAt}) => failedAt
-  | Held(_) => Float.Constants.positiveInfinity
+  | Working | Held({failedAt: None}) => Float.Constants.negativeInfinity
+  | Recovering({failedAt}) | Held({failedAt: Some(failedAt)}) => failedAt
   }
 
 let compareByOldestFailure = (a: sourceState, b: sourceState) =>
-  Float.compare(a->failedAtForOrder, b->failedAtForOrder)
+  Float.compare(a->lastFailedAt, b->lastFailedAt)
 
-// Priority: working primaries > working secondaries > all primaries.
+// Priority: working primaries > working secondaries > all primaries > all
+// secondaries.
 let getNextSources = (sourceManager: t, ~isRealtime, ~excludedSources=?) => {
   let now = sourceManager.clock.now()
   let workingPrimarySources = []
   let allPrimarySources = []
   let workingSecondarySources = []
+  let allSecondarySources = []
   for i in 0 to sourceManager.sourcesState->Array.length - 1 {
     let sourceState = sourceManager.sourcesState->Array.getUnsafe(i)
     if !sourceState.disabled {
@@ -622,8 +624,12 @@ let getNextSources = (sourceManager: t, ~isRealtime, ~excludedSources=?) => {
           if isWorking {
             workingPrimarySources->Array.push(sourceState)
           }
-        | Some(Secondary) if isWorking => workingSecondarySources->Array.push(sourceState)
-        | _ => ()
+        | Some(Secondary) =>
+          allSecondarySources->Array.push(sourceState)
+          if isWorking {
+            workingSecondarySources->Array.push(sourceState)
+          }
+        | None => ()
         }
       }
     }
@@ -633,24 +639,27 @@ let getNextSources = (sourceManager: t, ~isRealtime, ~excludedSources=?) => {
   } else if workingSecondarySources->Array.length > 0 {
     workingSecondarySources
   } else {
-    // No primary is working: the last resort, closest to recovery first.
-    allPrimarySources->Array.sort(compareByOldestFailure)
-    allPrimarySources
+    // Nothing is working: the last resort, the source that failed longest ago
+    // first. A failing or held secondary is still better than no source at all
+    // once every primary is benched.
+    let lastResort =
+      allPrimarySources->Utils.Array.isEmpty ? allSecondarySources : allPrimarySources
+    lastResort->Array.sort(compareByOldestFailure)
+    lastResort
   }
 }
 
-// Single source selection from getNextSources.
-// Prefers activeSource if it's in the candidates. Fast path: check first item.
+// Single source selection from getNextSources. Stays on the active source while
+// it is working. In the last resort nothing is, and staying would retry the
+// same source for as long as it keeps failing while another one might answer.
 let getNextSource = (sourceManager, ~isRealtime, ~excludedSources=?) => {
   let sources = sourceManager->getNextSources(~isRealtime, ~excludedSources?)
-  switch sources->Array.get(0) {
-  | None => None
-  | Some(first) if first.source === sourceManager.activeSource => Some(first)
-  | _ =>
-    switch sources->Array.find(s => s.source === sourceManager.activeSource) {
-    | Some(_) as result => result
-    | None => sources->Array.get(0)
-    }
+  let now = sourceManager.clock.now()
+  switch sources->Array.find(s =>
+    s.source === sourceManager.activeSource && sourceManager->isWorking(s, ~now)
+  ) {
+  | Some(_) as active => active
+  | None => sources->Array.get(0)
   }
 }
 

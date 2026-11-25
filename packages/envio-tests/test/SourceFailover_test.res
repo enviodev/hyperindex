@@ -389,6 +389,61 @@ describe("Source failover", () => {
   )
 
   scenario->Scenario.it(
+    "Keeps retrying a held fallback once the sync source is benched",
+    ~sources=[{chain: 1337}, {chain: 1337, sourceFor: Fallback}],
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([{fromBlock: 1, reply: unsupported}])
+      // The fallback is held once it has been behind the head through the
+      // window, and there is no other source left to try.
+      let early = await Scenario.failThroughBackoff(
+        ~indexer,
+        ~source=fallback,
+        ~reply=Fail(Source.SourceBehindHead({blockNumber: 1, requestStats: []})),
+        ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000],
+      )
+      await fallback.expectItemsQueries([{fromBlock: 1, retryCount: 13, reply: LeavePending}])
+      t.expect((early, sync.pendingItemsQueries)).toEqual(([], []))
+    },
+  )
+
+  scenario->Scenario.it(
+    "Moves a query between held sources rather than retrying the same one",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~sourceTiming={newBlockStallTimeoutRealtime: 10, stalledPollingInterval: 50},
+    async (~t, ~indexer, ~source) => {
+      let sync0 = source(1337)
+      let sync1 = source(1337, ~index=1)
+      let fallback = source(1337, ~index=2)
+      sync0.resolveGetHeightOrThrow(100)
+      sync1.setAutoHeight(100)
+      await sync0.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
+      // Both sync sources stop at 100; the stalled wait recruits the fallback
+      // two blocks ahead and holds them both.
+      sync0.setAutoHeight(100)
+      fallback.setAutoHeight(102)
+      await indexer.advanceTime(10)
+      // The one source still working can't serve the query.
+      await fallback.expectItemsQueries([{fromBlock: 101, reply: impossible}])
+      let early = await Scenario.failThroughBackoff(
+        ~indexer,
+        ~source=sync0,
+        ~alsoWatching=[sync1],
+        ~reply=Fail(Source.SourceBehindHead({blockNumber: 101, requestStats: []})),
+        ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000],
+      )
+      await sync1.expectItemsQueries([{fromBlock: 101, retryCount: 13, reply: LeavePending}])
+      t.expect((early, sync0.pendingItemsQueries)).toEqual(([], []))
+    },
+  )
+
+  scenario->Scenario.it(
     "Stays on a healthy primary however short the recovery timeout",
     ~sources=[
       {chain: 1337, pollingInterval: 1},
