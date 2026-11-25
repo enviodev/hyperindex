@@ -15,7 +15,7 @@
 // over-fetching resolver cannot leak through even before serve projects.
 
 import * as S from "rescript-schema";
-import { unwrapNullableOutput } from "./manifest.js";
+import { NAMED, tagOf, unwrapNullableOutput } from "./manifest.js";
 import { ResolverError } from "./errors.js";
 import { PRIVATE_KEY_HEADER } from "./hasuraMetadata.js";
 
@@ -32,6 +32,130 @@ function argsSchemaOf(resolver) {
     argsSchemas.set(resolver, schema);
   }
   return schema;
+}
+
+// The manifest publishes an `S.optional(x)` and a null-typed schema alike as a
+// nullable GraphQL type, and a nullable argument may be sent as `null` or left
+// out -- a client cannot always choose which: a variable it does not provide
+// arrives as `null`. The schemas are stricter than the type they publish (an
+// optional takes only `undefined`, a null-typed one only `null`), so the
+// spelling a position's schema refuses is rewritten to the one it accepts
+// before parsing, and the declared schema still does all of the parsing.
+//
+// Only the positions the manifest walks are entered -- arguments, the fields
+// of a `defineInput`, array elements -- so what is accepted stays what is
+// published. A position with nothing to rewrite beneath it has no normaliser
+// at all, which keeps a resolver without nullable arguments off this path.
+const argsNormalisers = new WeakMap();
+const positionNormalisers = new WeakMap();
+
+const accepts = (schema, value) => {
+  try {
+    S.parseOrThrow(value, schema);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+function argsNormaliserOf(resolver) {
+  let normalise = argsNormalisers.get(resolver);
+  if (normalise === undefined) {
+    normalise = fieldsNormaliser(resolver.args);
+    argsNormalisers.set(resolver, normalise);
+  }
+  return normalise;
+}
+
+function fieldsNormaliser(fields) {
+  const steps = [];
+  for (const [key, schema] of Object.entries(fields)) {
+    // Assigning this key would set the copy's prototype rather than a field.
+    if (key === "__proto__") continue;
+    const normalise = positionNormaliser(schema);
+    if (normalise !== null) steps.push([key, normalise]);
+  }
+  if (steps.length === 0) return null;
+  // Copies only once something changes: the request's own object is the
+  // caller's, and most requests need no rewrite.
+  return (value) => {
+    let out = value;
+    for (const [key, normalise] of steps) {
+      const before = value[key];
+      const after = normalise(before);
+      if (after !== before) {
+        if (out === value) out = { ...value };
+        out[key] = after;
+      }
+    }
+    return out;
+  };
+}
+
+function elementsNormaliser(element) {
+  const normalise = positionNormaliser(element);
+  if (normalise === null) return null;
+  return (value) => {
+    let out = value;
+    for (let index = 0; index < value.length; index++) {
+      const after = normalise(value[index]);
+      if (after !== value[index]) {
+        if (out === value) out = value.slice();
+        out[index] = after;
+      }
+    }
+    return out;
+  };
+}
+
+function positionNormaliser(schema) {
+  // Shared schemas are walked once. The entry is reserved before its fields
+  // are walked, as the manifest reserves a type's name, so an input type that
+  // lists itself among its fields terminates: the inner occurrence defers to
+  // the entry the outer one is still filling in.
+  const known = positionNormalisers.get(schema);
+  if (known !== undefined) {
+    return known.settled
+      ? known.normalise
+      : (value) => (known.normalise === null ? value : known.normalise(value));
+  }
+  const entry = { settled: false, normalise: null };
+  positionNormalisers.set(schema, entry);
+
+  const outer = tagOf(schema).kind;
+  // Asked of the schema rather than read off its tag, so a null it already
+  // takes is left alone: an optional JSON scalar keeps receiving the caller's
+  // `null`, where rewriting it would change what a handler sees today.
+  const nullIsAbsent = outer === "option" && !accepts(schema, null);
+  const absentIsNull = outer === "null" && !accepts(schema, undefined);
+
+  let core = schema;
+  for (let tag = tagOf(core); tag.kind === "option" || tag.kind === "null"; tag = tagOf(core)) {
+    core = tag.node._0;
+  }
+  // The same order the manifest resolves a type in: a name wins over the
+  // shape beneath it, so a scalar declared over an array stays opaque.
+  const named = core[NAMED];
+  let inner = null;
+  if (named !== undefined) {
+    if (named.input && named.fields) {
+      const fields = fieldsNormaliser(named.fields);
+      inner = fields === null ? null : (value) => (isPlainObject(value) ? fields(value) : value);
+    }
+  } else if (tagOf(core).kind === "array") {
+    const elements = elementsNormaliser(core.t._0);
+    inner = elements === null ? null : (value) => (Array.isArray(value) ? elements(value) : value);
+  }
+
+  if (nullIsAbsent || absentIsNull || inner !== null) {
+    entry.normalise = (value) => {
+      if (value === null) return nullIsAbsent ? undefined : value;
+      if (value === undefined) return absentIsNull ? null : value;
+      return inner === null ? value : inner(value);
+    };
+  }
+  entry.settled = true;
+  return entry.normalise;
 }
 
 function outputSchemaOf(resolver) {
@@ -188,7 +312,12 @@ export function createDispatcher({ resolvers, pool, exposeErrors = false, onErro
 
     let args;
     try {
-      args = S.parseOrThrow(request.args ?? {}, argsSchemaOf(resolver));
+      const given = request.args ?? {};
+      const normalise = argsNormaliserOf(resolver);
+      args = S.parseOrThrow(
+        normalise === null ? given : normalise(given),
+        argsSchemaOf(resolver)
+      );
     } catch (error) {
       return errorBody(
         `Invalid arguments for '${field}': ${error.message}`,
