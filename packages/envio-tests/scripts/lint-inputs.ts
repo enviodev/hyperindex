@@ -350,9 +350,6 @@ const performanceAllowed: Record<string, string> = {
   "sources/FuelHyperSyncSource.res": realWork,
   "sources/RpcSource.res": realWork,
   "Supervisor.res": "it reports the process's uptime",
-  // The stall on storage writes only starts past ENVIO_IN_MEMORY_OBJECTS_TARGET
-  // changes, read once per process, so no scenario can reach it to set its time.
-  "Writing.res": "it waits on storage writes past a limit no scenario reaches",
 };
 const runtimeRoot = fileURLToPath(new URL("../../envio/src", import.meta.url));
 for (const path of resFiles(runtimeRoot)) {

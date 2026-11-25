@@ -239,6 +239,9 @@ let run = async (
   ~clock: option<VirtualClock.t>=?,
   ~startBlockRetry=?,
   ~targetBufferSize=?,
+  // Uncommitted changes at which processing waits for writes. The default,
+  // read from the environment, is more than any scenario makes.
+  ~inMemoryObjectsTarget=?,
   // Runs the indexer the way a supervised worker runs: it waits to be released
   // before entering the reorg threshold or switching to realtime.
   ~holdRealtime=false,
@@ -406,6 +409,7 @@ let run = async (
       ~registrationsByChainId,
       ~sourceTiming?,
       ~targetBufferSize?,
+      ~inMemoryObjectsTarget?,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
       ~holdRealtime={holdRealtime || superviseRun},

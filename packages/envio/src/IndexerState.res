@@ -53,6 +53,8 @@ type t = {
   logger: Logger.t,
   clock: Clock.t,
   storage: Persistence.storage,
+  // Processing waits for writes once the store holds this many changes.
+  inMemoryObjectsTarget: float,
   // --- In-memory store: entity/effect tables and the pending-write queue. ---
   // Cross-chain entities only; each ChainState holds its own partition for the
   // per-chain ones.
@@ -165,6 +167,7 @@ let make = (
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
   ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
+  ~inMemoryObjectsTarget=Env.inMemoryObjectsTarget,
   ~holdRealtime=false,
   ~committedFrontier=Frontier.empty(),
   ~storedEffectCaches=Dict.make(),
@@ -193,6 +196,7 @@ let make = (
     logger,
     clock,
     storage,
+    inMemoryObjectsTarget,
     entities: EntityTables.make(config.userEntities->EntityTables.crossChain),
     effectState: EffectState.make(~clock, ()),
     storedEffectCaches,
@@ -269,6 +273,7 @@ let makeFromDbState = (
   ~exitAfterFirstEventBlock=false,
   ~sourceTiming=?,
   ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
+  ~inMemoryObjectsTarget=?,
   // A process driving part of a split run waits for its supervisor before
   // entering the reorg threshold or switching to realtime.
   ~holdRealtime=false,
@@ -322,6 +327,7 @@ let makeFromDbState = (
     ~chainStates,
     ~isRealtime,
     ~targetBufferSize,
+    ~inMemoryObjectsTarget?,
     ~holdRealtime,
     ~committedFrontier=initialState.checkpointFrontier,
     ~storedEffectCaches=initialState.cache,
@@ -521,6 +527,7 @@ let recordProcessedBatch = (state: t) =>
 let config = (state: t) => state.config
 let logger = (state: t) => state.logger
 let clock = (state: t) => state.clock
+let inMemoryObjectsTarget = (state: t) => state.inMemoryObjectsTarget
 let storage = (state: t) => state.storage
 let entities = (state: t) => state.entities
 

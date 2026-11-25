@@ -17,6 +17,7 @@ let make: (
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
   ~targetBufferSize: int=?,
+  ~inMemoryObjectsTarget: float=?,
   ~holdRealtime: bool=?,
   ~committedFrontier: Frontier.t=?,
   ~storedEffectCaches: dict<Persistence.effectCacheRecord>=?,
@@ -40,6 +41,7 @@ let makeFromDbState: (
   ~exitAfterFirstEventBlock: bool=?,
   ~sourceTiming: SourceManager.timing=?,
   ~targetBufferSize: int=?,
+  ~inMemoryObjectsTarget: float=?,
   ~holdRealtime: bool=?,
   ~onError: ErrorHandling.t => unit,
   ~onExit: unit => unit=?,
@@ -81,6 +83,7 @@ let getSafeCheckpointIdByChain: t => array<(ChainId.t, option<Internal.checkpoin
 let config: t => Config.t
 let logger: t => Logger.t
 let clock: t => Clock.t
+let inMemoryObjectsTarget: t => float
 let storage: t => Persistence.storage
 let entities: t => EntityTables.t
 let eachEntityTable: (

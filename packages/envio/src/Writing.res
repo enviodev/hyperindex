@@ -4,10 +4,6 @@
 // there's pending work, and processing waits on it through awaitCapacity/flush.
 // State mutations go through IndexerState's domain operations.
 
-// Max uncommitted entity/effect changes plus unwritten batch items before
-// processing must wait for the cycle to free capacity.
-let keepLatestChangesLimit = Env.inMemoryObjectsTarget
-
 let getChangesCount = (state: IndexerState.t) => {
   let total = ref(0.)
   state->IndexerState.eachEntityTable((~entityConfig as _, ~scope as _, ~table) => {
@@ -25,6 +21,11 @@ let getChangesCount = (state: IndexerState.t) => {
   })
   total.contents
 }
+
+// Uncommitted entity/effect changes plus unwritten batch items at which
+// processing must wait for the cycle to free capacity.
+let isAtChangesLimit = (state: IndexerState.t) =>
+  state->getChangesCount >= state->IndexerState.inMemoryObjectsTarget
 
 let waitForCommit = (state: IndexerState.t): promise<unit> =>
   Promise.make((resolve, _) => {
@@ -315,28 +316,25 @@ let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
   )
 }
 
-// Blocks until the store holds fewer than keepLatestChangesLimit changes,
+// Blocks until the store holds fewer changes than the in-memory objects target,
 // freeing committed changes first and awaiting commits as a last resort.
 let rec awaitCapacityLoop = async (state: IndexerState.t) => {
   // After a failed write nothing will free capacity, so bail instead of waiting
   // on a commit that won't come (the error already went to onError).
-  if !(state->IndexerState.hasFailedWrite) && state->getChangesCount >= keepLatestChangesLimit {
+  if !(state->IndexerState.hasFailedWrite) && state->isAtChangesLimit {
     // Drop committed writes first, sparing db-loaded entries (explicitly
     // requested, so likelier to be read again).
     state->dropCommitted(~keepLoadedFromDb=true)
 
     // Still over: drop the db-loaded entries too.
-    if state->getChangesCount >= keepLatestChangesLimit {
+    if state->isAtChangesLimit {
       state->dropCommitted(~keepLoadedFromDb=false)
     }
 
     // Still over: what's left is uncommitted. Only wait if a queued batch can
     // free it; otherwise (e.g. a large rollback diff with no batch) waiting
     // would deadlock, so let processing proceed.
-    if (
-      state->getChangesCount >= keepLatestChangesLimit &&
-        state->IndexerState.processedBatches->Utils.Array.notEmpty
-    ) {
+    if state->isAtChangesLimit && state->IndexerState.processedBatches->Utils.Array.notEmpty {
       state->schedule
       await state->waitForCommit
       await state->awaitCapacityLoop
@@ -348,10 +346,11 @@ let rec awaitCapacityLoop = async (state: IndexerState.t) => {
 // batch the microtask hop of awaiting an already-resolved promise, which reads
 // as storage backpressure that isn't there.
 let awaitCapacity = async (state: IndexerState.t) =>
-  if state->getChangesCount >= keepLatestChangesLimit {
-    let timeRef = Performance.now()
+  if state->isAtChangesLimit {
+    let clock = state->IndexerState.clock
+    let timeRef = clock.now()
     await state->awaitCapacityLoop
-    state->IndexerState.recordStalledOnStorageWrite(~seconds=timeRef->Performance.secondsSince)
+    state->IndexerState.recordStalledOnStorageWrite(~seconds=clock->Clock.secondsSince(timeRef))
   }
 
 // Awaits until everything processed is persisted. On a failed write we stop

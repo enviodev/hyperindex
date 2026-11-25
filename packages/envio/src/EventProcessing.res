@@ -175,7 +175,7 @@ let processEventBatch = async (~batch: Batch.t, ~runtime: HandlerRuntime.t) => {
   })
 
   try {
-    // Backpressure: keep processing within keepLatestChangesLimit of the cycle.
+    // Backpressure: keep processing within the in-memory objects target of the cycle.
     await indexerState->Writing.awaitCapacity
 
     let clock = indexerState->IndexerState.clock
