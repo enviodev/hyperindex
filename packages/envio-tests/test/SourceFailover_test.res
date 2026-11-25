@@ -339,6 +339,55 @@ describe("Source failover", () => {
     },
   )
 
+  twoPartitionScenario->Scenario.it(
+    "Doesn't hold a source that was benched while its query was in flight",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~maxAddrInPartition=1,
+    ~sourceTiming={reducedPollingInterval: 100},
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectNewHeightCalls(1)
+      await sync.expectItemsQueries([
+        {partitionId: "0", fromBlock: 1, reply: LeavePending},
+        {partitionId: "1", fromBlock: 1, reply: LeavePending},
+      ])
+      let behindHead = MockSource.Fail(Source.SourceBehindHead({blockNumber: 1, requestStats: []}))
+      let waits = [100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000]
+      (sync.pendingItemsQueries->Array.getUnsafe(0)->MockSource.control).fail(
+        Source.SourceBehindHead({blockNumber: 1, requestStats: []}),
+      )
+      await indexer.advanceTime(waits->Array.getUnsafe(0))
+      for retryCount in 1 to waits->Array.length - 1 {
+        await sync.expectItemsQueries([{partitionId: "0", retryCount, reply: behindHead}])
+        await indexer.advanceTime(waits->Array.getUnsafe(retryCount))
+      }
+      // The attempt that fails the source over is in flight when partition 1's
+      // query benches the source.
+      await sync.expectItemsQueries([{partitionId: "0", retryCount: 12, reply: LeavePending}])
+      await sync.expectItemsQueries([
+        {
+          partitionId: "1",
+          fromBlock: 1,
+          reply: Fail(Source.GetItemsError(UnsupportedSelection({message: "test disable"}))),
+        },
+      ])
+      await fallback.expectItemsQueries([{partitionId: "1", fromBlock: 1, reply: LeavePending}])
+      await sync.expectItemsQueries([{partitionId: "0", retryCount: 12, reply: behindHead}])
+      await indexer.advanceTime(50)
+      await fallback.expectItemsQueries([{partitionId: "0", retryCount: 13, reply: LeavePending}])
+
+      // Nothing waits on a benched source, so nothing polls it.
+      await indexer.advanceTime(500)
+      await sync.expectNewHeightCalls(0)
+      t.expect(sync.pendingItemsQueries).toEqual([])
+    },
+  )
+
   scenario->Scenario.it(
     "Stays on a healthy primary however short the recovery timeout",
     ~sources=[

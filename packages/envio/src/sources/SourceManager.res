@@ -558,9 +558,11 @@ let holdUntilCaughtUp = (sourceManager: t, sourceState: sourceState) => {
     subscription.distrustStream()
     Held(subscription)
   }
+  // A query can fail on a source after another one benched it, and nothing
+  // would ever stop the poll of a hold taken then.
   switch sourceState.health {
-  | Held(_) => ()
-  | Working | Recovering(_) => sourceState.health = hold()
+  | Working | Recovering(_) if !sourceState.disabled => sourceState.health = hold()
+  | Working | Recovering(_) | Held(_) => ()
   }
 }
 
