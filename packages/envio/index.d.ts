@@ -1235,10 +1235,10 @@ export type EvmOnTransactionOptions<
  *     const handleTransaction: EvmOnTransactionHandler<typeof fields> =
  *       async ({ transaction, context }) => { ... };
  */
-export type EvmOnTransactionHandler<
-  Fields extends EvmFieldsSelection = {},
-  Context = EvmOnTransactionContext,
-> = (args: { transaction: EvmTransaction<Fields>; context: Context }) => Promise<void>;
+export type EvmOnTransactionHandler<Fields extends EvmFieldsSelection = {}> = (args: {
+  transaction: EvmTransaction<Fields>;
+  context: EvmOnTransactionContext;
+}) => Promise<void>;
 
 // ============== Fuel event fields ==============
 
@@ -1868,7 +1868,10 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
              */
             readonly onTransaction: <const F extends EvmFieldsSelection = {}>(
               options: EvmOnTransactionOptions<F, Config>,
-              handler: EvmOnTransactionHandler<F, EvmOnTransactionContext<Config>>,
+              handler: (args: {
+                transaction: EvmTransaction<F>;
+                context: EvmOnTransactionContext<Config>;
+              }) => Promise<void>,
             ) => void;
           } & (Config["evm"] extends {
             contracts: infer Contracts extends Record<string, Record<string, any>>;

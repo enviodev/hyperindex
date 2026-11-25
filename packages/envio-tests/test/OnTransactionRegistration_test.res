@@ -141,6 +141,8 @@ const handler: EvmOnTransactionHandler<typeof fields> = async ({ transaction, co
   void transaction.hash, sameContext;
 };
 indexer.onTransaction(options, handler);
+// @ts-expect-error - the context isn't a parameter
+type WithContext = EvmOnTransactionHandler<typeof fields, EvmOnTransactionContext>;
 
 indexer.onTransaction(
   {
