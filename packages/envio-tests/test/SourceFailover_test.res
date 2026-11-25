@@ -444,6 +444,71 @@ describe("Source failover", () => {
   )
 
   scenario->Scenario.it(
+    "Keeps a held source's last failure when it moves but stays far behind",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~sourceTiming={
+      newBlockStallTimeoutRealtime: 10,
+      stalledPollingInterval: 50,
+      reducedPollingInterval: 1_000,
+    },
+    async (~t, ~indexer, ~source) => {
+      let sync0 = source(1337)
+      let sync1 = source(1337, ~index=1)
+      let fallback = source(1337, ~index=2)
+      sync0.resolveGetHeightOrThrow(100)
+      sync1.setAutoHeight(100)
+      await sync0.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
+      // Both sync sources stop at 100, far behind the fallback's 1000, which
+      // holds them both. The fallback can't serve the query.
+      sync0.setAutoHeight(100)
+      fallback.setAutoHeight(1000)
+      await indexer.advanceTime(10)
+      await fallback.expectItemsQueries([{fromBlock: 101, reply: impossible}])
+
+      let behindHead = MockSource.Fail(
+        Source.SourceBehindHead({blockNumber: 101, requestStats: []}),
+      )
+      // Which held source each attempt lands on, and the backoff after it. The
+      // last resort takes the one that failed longest ago.
+      let attempts = [
+        (sync0, 100),
+        (sync0, 200),
+        (sync0, 400),
+        (sync0, 800),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync1, 2000),
+        (sync1, 4000),
+        (sync0, 8000),
+        (sync0, 16000),
+      ]
+      for retryCount in 0 to attempts->Array.length - 1 {
+        let (mock, wait) = attempts->Array.getUnsafe(retryCount)
+        await mock.expectItemsQueries([{fromBlock: 101, retryCount, reply: behindHead}])
+        if retryCount === attempts->Array.length - 1 {
+          // Sync0 has just failed, after sync1 did. It moves, but is still 899
+          // blocks behind, so it stays held.
+          sync0.setAutoHeight(101)
+        }
+        await indexer.advanceTime(wait)
+      }
+      await sync1.expectItemsQueries([{fromBlock: 101, retryCount: 17, reply: LeavePending}])
+      t.expect(sync0.pendingItemsQueries).toEqual([])
+    },
+  )
+
+  scenario->Scenario.it(
     "Stays on a healthy primary however short the recovery timeout",
     ~sources=[
       {chain: 1337, pollingInterval: 1},

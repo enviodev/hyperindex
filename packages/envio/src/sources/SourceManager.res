@@ -544,7 +544,7 @@ let highestKnownHeight = (sourceManager: t) =>
 // keep its keep-alives flowing while its heights stop, and while the fallback
 // answers every wait, nothing else would ever ask it again.
 let holdUntilCaughtUp = (sourceManager: t, sourceState: sourceState) => {
-  let rec hold = () => {
+  let rec hold = (~failedAt) => {
     let subscription = sourceState.feed->HeightFeed.onHeightAbove(
       ~knownHeight=sourceState.feed->HeightFeed.knownHeight,
       ~interval=() => sourceManager.reducedPollingInterval,
@@ -554,16 +554,23 @@ let holdUntilCaughtUp = (sourceManager: t, sourceState: sourceState) => {
         ) {
           Working
         } else {
-          hold()
+          // Still held, and still the failure it had: losing it would rank the
+          // source first in the last resort as if it had never failed.
+          hold(
+            ~failedAt=switch sourceState.health {
+            | Held({failedAt}) => failedAt
+            | Working | Recovering(_) => None
+            },
+          )
         },
     )
     subscription.distrustStream()
-    Held({release: subscription, failedAt: None})
+    Held({release: subscription, failedAt})
   }
   // A query can fail on a source after another one benched it, and nothing
   // would ever stop the poll of a hold taken then.
   switch sourceState.health {
-  | Working | Recovering(_) if !sourceState.disabled => sourceState.health = hold()
+  | Working | Recovering(_) if !sourceState.disabled => sourceState.health = hold(~failedAt=None)
   | Working | Recovering(_) | Held(_) => ()
   }
 }
