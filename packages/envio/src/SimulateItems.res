@@ -402,7 +402,10 @@ let parse = (
       ->Dict.forEachWithKey((value, key) =>
         switch heldValues->Dict.get(key) {
         | None => held->Dict.set(key, fields->Dict.getUnsafe(key))
-        | Some(heldValue) if JSON.stringify(heldValue) === JSON.stringify(value) => ()
+        // RPC values are hex, which reads the same in either case.
+        | Some(heldValue)
+          if JSON.stringify(heldValue)->String.toLowerCase ===
+            JSON.stringify(value)->String.toLowerCase => ()
         | Some(_) =>
           fail(
             `block ${blockNumber->Int.toString} already has a transaction at index ${indexKey} with another "${key}"`,
@@ -735,8 +738,8 @@ let parse = (
         ~blockJson,
       )
       block->addCarriedBlock(~blockNumber)
-      // An EVM event's transaction enters the buffer as a simulated
-      // transaction's does, and is read back by its index.
+      // An EVM event's transaction and block enter the buffer as a simulated
+      // transaction's do, and are read back by its key.
       let (transaction, transactionIndex) = switch config.ecosystem.name {
       | Fuel => (Some(parseFuelSimulateTransaction(~transactionJson)), 0)
       | Evm =>
@@ -813,7 +816,10 @@ let parse = (
                 srcAddress,
                 logIndex,
                 ?transaction,
-                block,
+                block: ?switch config.ecosystem.name {
+                | Fuel => Some(block)
+                | Evm | Svm => None
+                },
               }: Evm.payload
             )->Evm.fromPayload,
           }),

@@ -130,6 +130,9 @@ indexer.onTransaction(
     context.BlockNonce.set({ id: \`\${transaction.block.number}\`, nonce: transaction.block.nonce ?? -1n });
   },
 );
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Hashes.set({ id: \`event \${event.block.number}\`, blockHash: event.block.hash });
+});
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) =>
   record(
     context,
@@ -254,6 +257,7 @@ describe("onTransaction under simulate", () => {
           simulate: [
             { transaction: { from: dave }, block: { number: 4 } },
             { transaction: { from: dave, transactionIndex: 7 } },
+            { contract: "Token", event: "Transfer", params: { from: dave, to: dave, value: 1n } },
           ],
         },
       },
@@ -262,6 +266,8 @@ describe("onTransaction under simulate", () => {
     t.expect((await indexer.Hashes.getAll()).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
       { id: "0x" + word(4).slice(32) + word(0).slice(32), blockHash: "0x" + word(4) },
       { id: "0x" + word(4).slice(32) + word(7).slice(32), blockHash: "0x" + word(4) },
+      // An event of the same block reads the same hash.
+      { id: "event 4", blockHash: "0x" + word(4) },
     ]);
   });
 
@@ -351,6 +357,33 @@ describe("onTransaction under simulate", () => {
         }),
       )
       .rejects.toThrow("Unrouted items, by index in each chain's simulate array:\\n  - chain 1: 1");
+  });
+
+  // Hex is case-blind, so a checksummed and a lowercase address agree.
+  it("lets an event spell its transaction's address in another case", async (t) => {
+    const indexer = createTestIndexer();
+    const checksummed = "0x52908400098527886E0F7030069857D2E4169EE7";
+    await indexer.process({
+      chains: {
+        1: {
+          startBlock: 0,
+          endBlock: 5,
+          simulate: [
+            { transaction: { from: checksummed } },
+            {
+              contract: "Token",
+              event: "Transfer",
+              params: { from: alice, to: bob, value: 1n },
+              transaction: { from: checksummed.toLowerCase() as \`0x\${string}\` },
+            },
+          ],
+        },
+      },
+    });
+    t.expect((await indexer.Call.getAll()).map((call) => call.name).sort()).toEqual([
+      "Transfer 0/0 from " + checksummed,
+      "succeeded 0/0",
+    ]);
   });
 
   it("refuses an event that gives its transaction another value than the transaction", async (t) => {
