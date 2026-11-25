@@ -27,10 +27,8 @@ fn fields_needed(registration: &OnTransactionRegistration) -> u64 {
 
 /// The transaction registrations a page reads for.
 pub(crate) struct TransactionRead<'a> {
-    pub(crate) registrations: Vec<&'a OnTransactionRegistration>,
-    /// The union of the registrations' needed transaction fields.
+    registrations: Vec<&'a OnTransactionRegistration>,
     transaction_mask: u64,
-    /// The union of the registrations' block fields.
     pub(crate) block_mask: u64,
 }
 
@@ -258,23 +256,21 @@ pub(crate) async fn read(
             let runs = matched
                 .iter()
                 .any(|registration| registration.filter.matches_status(status));
-            Ok(runs.then_some((transaction, fetched)))
+            Ok(runs.then_some((block_number, transaction, fetched)))
         },
     ))
     .await;
 
-    let kept: Vec<(Transaction, u64)> = collect_worst(read_transactions)?
+    let kept: Vec<(u64, Transaction, u64)> = collect_worst(read_transactions)?
         .into_iter()
         .flatten()
         .collect();
     let mut rows = page.transactions.builder();
     let mut kept_blocks = Vec::with_capacity(kept.len());
-    for (transaction, fetched) in &kept {
+    for (block_number, transaction, fetched) in &kept {
         push_transaction(&mut rows, transaction, *fetched)
             .map_err(|error| EnrichError::Transient(format!("{error:#}")))?;
-        if let Some(block_number) = transaction.block_number {
-            kept_blocks.push(u64::from(block_number));
-        }
+        kept_blocks.push(*block_number);
     }
     page.add_transactions(rows.finish());
     kept_blocks.dedup();

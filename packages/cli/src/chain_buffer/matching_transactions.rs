@@ -30,7 +30,7 @@ pub struct OnTransactionRegistrationInput {
 
 /// What a filter compares: fields ANDed, the values of one field ORed, an
 /// empty list matching any value.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) struct TransactionFilter {
     pub(crate) from: Vec<[u8; 20]>,
     pub(crate) to: Vec<[u8; 20]>,
@@ -211,14 +211,10 @@ impl TransactionMatcher {
         self.registrations.get(index as usize)
     }
 
-    /// The registrations a query fetches for: all of them when it selects any,
-    /// as the chain's transaction handlers share one partition.
-    pub(crate) fn selected(&self, any: bool) -> Vec<&OnTransactionRegistration> {
-        if any {
-            self.registrations.iter().collect()
-        } else {
-            Vec::new()
-        }
+    /// A query selecting any transaction handler fetches for all of them, as
+    /// they share one partition.
+    pub(crate) fn registrations(&self) -> Vec<&OnTransactionRegistration> {
+        self.registrations.iter().collect()
     }
 
     /// Calls `f` with every registration the transaction belongs to, in

@@ -159,10 +159,11 @@ impl EvmHyperSyncClient {
             params.client_filtered_contracts.unwrap_or_default(),
         );
         let selects_logs = !params.on_event_registration_indexes.is_empty();
-        let transaction_registrations = self
-            .chain
-            .transaction_matcher
-            .selected(!params.on_transaction_registration_indexes.is_empty());
+        let transaction_registrations = if params.on_transaction_registration_indexes.is_empty() {
+            Vec::new()
+        } else {
+            self.chain.transaction_matcher.registrations()
+        };
         let selects_transactions = !transaction_registrations.is_empty();
         let built_transactions = transaction_selection::build(&transaction_registrations);
         let built = self

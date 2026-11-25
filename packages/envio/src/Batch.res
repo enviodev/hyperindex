@@ -415,8 +415,10 @@ let findLastItemBlock = (batch: t, ~chainId) => {
         result := Some(payload->Internal.getPayloadBlock->Nullable.toOption)
       | Internal.Transaction({?transaction}) =>
         result :=
-          transaction->Option.map(transaction =>
-            transaction->Internal.getTransactionBlock->Nullable.toOption
+          Some(
+            transaction->Option.flatMap(transaction =>
+              transaction->Internal.getTransactionBlock->Nullable.toOption
+            ),
           )
       | Internal.Block(_) => ()
       }

@@ -599,8 +599,7 @@ impl ChainBuffer {
     }
 
     /// Rows and block handler runs of blocks `[from_block, to_block]`: what a
-    /// build of the range produces at most. With transaction handlers, every
-    /// transaction row counts, matched or joined to a log.
+    /// build of the range produces at most.
     #[napi]
     pub fn count_items_in_block_range(&self, from_block: i64, to_block: i64) -> u32 {
         if to_block < from_block {
@@ -649,14 +648,11 @@ impl ChainBuffer {
             .peekable();
         let decoded = tables.decoded.copy_range(from, LAST_BLOCK);
         let mut decoded = decoded.iter().map(|event| event.block_number).peekable();
-        let mut transactions = tables
-            .transactions
-            .rows_in_block_range(from, LAST_BLOCK)
-            .take(if self.counts_transaction_rows() {
-                usize::MAX
-            } else {
-                0
-            })
+        let mut transactions = self
+            .counts_transaction_rows()
+            .then(|| tables.transactions.rows_in_block_range(from, LAST_BLOCK))
+            .into_iter()
+            .flatten()
             .map(|row| row.block_number())
             .peekable();
         let mut remaining = row_offset;

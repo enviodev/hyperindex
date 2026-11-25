@@ -143,7 +143,6 @@ let validateOnEventRegistrations = (
 
 let make = (
   ~chainConfig: Config.chain,
-  ~ecosystem: Ecosystem.name,
   ~fetchState: FetchState.t,
   ~chainBuffer: ChainBuffer.t,
   ~onEventRegistrations,
@@ -173,7 +172,7 @@ let make = (
     chainBuffer,
     itemContext: {
       chainId: chainConfig.id,
-      ecosystem,
+      ecosystem: chainConfig.ecosystem,
       onEventRegistrations,
       onBlockRegistrations,
       onTransactionRegistrations,
@@ -393,7 +392,6 @@ let makeInternal = (
 
   make(
     ~chainConfig,
-    ~ecosystem=config.ecosystem.name,
     ~fetchState,
     ~chainBuffer,
     ~onEventRegistrations,

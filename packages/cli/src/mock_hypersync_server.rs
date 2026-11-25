@@ -1077,10 +1077,10 @@ mod tests {
                 "address": address, "topic0": "0x01", "topic1": topic1,
             })
         };
-        let transaction = |block: u64, index: u64, from: &str, input: &str| {
+        let transaction = |block: u64, index: u64, from: &str| {
             serde_json::json!({
                 "block_number": block, "transaction_index": index,
-                "from": from, "input": input, "status": 1,
+                "from": from, "status": 1,
             })
         };
         let chain = serde_json::json!({
@@ -1090,9 +1090,9 @@ mod tests {
                 {"number": 7, "miner": "0x01"},
             ],
             "transactions": [
-                transaction(5, 0, "0x00000000000000000000000000000000000000cc", "0x"),
-                transaction(7, 1, "0x00000000000000000000000000000000000000cc", "0xa9059cbb00"),
-                transaction(7, 2, "0x00000000000000000000000000000000000000dd", "0xa9059cbb"),
+                transaction(5, 0, "0x00000000000000000000000000000000000000cc"),
+                transaction(7, 1, "0x00000000000000000000000000000000000000cc"),
+                transaction(7, 2, "0x00000000000000000000000000000000000000dd"),
             ],
             "logs": [
                 log(5, "0x00000000000000000000000000000000000000AA", "0x0a"),

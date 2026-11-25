@@ -559,11 +559,12 @@ impl EvmRpcClient {
                 Some(interval_end),
             )
             .map_err(map_err)?;
-        let transaction_read = TransactionRead::new(
-            self.chain
-                .transaction_matcher
-                .selected(!params.on_transaction_registration_indexes.is_empty()),
-        );
+        let transaction_read =
+            TransactionRead::new(if params.on_transaction_registration_indexes.is_empty() {
+                Vec::new()
+            } else {
+                self.chain.transaction_matcher.registrations()
+            });
         // A page selecting only blocks, where no handler runs, reads nothing:
         // over a final range it has no reorg observation to make either, so it
         // answers without a request up to the next block a handler runs on.

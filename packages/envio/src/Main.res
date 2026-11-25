@@ -293,6 +293,11 @@ let getGlobalIndexer = (): 'indexer => {
     let _ = RollbackCommit.register(callback->(Utils.magic: 'a => RollbackCommit.callback))
   }
 
+  let getChainsObject = config => {
+    let (chains, _) = buildChainsObject(~config)
+    chains->(Utils.magic: {..} => dict<unknown>)
+  }
+
   let onBlockFn = (rawOptions: 'a, handler: 'b) => {
     HandlerRegister.throwIfFinishedRegistration(~methodName="onBlock")
     let raw = rawOptions->(Utils.magic: 'a => {"name": string, "where": unknown, "fields": unknown})
@@ -301,10 +306,7 @@ let getGlobalIndexer = (): 'indexer => {
       ~where=raw["where"],
       ~fields=raw["fields"],
       ~handler=handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>),
-      ~getChainsObject=config => {
-        let (chains, _) = buildChainsObject(~config)
-        chains->(Utils.magic: {..} => dict<unknown>)
-      },
+      ~getChainsObject,
     )
   }
 
@@ -316,10 +318,7 @@ let getGlobalIndexer = (): 'indexer => {
       ~where=raw["where"],
       ~fields=raw["fields"],
       ~handler=handler->(Utils.magic: 'b => Internal.onTransactionArgs => promise<unit>),
-      ~getChainsObject=config => {
-        let (chains, _) = buildChainsObject(~config)
-        chains->(Utils.magic: {..} => dict<unknown>)
-      },
+      ~getChainsObject,
     )
   }
 

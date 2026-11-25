@@ -172,8 +172,6 @@ impl Walker<'_> {
             .events
             .rows_in_block_range(from_block, max_block)
             .peekable();
-        // Read only for transaction handlers: an indexer without one walks no
-        // second stream.
         let mut transactions = (!self.shared.transaction_matcher.is_empty()).then(|| {
             snapshots
                 .transactions
@@ -320,7 +318,7 @@ impl Walker<'_> {
 
     fn push_transactions_through<'r>(
         &mut self,
-        transactions: &mut std::iter::Peekable<impl Iterator<Item = &'r RowRef<'r>>>,
+        transactions: &mut Peekable<impl Iterator<Item = &'r RowRef<'r>>>,
         transaction_index: Option<u32>,
     ) {
         let Some(through) = transaction_index else {
@@ -608,7 +606,7 @@ impl Shared {
 
 #[cfg(test)]
 mod tests {
-    use hypersync_client::format::{Address, Data, Hex};
+    use hypersync_client::format::{Address, Hex};
     use hypersync_client::simple_types::Transaction;
 
     use super::*;
@@ -636,7 +634,6 @@ mod tests {
             block_number: Some(block_number.into()),
             transaction_index: Some(index.into()),
             from: from.map(|from| Address::decode_hex(from).unwrap()),
-            input: Some(Data::from(vec![])),
             ..Default::default()
         }
     }

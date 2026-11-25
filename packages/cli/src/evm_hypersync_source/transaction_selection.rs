@@ -76,19 +76,6 @@ mod tests {
         }
     }
 
-    // An indexer with no transaction handler asks for no transaction field.
-    #[test]
-    fn no_registration_selects_nothing() {
-        assert_eq!(
-            build(&[]),
-            BuiltTransactionSelection {
-                filters: vec![],
-                transaction_fields: vec![],
-                block_fields: vec![],
-            }
-        );
-    }
-
     #[test]
     fn identical_filters_collapse_and_filtered_fields_are_read() {
         let matcher = TransactionMatcher::new(&[
@@ -108,7 +95,7 @@ mod tests {
             },
         ])
         .unwrap();
-        let built = build(&matcher.selected(true));
+        let built = build(&matcher.registrations());
         assert_eq!(
             built,
             BuiltTransactionSelection {

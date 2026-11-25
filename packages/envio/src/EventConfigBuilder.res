@@ -297,9 +297,8 @@ let resolveFieldSelection = (
 
 // `block.number` is the item's own key, so an inline selection, an event's or
 // a transaction handler's, carries it whether or not the handler listed it.
-// Nothing else is added: dropping
-// `timestamp`/`hash` is the point of naming fields inline, and the two things
-// that read them off the payload cope — the progress-latency metric
+// Nothing else is added: dropping `timestamp`/`hash` is the point of naming
+// fields inline, and the two things that read them off the payload cope — the progress-latency metric
 // (`ChainState.applyBatchProgress`) skips a batch whose last block has no
 // timestamp, and `raw_events` selects them back below.
 let internalBlockFields = ["number"]

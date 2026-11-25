@@ -443,7 +443,7 @@ let parse = (
         ~default=transactions
         ->Dict.keysToArray
         ->Array.reduce(0, (next, index) =>
-          Pervasives.max(next, index->Int.fromString->Option.getOr(0) + 1)
+          Pervasives.max(next, index->Int.fromString->Option.getOrThrow + 1)
         ),
         ~fail,
       )
@@ -875,33 +875,24 @@ let parse = (
           ),
           ~blocks=evmTransactionFields
           ->Dict.keysToArray
-          ->Array.filterMap(blockKey =>
-            blockKey
-            ->Int.fromString
-            ->Option.flatMap(getBlock)
-            ->Option.map(block => {
-              let row =
-                block
-                ->(Utils.magic: Internal.eventBlock => dict<unknown>)
-                ->toRpcObject(~isBlock=true)
+          ->Array.map(blockKey => {
+            let blockNumber = blockKey->Int.fromString->Option.getOrThrow
+            let row =
+              blocks
+              ->Dict.getUnsafe(blockKey)
+              ->(Utils.magic: Internal.eventBlock => dict<unknown>)
+              ->toRpcObject(~isBlock=true)
 
-              // Every block row holds its hash, which an event's block
-              // defaults to empty.
-              if row->Dict.get("hash")->Option.isNone {
-                row->Dict.set(
-                  "hash",
-                  JSON.String(
-                    `0x${blockKey
-                      ->Int.fromString
-                      ->Option.getOr(0)
-                      ->Int.toString(~radix=16)
-                      ->String.padStart(64, "0")}`,
-                  ),
-                )
-              }
-              row
-            })
-          ),
+            // An empty hash, a simulated block's default, isn't sent: every
+            // block row holds one, made from the number.
+            if row->Dict.get("hash")->Option.isNone {
+              row->Dict.set(
+                "hash",
+                JSON.String(`0x${blockNumber->Int.toString(~radix=16)->String.padStart(64, "0")}`),
+              )
+            }
+            row
+          }),
         ),
       ),
     }

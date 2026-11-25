@@ -689,6 +689,9 @@ let extractRange = (filter: unknown, ~name, ~ecosystem: Ecosystem.t): blockRange
 // Mirrors `Envio.onBlockWhereArgs` without depending on the module.
 type onBlockWhereArgs = {chain: unknown}
 
+let isPlainObject = (value: unknown) =>
+  typeof(value) === #object && value !== %raw(`null`) && !Array.isArray(value)
+
 // `where` is evaluated once per configured chain at registration time.
 // Decoded ranges/stride feed directly into the per-chain registration store
 // so the fetcher's `(blockNumber - handlerStartBlock) % interval === 0`
@@ -748,7 +751,7 @@ let registerOnBlock = (
         (true, defaultBlockRange)
       } else if result === %raw(`false`) {
         (false, defaultBlockRange)
-      } else if typeof(result) === #object && !(result->Array.isArray) && result !== %raw(`null`) {
+      } else if isPlainObject(result) {
         (true, extractRange(result, ~name, ~ecosystem))
       } else {
         // Reject numbers, strings, functions, arrays, undefined, null —
@@ -814,9 +817,6 @@ let registerOnBlock = (
     }
   })
 }
-
-let isPlainObject = (value: unknown) =>
-  typeof(value) === #object && value !== %raw(`null`) && !Array.isArray(value)
 
 let addressPattern = RegExp.fromString(`^0x[0-9a-fA-F]{40}$`)
 
