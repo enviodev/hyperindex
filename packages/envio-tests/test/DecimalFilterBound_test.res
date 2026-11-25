@@ -122,18 +122,23 @@ describe("A getWhere bound finer than a Decimal column's scale", () => {
     await indexer.getBatchWritePromise()
 
     let queries = Array.concat(
-      ["amount", "narrow"]->Array.flatMap(field =>
-        filters->Array.map(((operator, bound)) => (
-          field,
-          operator,
-          decimal(bound)->(Utils.magic: BigDecimal.t => unknown),
-        ))
+      ["amount", "narrow"]->Array.flatMap(
+        field =>
+          filters->Array.map(
+            ((operator, bound)) => (
+              field,
+              operator,
+              decimal(bound)->(Utils.magic: BigDecimal.t => unknown),
+            ),
+          ),
       ),
-      listFilters->Array.map(((operator, bound)) => (
-        "amounts",
-        operator,
-        bound->Array.map(decimal)->(Utils.magic: array<BigDecimal.t> => unknown),
-      )),
+      listFilters->Array.map(
+        ((operator, bound)) => (
+          "amounts",
+          operator,
+          bound->Array.map(decimal)->(Utils.magic: array<BigDecimal.t> => unknown),
+        ),
+      ),
     )
 
     // Each filter runs in an indexer restarted for it: an entity a getWhere has
@@ -145,18 +150,21 @@ describe("A getWhere bound finer than a Decimal column's scale", () => {
       let (field, operator, bound) = queries->Array.getUnsafe(at)
       let block = at + 2
       source.setAutoHeight(100)
-      indexer := await indexer.contents.restart()
+      indexer := (await indexer.contents.restart())
       await source.expectItemsQueries([
         {
           coversBlock: block,
           reply: Respond({
             items: [
-              inHandler(~block, async context => {
-                let wides = await context.wide.getWhere(
-                  Dict.fromArray([(field, Dict.fromArray([(operator, bound)]))]),
-                )
-                found->Array.push((field, wides->ids))->ignore
-              }),
+              inHandler(
+                ~block,
+                async context => {
+                  let wides = await context.wide.getWhere(
+                    Dict.fromArray([(field, Dict.fromArray([(operator, bound)]))]),
+                  )
+                  found->Array.push((field, wides->ids))->ignore
+                },
+              ),
             ],
             latestFetchedBlockNumber: block,
           }),
