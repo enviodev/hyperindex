@@ -37,9 +37,9 @@ use crate::storage::schema::{
     RAW_EVENTS_TABLE,
 };
 use crate::storage::types::{
-    Addresses, Bounds, ChainConfig, ChainMeta, Checkpoints, Frontier, Progress, ProgressDiff,
-    ReorgCheckpoint, ResumedChain, Sequence, StoredConfig, CHAINS_TABLE, CHANGE_COLUMN,
-    CHECKPOINT_ID_COLUMN, DELETE, SET,
+    AddedEvents, Addresses, Bounds, ChainConfig, ChainMeta, Checkpoints, Frontier, Progress,
+    ProgressDiff, ReorgCheckpoint, ResumedChain, Sequence, StoredConfig, CHAINS_TABLE,
+    CHANGE_COLUMN, CHECKPOINT_ID_COLUMN, DELETE, SET,
 };
 use crate::storage::{
     AddChain, Batch, Failure, Handoff, Initialize, Resumed, RollbackWrite, WriteError,
@@ -645,15 +645,24 @@ impl Storage {
                 envio_info: None,
                 contract_names: None,
                 chains: vec![],
+                added_events_chain_ids: vec![],
             });
         }
-        let (chains, _) = self
-            .client
-            .query(&internal::read_stored_chains(schema), &[])
-            .await?;
+        let (read_stored_chains, read_added_events_chains) = (
+            internal::read_stored_chains(schema),
+            internal::read_added_events_chains(schema),
+        );
+        let ((chains, _), added_events) = futures_util::try_join!(
+            self.client.query(&read_stored_chains, &[]),
+            missing_as_none(self.client.query(&read_added_events_chains, &[])),
+        )?;
         Ok(StoredConfig {
             envio_info,
             contract_names,
+            added_events_chain_ids: added_events
+                .map(|(rows, _)| rows.iter().map(|row| cell(row, 0)).collect::<Result<_>>())
+                .transpose()?
+                .unwrap_or_default(),
             chains: chains
                 .iter()
                 .map(|row| {
@@ -667,6 +676,72 @@ impl Storage {
                 })
                 .collect::<Result<_>>()?,
         })
+    }
+
+    /// Records that every chain the schema holds owes `events` their history,
+    /// and the config that declares them, together: a start that finds the new
+    /// config stored finds the debt beside it.
+    pub async fn start_added_events(&self, envio_info: &str, events: &str) -> Result<()> {
+        let schema = self.schema();
+        let transaction = self.client.begin().await?;
+        let outcome = async {
+            transaction
+                .batch(&internal::create_added_events(schema))
+                .await?;
+            transaction
+                .execute(
+                    &internal::insert_added_events(schema),
+                    &[Param::Text(events.to_string())],
+                )
+                .await?;
+            transaction
+                .execute(
+                    &internal::set_info_config(schema),
+                    &[Param::Text(envio_info.to_string())],
+                )
+                .await?;
+            anyhow::Ok(())
+        }
+        .await;
+        finish(transaction, outcome).await
+    }
+
+    pub async fn read_added_events(&self, chain_ids: &[i64]) -> Result<Vec<AddedEvents>> {
+        let sql = internal::read_added_events(self.schema());
+        let params = [chain_ids_param(chain_ids)];
+        let Some((rows, _)) = missing_as_none(self.client.query(&sql, &params)).await? else {
+            return Ok(vec![]);
+        };
+        rows.iter()
+            .map(|row| {
+                Ok(AddedEvents {
+                    chain_id: cell(row, 0)?,
+                    events: cell(row, 1)?,
+                    until_block: cell(row, 2)?,
+                    progress_block: cell(row, 3)?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn begin_added_events(&self, chain_ids: &[i64]) -> Result<()> {
+        self.client
+            .execute(
+                &internal::begin_added_events(self.schema()),
+                &[chain_ids_param(chain_ids)],
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn finish_added_events(&self, chain_ids: &[i64]) -> Result<()> {
+        self.client
+            .execute(
+                &internal::finish_added_events(self.schema()),
+                &[chain_ids_param(chain_ids)],
+            )
+            .await?;
+        Ok(())
     }
 
     /// Each chain's frontier as committed: the checkpoint its rows are readable
@@ -1201,6 +1276,18 @@ impl Storage {
                     batch.diff_checkpoint(changes.chain_id),
                 )));
             }
+        }
+        let added_events_progress_sql = internal::set_added_events_progress(schema);
+        for progress in &batch.added_events_progress {
+            statements.push(execute(
+                transaction,
+                "Failed writing the added events' progress",
+                added_events_progress_sql.clone(),
+                vec![
+                    Param::Text(progress.chain_id.to_string()),
+                    Param::Text(progress.progress_block.to_string()),
+                ],
+            ));
         }
         let meta_sql = internal::set_meta(schema);
         for meta in &batch.chain_meta {

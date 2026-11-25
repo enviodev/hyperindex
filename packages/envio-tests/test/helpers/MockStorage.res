@@ -20,6 +20,7 @@ let emptyStored: ResumePlan.stored = {
   envioInfo: Some(JSON.Encode.object(Dict.make())),
   chains: [],
   contractMapping: ContractMapping.empty,
+  addedEventsChainIds: [],
 }
 
 let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
@@ -78,6 +79,11 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
       readStoredConfig: implement(#readStoredConfig, () => Promise.resolve(stored)),
       addChain: (~chainConfig as _, ~contractMapping as _) =>
         JsError.throwWithMessage("Not implemented"),
+      startAddedEvents: (~envioInfo as _, ~events as _) =>
+        JsError.throwWithMessage("Not implemented"),
+      readAddedEvents: (~chainIds as _) => Promise.resolve([]),
+      beginAddedEvents: (~chainIds as _) => JsError.throwWithMessage("Not implemented"),
+      finishAddedEvents: (~chainIds as _) => JsError.throwWithMessage("Not implemented"),
       resumeInitialState: (~chainIds as _, ~contractMapping as _) =>
         JsError.throwWithMessage("Not implemented"),
       takeOver: (~committed as _) => JsError.throwWithMessage("Not implemented"),

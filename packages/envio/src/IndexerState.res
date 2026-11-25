@@ -110,6 +110,10 @@ type t = {
   loadManager: LoadManager.t,
   keepProcessAlive: bool,
   exitAfterFirstEventBlock: bool,
+  // False for a run that indexes into chains without bringing them any closer
+  // to ready, which then never builds their deferred indexes or stamps
+  // `ready_at`.
+  finalizesIndexes: bool,
   // The single fatal-error handler.
   onError: ErrorHandling.t => unit,
   // Invoked once when the indexer catches up and would otherwise exit the
@@ -171,6 +175,7 @@ let make = (
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
+  ~finalizesIndexes=true,
   ~onError: ErrorHandling.t => unit,
   ~onExit=?,
   ~onArrivedAtHead=?,
@@ -225,6 +230,7 @@ let make = (
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     exitAfterFirstEventBlock,
+    finalizesIndexes,
     onError,
     onExit,
     onArrivedAtHead,
@@ -272,6 +278,8 @@ let makeFromDbState = (
   // A process driving part of a split run waits for its supervisor before
   // entering the reorg threshold or switching to realtime.
   ~holdRealtime=false,
+  ~finalizesIndexes=true,
+  ~fetchesRegistration: option<(~chainId: ChainId.t, Internal.onEventRegistration) => bool>=?,
   ~onError,
   ~onExit=?,
   ~onArrivedAtHead=?,
@@ -311,6 +319,9 @@ let makeFromDbState = (
         ~registrationsByChainId,
         ~logger,
         ~sourceTiming?,
+        ~fetchesRegistration=?fetchesRegistration->Option.map(fetchesRegistration =>
+          registration => fetchesRegistration(~chainId=resumedChainState.id, registration)
+        ),
       ),
     )
   })
@@ -328,6 +339,7 @@ let makeFromDbState = (
     ~isDevelopmentMode,
     ~shouldUseTui,
     ~exitAfterFirstEventBlock,
+    ~finalizesIndexes,
     ~onError,
     ~onExit?,
     ~onArrivedAtHead?,
@@ -587,7 +599,9 @@ let isFinalizingIndexes = (state: t) =>
 // The FinalizingIndexes phase is the transition a held process waits on: it
 // ends with `ready_at` committed and the indexer realtime.
 let shouldFinalizeIndexes = (state: t) =>
-  state->isFinalizingIndexes && !(state.crossChainState->CrossChainState.isHoldingRealtime)
+  state.finalizesIndexes &&
+  state->isFinalizingIndexes &&
+  !(state.crossChainState->CrossChainState.isHoldingRealtime)
 
 let markCaughtUpIfSettled = (state: t) =>
   state.crossChainState->CrossChainState.markCaughtUpIfSettled

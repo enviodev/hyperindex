@@ -11,6 +11,7 @@ use crate::storage::types::{
 
 pub const CONTRACTS: &str = "envio_contracts";
 pub const ADDRESSES: &str = "envio_addresses";
+pub const ADDED_EVENTS: &str = "envio_added_events";
 pub const META_VIEW: &str = "_meta";
 pub const CHAIN_METADATA_VIEW: &str = "chain_metadata";
 
@@ -234,6 +235,68 @@ pub fn read_info(pg_schema: &str) -> String {
 
 pub fn read_instance(pg_schema: &str) -> String {
     format!("SELECT \"instance\" FROM \"{pg_schema}\".\"{INFO}\" LIMIT 1;")
+}
+
+/// Created when a config first gains events to an existing schema rather than
+/// with the other tables: a schema built before the table existed has to be
+/// able to take one. A row is a chain that still owes the added events their
+/// history; `until_block` is null until the process driving the chain starts
+/// on it, since only that process knows the chain's progress won't move, and
+/// `progress_block` is how far the catch-up has got, apart from the chain's own
+/// progress, which keeps moving at the head meanwhile.
+pub fn create_added_events(pg_schema: &str) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS \"{pg_schema}\".\"{ADDED_EVENTS}\"(\"chain_id\" BIGINT NOT \
+         NULL PRIMARY KEY, \"events\" TEXT NOT NULL, \"until_block\" INTEGER NULL, \"progress_block\" \
+         INTEGER NULL);"
+    )
+}
+
+pub fn insert_added_events(pg_schema: &str) -> String {
+    format!(
+        "INSERT INTO \"{pg_schema}\".\"{ADDED_EVENTS}\" (\"chain_id\", \"events\")\nSELECT \
+         \"id\"::int8, $1 FROM \"{pg_schema}\".\"{CHAINS}\";"
+    )
+}
+
+pub fn set_info_config(pg_schema: &str) -> String {
+    format!("UPDATE \"{pg_schema}\".\"{INFO}\" SET \"config\" = $1;")
+}
+
+pub fn read_added_events(pg_schema: &str) -> String {
+    format!(
+        "SELECT \"chain_id\", \"events\", \"until_block\", \"progress_block\" FROM \
+         \"{pg_schema}\".\"{ADDED_EVENTS}\" WHERE \"chain_id\" = ANY($1::int8[]);"
+    )
+}
+
+pub fn read_added_events_chains(pg_schema: &str) -> String {
+    format!("SELECT \"chain_id\" FROM \"{pg_schema}\".\"{ADDED_EVENTS}\";")
+}
+
+/// Pins where each chain's catch-up ends at the chain's progress. A chain
+/// already begun is left alone: its catch-up ends where it was first pinned.
+pub fn begin_added_events(pg_schema: &str) -> String {
+    format!(
+        "UPDATE \"{pg_schema}\".\"{ADDED_EVENTS}\" AS added\nSET \"until_block\" = \
+         chain.\"progress_block\"\nFROM \"{pg_schema}\".\"{CHAINS}\" AS chain\nWHERE \
+         chain.\"id\"::int8 = added.\"chain_id\"\n  AND added.\"chain_id\" = \
+         ANY($1::int8[])\n  AND added.\"until_block\" IS NULL;"
+    )
+}
+
+pub fn set_added_events_progress(pg_schema: &str) -> String {
+    format!(
+        "UPDATE \"{pg_schema}\".\"{ADDED_EVENTS}\" SET \"progress_block\" = $2 WHERE \
+         \"chain_id\" = $1;"
+    )
+}
+
+pub fn finish_added_events(pg_schema: &str) -> String {
+    format!(
+        "DELETE FROM \"{pg_schema}\".\"{ADDED_EVENTS}\" WHERE \"chain_id\" = \
+         ANY($1::int8[]) AND \"until_block\" IS NOT NULL;"
+    )
 }
 
 pub fn insert_contracts(pg_schema: &str) -> String {

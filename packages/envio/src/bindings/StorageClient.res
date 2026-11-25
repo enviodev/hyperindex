@@ -132,6 +132,19 @@ type storedConfig = {
   envioInfo?: string,
   contractNames?: array<string>,
   chains: array<storedChain>,
+  addedEventsChainIds: array<float>,
+}
+
+type addedEvents = {
+  chainId: float,
+  events: string,
+  untilBlock?: int,
+  progressBlock?: int,
+}
+
+type addedEventsProgress = {
+  chainId: ChainId.t,
+  progressBlock: int,
 }
 
 type resumedChain = {
@@ -220,6 +233,8 @@ type effectCacheWrite = {table: string, create: bool, rows: int}
 type batch = {
   rollback?: rollbackWrite,
   progress: array<progress>,
+  // Set instead of `progress` by a batch of a catch-up on added events.
+  addedEventsProgress: array<addedEventsProgress>,
   rawEvents?: int,
   changes: array<changes>,
   chainMeta: array<chainMeta>,
@@ -351,6 +366,21 @@ type holding =
 @send external addChain: (t, addChain) => promise<unit> = "addChain"
 
 @send external readStoredConfig: t => promise<storedConfig> = "readStoredConfig"
+
+// Stores the config that gained events, and that every stored chain owes those
+// events their history, in one transaction.
+@send
+external startAddedEvents: (t, ~envioInfo: string, ~events: string) => promise<unit> =
+  "startAddedEvents"
+
+@send
+external readAddedEvents: (t, array<ChainId.t>) => promise<array<addedEvents>> = "readAddedEvents"
+
+// Pins each chain's catch-up at its progress. Leaves a chain already begun as
+// it is.
+@send external beginAddedEvents: (t, array<ChainId.t>) => promise<unit> = "beginAddedEvents"
+
+@send external finishAddedEvents: (t, array<ChainId.t>) => promise<unit> = "finishAddedEvents"
 
 // What the chains this process indexes resume from. Only reads.
 @send external resume: (t, array<ChainId.t>) => promise<resumed> = "resume"

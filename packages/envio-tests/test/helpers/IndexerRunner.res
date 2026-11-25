@@ -108,6 +108,9 @@ type rec t = {
   // Quiesce the run: its loops keep driving the database otherwise, and the
   // schema is dropped out from under them at the end of `run`.
   stop: unit => promise<unit>,
+  // Resolves once the catch-up on the events config.yaml gained is done, or
+  // has failed. At once when the run has none.
+  addedEventsFinished: unit => promise<unit>,
   // `~chains` resumes the same schema driving only those chains, the way
   // `envio start --chain` does. The chains left out keep their stored state.
   // `~config` resumes under an edited config.yaml, and later restarts keep it.
@@ -349,11 +352,6 @@ let run = async (
     storages->Array.push(storage)
     Main.setGlobalInitialState(None)
 
-    let onError = switch onError {
-    | Some(onError) => onError
-    | None => failWith
-    }
-
     let initialState = await storage->Persistence.initForRun(
       ~logger,
       ~config,
@@ -374,7 +372,17 @@ let run = async (
     // The client above is already in `clients`, so teardown still closes it;
     // only the loop must not start, since teardown may have passed `stops`.
     throwIfClosing()
+    let onError = switch onError {
+    | Some(onError) => onError
+    | None => failWith
+    }
     MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
+    let addedEvents = await AddedEvents.prepare(
+      ~storage,
+      ~config,
+      ~initialState,
+      ~registrationsByChainId,
+    )
 
     // Only when the test didn't ask for the hold itself: one that did is
     // testing the barrier and owns its own release. The stand-in supervisor
@@ -413,6 +421,23 @@ let run = async (
     stateRef := Some(state)
     Clock.refuseReal := clock->Option.isSome
     state->IndexerLoop.start
+    let addedEventsRun =
+      addedEvents->Option.map(addedEvents =>
+        addedEvents->AddedEvents.start(
+          ~storage,
+          ~config,
+          ~logger,
+          ~registrationsByChainId,
+          ~onError,
+          ~sourceTiming?,
+          ~targetBufferSize?,
+        )
+      )
+    // A failure reaches the test through `onError`.
+    let addedEventsFinished = switch addedEventsRun {
+    | Some(run) => run.finished->Promise.catch(_ => Promise.resolve())
+    | None => Promise.resolve()
+    }
 
     // Persist before stopping, else a resumed indexer loses uncommitted state,
     // then let any in-flight batch or write settle so nothing from this run
@@ -426,6 +451,10 @@ let run = async (
       | None =>
         let promise = (
           async () => {
+            switch addedEventsRun {
+            | Some(run) => await run.stop()
+            | None => ()
+            }
             await state->Writing.flush
             state->IndexerState.stop
             // Tests deliberately leave handlers that never resolve, which pins
@@ -888,6 +917,7 @@ let run = async (
           Promise.resolve()
         },
       stop,
+      addedEventsFinished: () => addedEventsFinished,
       infoAndAboveLogs: () => logger->Logger.inMemoryLines->Array.filterMap(toInfoLogEntry),
       allLogsAsJson: () => logger->Logger.inMemoryLines,
       sibling: async (~chains) => {

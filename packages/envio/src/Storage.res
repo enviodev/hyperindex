@@ -423,10 +423,40 @@ let make = (
           maxReorgDepth: chain.maxReorgDepth,
         }),
         contractMapping: ContractMapping.fromStoredNames(contractNames),
+        addedEventsChainIds: stored.addedEventsChainIds->Array.map(ChainId.normalizeOrThrow),
       }
-    | _ => {envioInfo: None, chains: [], contractMapping: ContractMapping.empty}
+    | _ => {
+        envioInfo: None,
+        chains: [],
+        contractMapping: ContractMapping.empty,
+        addedEventsChainIds: [],
+      }
     }
   }
+
+  let startAddedEvents = (~envioInfo, ~events: ResumePlan.addedEvents) =>
+    client->StorageClient.startAddedEvents(
+      ~envioInfo=envioInfo->JSON.stringify,
+      ~events=events
+      ->(Utils.magic: ResumePlan.addedEvents => JSON.t)
+      ->JSON.stringify,
+    )
+
+  let readAddedEvents = async (~chainIds) =>
+    (await client->StorageClient.readAddedEvents(chainIds))->Array.map((
+      added
+    ): Persistence.addedEventsDebt => {
+      chainId: added.chainId->ChainId.normalizeOrThrow,
+      events: added.events
+      ->JSON.parseOrThrow
+      ->(Utils.magic: JSON.t => ResumePlan.addedEvents),
+      untilBlock: added.untilBlock,
+      progressBlock: added.progressBlock,
+    })
+
+  let beginAddedEvents = (~chainIds) => client->StorageClient.beginAddedEvents(chainIds)
+
+  let finishAddedEvents = (~chainIds) => client->StorageClient.finishAddedEvents(chainIds)
 
   let addChain = (~chainConfig: Config.chain, ~contractMapping) =>
     client->StorageClient.addChain({
@@ -589,8 +619,13 @@ let make = (
     ~chainMetaData,
     ~onWrite,
   ) => {
+    // A catch-up on added events indexes below where its chains stand, so its
+    // batches carry rows and how far the catch-up got, and nothing of the
+    // chains' own: their progress, frontier, checkpoints and metadata belong to
+    // the run indexing them at the head meanwhile.
+    let isCatchUp = config.isAddedEventsCatchUp
     let (frontierChainIds, frontierCheckpointIds) = {
-      let frontier = Persistence.writtenFrontier(~batch, ~rollback)
+      let frontier = isCatchUp ? Frontier.empty() : Persistence.writtenFrontier(~batch, ~rollback)
       let chainIds = frontier->Frontier.chainIds
       (chainIds, chainIds->Array.map(chainId => frontier->Frontier.get(chainId)))
     }
@@ -634,15 +669,25 @@ let make = (
           }),
         })
       ),
-      progress: batch.progressedChainsById->Utils.Dict.mapValuesToArray(chainAfterBatch =>
-        progress({
-          chainId: chainAfterBatch.chainId,
-          progressBlockNumber: chainAfterBatch.progressBlockNumber,
-          progressBlockTime: chainAfterBatch.progressBlockTime,
-          sourceBlockNumber: chainAfterBatch.sourceBlockNumber,
-          totalEventsProcessed: chainAfterBatch.totalEventsProcessed,
-        })
-      ),
+      progress: isCatchUp
+        ? []
+        : batch.progressedChainsById->Utils.Dict.mapValuesToArray(chainAfterBatch =>
+            progress({
+              chainId: chainAfterBatch.chainId,
+              progressBlockNumber: chainAfterBatch.progressBlockNumber,
+              progressBlockTime: chainAfterBatch.progressBlockTime,
+              sourceBlockNumber: chainAfterBatch.sourceBlockNumber,
+              totalEventsProcessed: chainAfterBatch.totalEventsProcessed,
+            })
+          ),
+      addedEventsProgress: isCatchUp
+        ? batch.progressedChainsById->Utils.Dict.mapValuesToArray((
+            chainAfterBatch
+          ): StorageClient.addedEventsProgress => {
+            chainId: chainAfterBatch.chainId,
+            progressBlock: chainAfterBatch.progressBlockNumber,
+          })
+        : [],
       rawEvents: ?(
         rawEvents->Utils.Array.notEmpty
           ? Some(
@@ -689,21 +734,30 @@ let make = (
           )
         }
       ),
-      chainMeta: chainMetaData->Option.mapOr([], chainMeta),
+      chainMeta: isCatchUp ? [] : chainMetaData->Option.mapOr([], chainMeta),
       addresses: registeredAddresses->Array.map(staged => staged.row)->addressColumns,
       frontier: {chainIds: frontierChainIds, checkpointIds: frontierCheckpointIds},
       // A checkpoint anchors the history its chain keeps, which the batch
       // decides chain by chain.
-      checkpoints: {
-        ids: batch.checkpointIds,
-        chainIds: batch.checkpointChainIds,
-        blockNumbers: batch.checkpointBlockNumbers,
-        blockHashes: batch.checkpointBlockHashes,
-        eventsProcessed: batch.checkpointEventsProcessed,
-        keepsHistory: batch.checkpointChainIds->Array.map(chainId =>
-          batch.history->HistoryPolicy.forChain(chainId)
-        ),
-      },
+      checkpoints: isCatchUp
+        ? {
+            ids: [],
+            chainIds: [],
+            blockNumbers: [],
+            blockHashes: [],
+            eventsProcessed: [],
+            keepsHistory: [],
+          }
+        : {
+            ids: batch.checkpointIds,
+            chainIds: batch.checkpointChainIds,
+            blockNumbers: batch.checkpointBlockNumbers,
+            blockHashes: batch.checkpointBlockHashes,
+            eventsProcessed: batch.checkpointEventsProcessed,
+            keepsHistory: batch.checkpointChainIds->Array.map(chainId =>
+              batch.history->HistoryPolicy.forChain(chainId)
+            ),
+          },
       // Never rolled back, so written outside the batch's commit.
       effectCaches: updatedEffectsCache->Array.map(({
         table,
@@ -784,6 +838,10 @@ let make = (
     initialize,
     readStoredConfig,
     addChain,
+    startAddedEvents,
+    readAddedEvents,
+    beginAddedEvents,
+    finishAddedEvents,
     resumeInitialState,
     takeOver,
     readChainProgress,

@@ -34,6 +34,8 @@ let it = (
   ~deployed: Scenario.t,
   ~edited: Scenario.t,
   ~chains: option<array<int>>=?,
+  // Restarts as `envio start --backfill-added-events`.
+  ~backfillAddedEvents=false,
   ~expected: outcome,
 ) => {
   let deployedChains = deployed.config.chainMap->ChainMap.keys->Array.map(ChainId.toInt)
@@ -68,7 +70,7 @@ let it = (
         }),
       )
       let outcome = switch await indexer.restart(
-        ~config,
+        ~config={...config, backfillAddedEvents},
         ~chains=?chains->Option.map(chains => chains->Array.map(ChainId.fromInt)),
         (),
       ) {

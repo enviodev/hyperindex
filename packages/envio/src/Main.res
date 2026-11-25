@@ -526,6 +526,13 @@ exception FatalError(exn)
       )
     }
 
+    let addedEvents = await AddedEvents.prepare(
+      ~storage,
+      ~config,
+      ~initialState,
+      ~registrationsByChainId,
+    )
+
     let state = IndexerState.makeFromDbState(
       ~config,
       ~logger,
@@ -547,6 +554,31 @@ exception FatalError(exn)
     )
     setIndexerState(state)
     state->IndexerLoop.start
+    switch addedEvents {
+    | Some(addedEvents) =>
+      (
+        addedEvents->AddedEvents.start(
+          ~storage,
+          ~config,
+          ~logger,
+          ~registrationsByChainId,
+          ~onError,
+        )
+      ).finished
+      ->Promise.catch(exn => {
+        switch exn {
+        // Already reported through `onError`.
+        | AddedEvents.Failed => ()
+        | exn =>
+          onError(
+            exn->ErrorHandling.make(~logger, ~msg="Failed indexing the events config.yaml gained"),
+          )
+        }
+        Promise.resolve()
+      })
+      ->ignore
+    | None => ()
+    }
     await runUntilFatalError
   }
 )

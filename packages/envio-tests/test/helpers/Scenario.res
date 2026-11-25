@@ -222,6 +222,10 @@ let run = async (
   ~postgresPort=?,
   ~provideClickHouse=?,
   ~chains=?,
+  // The scenarios a restart may continue the run as: restarted under the config
+  // of one of them, the indexer loads that scenario's handlers, as a deployment
+  // whose config.yaml and handlers were edited together does.
+  ~edited: array<t>=[],
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
   let virtualTime = virtualTime->Option.getOr(scenario.virtualTime)
@@ -297,22 +301,49 @@ let run = async (
   let logger = Logger.makeInMemory()
   let registration = HandlerRegister.makeRegistration(~config, ~logger)
   let imported = ref(false)
+  let editedRegistrations = edited->Array.map(edited => (edited, ref(None)))
+  let registerHandlers = async (~config, ~registration, ~imported, ~handlers, ~site) =>
+    await registration->HandlerRegister.useRegistration(async () => {
+      switch (handlers, imported.contents) {
+      | (Some(source), false) =>
+        imported := true
+        await UserModule.importModule(UserModule.write(~kind="handlers", ~site, ~source))
+      | _ => ()
+      }
+      HandlerRegister.finishRegistration(~config)
+    })
 
   await IndexerRunner.run(
     ~config,
     ~logger,
     ~resolveRegistrations=(~config) =>
-      registration->HandlerRegister.useRegistration(async () => {
-        switch (scenario.handlers, imported.contents) {
-        | (Some(source), false) =>
-          imported := true
-          await UserModule.importModule(
-            UserModule.write(~kind="handlers", ~site=scenario.site, ~source),
-          )
-        | _ => ()
+      switch editedRegistrations->Array.find(((edited, _)) =>
+        edited.config.envioInfo->JSON.stringify === config.envioInfo->JSON.stringify
+      ) {
+      | Some((edited, registered)) =>
+        let (registration, imported) = switch registered.contents {
+        | Some(registered) => registered
+        | None =>
+          let made = (HandlerRegister.makeRegistration(~config, ~logger), ref(false))
+          registered := Some(made)
+          made
         }
-        HandlerRegister.finishRegistration(~config)
-      }),
+        registerHandlers(
+          ~config,
+          ~registration,
+          ~imported,
+          ~handlers=edited.handlers,
+          ~site=edited.site,
+        )
+      | None =>
+        registerHandlers(
+          ~config,
+          ~registration,
+          ~imported,
+          ~handlers=scenario.handlers,
+          ~site=scenario.site,
+        )
+      },
     ~sourceTiming?,
     ~clock?,
     ~startBlockRetry?,
@@ -402,6 +433,7 @@ let it = (
   ~postgresPort=?,
   ~timeout=?,
   ~retry=?,
+  ~edited=?,
   body: (
     ~t: Vitest.testContext,
     ~indexer: IndexerRunner.t,
@@ -431,6 +463,7 @@ let it = (
           ~onExit?,
           ~mapStorage?,
           ~postgresPort?,
+          ~edited?,
           (~indexer, ~source) => body(~t, ~indexer, ~source),
         )
     let register = (name, ~superviseRun) =>

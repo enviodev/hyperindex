@@ -142,6 +142,12 @@ type t = {
   // The operator's `-d` / `--config` flags, repeated in every command printed
   // for them to run next. Empty when they gave neither.
   projectFlags: string,
+  // `envio start --backfill-added-events`: the operator's word that the events
+  // config.yaml gained can be indexed apart from the ones already stored.
+  backfillAddedEvents: bool,
+  // Set on the config a catch-up on added events runs under, never by
+  // config.yaml: its writes leave the chains' own progress alone.
+  isAddedEventsCatchUp: bool,
   // An `envio start --chain` process: drives a subset of the schema's chains
   // while sibling processes drive the rest, so it only touches what its own
   // chains own — their partitions' indexes, their `ready_at`, their resume.
@@ -614,6 +620,7 @@ let publicConfigSchema = S.schema(s =>
     "isDev": s.matches(S.option(S.bool)),
     "isolatedChains": s.matches(S.option(S.array(ChainId.schema))),
     "projectFlags": s.matches(S.option(S.string)),
+    "backfillAddedEvents": s.matches(S.option(S.bool)),
     "fullBatchSize": s.matches(S.option(S.int)),
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
@@ -688,7 +695,7 @@ let isolate = (config: t, ~chainIds: array<ChainId.t>) => {
 // What the command decided rather than the project's files: `envio dev` vs
 // `envio start`, which chains this process drives, and how it found the
 // project.
-let commandFields = ["isDev", "isolatedChains", "projectFlags"]
+let commandFields = ["isDev", "isolatedChains", "projectFlags", "backfillAddedEvents"]
 
 let withProjectFlags = (command, ~config: t) =>
   switch config.projectFlags {
@@ -1185,6 +1192,8 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     lowercaseAddresses,
     isDev: publicConfig["isDev"]->Option.getOr(false),
     projectFlags: publicConfig["projectFlags"]->Option.getOr(""),
+    backfillAddedEvents: publicConfig["backfillAddedEvents"]->Option.getOr(false),
+    isAddedEventsCatchUp: false,
     isolated: false,
     userEntitiesByName,
     userEntities,
@@ -1449,6 +1458,7 @@ let incompatibleMessage = (
   ~runCommand: option<string>,
   ~hasClickhouse: bool,
   ~addChainCommands: array<string>=[],
+  ~backfillAddedEventsCommand: option<string>=?,
 ) => {
   let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
   let addChains = switch addChainCommands {
@@ -1462,6 +1472,15 @@ let incompatibleMessage = (
         commands,
       ),
     ]
+  }
+  let backfillAddedEvents = switch backfillAddedEventsCommand {
+  | Some(command) => [
+      Steps(
+        "Index only the added events, keeping what's already indexed. Only if their handlers write rows of their own event and read nothing other events write",
+        [command],
+      ),
+    ]
+  | None => []
   }
   let secondIndexer = switch runCommand {
   | None => []
@@ -1478,6 +1497,7 @@ let incompatibleMessage = (
   }
   `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n${Array.flat([
       addChains,
+      backfillAddedEvents,
       [Command("Revert the changes above", resume), Command(resetCommand, startOver)],
       secondIndexer,
     ])->pickOneOf}`

@@ -27,6 +27,7 @@ let makeFromDbState: (
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~logger: Logger.t,
   ~sourceTiming: SourceManager.timing=?,
+  ~fetchesRegistration: Internal.onEventRegistration => bool=?,
 ) => t
 
 // Accessors.

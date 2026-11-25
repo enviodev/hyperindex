@@ -161,6 +161,7 @@ async fn execute_command(
                 false,
                 &[],
                 &start_args.chains,
+                start_args.backfill_added_events,
             )?))
         }
 
@@ -225,6 +226,9 @@ pub fn build_start_command(
     // `isDev`, so the runtime reads the selection off the config it already
     // parses. Empty means every chain, which is what a run without the flag does.
     chains: &[u64],
+    // `--backfill-added-events`: the operator's word that the events config.yaml
+    // gained can be indexed apart from the ones already stored.
+    backfill_added_events: bool,
 ) -> Result<Command> {
     let config_path = config
         .parsed_project_paths
@@ -240,6 +244,9 @@ pub fn build_start_command(
     let mut public_config = public_config_value(config, is_dev)?;
     if !chains.is_empty() {
         public_config["isolatedChains"] = chains.iter().copied().collect();
+    }
+    if backfill_added_events {
+        public_config["backfillAddedEvents"] = true.into();
     }
 
     Ok(Command::Start {
@@ -331,7 +338,7 @@ pub fn public_config_value(config: &SystemConfig, is_dev: bool) -> Result<serde_
 
 #[cfg(test)]
 mod chain_selection_tests {
-    use super::validate_chain_selection;
+    use super::{build_start_command, validate_chain_selection, Command};
     use crate::config_parsing::system_config::SystemConfig;
     use std::collections::HashMap;
 
@@ -390,6 +397,29 @@ chains:
                 validate_chain_selection(&config, &[1, 137], false).is_ok(),
             ),
             (true, true)
+        );
+    }
+
+    // https://github.com/enviodev/hyperindex/issues/1878
+    #[test]
+    fn tells_the_runtime_about_backfill_added_events_only_when_asked() {
+        let config = config(true);
+        let flag = |backfill_added_events| match build_start_command(
+            &config,
+            false,
+            false,
+            &[],
+            &[],
+            backfill_added_events,
+        )
+        .expect("the start command should build")
+        {
+            Command::Start { config, .. } => config.get("backfillAddedEvents").cloned(),
+            other => panic!("expected a start, got {other:?}"),
+        };
+        assert_eq!(
+            (flag(false), flag(true)),
+            (None, Some(serde_json::json!(true)))
         );
     }
 

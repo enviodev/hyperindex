@@ -127,10 +127,16 @@ chains:
     ~current: JSON.t,
     ~resetCommand=resetCmd,
     ~runCommand=runCmd,
+    ~backfillAddedEventsCommand=?,
   ) => {
     let storageMock = MockStorage.make(
       [#holding, #readStoredConfig],
-      ~stored={envioInfo: storedEnvioInfo, chains: [], contractMapping: ContractMapping.empty},
+      ~stored={
+        envioInfo: storedEnvioInfo,
+        chains: [],
+        contractMapping: ContractMapping.empty,
+        addedEventsChainIds: [],
+      },
     )
     // Attach before resolving the mock: an incompatible config rejects this
     // promise, and an unattached rejection would surface as unhandled.
@@ -143,6 +149,7 @@ chains:
           ~envioInfo=current,
           ~resetCommand,
           ~runCommand,
+          ~backfillAddedEventsCommand?,
         ) {
         | _ => None
         | exception exn => Some(exn)
@@ -157,6 +164,41 @@ chains:
     }
     (raised, message, storageMock)
   }
+
+  // https://github.com/enviodev/hyperindex/issues/1878
+  Async.it(
+    "Offers --backfill-added-events when added events are the whole of the change",
+    async t => {
+      let withEvents = events =>
+        JSON.parseOrThrow(
+          `{"name": "demo", "evm": {"contracts": {"Token": {"abi": [], "events": [${events
+            ->Array.map(name => `{"name": "${name}"}`)
+            ->Array.join(", ")}]}}}}`,
+        )
+      let (_, message, _) = await resumeWith(
+        ~storedEnvioInfo=Some(withEvents(["Transfer"])),
+        ~current=withEvents(["Approval", "Transfer"]),
+        ~resetCommand="envio start -r",
+        ~runCommand=Some("envio start"),
+        ~backfillAddedEventsCommand="envio start --backfill-added-events",
+      )
+      t.expect(
+        message,
+      ).toBe(`The following config changes are incompatible with the existing indexer data:
+
+    - evm.contracts.Token.events.Approval
+
+Pick one:
+  1. Index only the added events, keeping what's already indexed. Only if their handlers write rows of their own event and read nothing other events write:
+       envio start --backfill-added-events
+  2. Revert the changes above  # resume indexing where it left off
+  3. envio start -r            # delete all indexed data and start over
+  4. Run a second indexer alongside this one to keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio start`)
+    },
+  )
 
   Async.it(
     "Throws version-mismatch incompat error when the stored config is unreadable",
