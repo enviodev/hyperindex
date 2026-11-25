@@ -416,7 +416,7 @@ ${storageLines}
         [
           (
             {
-              msg: "Found existing indexer storage. Resuming indexing state...",
+              msg: "Found existing indexer storage.",
               params: dict{},
             }: IndexerRunner.logEntry
           ),
@@ -642,6 +642,94 @@ ${storageLines}
        envio dev -d indexer --config config.head.yaml`,
         ),
       )
+    },
+  )
+})
+
+// A chain's config addresses sit in the address table among every registered
+// one, which only that chain's own resume reads. What `prepare` checks before
+// it resumes anything leaves them out.
+describe("Checking a chain's config addresses where it resumes", () => {
+  let refusalOf = async restarting =>
+    switch await restarting {
+    | _ => None
+    | exception JsExn(e) => e->JsExn.message
+    }
+
+  deployed->Scenario.it(
+    "Adds a new chain beside a changed address, and refuses the address once its chain resumes",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(100)
+      await source.respondUpTo(100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+      let config =
+        deployment(
+          ~chains=[chain(1, ~addresses=[address(2)]), chain(137)],
+        ).config->Scenario.withMockSources(
+          ~sources=[(1, source), (137, MockSource.make(Scenario.defaultMethods, ~chainId=137))],
+        )
+
+      let plain = await refusalOf(indexer.restart(~config, ()))
+      let addedChain = await indexer.restart(~config, ~chains=[ChainId.fromInt(137)], ())
+      let resumed = await refusalOf(addedChain.restart(~config, ()))
+
+      t.expect((
+        plain->Option.map(Migration.outcomeOfRefusal),
+        plain->Option.mapOr(false, message => message->String.includes("envio start --chain 137")),
+        resumed->Option.map(Migration.outcomeOfRefusal),
+      )).toEqual((
+        Some(Migration.Refused(["chains.137"])),
+        true,
+        Some(
+          Migration.Refused([
+            `chains.1.contracts.Token.addresses.${address(1)}`,
+            `chains.1.contracts.Token.addresses.${address(2)}`,
+          ]),
+        ),
+      ))
+    },
+  )
+
+  // A resume refused on its config addresses has only read: ClickHouse keeps
+  // what lies past Postgres's commit, which a trim would have taken.
+  paired->Scenario.it(
+    "Trims nothing from ClickHouse for a resume it refuses",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(100)
+      await source.respondUpTo(100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+      let database = TestClickHouse.currentDatabase()
+      let _ = await TestClickHouse.query(
+        `INSERT INTO \`${database}\`.\`envio_checkpoints\` (\`id\`, \`chain_id\`, \`block_number\`, \`block_hash\`, \`events_processed\`) VALUES (999999999, 1, 999, NULL, 1)`,
+      )
+      let config =
+        deployment(
+          ~chains=[chain(1, ~addresses=[address(2)])],
+          ~storage=clickHouseBesidePostgres,
+        ).config->Scenario.withMockSources(~sources=[(1, source)])
+
+      let refusal = await refusalOf(indexer.restart(~config, ()))
+      let orphans = await TestClickHouse.query(
+        `SELECT count() FROM \`${database}\`.\`envio_checkpoints\` WHERE \`id\` = 999999999 FORMAT TabSeparated`,
+      )
+
+      t.expect((refusal->Option.map(Migration.outcomeOfRefusal), orphans->String.trim)).toEqual((
+        Some(
+          Migration.Refused([
+            `chains.1.contracts.Token.addresses.${address(1)}`,
+            `chains.1.contracts.Token.addresses.${address(2)}`,
+          ]),
+        ),
+        "1",
+      ))
     },
   )
 })

@@ -52,13 +52,15 @@ type t = {
   config: Config.t,
   logger: Logger.t,
   clock: Clock.t,
-  persistence: Persistence.t,
+  storage: Persistence.storage,
   // --- In-memory store: entity/effect tables and the pending-write queue. ---
-  allEntities: array<Internal.entityConfig>,
   // Cross-chain entities only; each ChainState holds its own partition for the
   // per-chain ones.
   mutable entities: EntityTables.t,
   effectState: EffectState.t,
+  // The effect cache tables the storage holds, by table name, each with the
+  // row count read at startup plus what this process has written since.
+  storedEffectCaches: dict<Persistence.effectCacheRecord>,
   mutable rollback: option<Persistence.rollback>,
   // Last checkpoint each chain has persisted to the db.
   mutable committedFrontier: Frontier.t,
@@ -159,12 +161,13 @@ type t = {
 let make = (
   ~config: Config.t,
   ~logger: Logger.t,
-  ~persistence: Persistence.t,
+  ~storage: Persistence.storage,
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
   ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
   ~holdRealtime=false,
   ~committedFrontier=Frontier.empty(),
+  ~storedEffectCaches=Dict.make(),
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
@@ -189,10 +192,10 @@ let make = (
     config,
     logger,
     clock,
-    persistence,
-    allEntities: persistence.allEntities,
-    entities: EntityTables.make(persistence.allEntities->EntityTables.crossChain),
+    storage,
+    entities: EntityTables.make(config.userEntities->EntityTables.crossChain),
     effectState: EffectState.make(~clock, ()),
+    storedEffectCaches,
     rollback: None,
     committedFrontier,
     processedFrontier: committedFrontier->Frontier.copy,
@@ -258,7 +261,7 @@ let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~max
 let makeFromDbState = (
   ~config: Config.t,
   ~logger: Logger.t,
-  ~persistence: Persistence.t,
+  ~storage: Persistence.storage,
   ~initialState: Persistence.initialState,
   ~registrationsByChainId,
   ~isDevelopmentMode=false,
@@ -315,12 +318,13 @@ let makeFromDbState = (
   let state = make(
     ~config,
     ~logger,
-    ~persistence,
+    ~storage,
     ~chainStates,
     ~isRealtime,
     ~targetBufferSize,
     ~holdRealtime,
     ~committedFrontier=initialState.checkpointFrontier,
+    ~storedEffectCaches=initialState.cache,
     ~isDevelopmentMode,
     ~shouldUseTui,
     ~exitAfterFirstEventBlock,
@@ -517,7 +521,7 @@ let recordProcessedBatch = (state: t) =>
 let config = (state: t) => state.config
 let logger = (state: t) => state.logger
 let clock = (state: t) => state.clock
-let persistence = (state: t) => state.persistence
+let storage = (state: t) => state.storage
 let entities = (state: t) => state.entities
 
 // Every in-memory entity table across all scopes, cross-chain first. The size,
@@ -532,7 +536,7 @@ let eachEntityTable = (
   ) => unit,
 ) => {
   let chainStates = state.crossChainState->CrossChainState.chainStates
-  state.allEntities->Array.forEach(entityConfig =>
+  state.config.userEntities->Array.forEach(entityConfig =>
     if entityConfig.crossChain {
       fn(
         ~entityConfig,
@@ -551,6 +555,7 @@ let eachEntityTable = (
   )
 }
 let effectState = (state: t) => state.effectState
+let storedEffectCaches = (state: t) => state.storedEffectCaches
 let committedFrontier = (state: t) => state.committedFrontier
 let processedFrontier = (state: t) => state.processedFrontier
 
@@ -976,8 +981,8 @@ let beginRollbackDiff = (
     ->Frontier.fromEntries
   }
   state.processedFrontier = Frontier.mergeMax(state.processedFrontier, diffFrontier)
-  let perChainEntities = state.allEntities->EntityTables.perChain
-  state.entities = EntityTables.make(state.allEntities->EntityTables.crossChain)
+  let perChainEntities = state.config.userEntities->EntityTables.perChain
+  state.entities = EntityTables.make(state.config.userEntities->EntityTables.crossChain)
   state->chainStates->Utils.Dict.forEach(cs => cs->ChainState.resetEntities(~perChainEntities))
   state.effectState->EffectState.resetForRollback
   // The address store reports only what each rollback killed, and never

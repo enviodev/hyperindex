@@ -1,12 +1,10 @@
 // A chain as its storage holds it: what its `envio_chains` row keeps of its
-// config, and the addresses the config declared for it.
+// config.
 type storedChain = {
   id: ChainId.t,
-  ecosystem: string,
   startBlock: int,
   endBlock: option<int>,
   maxReorgDepth: int,
-  configAddresses: array<AddressRows.row>,
 }
 
 // What a storage holds of the config it was built from. `envioInfo` is `None`
@@ -25,30 +23,9 @@ type t =
   | Incompatible(array<string>)
 
 // The part of a chain's config its storage keeps, shaped so a stored chain and
-// a configured one diff by the path config.yaml spells: `chains.137.endBlock`,
-// `chains.137.contracts.Token.addresses.0x…`.
-let chainEntry = (
-  ~startBlock: option<int>,
-  ~endBlock: option<int>,
-  ~maxReorgDepth: int,
-  ~addresses: array<(string, string)>,
-) => {
-  let contracts = Dict.make()
-  addresses->Array.forEach(((contractName, address)) =>
-    contracts->Utils.Dict.push(contractName, address)
-  )
-  let entry = dict{
-    "maxReorgDepth": JSON.Number(maxReorgDepth->Int.toFloat),
-    "contracts": JSON.Object(
-      contracts->Dict.mapValues(addresses => JSON.Object(
-        dict{
-          "addresses": JSON.Object(
-            addresses->Array.map(address => (address, JSON.Boolean(true)))->Dict.fromArray,
-          ),
-        },
-      )),
-    ),
-  }
+// a configured one diff by the path config.yaml spells: `chains.137.endBlock`.
+let chainEntry = (~startBlock: option<int>, ~endBlock: option<int>, ~maxReorgDepth: int) => {
+  let entry = dict{"maxReorgDepth": JSON.Number(maxReorgDepth->Int.toFloat)}
   startBlock->Option.forEach(startBlock =>
     entry->Dict.set("startBlock", JSON.Number(startBlock->Int.toFloat))
   )
@@ -83,7 +60,6 @@ let make = (
   ~envioInfo: JSON.t,
   ~chainConfigs: array<Config.chain>,
   ~contractMapping: ContractMapping.t,
-  ~lowercaseAddresses: bool,
   ~isolated: bool,
 ) =>
   switch stored.envioInfo {
@@ -99,26 +75,15 @@ let make = (
           chainConfigs->Array.some(chain => chain.id == storedChain.id)
         )
       : stored.chains
-    let storedEntries = storedChains->Array.map(storedChain => {
-      let addresses =
-        storedChain.configAddresses
-        ->AddressRows.render(~ecosystem=storedChain.ecosystem, ~shouldChecksum=!lowercaseAddresses)
-        ->Array.mapWithIndex((address, idx) => (
-          stored.contractMapping->ContractMapping.nameOfOrThrow(
-            (storedChain.configAddresses->Array.getUnsafe(idx)).contractId,
-          ),
-          address->Address.toString,
-        ))
-      (
+    let storedEntries =
+      storedChains->Array.map(storedChain => (
         storedChain.id,
         chainEntry(
           ~startBlock=Some(storedChain.startBlock),
           ~endBlock=storedChain.endBlock,
           ~maxReorgDepth=storedChain.maxReorgDepth,
-          ~addresses,
         ),
-      )
-    })
+      ))
     let currentEntries = chainConfigs->Array.filterMap(chain =>
       switch added {
       | Some(added) if added.id == chain.id => None
@@ -134,9 +99,6 @@ let make = (
             },
             ~endBlock=chain.endBlock,
             ~maxReorgDepth=chain.maxReorgDepth,
-            ~addresses=chain.contracts->Array.flatMap(contract =>
-              contract.addresses->Array.map(address => (contract.name, address->Address.toString))
-            ),
           ),
         ))
       }
@@ -156,6 +118,79 @@ let make = (
     }
   }
 
+// The paths of the config addresses each resumed chain gained or lost since it
+// was stored, as config.yaml spells them: `chains.137.contracts.Token.addresses.0x…`.
+// A chain's stored rows are read whole to resume it, and its config ones are
+// those no event registered, so this reads nothing of its own.
+let changedConfigAddressPaths = (
+  resumedChains: array<(Config.chain, AddressRows.seedRows)>,
+  ~ecosystem: string,
+  ~contractMapping: ContractMapping.t,
+  ~lowercaseAddresses: bool,
+) => {
+  let entry = (addresses: array<(string, string)>) => {
+    let contracts = Dict.make()
+    addresses->Array.forEach(((contractName, address)) =>
+      contracts->Utils.Dict.push(contractName, address)
+    )
+    JSON.Object(
+      dict{
+        "contracts": JSON.Object(
+          contracts->Dict.mapValues(addresses => JSON.Object(
+            dict{
+              "addresses": JSON.Object(
+                addresses->Array.map(address => (address, JSON.Boolean(true)))->Dict.fromArray,
+              ),
+            },
+          )),
+        ),
+      },
+    )
+  }
+  let storedEntries = resumedChains->Array.map(((chain, seedRows)) => {
+    let configRows = []
+    seedRows.registrationBlocks->Array.forEachWithIndex((registrationBlock, idx) =>
+      if registrationBlock === AddressRows.configRegistrationBlock {
+        configRows
+        ->Array.push(
+          (
+            {
+              chainId: chain.id,
+              address: seedRows.addresses->Array.getUnsafe(idx),
+              contractId: seedRows.contractIds->Array.getUnsafe(idx),
+              registrationBlock,
+            }: AddressRows.row
+          ),
+        )
+        ->ignore
+      }
+    )
+    let addresses =
+      configRows
+      ->AddressRows.render(~ecosystem, ~shouldChecksum=!lowercaseAddresses)
+      ->Array.mapWithIndex((address, idx) => (
+        contractMapping->ContractMapping.nameOfOrThrow(
+          (configRows->Array.getUnsafe(idx)).contractId,
+        ),
+        address->Address.toString,
+      ))
+    (chain.id, entry(addresses))
+  })
+  let currentEntries =
+    resumedChains->Array.map(((chain, _)) => (
+      chain.id,
+      entry(
+        chain.contracts->Array.flatMap(contract =>
+          contract.addresses->Array.map(address => (contract.name, address->Address.toString))
+        ),
+      ),
+    ))
+  Config.diffPaths(
+    ~stored=JSON.Object(dict{})->withChains(~chains=storedEntries),
+    ~current=JSON.Object(dict{})->withChains(~chains=currentEntries),
+  )
+}
+
 // The configured chains the storage holds nothing of, when adding them is the
 // whole of what changed. `changedPaths` names only the first tier that differs,
 // so a change in a later tier, an entity say, is caught by planning each new
@@ -167,7 +202,6 @@ let newChainIdsWhenOnlyChange = (
   ~envioInfo: JSON.t,
   ~chainConfigs: array<Config.chain>,
   ~contractMapping: ContractMapping.t,
-  ~lowercaseAddresses: bool,
 ) => {
   let newChains =
     chainConfigs->Array.filter(chain =>
@@ -176,14 +210,7 @@ let newChainIdsWhenOnlyChange = (
   let isNewChainPath = path =>
     newChains->Array.some(chain => path == `chains.${chain.id->ChainId.toString}`)
   let addsAlone = chain =>
-    switch make(
-      ~stored,
-      ~envioInfo,
-      ~chainConfigs=[chain],
-      ~contractMapping,
-      ~lowercaseAddresses,
-      ~isolated=true,
-    ) {
+    switch make(~stored, ~envioInfo, ~chainConfigs=[chain], ~contractMapping, ~isolated=true) {
     | AddChain(_) => true
     | Resume | Incompatible(_) => false
     }

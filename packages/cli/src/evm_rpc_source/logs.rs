@@ -97,7 +97,7 @@ fn is_answer_too_large(error: &RpcError) -> bool {
     match error {
         RpcError::JsonRpc { message, .. } => is_result_cap_message(message),
         RpcError::Timeout(_) | RpcError::MalformedResponse(_) => true,
-        RpcError::Other(_) => false,
+        RpcError::RateLimited { .. } | RpcError::Other(_) => false,
     }
 }
 
@@ -243,9 +243,10 @@ mod tests {
                 code: -32005,
                 message: "query returned more than 10000 results".to_string(),
             },
-            RpcError::JsonRpc {
-                code: -32005,
+            RpcError::RateLimited {
+                code: Some(-32005),
                 message: "project ID request rate exceeded".to_string(),
+                retry_after_millis: None,
             },
             RpcError::Timeout(anyhow::anyhow!("eth_getLogs took longer than 20000ms")),
             RpcError::MalformedResponse(anyhow::anyhow!("parse eth_getLogs result")),

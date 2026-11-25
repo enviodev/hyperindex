@@ -112,18 +112,18 @@ type Trade @index(fields: ["poolId", ["date", "DESC"]], include: ["volume"]) {
 
 ## @config
 
-Customize precision for numeric types:
+`BigInt` and `BigDecimal` are unbounded by default and hold any uint256/int256. `@config` caps their digits. Pick by what the field stores:
 
-```graphql
-type Token {
-  id: ID!
-  totalSupply: BigInt! @config(precision: 100)
-  price: BigDecimal! @config(precision: 30, scale: 15)
-}
-```
+| Field stores | Declare |
+|---|---|
+| Raw on-chain amount: balance, supply, transfer value, liquidity, `sqrtPriceX96` | `BigInt!` (no `@config`: a uint256 has up to 78 digits) |
+| Amount you sort, filter or `sum()` in ClickHouse, known to stay below 10^76 | `BigInt! @config(precision: 76)` |
+| Price, rate or USD value with a fixed number of decimals | `BigDecimal! @config(precision: 30, scale: 18)` |
+| Decimal of unknown size or decimals | `BigDecimal!` |
+| Small integer: fee in bps, token decimals, tick | `Int!`, not `BigInt` |
 
-- `BigInt` default precision: 76 digits
-- `BigDecimal` default: precision 76, scale 32
+- **Postgres** rounds a bounded value to `scale` decimals and stops the indexer on one with more than `precision − scale` whole digits.
+- **ClickHouse** stores precision ≤ 76 (with scale ≤ precision) as a numeric `Decimal(P, S)`. Anything else is a `String`: cast it in SQL (`toUInt256(x)`, `toInt256(x)`, `toDecimal256(x, 18)`), keep it out of `clickhouse.orderBy`, and give an entity whose `BigInt` id is unbounded an `orderBy` of other fields.
 
 ## Array Rules
 
