@@ -223,8 +223,9 @@ impl EvmHyperSyncClient {
         let mut transaction_fields = requested_transaction_fields.clone();
         // Transactions are accumulated into the store keyed by
         // (blockNumber, transactionIndex), so those keys must come back on each
-        // transaction row whenever any transaction field is requested.
-        if !transaction_fields.is_empty() {
+        // transaction row whenever any transaction field is requested, or a
+        // transaction handler runs on rows of none.
+        if !transaction_fields.is_empty() || selects_transactions {
             for field in [
                 TransactionField::BlockNumber,
                 TransactionField::TransactionIndex,
@@ -484,7 +485,7 @@ fn process_response(
 
     let referenced_transactions = sorted_set(referenced_transactions);
     let mut handled_transactions: Vec<(u64, u32)> = Vec::new();
-    if !requested_transaction_fields.is_empty() {
+    if !requested_transaction_fields.is_empty() || transaction_matcher.is_some() {
         let fetched = evm_rpc_source::fields::tx_mask(requested_transaction_fields);
         let mut kept = Vec::new();
         let mut rows = page.transactions.builder();
