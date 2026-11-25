@@ -1265,18 +1265,6 @@ readonly srcAddress: Address;
             }
         };
 
-        let on_transaction_field = match &cfg.human_config {
-            HumanConfig::Evm(_) => {
-                r#"
-  /** Register a Transaction Handler. Evaluates `where` once per configured chain at registration time. */
-  onTransaction: (
-    Envio.onTransactionOptions<indexerChain>,
-    Envio.evmOnTransactionArgs<handlerContext> => promise<unit>,
-  ) => unit,"#
-            }
-            _ => "",
-        };
-
         // ReScript integer polyvariants (`#137`) are int32-bound, so a config
         // with a wider id falls back to the opaque runtime representation.
         // TypeScript keeps its numeric literal union either way.
@@ -1391,7 +1379,7 @@ type indexer = {{
   onBlock: (
     Envio.onBlockOptions<indexerChain>,
     {on_block_handler_type},
-  ) => unit,{on_transaction_field}
+  ) => unit,
 }}"#
         );
 

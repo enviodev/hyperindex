@@ -410,11 +410,6 @@ type indexer = {
     Envio.onBlockOptions<indexerChain>,
     Envio.evmOnBlockArgs<handlerContext> => promise<unit>,
   ) => unit,
-  /** Register a Transaction Handler. Evaluates `where` once per configured chain at registration time. */
-  onTransaction: (
-    Envio.onTransactionOptions<indexerChain>,
-    Envio.evmOnTransactionArgs<handlerContext> => promise<unit>,
-  ) => unit,
 }
 
 /** Get chain configuration by chain ID with exhaustive pattern matching. */

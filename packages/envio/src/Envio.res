@@ -10,19 +10,6 @@ type evmOnBlockArgs<'context> = {
   context: 'context,
 }
 
-/** The transaction a transaction handler runs on. As with `evmOnBlockArgs`,
- the fields listed in `fields` are there too but not typed here. */
-type evmOnTransactionTransaction = {
-  transactionIndex: int,
-  block: {number: int},
-}
-
-/** Arguments passed to handlers registered via `indexer.onTransaction`. */
-type evmOnTransactionArgs<'context> = {
-  transaction: evmOnTransactionTransaction,
-  context: 'context,
-}
-
 type fuelOnBlockArgs<'context> = {
   block: {height: int},
   context: 'context,
@@ -131,14 +118,6 @@ type onBlockWhereArgs<'chain> = {chain: 'chain}
 type onBlockOptions<'chain> = {
   name: string,
   where?: onBlockWhereArgs<'chain> => unknown,
-}
-
-// `where` returns `false` to skip the chain, `true` to run on every succeeded
-// transaction, or `{transaction: {from?, to?, status?}}`.
-type onTransactionOptions<'chain> = {
-  name: string,
-  where: onBlockWhereArgs<'chain> => unknown,
-  fields?: unknown,
 }
 
 type whereOperator<'fieldType> = {
