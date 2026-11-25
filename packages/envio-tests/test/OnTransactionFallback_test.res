@@ -66,8 +66,7 @@ indexer.onTransaction(
     context.Sent.set({ id, runs });
   },
 );
-// Matches nothing served, and names no call field: the chain syncs over
-// HyperSync, so its warning says nothing of what RPC would cost.
+// Matches nothing served, and names no call field, which registers quietly.
 indexer.onTransaction({ name: "reverted", where: () => ({ transaction: { status: [0] } }) }, async () => {});
 `,
 )
@@ -162,9 +161,7 @@ describe("onTransaction falling back from HyperSync to RPC", () => {
             },
           ),
           ["0x3", "0x4", "0x5", "0x6"],
-          [
-            "`indexer.onTransaction(\"reverted\")` runs on every reverted transaction of chain 1: its filter names no `from` or `to`.",
-          ],
+          [],
         ))
       },
     )

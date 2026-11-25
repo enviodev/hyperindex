@@ -1009,23 +1009,6 @@ let registerOnTransaction = (
       | None => ()
       | Some(filter) =>
         matchedAny := true
-        if filter.from === None && filter.to === None {
-          let readsOverRpc = switch chainConfig.sourceConfig {
-          | EvmSourceConfig({rpcs}) => rpcs->Array.some(rpc => rpc.sourceFor === Sync)
-          | _ => false
-          }
-          logger->Logger.warn(
-            `\`indexer.onTransaction("${name}")\` runs on every ${switch filter.status {
-              | Some(1) => "succeeded "
-              | Some(_) => "reverted "
-              | None => ""
-              }}transaction of chain ${chainId->ChainId.toString}: its filter names no \`from\` or \`to\`.${readsOverRpc
-                ? ` Over RPC that reads every block in full${filter.status === None
-                      ? ""
-                      : ", and a receipt for every transaction to check its status"}.`
-                : ""}`,
-          )
-        }
         let chainRegs = registration->getChainRegistrations(~chainId)
         chainRegs.onTransactionRegistrations
         ->Array.push({

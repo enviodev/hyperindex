@@ -67,7 +67,7 @@ filter:
   (mainnet block 4,370,000), so over RPC any other list stops the indexer
   with an error there: use HyperSync, or `[0, 1]`.
 - A filter naming no `from` or `to` runs on every transaction of the
-  chain. It is allowed, and warned about at startup.
+  chain. Over RPC that reads every block in full.
 - An address that isn't 20 bytes, an empty list or a `status` value other
   than 0 or 1 throws at registration.
 - Several handlers may match one transaction: each runs, in registration order.
