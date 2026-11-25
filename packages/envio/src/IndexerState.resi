@@ -139,12 +139,12 @@ let recordStalledOnStorageWrite: (t, ~seconds: float) => unit
 type handlerStat
 let handlerStatFor: (t, Internal.eventConfig) => handlerStat
 let recordHandlerDuration: (handlerStat, ~duration: float) => unit
-let startPreloadHandler: handlerStat => Performance.timeRef
-let endPreloadHandler: (handlerStat, Performance.timeRef) => unit
-let startStorageLoad: (t, ~storage: string, ~operation: string) => Performance.timeRef
+let startPreloadHandler: (handlerStat, ~clock: Clock.t) => float
+let endPreloadHandler: (handlerStat, float, ~clock: Clock.t) => unit
+let startStorageLoad: (t, ~storage: string, ~operation: string) => float
 let endStorageLoad: (
   t,
-  Performance.timeRef,
+  float,
   ~storage: string,
   ~operation: string,
   ~whereSize: int,

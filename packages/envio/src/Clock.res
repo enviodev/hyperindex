@@ -35,6 +35,8 @@ let real: t = {
   random: Math.random,
 }
 
+let secondsSince = (clock: t, since) => (clock.now() -. since) /. 1000.
+
 let delay = (clock: t, ~label, millis) =>
   Promise.make((resolve, _reject) => clock.setTimeout(~label, () => resolve(), millis)->ignore)
 
