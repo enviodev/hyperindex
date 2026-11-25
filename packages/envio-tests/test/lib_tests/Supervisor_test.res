@@ -351,7 +351,7 @@ let resumedRow = (
   ~firstEventBlockNumber=?,
   ~numEventsProcessed=0.,
   ~sourceBlockNumber=0,
-): Persistence.initialChainState => {
+): Persistence.chainProgress => {
   id: id->ChainId.fromInt,
   startBlock,
   endBlock,
@@ -361,7 +361,6 @@ let resumedRow = (
   numEventsProcessed,
   firstEventBlockNumber,
   timestampCaughtUpToHeadOrEndblock: None,
-  addressRows: AddressRows.emptySeedRows(),
   sourceBlockNumber,
 }
 

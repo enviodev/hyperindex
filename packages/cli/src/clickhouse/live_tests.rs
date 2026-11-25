@@ -21,7 +21,7 @@ use crate::storage::changes::ChangeSet;
 use crate::storage::rows::{ReadKind, ResultSet};
 use crate::storage::schema::{ClickHouseOptions, Entity, Field, FieldType, Schema};
 use crate::storage::types::{
-    Addresses, Bounds, ChainConfig, Checkpoints, Frontier, Progress, ResumedChain, Sequence,
+    Addresses, Bounds, ChainConfig, Checkpoints, Frontier, Progress, Sequence,
 };
 use crate::storage::{Batch, Handoff, Initialize, Resume, WriteError};
 use crate::test_servers;
@@ -179,31 +179,19 @@ async fn initialize(live: &Live) {
 }
 
 /// Resumes `storage` to chain 1 as Postgres hands it over having committed
-/// up to `checkpoint_id`, at `progress_block`.
-async fn resume(storage: &Storage, checkpoint_id: i64, progress_block: i32) {
+/// up to `checkpoint_id`.
+async fn resume(storage: &Storage, checkpoint_id: i64) {
     storage
         .resume(&Resume {
-            committed: vec![committed(checkpoint_id, progress_block)],
+            committed: committed(checkpoint_id),
         })
         .await
         .unwrap();
 }
 
 /// Chain 1 as Postgres hands it over having committed up to `checkpoint_id`.
-fn committed(checkpoint_id: i64, progress_block: i32) -> ResumedChain {
-    ResumedChain {
-        id: 1,
-        start_block: 0,
-        end_block: None,
-        max_reorg_depth: 200,
-        first_event_block: None,
-        ready_at: None,
-        events_processed: 0.0,
-        progress_block,
-        progress_block_time: None,
-        source_block: 1000,
-        checkpoint_id,
-    }
+fn committed(checkpoint_id: i64) -> Frontier {
+    Frontier::from([(1, checkpoint_id)])
 }
 
 /// An account history row: set to `(owner, balance)`, or a delete.
@@ -851,7 +839,7 @@ async fn a_commit_landing_after_the_next_resume_claims_nothing() {
     );
     let next = async {
         rows_landed.await.unwrap();
-        resume(&live.another_process(), 1, 10).await;
+        resume(&live.another_process(), 1).await;
         let resumed = live.frontier().await;
         commit.send(true).unwrap();
         resumed
@@ -963,7 +951,7 @@ async fn a_resume_trims_what_an_uncommitted_write_left_behind() {
     );
 
     let before = live.load(&account, eq("id", "a")).await;
-    resume(&live.storage, 1, 10).await;
+    resume(&live.storage, 1).await;
     let (history, checkpoints) = (
         live.count("envio_history_Account").await,
         live.count("envio_checkpoints").await,
@@ -1082,7 +1070,7 @@ async fn a_resume_trims_back_to_what_postgres_committed() {
     )
     .await;
 
-    resume(&live.storage, 1, 10).await;
+    resume(&live.storage, 1).await;
     let loaded = live.load(&account, eq("id", "a")).await;
     let (history, frontier) = (
         live.count("envio_history_Account").await,
@@ -1137,7 +1125,7 @@ async fn a_resume_publishes_a_batch_postgres_committed_and_clickhouse_never_reco
         .await;
 
     let resumed = live.another_process();
-    resume(&resumed, 2, 20).await;
+    resume(&resumed, 2).await;
     let loaded = rows(
         &resumed
             .load_where(&account, vec![eq("id", "a")])
@@ -1177,7 +1165,7 @@ async fn a_resume_refuses_a_database_missing_a_batch_postgres_committed() {
     let resumed = live
         .storage
         .resume(&Resume {
-            committed: vec![committed(2, 20)],
+            committed: committed(2),
         })
         .await
         .map_err(|error| format!("{error:#}"));
@@ -1396,7 +1384,7 @@ async fn the_indexer_runs_within_the_grants_envio_cloud_gives_it() {
         let first_run = as_indexer();
         first_run
             .resume(&Resume {
-                committed: vec![committed(0, 0)],
+                committed: committed(0),
             })
             .await?;
         write_or_fail(
@@ -1431,7 +1419,7 @@ async fn the_indexer_runs_within_the_grants_envio_cloud_gives_it() {
         let restarted = as_indexer();
         restarted
             .resume(&Resume {
-                committed: vec![committed(1, 10)],
+                committed: committed(1),
             })
             .await?;
         restarted

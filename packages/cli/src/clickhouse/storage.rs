@@ -741,11 +741,7 @@ impl Storage {
             frontier: Frontier::new(),
             version: version + VERSION_FENCE,
         };
-        let frontier: Frontier = input
-            .committed
-            .iter()
-            .map(|chain| (chain.id, chain.checkpoint_id))
-            .collect();
+        let frontier = input.committed.clone();
         // No chain, no rows to hold to anything: Postgres writes every chain's
         // row in the transaction that creates its schema, so an empty list
         // means a config without chains.
@@ -899,7 +895,7 @@ mod tests {
     use crate::clickhouse::mock_server::MockClickHouse;
     use crate::clickhouse::table::test_support::{column, entity_input};
     use crate::storage::changes::test_support::{change_set, Change};
-    use crate::storage::types::{Addresses, ChainConfig, Frontier, ResumedChain};
+    use crate::storage::types::{Addresses, ChainConfig, Frontier};
     use pretty_assertions::assert_eq;
 
     /// A cross-chain entity has no chain column, which only a shared sequence
@@ -1172,19 +1168,7 @@ mod tests {
 
     fn resume_at_checkpoint_7() -> Resume {
         Resume {
-            committed: vec![ResumedChain {
-                id: 1,
-                start_block: 0,
-                end_block: None,
-                max_reorg_depth: 0,
-                first_event_block: None,
-                ready_at: None,
-                events_processed: 0.0,
-                progress_block: 10,
-                progress_block_time: None,
-                source_block: 10,
-                checkpoint_id: 7,
-            }],
+            committed: Frontier::from([(1, 7)]),
         }
     }
 

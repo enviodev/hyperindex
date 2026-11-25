@@ -1,6 +1,5 @@
 let loadById: (
   ~loadManager: LoadManager.t,
-  ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
   ~scope: Internal.chainScope,
   ~indexerState: IndexerState.t,
@@ -10,7 +9,6 @@ let loadById: (
 
 let loadByFilter: (
   ~loadManager: LoadManager.t,
-  ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
   ~scope: Internal.chainScope,
   ~indexerState: IndexerState.t,
@@ -20,7 +18,6 @@ let loadByFilter: (
 
 let loadEffect: (
   ~loadManager: LoadManager.t,
-  ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs: Internal.effectArgs,
   ~scope: Internal.chainScope,

@@ -130,7 +130,7 @@ and executeRollback = async (
   await state->Writing.flush
 
   let rollbackTargetCheckpointId = {
-    switch await (state->IndexerState.persistence).storage.getRollbackTargetCheckpoint(
+    switch await (state->IndexerState.storage).getRollbackTargetCheckpoint(
       ~reorgChainId=reorgChain,
       ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
     ) {
@@ -162,9 +162,7 @@ and executeRollback = async (
   let rollbackedProcessedEvents = ref(0.)
 
   {
-    let rollbackProgressDiff = await (
-      state->IndexerState.persistence
-    ).storage.getRollbackProgressDiff(~floors)
+    let rollbackProgressDiff = await (state->IndexerState.storage).getRollbackProgressDiff(~floors)
     for idx in 0 to rollbackProgressDiff->Array.length - 1 {
       let diff = rollbackProgressDiff->Array.getUnsafe(idx)
       let chainId = diff["chain_id"]
