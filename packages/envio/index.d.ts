@@ -956,12 +956,13 @@ export type EvmBlock<Fields extends EvmFieldsSelection> = SelectedFields<
 >;
 
 /** A transaction narrowed to a fields selection: a registration's `fields`
- * option, or an event's `field_selection` in config.yaml. */
+ * option, or an event's `field_selection` in config.yaml. Event and
+ * transaction handlers get the same type, so one function can take either's. */
 export type EvmTransaction<Fields extends EvmFieldsSelection> = SelectedFields<
   EvmAllTransactionFields,
   ListedFields<Fields, "transaction">,
   "transaction"
->;
+> & { readonly block: EvmBlock<Fields> };
 
 /** Rebinds an event's `block`/`transaction` to an inline `fields` selection.
  * With no `fields` option the event type passes through, so the `config.yaml`
@@ -1206,17 +1207,8 @@ export type EvmOnTransactionWhereArgs<Config extends IndexerConfigTypes = Global
   };
 };
 
-/** The transaction an EVM transaction handler runs on, narrowed as an event's
- * is: `transactionIndex` and `block.number`, plus the fields listed in
- * `fields`. A field the filter compares is fetched, but read only if listed. */
-export type EvmOnTransactionTransaction<Fields extends EvmFieldsSelection> = SelectedFields<
-  EvmAllTransactionFields,
-  "transactionIndex" | ListedFields<Fields, "transaction">,
-  "transaction"
-> & { readonly block: EvmBlock<Fields> };
-
 type EvmOnTransactionArgsFor<Fields extends EvmFieldsSelection, Config extends IndexerConfigTypes> = {
-  readonly transaction: EvmOnTransactionTransaction<Fields>;
+  readonly transaction: EvmTransaction<Fields>;
   /** Handler context: entity operations, logger, effect caller, chain state. */
   readonly context: EvmOnEventContext<Config>;
 };
@@ -1233,9 +1225,8 @@ type EvmOnTransactionOptionsFor<Fields extends EvmFieldsSelection, Config extend
       to skip a chain, `true` to run on every succeeded transaction, or a
       filter. */
   readonly where: (args: EvmOnTransactionWhereArgs<Config>) => EvmOnTransactionWhereResult;
-  /** Block and transaction fields this handler reads besides
-      `transactionIndex` and `block.number`, with the same names as an event
-      handler's `fields`. */
+  /** Block and transaction fields this handler reads besides `block.number`,
+      with the same names as an event handler's `fields`. */
   readonly fields?: Fields & FieldsLiteralCheck<Fields>;
 };
 

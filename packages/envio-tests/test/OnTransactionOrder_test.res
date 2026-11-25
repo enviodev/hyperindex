@@ -64,7 +64,12 @@ type Call {
 }
 `,
   ~handlers=`
-import { indexer } from "envio";
+import { indexer, type EvmTransaction } from "envio";
+
+// One function for the transaction an event and a transaction handler get.
+const fields = { transaction: ["transactionIndex"] } as const;
+const position = (transaction: EvmTransaction<typeof fields>) =>
+  \`\${transaction.block.number}/\${transaction.transactionIndex}\`;
 
 const record = async (context: any, name: string) => {
   if (context.isPreload) return;
@@ -75,17 +80,15 @@ const record = async (context: any, name: string) => {
 };
 
 indexer.onTransaction(
-  { name: "to-token", where: () => ({ transaction: { to: ["${token}"] } }) },
-  async ({ transaction, context }) =>
-    record(context, \`to-token \${transaction.block.number}/\${transaction.transactionIndex}\`),
+  { name: "to-token", where: () => ({ transaction: { to: ["${token}"] } }), fields },
+  async ({ transaction, context }) => record(context, \`to-token \${position(transaction)}\`),
 );
 indexer.onTransaction(
-  { name: "from-alice", where: () => ({ transaction: { from: ["${alice}"] } }) },
-  async ({ transaction, context }) =>
-    record(context, \`from-alice \${transaction.block.number}/\${transaction.transactionIndex}\`),
+  { name: "from-alice", where: () => ({ transaction: { from: ["${alice}"] } }), fields },
+  async ({ transaction, context }) => record(context, \`from-alice \${position(transaction)}\`),
 );
-indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) =>
-  record(context, \`Transfer \${event.block.number}/\${event.logIndex}\`),
+indexer.onEvent({ contract: "Token", event: "Transfer", fields }, async ({ event, context }) =>
+  record(context, \`Transfer \${position(event.transaction)} log \${event.logIndex}\`),
 );
 indexer.onBlock(
   { name: "block", where: () => ({ block: { number: { _gte: 2, _lte: 2 } } }) },
@@ -119,11 +122,11 @@ describe("onTransaction order", () => {
             "to-token 2/0",
             "from-alice 2/0",
             "to-token 2/1",
-            "Transfer 2/0",
-            "Transfer 2/1",
+            "Transfer 2/1 log 0",
+            "Transfer 2/1 log 1",
             "to-token 2/2",
             "from-alice 2/2",
-            "Transfer 2/2",
+            "Transfer 2/2 log 2",
             "block 2",
           ]
           t.expect((sequenceOf(1), sequenceOf(2))).toEqual((expected, expected))

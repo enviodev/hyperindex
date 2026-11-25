@@ -755,7 +755,12 @@ let parse = (
       block->addCarriedBlock(~blockNumber)
       let transaction = switch config.ecosystem.name {
       | Fuel => parseFuelSimulateTransaction(~transactionJson)
-      | Evm => parseEvmSimulateTransaction(~transactionJson)
+      | Evm =>
+        let transaction = parseEvmSimulateTransaction(~transactionJson)
+        transaction
+        ->(Utils.magic: Internal.eventTransaction => Internal.blockHolder)
+        ->Internal.setHolderBlock(block)
+        transaction
       | Svm => JsError.throwWithMessage("simulate is not supported for SVM ecosystem")
       }
 

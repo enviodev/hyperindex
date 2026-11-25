@@ -136,7 +136,6 @@ pub mod reserved_keywords {
         "EvmOnTransactionHandler",
         "EvmOnTransactionHandlerArgs",
         "EvmOnTransactionOptions",
-        "EvmOnTransactionTransaction",
         "EvmOnTransactionWhereArgs",
         "EvmOnTransactionWhereResult",
         "EvmTransaction",

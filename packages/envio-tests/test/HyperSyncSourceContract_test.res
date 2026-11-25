@@ -202,7 +202,7 @@ type paramsView = {
   value: bigint,
 }
 type blockView = {number: int, parentHash?: string, miner?: Address.t, stateRoot?: string}
-type transactionView = {hash?: string, to?: Address.t, gasUsed?: bigint}
+type transactionView = {hash?: string, to?: Address.t, gasUsed?: bigint, block?: blockView}
 
 let eventSummary = (item: Internal.item) =>
   switch item {
@@ -335,6 +335,7 @@ describe("HyperSync source contract", () => {
           hash: transactionHash,
           to: toAddress->Address.unsafeFromString,
           gasUsed: 21000n,
+          block: {number: 10, parentHash, miner: minerAddress->Address.unsafeFromString},
         },
       },
       {
@@ -354,6 +355,7 @@ describe("HyperSync source contract", () => {
           hash: transactionHash,
           to: toAddress->Address.unsafeFromString,
           gasUsed: 21000n,
+          block: {number: 10, parentHash, miner: minerAddress->Address.unsafeFromString},
         },
       },
       {
@@ -369,7 +371,7 @@ describe("HyperSync source contract", () => {
           value: 5n,
         },
         "block": {number: 11, stateRoot},
-        "transaction": ({}: transactionView),
+        "transaction": {block: {number: 11, stateRoot}},
       },
     ])
   })

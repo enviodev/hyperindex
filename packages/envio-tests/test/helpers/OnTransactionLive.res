@@ -24,7 +24,7 @@ indexer.onTransaction(
     where: () => ({
       transaction: { to: ["0xdac17f958d2ee523a2206206994597c13d831ec7"] },
     }),
-    fields: { transaction: ["hash", "from", "status", "gasUsed", "input"], block: ["timestamp"] },
+    fields: { transaction: ["hash", "transactionIndex", "from", "status", "gasUsed", "input"], block: ["timestamp"] },
   },
   async ({ transaction, context }) => {
     if (!transaction.input.startsWith("0xa9059cbb")) return;

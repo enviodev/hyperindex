@@ -85,23 +85,23 @@ indexer.onEvent(
   async ({ event, context }) => record(context, \`Transfer \${event.block.number}/\${event.logIndex}\`),
 );
 indexer.onTransaction(
-  { name: "alice-to-token", where: () => ({ transaction: { from: ["${alice}"], to: ["${token}"] } }) },
+  { name: "alice-to-token", where: () => ({ transaction: { from: ["${alice}"], to: ["${token}"] } }), fields: { transaction: ["transactionIndex"] } },
   route("alice-to-token"),
 );
 indexer.onTransaction(
-  { name: "bob-succeeded", where: () => ({ transaction: { from: ["${bob}"], status: [1] } }) },
+  { name: "bob-succeeded", where: () => ({ transaction: { from: ["${bob}"], status: [1] } }), fields: { transaction: ["transactionIndex"] } },
   route("bob-succeeded"),
 );
 indexer.onTransaction(
-  { name: "alice-to-bob", where: () => ({ transaction: { from: ["${alice}"], to: ["${bob}"] } }) },
+  { name: "alice-to-bob", where: () => ({ transaction: { from: ["${alice}"], to: ["${bob}"] } }), fields: { transaction: ["transactionIndex"] } },
   route("alice-to-bob"),
 );
 indexer.onTransaction(
-  { name: "carol-to-alice", where: () => ({ transaction: { from: ["${carol}"], to: ["${alice}"] } }) },
+  { name: "carol-to-alice", where: () => ({ transaction: { from: ["${carol}"], to: ["${alice}"] } }), fields: { transaction: ["transactionIndex"] } },
   route("carol-to-alice"),
 );
 indexer.onTransaction(
-  { name: "carol-reverted", where: () => ({ transaction: { from: ["${carol}"], status: [0] } }) },
+  { name: "carol-reverted", where: () => ({ transaction: { from: ["${carol}"], status: [0] } }), fields: { transaction: ["transactionIndex"] } },
   route("carol-reverted"),
 );
 `,

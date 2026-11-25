@@ -74,9 +74,10 @@ filter:
 
 What the handler gets:
 
-- The handler gets `{ transaction, context }`. As with `event`,
-  `transaction` carries `transactionIndex` and `transaction.block.number`;
-  anything else, `hash`, `from` and `to` included, is listed in `fields`,
+- The handler gets `{ transaction, context }`. `transaction` is an
+  `EvmTransaction`, the type of `event.transaction` too, so one function can
+  take either: `transaction.block.number` is always there, anything else,
+  `transactionIndex`, `hash`, `from` and `to` included, is listed in `fields`,
   with the names below. A field the filter compares is fetched but readable
   only when listed. Reading an unlisted field is a type error.
 - `context` is an event handler's: entities, effects, `log`, `chain.id`,

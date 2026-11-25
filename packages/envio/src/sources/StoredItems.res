@@ -108,11 +108,20 @@ type links = {
 
 // Gives each item the transaction and block its links point at. Items of one
 // transaction or block share its object; where the batch selects no field of
-// either, each item gets an empty object of its own.
+// either, each item gets an empty object of its own. An EVM transaction also
+// carries its block, as an event's and a transaction handler's alike.
 %%private(
-  let attach = (items: array<Internal.item>, toRead: links, ~transactions, ~blocks) =>
+  let attach = (
+    items: array<Internal.item>,
+    toRead: links,
+    ~transactions,
+    ~blocks,
+    ~isEvmRow: int => bool,
+  ) =>
     items->Array.forEachWithIndex((item, row) => {
-      switch toRead.transactionRows->valueAt(row)->(Utils.magic: unknown => Null.t<float>) {
+      let transaction = switch toRead.transactionRows
+      ->valueAt(row)
+      ->(Utils.magic: unknown => Null.t<float>) {
       | Value(link) =>
         let transaction =
           link < 0.
@@ -133,37 +142,30 @@ type links = {
           }
         | Block(_) => ()
         }
-      | Null => ()
+        Some(transaction)
+      | Null => None
       }
       switch toRead.blockRows->valueAt(row)->(Utils.magic: unknown => Null.t<float>) {
       | Value(link) =>
-        let holder = switch item {
-        | Event({payload}) => payload->Internal.payloadBlockHolder
-        | Block(_) | Transaction(_) => item->Internal.itemBlockHolder
-        }
-        holder->Internal.setHolderBlock(
+        let block =
           link < 0.
             ? %raw(`{}`)
             : blocks
               ->Array.getUnsafe(link->Float.toInt)
-              ->(Utils.magic: dict<unknown> => Internal.eventBlock),
-        )
-      | Null => ()
-      }
-      switch item {
-      // A copy: the transaction object is shared with its events'
-      // `event.transaction`, which carries no block.
-      | Transaction({?transaction, ?block}) =>
-        item->Internal.setItemTransaction(
+              ->(Utils.magic: dict<unknown> => Internal.eventBlock)
+        let holder = switch item {
+        | Event({payload}) => payload->Internal.payloadBlockHolder
+        | Block(_) | Transaction(_) => item->Internal.itemBlockHolder
+        }
+        holder->Internal.setHolderBlock(block)
+        switch transaction {
+        | Some(transaction) if isEvmRow(row) =>
           transaction
-          ->Option.getUnsafe
-          ->(Utils.magic: Internal.eventTransaction => dict<unknown>)
-          ->Utils.Dict.merge(
-            dict{"block": block->Option.getUnsafe->(Utils.magic: Internal.eventBlock => unknown)},
-          )
-          ->(Utils.magic: dict<unknown> => Internal.eventTransaction),
-        )
-      | Event(_) | Block(_) => ()
+          ->(Utils.magic: Internal.eventTransaction => Internal.blockHolder)
+          ->Internal.setHolderBlock(block)
+        | _ => ()
+        }
+      | Null => ()
       }
     })
 )
@@ -302,6 +304,15 @@ let read = (rows: ChainBuffer.builtItems, ~context: context): array<Internal.ite
       {transactionRows: linkColumn("transactionRow"), blockRows: linkColumn("blockRow")},
       ~transactions,
       ~blocks,
+      ~isEvmRow=row =>
+        switch details
+        ->numberAt(row)
+        ->Float.toInt
+        ->Int.bitwiseAnd(7)
+        ->(Utils.magic: int => format) {
+        | EvmLog | Transaction => true
+        | _ => false
+        },
     )
     items
   })

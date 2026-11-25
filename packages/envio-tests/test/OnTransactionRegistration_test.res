@@ -119,8 +119,8 @@ type Noop {
   id: ID!
 }
 `,
-  // A handler reads its key, `transactionIndex` and `block.number`, and what it
-  // lists, as an event handler does.
+  // A handler reads \`block.number\` and what it lists, as an event handler
+  // does.
   ~handlers=`
 import { indexer } from "envio";
 
@@ -131,15 +131,17 @@ indexer.onTransaction(
     fields: { transaction: ["value"], block: ["miner"] },
   },
   async ({ transaction }) => {
-    const always: [number, number] = [transaction.transactionIndex, transaction.block.number];
+    const always: number = transaction.block.number;
     const listed: [bigint, string] = [transaction.value, transaction.block.miner];
+    // @ts-expect-error - transactionIndex is not listed
+    const transactionIndex: number = transaction.transactionIndex;
     // @ts-expect-error - hash is not listed
     const hash: string = transaction.hash;
     // @ts-expect-error - from is filtered on but not listed
     const from: string = transaction.from;
     // @ts-expect-error - timestamp is not listed
     const timestamp: number = transaction.block.timestamp;
-    void always, listed, hash, from, timestamp;
+    void always, listed, transactionIndex, hash, from, timestamp;
   },
 );
 

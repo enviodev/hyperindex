@@ -489,7 +489,6 @@ let resolveOnTransactionFieldMasks = (fields: unknown, ~name) => {
       ),
     )
   }
-  transactionFields->Utils.Set.add("transactionIndex")->ignore
   // Types expose only `number`, as for events, but the progress latency reads
   // a batch's last block's timestamp.
   blockFields

@@ -44,37 +44,38 @@ chains:${served->ServedEvmChain.chainsYaml(
 `,
   ~schema=ServedEvmChain.routedSchema,
   ~handlers=`
-import { indexer } from "envio";
+import { indexer, type EvmTransaction } from "envio";
 
+const fields = { transaction: ["transactionIndex"] } as const;
 const route =
   (name: string) =>
-  async ({ transaction, context }: { transaction: { transactionIndex: number; block: { number: number } }; context: any }) =>
+  async ({ transaction, context }: { transaction: EvmTransaction<typeof fields>; context: any }) =>
     context.Routed.set({ id: \`\${context.chain.id}-\${transaction.block.number}-\${transaction.transactionIndex}-\${name}\` });
 
 indexer.onTransaction(
-  { name: "from-alice", where: () => ({ transaction: { from: ["${alice}"] } }) },
+  { name: "from-alice", where: () => ({ transaction: { from: ["${alice}"] } }), fields },
   route("from-alice"),
 );
 indexer.onTransaction(
-  { name: "to-bob-or-carol", where: () => ({ transaction: { to: ["${bob}", "${carol}"] } }) },
+  { name: "to-bob-or-carol", where: () => ({ transaction: { to: ["${bob}", "${carol}"] } }), fields },
   route("to-bob-or-carol"),
 );
 indexer.onTransaction(
-  { name: "alice-to-bob", where: () => ({ transaction: { from: ["${alice}"], to: ["${bob}"] } }) },
+  { name: "alice-to-bob", where: () => ({ transaction: { from: ["${alice}"], to: ["${bob}"] } }), fields },
   route("alice-to-bob"),
 );
 indexer.onTransaction(
-  { name: "succeeded", where: () => ({ transaction: { status: [1] } }) },
+  { name: "succeeded", where: () => ({ transaction: { status: [1] } }), fields },
   route("succeeded"),
 );
 indexer.onTransaction(
-  { name: "reverted-from-bob", where: () => ({ transaction: { from: ["${bob}"], status: [0] } }) },
+  { name: "reverted-from-bob", where: () => ({ transaction: { from: ["${bob}"], status: [0] } }), fields },
   route("reverted-from-bob"),
 );
-indexer.onTransaction({ name: "everything", where: () => true }, route("everything"));
-indexer.onTransaction({ name: "nothing", where: () => false }, route("nothing"));
+indexer.onTransaction({ name: "everything", where: () => true, fields }, route("everything"));
+indexer.onTransaction({ name: "nothing", where: () => false, fields }, route("nothing"));
 indexer.onTransaction(
-  { name: "to-alice-on-rpc", where: ({ chain }) => chain.id === 2 && { transaction: { to: ["${alice}"], status: [0, 1] } } },
+  { name: "to-alice-on-rpc", where: ({ chain }) => chain.id === 2 && { transaction: { to: ["${alice}"], status: [0, 1] } }, fields },
   route("to-alice-on-rpc"),
 );
 `,

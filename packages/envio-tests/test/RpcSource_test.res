@@ -206,7 +206,17 @@ describe("RpcSource - field selection end to end", () => {
     )
     items->Array.map(item =>
       switch item {
-      | Internal.Event({payload}) => payload->Evm.toPayload
+      | Internal.Event({payload}) =>
+        let payload = payload->Evm.toPayload
+        // The transaction carries the item's block, which these cases don't
+        // read: they pin what the source fetches.
+        payload.transaction->Option.forEach(
+          transaction =>
+            transaction
+            ->(Utils.magic: Internal.eventTransaction => dict<unknown>)
+            ->Dict.delete("block"),
+        )
+        payload
       | Internal.Block(_) | Internal.Transaction(_) =>
         JsError.throwWithMessage("unexpected handler item")
       }

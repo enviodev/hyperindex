@@ -74,7 +74,7 @@ indexer.onTransaction(
   {
     name: "from-alice",
     where: () => ({ transaction: { from: [alice] } }),
-    fields: { transaction: ["hash", "from", "value", "input"], block: ["timestamp", "miner"] },
+    fields: { transaction: ["hash", "transactionIndex", "from", "value", "input"], block: ["timestamp", "miner"] },
   },
   async ({ transaction, context }) => {
     await record(context, \`from-alice \${transaction.block.number}/\${transaction.transactionIndex}\`);
@@ -91,12 +91,12 @@ indexer.onTransaction(
   },
 );
 indexer.onTransaction(
-  { name: "to-bob", where: () => ({ transaction: { to: [bob] } }) },
+  { name: "to-bob", where: () => ({ transaction: { to: [bob] } }), fields: { transaction: ["transactionIndex"] } },
   async ({ transaction, context }) =>
     record(context, \`to-bob \${transaction.block.number}/\${transaction.transactionIndex}\`),
 );
 indexer.onTransaction(
-  { name: "succeeded", where: () => ({ transaction: { status: [1] } }) },
+  { name: "succeeded", where: () => ({ transaction: { status: [1] } }), fields: { transaction: ["transactionIndex"] } },
   async ({ transaction, context }) =>
     record(context, \`succeeded \${transaction.block.number}/\${transaction.transactionIndex}\`),
 );
@@ -127,7 +127,7 @@ indexer.onTransaction(
   },
 );
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) =>
-  record(context, \`Transfer \${event.block.number}/\${event.logIndex}\`),
+  record(context, \`Transfer \${event.transaction.block.number}/\${event.logIndex}\`),
 );
 `,
   ~test=`
