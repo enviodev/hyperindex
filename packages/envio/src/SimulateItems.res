@@ -224,8 +224,8 @@ let toRpcObject = (fields: dict<unknown>, ~isBlock) => {
 }
 
 // A simulated transaction as a JSON-RPC node spells it, at its place in the
-// block. A handler always reads the hash, so one left out is made from that
-// place, and a mined transaction succeeded unless the test says it reverted.
+// block. A row is keyed and decoded with its hash, so one left out is made from
+// that place, and a mined transaction succeeded unless the test says it reverted.
 let transactionRow = (fields: dict<unknown>, ~blockNumber, ~transactionIndex) => {
   let row = fields->toRpcObject(~isBlock=false)
   row->Dict.set("blockNumber", JSON.String("0x" ++ blockNumber->Int.toString(~radix=16)))
@@ -875,8 +875,8 @@ let parse = (
                 ->(Utils.magic: Internal.eventBlock => dict<unknown>)
                 ->toRpcObject(~isBlock=true)
 
-              // A handler always reads the block's hash, which an event's
-              // block defaults to empty.
+              // Every block row holds its hash, which an event's block
+              // defaults to empty.
               if row->Dict.get("hash")->Option.isNone {
                 row->Dict.set(
                   "hash",

@@ -26,7 +26,7 @@ indexer.onTransaction(
     name: "TreasuryActivity",
     where: ({ chain }) =>
       chain.id === 1 && { transaction: { from: ["0x1111111111111111111111111111111111111111"], status: [0, 1] } },
-    fields: { transaction: ["input", "value", "status"], block: ["timestamp"] },
+    fields: { transaction: ["hash", "to", "value", "status"], block: ["timestamp"] },
   },
   async ({ transaction, context }) => {
     context.TreasuryTx.set({
@@ -74,10 +74,11 @@ filter:
 
 What the handler gets:
 
-- The handler gets `{ transaction, context }`. `transaction` always carries
-  `transactionIndex`, `hash`, `from`, `to` and its `block`, which always
-  carries `number`, `timestamp` and `hash`. Anything else is listed in
-  `fields`, with the names below. Reading an unlisted field is a type error.
+- The handler gets `{ transaction, context }`. As with `event`,
+  `transaction` carries `transactionIndex` and `transaction.block.number`;
+  anything else, `hash`, `from` and `to` included, is listed in `fields`,
+  with the names below. A field the filter compares is fetched but readable
+  only when listed. Reading an unlisted field is a type error.
 - `context` is an event handler's: entities, effects, `log`, `chain.id`,
   `isPreload`. The handler runs in the preload pass too.
 - A transaction's handlers run before the event handlers of that transaction

@@ -74,7 +74,7 @@ indexer.onTransaction(
   {
     name: "from-alice",
     where: () => ({ transaction: { from: [alice] } }),
-    fields: { transaction: ["value", "input"], block: ["miner"] },
+    fields: { transaction: ["hash", "from", "value", "input"], block: ["timestamp", "miner"] },
   },
   async ({ transaction, context }) => {
     await record(context, \`from-alice \${transaction.block.number}/\${transaction.transactionIndex}\`);
@@ -107,7 +107,11 @@ indexer.onTransaction(
   },
 );
 indexer.onTransaction(
-  { name: "hashes", where: () => ({ transaction: { from: ["0x00000000000000000000000000000000000000dd"] } }) },
+  {
+    name: "hashes",
+    where: () => ({ transaction: { from: ["0x00000000000000000000000000000000000000dd"] } }),
+    fields: { transaction: ["hash"], block: ["hash"] },
+  },
   async ({ transaction, context }) => {
     context.Hashes.set({ id: transaction.hash, blockHash: transaction.block.hash });
   },

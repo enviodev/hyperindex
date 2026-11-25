@@ -92,9 +92,16 @@ const record = (name: string) => async ({ transaction, context }: any) => {
   context.Sent.set({ id, to: (transaction.to ?? "none").toLowerCase(), runs });
 };
 
-indexer.onTransaction({ name: "to-bob", where: () => ({ transaction: { to: ["${bob}"] } }) }, record("to-bob"));
 indexer.onTransaction(
-  { name: "succeeded", where: () => ({ transaction: { from: ["${alice}"], status: [1] } }) },
+  { name: "to-bob", where: () => ({ transaction: { to: ["${bob}"] } }), fields: { transaction: ["to"] } },
+  record("to-bob"),
+);
+indexer.onTransaction(
+  {
+    name: "succeeded",
+    where: () => ({ transaction: { from: ["${alice}"], status: [1] } }),
+    fields: { transaction: ["to"] },
+  },
   record("succeeded"),
 );
 `,

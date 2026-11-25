@@ -461,10 +461,6 @@ let resolveOnBlockFieldMask = (fields: unknown, ~name, ~ecosystem: Ecosystem.t):
     }
   }
 
-// Every transaction handler reads these whatever it lists.
-let onTransactionTransactionFields = ["transactionIndex", "hash", "from", "to"]
-let onTransactionBlockFields = ["number", "timestamp", "hash"]
-
 // Resolve a transaction handler's `fields` option, the shape `onEvent` takes,
 // into the transaction and block tables' bitmasks.
 let resolveOnTransactionFieldMasks = (fields: unknown, ~name) => {
@@ -493,8 +489,8 @@ let resolveOnTransactionFieldMasks = (fields: unknown, ~name) => {
       ),
     )
   }
-  transactionFields->Utils.Set.addMany(onTransactionTransactionFields)
-  blockFields->Utils.Set.addMany(onTransactionBlockFields)
+  transactionFields->Utils.Set.add("transactionIndex")->ignore
+  blockFields->Utils.Set.add("number")->ignore
   (Evm.eventTransactionFieldMask(transactionFields), Evm.eventBlockFieldMask(blockFields))
 }
 

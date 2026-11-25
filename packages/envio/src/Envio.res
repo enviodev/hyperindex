@@ -10,17 +10,11 @@ type evmOnBlockArgs<'context> = {
   context: 'context,
 }
 
-/** The transaction's block: these fields, plus those listed in `fields.block`. */
-type evmOnTransactionBlock = {number: int, timestamp: int, hash: string}
-
-/** The transaction a transaction handler runs on: these fields, plus those
- listed in `fields.transaction`. */
+/** The transaction a transaction handler runs on. As with `evmOnBlockArgs`,
+ the fields listed in `fields` are there too but not typed here. */
 type evmOnTransactionTransaction = {
   transactionIndex: int,
-  hash: string,
-  from: option<Address.t>,
-  to: option<Address.t>,
-  block: evmOnTransactionBlock,
+  block: {number: int},
 }
 
 /** Arguments passed to handlers registered via `indexer.onTransaction`. */

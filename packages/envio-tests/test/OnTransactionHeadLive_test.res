@@ -26,7 +26,7 @@ indexer.onTransaction(
   {
     name: "usdt-transfers",
     where: () => ({ transaction: { to: ["0xdac17f958d2ee523a2206206994597c13d831ec7"], status: [0, 1] } }),
-    fields: { transaction: ["input"] },
+    fields: { transaction: ["hash", "input"] },
   },
   async ({ transaction, context }) => {
     if (transaction.input.startsWith("0xa9059cbb")) context.UsdtTransfer.set({ id: transaction.hash });

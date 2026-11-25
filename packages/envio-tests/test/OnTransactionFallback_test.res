@@ -58,7 +58,7 @@ type Sent {
 import { indexer } from "envio";
 
 indexer.onTransaction(
-  { name: "sends", where: () => ({ transaction: { from: ["${alice}"] } }) },
+  { name: "sends", where: () => ({ transaction: { from: ["${alice}"] } }), fields: { transaction: ["hash"] } },
   async ({ transaction, context }) => {
     if (context.isPreload) return;
     const id = \`\${transaction.block.number}\`;

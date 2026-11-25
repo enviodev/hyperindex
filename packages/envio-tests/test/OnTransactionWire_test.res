@@ -227,7 +227,6 @@ describe("onTransaction wire", () => {
                 "block_number",
                 "from",
                 "gas_used",
-                "hash",
                 "status",
                 "to",
                 "transaction_index",

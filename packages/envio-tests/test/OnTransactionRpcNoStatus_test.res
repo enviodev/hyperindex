@@ -63,7 +63,11 @@ type Sent {
 import { indexer } from "envio";
 
 indexer.onTransaction(
-  { name: "from-alice", where: () => ({ transaction: { from: ["${alice}"] } }) },
+  {
+    name: "from-alice",
+    where: () => ({ transaction: { from: ["${alice}"] } }),
+    fields: { transaction: ["hash"] },
+  },
   async ({ transaction, context }) => {
     context.Sent.set({ id: transaction.hash });
   },
