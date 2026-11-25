@@ -46,13 +46,12 @@ type user = {
 describe("LoadLayer", () => {
   Async.it("Trys to load non existing entity from db", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
     let loadManager = LoadManager.make()
 
     let getUser = entityId =>
       LoadLayer.loadById(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,
@@ -74,12 +73,11 @@ describe("LoadLayer", () => {
   Async.it("Does two round trips to db when requesting non existing entity one by one", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
 
     let getUser = entityId =>
       LoadLayer.loadById(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,
@@ -109,11 +107,10 @@ describe("LoadLayer", () => {
     async t => {
       let storageMock = MockStorage.make([#loadOrThrow])
       let loadManager = LoadManager.make()
-      let indexerState = TestIndexerState.make(~config)
+      let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
-          ~persistence=storageMock->MockStorage.toPersistence(~config),
           ~entityConfig=userEntityConfig,
           ~scope=Internal.CrossChain,
           ~indexerState,
@@ -138,11 +135,10 @@ describe("LoadLayer", () => {
   Async.it("Doesn't stack with an await in between of loader calls", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
     let getUser = entityId =>
       LoadLayer.loadById(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,
@@ -182,11 +178,10 @@ describe("LoadLayer", () => {
   Async.it("Batches requests to db when requesting non existing entity in Promise.all", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
     let getUser = entityId =>
       LoadLayer.loadById(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,
@@ -221,11 +216,14 @@ describe("LoadLayer", () => {
         }: user
       )
 
-      let indexerState = TestIndexerState.make(~config, ~entities=[(userEntityConfig, [user1])])
+      let indexerState = TestIndexerState.make(
+        ~storage=storageMock.storage,
+        ~config,
+        ~entities=[(userEntityConfig, [user1])],
+      )
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
-          ~persistence=storageMock->MockStorage.toPersistence(~config),
           ~entityConfig=userEntityConfig,
           ~scope=Internal.CrossChain,
           ~indexerState,
@@ -250,7 +248,7 @@ describe("LoadLayer", () => {
     async t => {
       let storageMock = MockStorage.make([#loadOrThrow])
       let loadManager = LoadManager.make()
-      let indexerState = TestIndexerState.make(~config)
+      let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
 
       let user1 = (
         {
@@ -265,7 +263,6 @@ describe("LoadLayer", () => {
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
-          ~persistence=storageMock->MockStorage.toPersistence(~config),
           ~entityConfig=userEntityConfig,
           ~scope=Internal.CrossChain,
           ~indexerState,
@@ -315,12 +312,15 @@ describe("LoadLayer", () => {
         }: user
       )
 
-      let indexerState = TestIndexerState.make(~config, ~entities=[(userEntityConfig, [user1])])
+      let indexerState = TestIndexerState.make(
+        ~storage=storageMock.storage,
+        ~config,
+        ~entities=[(userEntityConfig, [user1])],
+      )
 
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
-          ~persistence=storageMock->MockStorage.toPersistence(~config),
           ~entityConfig=userEntityConfig,
           ~scope=Internal.CrossChain,
           ~indexerState,
@@ -357,12 +357,11 @@ describe("LoadLayer", () => {
   Async.it("Trys to load non existing entities from db by field", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
 
     let getUsersWithId = fieldValue =>
       LoadLayer.loadByFilter(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,
@@ -372,7 +371,6 @@ describe("LoadLayer", () => {
     let getUsersWithUpdates = fieldValue =>
       LoadLayer.loadByFilter(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,
@@ -404,7 +402,6 @@ describe("LoadLayer", () => {
     let getUsersWithUpdatesLt = fieldValue =>
       LoadLayer.loadByFilter(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,
@@ -442,12 +439,15 @@ describe("LoadLayer", () => {
       updatesCountOnUserForTesting: 0,
     }
 
-    let indexerState = TestIndexerState.make(~config, ~entities=[(userEntityConfig, [user1])])
+    let indexerState = TestIndexerState.make(
+      ~storage=storageMock.storage,
+      ~config,
+      ~entities=[(userEntityConfig, [user1])],
+    )
 
     let getUsersWithAddress = fieldValue =>
       LoadLayer.loadByFilter(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,
@@ -486,12 +486,11 @@ describe("LoadLayer", () => {
       ~dbEntities=[(userEntityConfig, [user1, user2, user("3", "0x3")])],
     )
     let loadManager = LoadManager.make()
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
 
     let getUsersWithAddress = fieldValue =>
       LoadLayer.loadByFilter(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,
@@ -520,12 +519,11 @@ describe("LoadLayer", () => {
   Async.it("Merges concurrent In filters on the same field into a single In query", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
 
     let getUsersWithAddresses = fieldValues =>
       LoadLayer.loadByFilter(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,
@@ -554,12 +552,11 @@ describe("LoadLayer", () => {
   Async.it("Doesn't merge concurrent Gt filters", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
 
     let getUsersWithUpdates = fieldValue =>
       LoadLayer.loadByFilter(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,
@@ -610,6 +607,7 @@ describe("LoadLayer", () => {
     }
 
     let indexerState = TestIndexerState.make(
+      ~storage=storageMock.storage,
       ~config,
       ~entities=[(userEntityConfig, [user1, user2])],
     )
@@ -617,7 +615,6 @@ describe("LoadLayer", () => {
     let getUsersWithId = fieldValue =>
       LoadLayer.loadByFilter(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,
@@ -628,7 +625,6 @@ describe("LoadLayer", () => {
     let getUsersWithUpdates = fieldValue =>
       LoadLayer.loadByFilter(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,
@@ -684,7 +680,7 @@ describe("LoadLayer", () => {
     async t => {
       let storageMock = MockStorage.make([#loadOrThrow])
       let loadManager = LoadManager.make()
-      let indexerState = TestIndexerState.make(~config)
+      let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
 
       let user1 = (
         {
@@ -699,7 +695,6 @@ describe("LoadLayer", () => {
       let getUsersWithId = fieldValue =>
         LoadLayer.loadByFilter(
           ~loadManager,
-          ~persistence=storageMock->MockStorage.toPersistence(~config),
           ~entityConfig=userEntityConfig,
           ~scope=Internal.CrossChain,
           ~indexerState,
@@ -744,7 +739,7 @@ describe("LoadLayer effect cache", () => {
     async t => {
       let storageMock = MockStorage.make([#loadOrThrow])
       let loadManager = LoadManager.make()
-      let indexerState = TestIndexerState.make(~config)
+      let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
 
       let callCount = ref(0)
       let effect = Envio.createEffect(
@@ -764,7 +759,6 @@ describe("LoadLayer effect cache", () => {
       let callEffect = () =>
         LoadLayer.loadEffect(
           ~loadManager,
-          ~persistence=storageMock->MockStorage.toPersistence(~config),
           ~effect,
           ~effectArgs={
             input: "test"->(Utils.magic: string => Internal.effectInput),
@@ -789,11 +783,10 @@ describe("LoadLayer effect cache", () => {
 })
 
 describe("LoadLayer effect scope isolation", () => {
-  let makeCaller = (~effect, ~loadManager, ~persistence, ~indexerState) =>
+  let makeCaller = (~effect, ~loadManager, ~indexerState) =>
     (~scope, ~input) =>
       LoadLayer.loadEffect(
         ~loadManager,
-        ~persistence,
         ~effect,
         ~effectArgs={
           input: input->(Utils.magic: string => Internal.effectInput),
@@ -810,7 +803,7 @@ describe("LoadLayer effect scope isolation", () => {
   Async.it("Deduplicates the same input within a chain but re-runs it across chains", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
 
     let callCount = ref(0)
     let effect = Envio.createEffect(
@@ -828,12 +821,7 @@ describe("LoadLayer effect scope isolation", () => {
       },
     )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
 
-    let call = makeCaller(
-      ~effect,
-      ~loadManager,
-      ~persistence=storageMock->MockStorage.toPersistence(~config),
-      ~indexerState,
-    )
+    let call = makeCaller(~effect, ~loadManager, ~indexerState)
 
     // Two concurrent calls, same input, same chain -> handler runs once.
     let chain1 = await Promise.all([
@@ -856,7 +844,7 @@ describe("LoadLayer effect scope isolation", () => {
   Async.it("Shares one cache across chains for a cross-chain effect", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
 
     let callCount = ref(0)
     let effect = Envio.createEffect(
@@ -873,12 +861,7 @@ describe("LoadLayer effect scope isolation", () => {
       },
     )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
 
-    let call = makeCaller(
-      ~effect,
-      ~loadManager,
-      ~persistence=storageMock->MockStorage.toPersistence(~config),
-      ~indexerState,
-    )
+    let call = makeCaller(~effect, ~loadManager, ~indexerState)
 
     // A cross-chain effect always resolves to the CrossChain scope, so calls
     // from any chain hit the same cache and the handler runs once.
@@ -894,7 +877,7 @@ describe("LoadLayer effect scope isolation", () => {
   Async.it("Rate limits each chain independently for a chain-scoped effect", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
 
     let callCount = ref(0)
     let effect = Envio.createEffect(
@@ -913,12 +896,7 @@ describe("LoadLayer effect scope isolation", () => {
       },
     )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
 
-    let call = makeCaller(
-      ~effect,
-      ~loadManager,
-      ~persistence=storageMock->MockStorage.toPersistence(~config),
-      ~indexerState,
-    )
+    let call = makeCaller(~effect, ~loadManager, ~indexerState)
 
     let order = []
     let track = (p, label) =>
@@ -975,7 +953,7 @@ chains:
 `,
     )
     let storageMock = MockStorage.make([#loadOrThrow])
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
     let effect = Envio.createEffect(
       {
         name: "crossChainPerChainSequence",
@@ -990,7 +968,6 @@ chains:
 
     let _ = await LoadLayer.loadEffect(
       ~loadManager=LoadManager.make(),
-      ~persistence=storageMock->MockStorage.toPersistence(~config),
       ~effect,
       ~effectArgs={
         input: "a"->(Utils.magic: string => Internal.effectInput),
@@ -1025,7 +1002,7 @@ chains:
   Async.it("Keeps the rate-limit budget across a rollback reset", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
 
     let callCount = ref(0)
     let effect = Envio.createEffect(
@@ -1044,12 +1021,7 @@ chains:
       },
     )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
 
-    let call = makeCaller(
-      ~effect,
-      ~loadManager,
-      ~persistence=storageMock->MockStorage.toPersistence(~config),
-      ~indexerState,
-    )
+    let call = makeCaller(~effect, ~loadManager, ~indexerState)
 
     // Consume chain 1's single-call-per-window budget.
     let _ = await call(~scope=Chain(1->ChainId.fromInt), ~input="a")
@@ -1088,12 +1060,11 @@ describe("LoadLayer getWhere index reuse", () => {
   Async.it("Serves a filter whose values an earlier query already loaded", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
 
     let getUsers = filter =>
       LoadLayer.loadByFilter(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,
@@ -1124,12 +1095,11 @@ describe("LoadLayer getWhere index reuse", () => {
   Async.it("Still queries for an operator no loaded value can cover", async t => {
     let storageMock = MockStorage.make([#loadOrThrow])
     let loadManager = LoadManager.make()
-    let indexerState = TestIndexerState.make(~config)
+    let indexerState = TestIndexerState.make(~storage=storageMock.storage, ~config)
 
     let getUsers = filter =>
       LoadLayer.loadByFilter(
         ~loadManager,
-        ~persistence=storageMock->MockStorage.toPersistence(~config),
         ~entityConfig=userEntityConfig,
         ~scope=Internal.CrossChain,
         ~indexerState,

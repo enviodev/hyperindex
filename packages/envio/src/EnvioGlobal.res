@@ -19,7 +19,7 @@ type t = {
   preRegistered: array<unknown>,
   rollbackCommitCallbacks: array<unknown>,
   mutable indexerState: option<unknown>,
-  mutable persistence: option<unknown>,
+  mutable initialState: option<unknown>,
 }
 
 // Record type with `mutable` so assignment typechecks; ReScript keeps the
@@ -43,7 +43,7 @@ let value: t = {
       preRegistered: [],
       rollbackCommitCallbacks: [],
       indexerState: None,
-      persistence: None,
+      initialState: None,
     }
     globalThis.__envioGlobal = Nullable.make(fresh)
     fresh
