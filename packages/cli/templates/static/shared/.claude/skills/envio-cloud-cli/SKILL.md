@@ -18,6 +18,7 @@ How it works:
 
 - An **indexer** follows one branch of a GitHub repo. Envio Cloud only sees commits **pushed to that branch after the indexer was added**.
 - With auto-deploy on (the default), a push deploys. With it off, the commit waits as `inactive` until `deployment deploy`.
+- Each plan allows a few deployments per indexer. A push while the indexer is at the limit deploys nothing and reports nothing: the commit just shows `inactive`. `indexer get <indexer> <org>` lists the current deployments.
 - Each deployment has its own GraphQL URL. On Production plans, `deployment promote` points the static production endpoint at it; promoting an older one rolls back.
 - Indexers on Envio Cloud don't need a HyperSync `ENVIO_API_TOKEN`.
 
@@ -68,7 +69,7 @@ A new indexer has no deployments until the next push (an empty commit works).
    | not listed | Wait. Still missing after a few minutes: it was pushed before the indexer existed, or to another branch (`indexer settings get`) |
    | `pending`, `deploy` | Wait |
    | `active` | Deployed: go to step 3 |
-   | `inactive` | `npx -y envio-cloud deployment deploy <indexer> <commit> <org> --yes`. If it fails at the plan's deployment limit, it lists the deployments and marks production: ask before `deployment delete <indexer> <old-commit> <org> --yes` on one that isn't. Still `inactive` after a deploy that started: the indexing-hour limit (ask the user to check the dashboard), or push a new commit |
+   | `inactive` | With auto-deploy on, usually the deployment limit. `npx -y envio-cloud deployment deploy <indexer> <commit> <org> --yes`. If it fails at the limit, it lists the deployments and marks production: ask before `deployment delete <indexer> <old-commit> <org> --yes` on one that isn't. Each deployment's own URL works until it is deleted, so an old one may still have clients: tell the user which URL goes away. A deploy sent right after a delete can be accepted and dropped: if the commit is still `inactive` a minute later, run `deployment deploy` again. Still `inactive` after that: the indexing-hour limit (ask the user to check the dashboard), or push a new commit |
    | `deletingDeploymemt` (spelled so) | Push a new commit |
    | anything else | The name says what's wrong (`versionNotSupported`, `configFileMissing`, ...): fix it and push |
 
@@ -86,6 +87,7 @@ npx -y envio-cloud deployment logs <indexer> <commit> <org> --level error,warn -
 | Symptom | Fix |
 |---|---|
 | `deployment deploy` says "commit ... not found" | Envio Cloud never saw it: push, then use the hash from `indexer commits` |
+| `deployment status` fails with `API error (status 404)` | The commit has no deployment: check its status in `indexer commits` ([Ship a commit](#ship-a-commit), step 2). Don't wait on `status` in a loop that hides errors |
 | Builds locally, fails on Envio Cloud | A file it needs isn't uploaded (see [Add an indexer](#add-an-indexer)): move it inside the root dir, or widen `--root-dir` |
 | Pushes stopped deploying | The pusher has the `reader` role, or the indexer is paused (billing or plan limits): ask the user to check the dashboard |
 | Env var undefined at runtime | Key lacks the `ENVIO_` prefix, or was set after the deployment: `deployment env set <indexer> <commit> <org> ENVIO_KEY=value --yes` (below) |
