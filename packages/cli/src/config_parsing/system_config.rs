@@ -1,5 +1,4 @@
 use super::{
-    chain_helpers::get_max_reorg_depth_from_id,
     entity_parsing::{
         schema_source_label, ClickHouseEntityStorage, DefaultChainScope, Entity, EntityColumn,
         GqlScalar, GraphQLEnum, Schema, MAX_PG_IDENTIFIER_LENGTH, RESERVED_CHAIN_ID_FIELD_NAMES,
@@ -1166,9 +1165,7 @@ impl SystemConfig {
                     let chain = Chain {
                         id: network.id,
                         skip: network.skip.unwrap_or(false),
-                        max_reorg_depth: network
-                            .max_reorg_depth
-                            .or_else(|| get_max_reorg_depth_from_id(network.id)),
+                        max_reorg_depth: network.max_reorg_depth,
                         block_lag: network.block_lag,
                         block_throttle: network.block_throttle,
                         start_block: network.start_block,
