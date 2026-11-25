@@ -62,8 +62,9 @@ filter:
   transaction: use the event it emits instead.
 - A handler runs on succeeded transactions unless `status` lists `0`: a
   reverted transaction emits no events, so it is opt-in. `[0, 1]` runs on
-  every mined transaction, `[0]` on reverted ones only. Blocks from before
-  Byzantium carry no status: only `[0, 1]` runs on their transactions.
+  every mined transaction, `[0]` on reverted ones only. HyperSync has a
+  status for every transaction; an RPC node has none before Byzantium
+  (mainnet block 4,370,000), so over RPC only `[0, 1]` runs on those.
 - A filter naming no `from` or `to` runs on every transaction of the
   chain. It is allowed, and warned about at startup.
 - An address that isn't 20 bytes, an empty list or a `status` value other
