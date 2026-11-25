@@ -72,6 +72,35 @@ let sourceLogs = (indexer: IndexerRunner.t) =>
 let switchCount = (indexer: IndexerRunner.t) =>
   indexer.infoAndAboveLogs()->Array.filter(({msg}) => msg == "Switching data-source")->Array.length
 
+// Two addresses, one partition each, so one query can still be in flight on a
+// source while the other partition's wait holds it.
+let twoPartitionScenario = Scenario.make(
+  ~configYaml=`
+name: source-failover-two-partitions
+rollback_on_reorg: false
+chains:
+  - id: 1337
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    max_reorg_depth: 0
+    contracts:
+      - name: Gravatar
+        address:
+          - "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+          - "0x1111111111111111111111111111111111111111"
+        events:
+          - event: "TestEvent()"
+`,
+  ~schema=`
+type Gravatar {
+  id: ID!
+  owner: String!
+}
+`,
+)
+
 describe("Source failover", () => {
   scenario->Scenario.it(
     "Retries on same source twice before switching, then alternates every second retry",
@@ -263,6 +292,50 @@ describe("Source failover", () => {
       await indexer.advanceTime(50)
       await sync.expectItemsQueries([{fromBlock: 402, reply: LeavePending}])
       t.expect((indexer->sourceLogs, indexer->switchCount)).toEqual(([], 2))
+    },
+  )
+
+  // https://github.com/enviodev/hyperindex/issues/1829
+  twoPartitionScenario->Scenario.it(
+    "Keeps a source held when a query sent before the hold succeeds",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~maxAddrInPartition=1,
+    ~sourceTiming={newBlockStallTimeout: 10, reducedPollingInterval: 1_000},
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      // Sync never answers the first height; the fallback, recruited once that
+      // stalls, reports 200.
+      fallback.setAutoHeight(200)
+      await indexer.advanceTime(10)
+      // Sync stopped at 100. Partition 1's first range stays in flight on it.
+      await sync.expectItemsQueries([
+        {partitionId: "0", fromBlock: 1, reply: upTo(100)},
+        {partitionId: "1", fromBlock: 1, reply: LeavePending},
+      ])
+      let waits = [100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 50]
+      for retryCount in 0 to waits->Array.length - 1 {
+        await sync.expectItemsQueries([
+          {
+            partitionId: "0",
+            retryCount,
+            reply: Fail(Source.SourceBehindHead({blockNumber: 101, requestStats: []})),
+          },
+        ])
+        await indexer.advanceTime(waits->Array.getUnsafe(retryCount))
+      }
+      await fallback.expectItemsQueries([
+        {partitionId: "0", fromBlock: 101, retryCount: 13, reply: upTo(200)},
+      ])
+
+      // The range it was sent before the hold is one it can serve, which shows
+      // nothing about the head.
+      await sync.expectItemsQueries([{partitionId: "1", fromBlock: 1, reply: upTo(100)}])
+      await fallback.expectItemsQueries([{partitionId: "1", fromBlock: 101, reply: LeavePending}])
+      t.expect(sync.pendingItemsQueries).toEqual([])
     },
   )
 

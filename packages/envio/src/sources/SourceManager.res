@@ -502,10 +502,14 @@ let releaseHold = (sourceState: sourceState) =>
   | Working | Recovering(_) => ()
   }
 
-let markWorking = (sourceState: sourceState) => {
-  sourceState->releaseHold
-  sourceState.health = Working
-}
+// Answering clears a recovery but not a hold: a held source can still answer a
+// range below where it stopped, or one sent before it was held, and neither
+// says it is back near the head. Only its height releases it.
+let markAnswered = (sourceState: sourceState) =>
+  switch sourceState.health {
+  | Recovering(_) => sourceState.health = Working
+  | Working | Held(_) => ()
+  }
 
 // A held source stays held: failing a query it was only asked as the last
 // resort says nothing new about it.
@@ -1177,7 +1181,7 @@ let executeQuery = async (
       )
       sourceState->recordRequestStats(response.requestStats)
       validateResponsePage(~method="getItems", ~page=response.page)
-      sourceState->markWorking
+      sourceState->markAnswered
 
       // The response carries a fresh height for exactly this source, so during a
       // long backfill (when nothing is waiting on the feed) it keeps the
@@ -1352,7 +1356,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
           ~page=data,
           ~requiredBlockNumbers=blockNumbers,
         )
-        sourceState->markWorking
+        sourceState->markAnswered
         responseRef := Some(data)
       | Error(exn) => throw(exn)
       }
