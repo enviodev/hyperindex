@@ -205,60 +205,40 @@ pub(super) fn decimal_key(text: &str) -> Result<String> {
     })
 }
 
-/// Which value on a Decimal column's grid of `scale` places a bound between
-/// two of them is compared as. Every value the column holds is on that grid,
-/// so `> b` finds what `> floor(b)` does, `>= b` what `>= ceil(b)` does, and no
-/// value equals a bound off it.
-#[derive(Debug, Clone, Copy)]
-enum Snap {
-    Down,
-    Up,
-    Exactly,
+/// A value as the statement spells it, and whether the column holds it
+/// exactly. A bound with more places than a Decimal column's scale lies
+/// between two values the column holds and is spelled as the one above it:
+/// ClickHouse compares Decimals of two scales by scaling the coarser one up,
+/// and a value near the top of a precision-76 column scaled up wraps past 256
+/// bits, answering the comparison wrong without an error.
+struct Spelled {
+    sql: String,
+    exact: bool,
 }
 
-impl Snap {
-    fn of(operator: Operator) -> Snap {
-        match operator {
-            Operator::Gt | Operator::Lte => Snap::Down,
-            Operator::Gte | Operator::Lt => Snap::Up,
-            Operator::Eq | Operator::In => Snap::Exactly,
-        }
-    }
-}
-
-/// A bound as a Decimal of the column's own scale. ClickHouse compares
-/// Decimals of two scales by scaling the coarser one up, and a value near the
-/// top of a precision-76 column scaled up wraps past 256 bits, answering the
-/// comparison wrong without an error.
-fn decimal_bound(text: &str, scale: u32, snap: Snap) -> Result<String> {
+fn decimal_ceiling(text: &str, scale: u32) -> Result<Spelled> {
     let text = number(text)?;
-    let at = |rounding| row_binary::decimal_at_scale(text, scale, rounding);
-    let bound = match snap {
-        Snap::Down => at(Rounding::Floor)?,
-        Snap::Up => at(Rounding::Ceiling)?,
-        Snap::Exactly => {
-            let floor = at(Rounding::Floor)?;
-            if floor != at(Rounding::Ceiling)? {
-                return Ok("NULL".to_string());
-            }
-            floor
-        }
-    };
-    Ok(format!(
-        "toDecimal256({}, {scale})",
-        literal(&row_binary::decimal_text(bound, scale))
-    ))
+    let ceiling = row_binary::decimal_at_scale(text, scale, Rounding::Ceiling)?;
+    Ok(Spelled {
+        sql: format!(
+            "toDecimal256({}, {scale})",
+            literal(&row_binary::decimal_text(ceiling, scale))
+        ),
+        exact: ceiling == row_binary::decimal_at_scale(text, scale, Rounding::Floor)?,
+    })
 }
 
 /// One element as the column's own type reads it.
 fn element(
     text: &str,
     kind: ValueKind,
-    snap: Snap,
     field_type: &FieldType,
     ch_type: &ChType,
-) -> Result<String> {
-    Ok(match kind {
+) -> Result<Spelled> {
+    if let (ValueKind::Number, ChType::Decimal { scale, .. }) = (kind, ch_type) {
+        return decimal_ceiling(text, *scale);
+    }
+    let sql = match kind {
         ValueKind::Text | ValueKind::Enum | ValueKind::Json => literal(text),
         ValueKind::Boolean => match text {
             "true" | "false" => text.to_string(),
@@ -280,10 +260,10 @@ fn element(
                 literal(&integer_key(&integer(text)?))
             }
             ChType::String => literal(&decimal_key(text)?),
-            ChType::Decimal { scale, .. } => decimal_bound(text, *scale, snap)?,
             _ => number(text)?.to_string(),
         },
-    })
+    };
+    Ok(Spelled { sql, exact: true })
 }
 
 /// The column as a filter compares it: a number kept as text is read as the
@@ -304,33 +284,37 @@ fn compared(column: &Column, kind: ValueKind) -> String {
 }
 
 /// A value: one element for a scalar column, the list's own for a list column.
-fn value(column: &Column, condition: &Condition, value: &[Option<String>]) -> Result<String> {
-    let render = |text: &Option<String>, snap: Snap, ch_type: &ChType| match text {
-        None => Ok("NULL".to_string()),
-        Some(text) => element(
-            text,
-            condition.kind,
-            snap,
-            &column.field.field_type,
-            ch_type,
-        ),
+/// Lists compare element by element, so a list's first inexact element decides
+/// any comparison that reaches it, and the list is spelled up to it.
+fn value(column: &Column, condition: &Condition, value: &[Option<String>]) -> Result<Spelled> {
+    let render = |text: &Option<String>, ch_type: &ChType| match text {
+        None => Ok(Spelled {
+            sql: "NULL".to_string(),
+            exact: true,
+        }),
+        Some(text) => element(text, condition.kind, &column.field.field_type, ch_type),
     };
     if condition.is_list {
         let ChType::Array(inner) = column.ch_type.base() else {
             bail!("`{}` is not a list column", column.row_name());
         };
-        let inner = inner.base();
-        Ok(format!(
-            "[{}]",
-            value
-                .iter()
-                .map(|text| render(text, Snap::Exactly, inner))
-                .collect::<Result<Vec<_>>>()?
-                .join(", ")
-        ))
+        let mut elements = Vec::with_capacity(value.len());
+        let mut exact = true;
+        for text in value {
+            let spelled = render(text, inner.base())?;
+            elements.push(spelled.sql);
+            if !spelled.exact {
+                exact = false;
+                break;
+            }
+        }
+        Ok(Spelled {
+            sql: format!("[{}]", elements.join(", ")),
+            exact,
+        })
     } else {
         match value {
-            [text] => render(text, Snap::of(condition.operator), column.ch_type.base()),
+            [text] => render(text, column.ch_type.base()),
             _ => bail!("A scalar filter takes one value"),
         }
     }
@@ -387,12 +371,17 @@ fn condition(
             {
                 return Ok(format!("{compared} IN {list}"));
             }
+            // A candidate the column can't hold exactly equals none of its values.
             let candidates = condition
                 .values
                 .iter()
                 .map(|candidate| value(column, condition, candidate))
+                .filter(|spelled| spelled.as_ref().map_or(true, |spelled| spelled.exact))
+                .map(|spelled| spelled.map(|spelled| spelled.sql))
                 .collect::<Result<Vec<_>>>()?;
-            if condition.is_list {
+            if candidates.is_empty() {
+                "false".to_string()
+            } else if condition.is_list {
                 format!(
                     "({})",
                     candidates
@@ -409,17 +398,19 @@ fn condition(
             let [candidate] = condition.values.as_slice() else {
                 bail!("A {operator:?} filter takes exactly one value");
             };
-            let sql_operator = match operator {
-                Operator::Gt => ">",
-                Operator::Lt => "<",
-                Operator::Gte => ">=",
-                Operator::Lte => "<=",
+            let spelled = value(column, condition, candidate)?;
+            // Spelled as the value above it, an inexact bound equals nothing
+            // the column holds, so `> b` and `>= b` both find what `>=` it
+            // does, and `< b` and `<= b` what `<` it does.
+            let sql_operator = match (operator, spelled.exact) {
+                (Operator::Eq, false) => return Ok("false".to_string()),
+                (Operator::Gt, true) => ">",
+                (Operator::Lte, true) => "<=",
+                (Operator::Gt | Operator::Gte, _) => ">=",
+                (Operator::Lt | Operator::Lte, _) => "<",
                 _ => "=",
             };
-            format!(
-                "{compared} {sql_operator} {}",
-                value(column, condition, candidate)?
-            )
+            format!("{compared} {sql_operator} {}", spelled.sql)
         }
     })
 }
@@ -824,32 +815,69 @@ mod tests {
         );
     }
 
-    /// A bound is compared at the column's own scale, moved onto its grid the
-    /// way the operator keeps its meaning.
+    /// A bound is compared at a Decimal column's own scale. One between two
+    /// values the column holds is spelled as the one above it, with the
+    /// operator that keeps its meaning; a list is spelled up to its first such
+    /// element, which decides any comparison that reaches it.
     #[test]
-    fn a_decimal_bound_snaps_to_the_columns_scale() {
-        let bounds = [
-            ("0.001", Snap::Down),
-            ("0.001", Snap::Up),
-            ("0.001", Snap::Exactly),
-            ("-0.001", Snap::Down),
-            ("-0.001", Snap::Up),
-            ("1.5", Snap::Exactly),
-            ("1.5e3", Snap::Down),
-            ("15e-3", Snap::Up),
-        ]
-        .map(|(text, snap)| decimal_bound(text, 2, snap).map_err(|error| error.to_string()));
+    fn a_decimal_bound_is_compared_at_the_columns_scale() {
+        let decimal = |name: &str, is_array| crate::storage::schema::Field {
+            field_type: FieldType::BigDecimal {
+                config: Some((38, 2)),
+            },
+            is_array,
+            ..column(name, "BigDecimal")
+        };
+        let table = Table::new(
+            &entity_input(
+                "Price",
+                vec![
+                    column("id", "String"),
+                    decimal("amount", false),
+                    decimal("amounts", true),
+                ],
+            ),
+            "db",
+            ChainIdMode::Int32,
+        )
+        .unwrap();
+        let filter = |column: &str, operator, values: &[&[&str]]| {
+            let filter = Condition {
+                operator,
+                is_list: column == "amounts",
+                values: values
+                    .iter()
+                    .map(|value| value.iter().map(|text| Some(text.to_string())).collect())
+                    .collect(),
+                ..eq(column, ValueKind::Number, "")
+            };
+            condition(&table, &filter, None).map_err(|error| error.to_string())
+        };
+        let rendered = [
+            filter("amount", Operator::Gt, &[&["0.001"]]),
+            filter("amount", Operator::Gte, &[&["-0.001"]]),
+            filter("amount", Operator::Lt, &[&["15e-3"]]),
+            filter("amount", Operator::Lte, &[&["1.5e3"]]),
+            filter("amount", Operator::Eq, &[&["0.001"]]),
+            filter("amount", Operator::In, &[&["1.5"], &["0.001"]]),
+            filter("amount", Operator::In, &[&["0.001"]]),
+            filter("amounts", Operator::Lte, &[&["0.01", "4.995", "7"]]),
+            filter("amounts", Operator::Gt, &[&["0.01", "5"]]),
+            filter("amounts", Operator::Eq, &[&["0.01", "4.995"]]),
+        ];
         assert_eq!(
-            bounds,
+            rendered,
             [
-                Ok("toDecimal256('0.00', 2)".to_string()),
-                Ok("toDecimal256('0.01', 2)".to_string()),
-                Ok("NULL".to_string()),
-                Ok("toDecimal256('-0.01', 2)".to_string()),
-                Ok("toDecimal256('0.00', 2)".to_string()),
-                Ok("toDecimal256('1.50', 2)".to_string()),
-                Ok("toDecimal256('1500.00', 2)".to_string()),
-                Ok("toDecimal256('0.02', 2)".to_string()),
+                Ok("`amount` >= toDecimal256('0.01', 2)".to_string()),
+                Ok("`amount` >= toDecimal256('0.00', 2)".to_string()),
+                Ok("`amount` < toDecimal256('0.02', 2)".to_string()),
+                Ok("`amount` <= toDecimal256('1500.00', 2)".to_string()),
+                Ok("false".to_string()),
+                Ok("`amount` IN (toDecimal256('1.50', 2))".to_string()),
+                Ok("false".to_string()),
+                Ok("`amounts` < [toDecimal256('0.01', 2), toDecimal256('5.00', 2)]".to_string()),
+                Ok("`amounts` > [toDecimal256('0.01', 2), toDecimal256('5.00', 2)]".to_string()),
+                Ok("false".to_string()),
             ]
         );
     }

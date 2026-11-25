@@ -28,14 +28,20 @@ type Wide {
   id: ID!
   amount: BigDecimal! @config(precision: 76, scale: 2)
   narrow: BigDecimal! @config(precision: 38, scale: 2)
+  amounts: [BigDecimal!]! @config(precision: 38, scale: 2)
 }
 `,
 )
 
-type wide = {id: string, amount: BigDecimal.t, narrow: BigDecimal.t}
+type wide = {
+  id: string,
+  amount: BigDecimal.t,
+  narrow: BigDecimal.t,
+  amounts: array<BigDecimal.t>,
+}
 type wideOps = {
   set: wide => unit,
-  getWhere: dict<dict<BigDecimal.t>> => promise<array<wide>>,
+  getWhere: dict<dict<unknown>> => promise<array<wide>>,
 }
 type handlerContext = {@as("Wide") wide: wideOps}
 
@@ -59,6 +65,18 @@ let filters = [
   ("_eq", "0.010"),
 ]
 
+// A list compares element by element, so the first element off the column's
+// grid decides the comparison, whatever follows it.
+let listFilters = [
+  ("_gte", ["0.011"]),
+  ("_lt", ["0.015"]),
+  ("_lte", ["0.01", "4.995"]),
+  ("_gt", ["0.01", "4.995"]),
+  ("_eq", ["0.01", "5"]),
+]
+
+let ids = (wides: array<wide>) => wides->Array.map(wide => wide.id)->Array.toSorted(String.compare)
+
 describe("A getWhere bound finer than a Decimal column's scale", () => {
   scenario->Scenario.it("finds the rows it would in Postgres", ~sources=[{chain: 1}], async (
     ~t,
@@ -80,13 +98,20 @@ describe("A getWhere bound finer than a Decimal column's scale", () => {
                   id: "top",
                   amount: decimal(widest),
                   narrow: decimal(widestNarrow),
+                  amounts: [decimal(widestNarrow)],
                 })
                 context.wide.set({
                   id: "bottom",
                   amount: decimal(`-${widest}`),
                   narrow: decimal(`-${widestNarrow}`),
+                  amounts: [decimal(`-${widestNarrow}`)],
                 })
-                context.wide.set({id: "small", amount: decimal("0.01"), narrow: decimal("0.01")})
+                context.wide.set({
+                  id: "small",
+                  amount: decimal("0.01"),
+                  narrow: decimal("0.01"),
+                  amounts: [decimal("0.01"), decimal("5")],
+                })
               },
             ),
           ],
@@ -96,44 +121,62 @@ describe("A getWhere bound finer than a Decimal column's scale", () => {
     ])
     await indexer.getBatchWritePromise()
 
-    // Restarted, so the getWhere is answered by storage rather than memory.
-    source.setAutoHeight(100)
-    let indexer = await indexer.restart()
+    let queries = Array.concat(
+      ["amount", "narrow"]->Array.flatMap(field =>
+        filters->Array.map(((operator, bound)) => (
+          field,
+          operator,
+          decimal(bound)->(Utils.magic: BigDecimal.t => unknown),
+        ))
+      ),
+      listFilters->Array.map(((operator, bound)) => (
+        "amounts",
+        operator,
+        bound->Array.map(decimal)->(Utils.magic: array<BigDecimal.t> => unknown),
+      )),
+    )
+
+    // Each filter runs in an indexer restarted for it: an entity a getWhere has
+    // already loaded is matched in memory, so only the first one in a run is
+    // answered by storage alone.
+    let indexer = ref(indexer)
     let found = []
-    await source.expectItemsQueries([
-      {
-        coversBlock: 2,
-        reply: Respond({
-          items: [
-            inHandler(
-              ~block=2,
-              async context =>
-                for field in 0 to 1 {
-                  let field = ["amount", "narrow"]->Array.getUnsafe(field)
-                  for at in 0 to filters->Array.length - 1 {
-                    let (operator, bound) = filters->Array.getUnsafe(at)
-                    let ids =
-                      (
-                        await context.wide.getWhere(
-                          Dict.fromArray([(field, Dict.fromArray([(operator, decimal(bound))]))]),
-                        )
-                      )
-                      ->Array.map(wide => wide.id)
-                      ->Array.toSorted(String.compare)
-                    found->Array.push((field, ids))->ignore
-                  }
-                },
-            ),
-          ],
-          latestFetchedBlockNumber: 2,
-        }),
-      },
-    ])
-    await indexer.getBatchWritePromise()
+    for at in 0 to queries->Array.length - 1 {
+      let (field, operator, bound) = queries->Array.getUnsafe(at)
+      let block = at + 2
+      source.setAutoHeight(100)
+      indexer := await indexer.contents.restart()
+      await source.expectItemsQueries([
+        {
+          coversBlock: block,
+          reply: Respond({
+            items: [
+              inHandler(~block, async context => {
+                let wides = await context.wide.getWhere(
+                  Dict.fromArray([(field, Dict.fromArray([(operator, bound)]))]),
+                )
+                found->Array.push((field, wides->ids))->ignore
+              }),
+            ],
+            latestFetchedBlockNumber: block,
+          }),
+        },
+      ])
+      await indexer.contents.getBatchWritePromise()
+    }
 
     let expected = [["small", "top"], ["top"], ["bottom"], ["bottom"], [], ["small"]]
     t.expect(found).toEqual(
-      ["amount", "narrow"]->Array.flatMap(field => expected->Array.map(ids => (field, ids))),
+      Array.concat(
+        ["amount", "narrow"]->Array.flatMap(field => expected->Array.map(ids => (field, ids))),
+        [
+          ("amounts", ["top"]),
+          ("amounts", ["bottom", "small"]),
+          ("amounts", ["bottom"]),
+          ("amounts", ["small", "top"]),
+          ("amounts", ["small"]),
+        ],
+      ),
     )
   })
 })
