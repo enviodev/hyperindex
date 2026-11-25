@@ -110,7 +110,7 @@ let startCall = (stats: effectStats) => {
   let hadActiveCalls = stats.activeCallsCount > 0
   stats.activeCallsCount = stats.activeCallsCount + 1
   if hadActiveCalls {
-    let elapsed = (timerRef -. stats.prevCallStartTimerRef) /. 1000.
+    let elapsed = Clock.secondsBetween(~from=stats.prevCallStartTimerRef, ~to=timerRef)
     if elapsed > 0. {
       stats.callSeconds = stats.callSeconds +. elapsed
     }
@@ -124,7 +124,8 @@ let startCall = (stats: effectStats) => {
 let endCall = (stats: effectStats, ~startTimerRef) => {
   stats.activeCallsCount = stats.activeCallsCount - 1
   let endedAt = stats.clock.now()
-  stats.callSeconds = stats.callSeconds +. (endedAt -. stats.prevCallStartTimerRef) /. 1000.
+  stats.callSeconds =
+    stats.callSeconds +. Clock.secondsBetween(~from=stats.prevCallStartTimerRef, ~to=endedAt)
   stats.prevCallStartTimerRef = endedAt
 
   stats.callCount = stats.callCount +. 1.

@@ -57,16 +57,12 @@ describe("effect call metrics", () => {
         ])
         await indexer.advanceTime(5)
         await indexer.getBatchWritePromise()
-        let valueOf = async name =>
-          switch await indexer.metric(name) {
-          | [{value}] => value
-          | samples => `${samples->Array.length->Int.toString} samples`
-          }
+        let valuesOf = async name => (await indexer.metric(name))->Array.map(({value}) => value)
         t.expect({
-          "calls": await valueOf("envio_effect_call_total"),
-          "seconds": await valueOf("envio_effect_call_seconds"),
-          "secondsTotal": await valueOf("envio_effect_call_seconds_total"),
-        }).toEqual({"calls": "1", "seconds": "0.005", "secondsTotal": "0.005"})
+          "calls": await valuesOf("envio_effect_call_total"),
+          "seconds": await valuesOf("envio_effect_call_seconds"),
+          "secondsTotal": await valuesOf("envio_effect_call_seconds_total"),
+        }).toEqual({"calls": ["1"], "seconds": ["0.005"], "secondsTotal": ["0.005"]})
       },
     )
   })

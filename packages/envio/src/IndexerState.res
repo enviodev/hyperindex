@@ -20,6 +20,7 @@ type handlerStat = {
   mutable preloadSecondsTotal: float,
   mutable preloadPendingCount: int,
   mutable preloadPendingTimerRef: float,
+  clock: Clock.t,
 }
 
 // Per-(storage, operation) load counters rendered into the
@@ -772,6 +773,7 @@ let getHandlerStat = (state: t, ~contract, ~event) => {
       preloadSecondsTotal: 0.,
       preloadPendingCount: 0,
       preloadPendingTimerRef: %raw(`null`),
+      clock: state.clock,
     }
     state.handlerStatBySeries->Dict.set(key, stat)
     stat
@@ -792,8 +794,8 @@ let recordHandlerDuration = (stat: handlerStat, ~duration) => {
   stat.processingCount = stat.processingCount +. 1.
 }
 
-let startPreloadHandler = (stat: handlerStat, ~clock: Clock.t) => {
-  let timerRef = clock.now()
+let startPreloadHandler = (stat: handlerStat) => {
+  let timerRef = stat.clock.now()
   if stat.preloadPendingCount === 0 {
     stat.preloadPendingTimerRef = timerRef
   }
@@ -801,13 +803,13 @@ let startPreloadHandler = (stat: handlerStat, ~clock: Clock.t) => {
   timerRef
 }
 
-let endPreloadHandler = (stat: handlerStat, timerRef, ~clock: Clock.t) => {
+let endPreloadHandler = (stat: handlerStat, timerRef) => {
   stat.preloadPendingCount = stat.preloadPendingCount - 1
   if stat.preloadPendingCount === 0 {
     stat.preloadSeconds =
-      stat.preloadSeconds +. clock->Clock.secondsSince(stat.preloadPendingTimerRef)
+      stat.preloadSeconds +. stat.clock->Clock.secondsSince(stat.preloadPendingTimerRef)
   }
-  stat.preloadSecondsTotal = stat.preloadSecondsTotal +. clock->Clock.secondsSince(timerRef)
+  stat.preloadSecondsTotal = stat.preloadSecondsTotal +. stat.clock->Clock.secondsSince(timerRef)
   stat.preloadCount = stat.preloadCount +. 1.
 }
 

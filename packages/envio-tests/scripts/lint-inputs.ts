@@ -111,23 +111,25 @@ const realClock = /\bDate\.now\(/;
 const pollSnapshot = /\bgetHeightOrThrowCalls->Array\.length\b(?!\s*-\s*1)/;
 const scenarioStart = /\bScenario\.(?:it|run)\(/;
 
+// Work off the source clock (a handler or effect taking time, events from the
+// addon's threads, throttled writes) still takes real time, and says so: a
+// `// Real time:` comment covers the statement it sits on or above, the lines
+// below it indented at least as deep, up to the next blank line.
+const indentOf = (line: string) => line.length - line.trimStart().length;
+const isRealTimeAt = (lines: string[], index: number) => {
+  for (let at = index; at >= 0 && lines[at].trim() !== ""; at--) {
+    if (/\/\/\s*Real time:/.test(lines[at])) {
+      const indent = indentOf(lines[at]);
+      return lines.slice(at + 1, index + 1).every((line) => indentOf(line) >= indent);
+    }
+  }
+  return false;
+};
+
 for (const path of resFiles(testRoot)) {
   const file = relative(repoRoot, path);
   const lines = readFileSync(path, "utf8").split("\n");
-  // Work off the source clock (a handler or effect taking time, events from the
-  // addon's threads, throttled writes) still takes real time, and says so: a
-  // `// Real time:` comment covers the statement it sits on or above, the lines
-  // below it indented at least as deep, up to the next blank line.
-  const indentOf = (line: string) => line.length - line.trimStart().length;
-  const realTimeAt = (index: number) => {
-    for (let at = index; at >= 0 && lines[at].trim() !== ""; at--) {
-      if (/\/\/\s*Real time:/.test(lines[at])) {
-        const indent = indentOf(lines[at]);
-        return lines.slice(at + 1, index + 1).every((line) => indentOf(line) >= indent);
-      }
-    }
-    return false;
-  };
+  const realTimeAt = (index: number) => isRealTimeAt(lines, index);
   // Scenarios run on virtual time unless `~virtualTime=false` takes them off it,
   // on `Scenario.make` for every test of that scenario or on one test.
   const realTimeScenarios = new Set<string>();
@@ -396,18 +398,14 @@ for (const path of resFiles(testRoot)) {
           `\`await indexer.advanceTime(${handlerDelay[1]})\`: the handler then takes exactly that long.`,
       });
     }
-  });
-  // A duration only has to be more than zero when nothing set it, and a metric
-  // exported to the millisecond reads zero whenever the scheduler was quick.
-  lines.forEach((line, index) => {
-    const code = line.replace(/(?<!:)\/\/.*$/, "");
-    if (!/>\s*0\.?(?![\d.])/.test(code)) return;
+    // A duration only has to be more than zero when nothing set it, and a metric
+    // exported to the millisecond reads zero whenever the scheduler was quick.
     const statement = lines.slice(Math.max(0, index - 2), index + 1).join("\n");
-    if (!/_seconds(?:_total)?"/.test(statement)) return;
-    const excused = lines
-      .slice(Math.max(0, index - 4), index + 1)
-      .some((previous) => /\/\/\s*Real time:/.test(previous));
-    if (!excused) {
+    if (
+      />\s*0\.?(?![\d.])/.test(code) &&
+      /_seconds(?:_total)?"/.test(statement) &&
+      !isRealTimeAt(lines, index)
+    ) {
       violations.push({
         file,
         line: index + 1,

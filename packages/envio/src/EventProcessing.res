@@ -80,17 +80,16 @@ let runHandlerOrThrow = async (item: Internal.item, ~checkpointId, ~runtime: Han
 
 // A preload run's errors are dropped: the run proper reports them. It is still
 // timed either way, so one that throws doesn't leave its handler's timing open.
-let preload = async (runtime: HandlerRuntime.t, ~item, ~checkpointId) => {
+let preload = async (runtime, ~item, ~checkpointId) => {
   let scope = runtime->handlerScope(~item, ~checkpointId, ~isPreload=true)
   switch runtime->eventStat(item) {
   | Some(stat) =>
-    let clock = runtime.params.indexerState->IndexerState.clock
-    let timerRef = stat->IndexerState.startPreloadHandler(~clock)
+    let timerRef = stat->IndexerState.startPreloadHandler
     try await RunScope.enter(scope, invokeHandler, runtime, item) catch {
     | _ => ()
     }
     scope->RunScope.resolve
-    stat->IndexerState.endPreloadHandler(timerRef, ~clock)
+    stat->IndexerState.endPreloadHandler(timerRef)
   | None =>
     try await RunScope.enter(scope, invokeHandler, runtime, item) catch {
     | _ => ()
@@ -175,7 +174,8 @@ let processEventBatch = async (~batch: Batch.t, ~runtime: HandlerRuntime.t) => {
   })
 
   try {
-    // Backpressure: keep processing within the in-memory objects target of the cycle.
+    // Backpressure: wait while the store holds as many changes as the in-memory
+    // objects target allows.
     await indexerState->Writing.awaitCapacity
 
     let clock = indexerState->IndexerState.clock

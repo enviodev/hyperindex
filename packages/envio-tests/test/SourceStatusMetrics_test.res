@@ -28,16 +28,12 @@ describe("source status metrics", () => {
         mock.resolveGetHeightOrThrow(300)
         await mock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
         await indexer.advanceTime(1000)
-        let valueOf = async name =>
-          switch await indexer.metric(name) {
-          | [{value}] => value
-          | samples => `${samples->Array.length->Int.toString} samples`
-          }
+        let valuesOf = async name => (await indexer.metric(name))->Array.map(({value}) => value)
         t.expect({
-          "idle": await valueOf("envio_indexing_idle_seconds"),
-          "waiting": await valueOf("envio_indexing_source_waiting_seconds"),
-          "querying": await valueOf("envio_indexing_source_querying_seconds"),
-        }).toEqual({"idle": "0", "waiting": "0", "querying": "1"})
+          "idle": await valuesOf("envio_indexing_idle_seconds"),
+          "waiting": await valuesOf("envio_indexing_source_waiting_seconds"),
+          "querying": await valuesOf("envio_indexing_source_querying_seconds"),
+        }).toEqual({"idle": ["0"], "waiting": ["0"], "querying": ["1"]})
       },
     )
   })

@@ -46,16 +46,12 @@ describe("preload handler metrics", () => {
         ])
         await indexer.advanceTime(5)
         await indexer.getBatchWritePromise()
-        let valueOf = async name =>
-          switch await indexer.metric(name) {
-          | [{value}] => value
-          | samples => `${samples->Array.length->Int.toString} samples`
-          }
+        let valuesOf = async name => (await indexer.metric(name))->Array.map(({value}) => value)
         t.expect({
-          "runs": await valueOf("envio_preload_handler_total"),
-          "seconds": await valueOf("envio_preload_handler_seconds"),
-          "secondsTotal": await valueOf("envio_preload_handler_seconds_total"),
-        }).toEqual({"runs": "2", "seconds": "0.005", "secondsTotal": "0.005"})
+          "runs": await valuesOf("envio_preload_handler_total"),
+          "seconds": await valuesOf("envio_preload_handler_seconds"),
+          "secondsTotal": await valuesOf("envio_preload_handler_seconds_total"),
+        }).toEqual({"runs": ["2"], "seconds": ["0.005"], "secondsTotal": ["0.005"]})
       },
     )
   })
