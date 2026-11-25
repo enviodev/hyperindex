@@ -229,6 +229,44 @@ describe("Source failover", () => {
   )
 
   scenario->Scenario.it(
+    "Keeps a held source off queries while it moves but stays more than 200 blocks behind",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~sourceTiming={
+      newBlockStallTimeoutRealtime: 10,
+      stalledPollingInterval: 50,
+      reducedPollingInterval: 1_000,
+    },
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
+      sync.setAutoHeight(100)
+      fallback.setAutoHeight(400)
+      await indexer.advanceTime(10)
+      await fallback.expectItemsQueries([{fromBlock: 101, reply: upTo(400)}])
+
+      // Resyncing: it moves, but is still 250 blocks behind.
+      sync.setAutoHeight(150)
+      await indexer.advanceTime(1_000)
+      fallback.setAutoHeight(401)
+      await indexer.advanceTime(50)
+      await fallback.expectItemsQueries([{fromBlock: 401, reply: upTo(401)}])
+
+      // Within 200 blocks of the head.
+      sync.setAutoHeight(250)
+      await indexer.advanceTime(1_000)
+      fallback.setAutoHeight(402)
+      await indexer.advanceTime(50)
+      await sync.expectItemsQueries([{fromBlock: 402, reply: LeavePending}])
+      t.expect((indexer->sourceLogs, indexer->switchCount)).toEqual(([], 2))
+    },
+  )
+
+  scenario->Scenario.it(
     "Stays on a healthy primary however short the recovery timeout",
     ~sources=[
       {chain: 1337, pollingInterval: 1},

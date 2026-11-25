@@ -95,6 +95,22 @@ describe("A HyperSync instance that stopped following its chain", () => {
         },
         ~onExit=() => exited := true,
         async (~indexer, ~source as _) => {
+          // Real time: HyperSync's first height and the backfill to it go over
+          // real local I/O with no timer in between. Moving the clock before
+          // they land could fire the first-height stall and recruit the RPC
+          // before HyperSync has said where it is.
+          let deadline = Date.now() +. 10_000.
+          let backfilled = ref(false)
+          while !backfilled.contents {
+            let rows: array<seen> = await indexer.query("Seen")
+            backfilled := rows->Array.length >= frozenAt
+            if !backfilled.contents {
+              if Date.now() > deadline {
+                JsError.throwWithMessage("Timed out waiting for the backfill to the frozen height")
+              }
+              await Utils.delay(10)
+            }
+          }
           let steps = ref(0)
           while !exited.contents && steps.contents < 200 {
             // The chain moves on by a block a second.

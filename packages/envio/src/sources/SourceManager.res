@@ -13,7 +13,7 @@ type requestStatAgg = {
 // Whether a source takes queries. A failing source is given another try once
 // the recovery timeout passes. A source that stopped following its chain isn't:
 // a timeout would hand it queries back every time it ran out, for as long as
-// the indexer runs. It is held until its own height moves instead.
+// the indexer runs. It is held until its own height moves back near the head.
 type health =
   | Working
   | Recovering({failedAt: float})
@@ -522,27 +522,43 @@ let isWorking = (sourceManager: t, sourceState: sourceState, ~now) =>
   | Held(_) => false
   }
 
-// Released by a single new block: a source that moves at all is following its
-// chain again, and one still far behind is held again by the next thing that
-// shows it. Polls at the reduced interval: nothing waits on the source while it
-// is held, and a source that stopped following its chain can stay stopped for
-// weeks. Polls behind a live height stream too: a source that stopped following
-// its chain is exactly the one whose stream can keep its keep-alives flowing
-// while its heights stop, and while the fallback answers every wait, nothing
-// else would ever ask it again.
-let holdUntilHeightMoves = (sourceManager: t, sourceState: sourceState) =>
+// The head as far as this chain's sources have said.
+let highestKnownHeight = (sourceManager: t) =>
+  sourceManager.sourcesState->Array.reduce(0, (highest, {feed}) =>
+    Pervasives.max(highest, feed->HeightFeed.knownHeight)
+  )
+
+// Released once its own height moves and lands within the distance the chain
+// counts as near the head. Moving at all shows a source that stopped is
+// following its chain again, but one resyncing from far behind would only fail
+// the queries at the head it is handed. Polls at the reduced interval: nothing
+// waits on the source while it is held, and a source that stopped following its
+// chain can stay stopped for weeks. Polls behind a live height stream too: a
+// source that stopped following its chain is exactly the one whose stream can
+// keep its keep-alives flowing while its heights stop, and while the fallback
+// answers every wait, nothing else would ever ask it again.
+let holdUntilCaughtUp = (sourceManager: t, sourceState: sourceState) => {
+  let rec hold = () => {
+    let subscription = sourceState.feed->HeightFeed.onHeightAbove(
+      ~knownHeight=sourceState.feed->HeightFeed.knownHeight,
+      ~interval=() => sourceManager.reducedPollingInterval,
+      ~onHeight=height =>
+        sourceState.health = if (
+          sourceManager->highestKnownHeight - height <= FetchState.headClientFilteringDistance
+        ) {
+          Working
+        } else {
+          hold()
+        },
+    )
+    subscription.distrustStream()
+    Held(subscription)
+  }
   switch sourceState.health {
   | Held(_) => ()
-  | Working | Recovering(_) =>
-    let subscription =
-      sourceState.feed->HeightFeed.onHeightAbove(
-        ~knownHeight=sourceState.feed->HeightFeed.knownHeight,
-        ~interval=() => sourceManager.reducedPollingInterval,
-        ~onHeight=_ => sourceState.health = Working,
-      )
-    sourceState.health = Held(subscription)
-    subscription.distrustStream()
+  | Working | Recovering(_) => sourceState.health = hold()
   }
+}
 
 let disableSource = (sourceManager: t, sourceState: sourceState) => {
   if !sourceState.disabled {
@@ -740,7 +756,7 @@ let retryBehindHead = async (
   }
   logger->Logger.logAt(level, msg, ~params={"retry": retry, "backOffMilliseconds": backoffMillis})
   if retry >= behindHeadFailoverRetries {
-    sourceManager->holdUntilHeightMoves(sourceState)
+    sourceManager->holdUntilCaughtUp(sourceState)
   }
   await sourceManager->backoffBeforeRetry(
     sourceState,
@@ -926,7 +942,7 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
           mainSources->Array.forEach(sourceState => {
             let ownHeight = sourceState.feed->HeightFeed.knownHeight
             if ownHeight > 0 && height - ownHeight > 1 {
-              sourceManager->holdUntilHeightMoves(sourceState)
+              sourceManager->holdUntilCaughtUp(sourceState)
             }
           })
         }
