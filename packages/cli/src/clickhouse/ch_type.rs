@@ -41,9 +41,10 @@ pub enum ChType {
     Array(Box<ChType>),
 }
 
-/// Past this many digits ClickHouse needs a 256-bit Decimal, which is wider
-/// than the `i128` the encoder carries — so envio stores those as `String`.
-pub const MAX_DECIMAL_PRECISION: u32 = 38;
+/// The digits ClickHouse's widest Decimal, `Decimal256`, holds. It falls short
+/// of a uint256, whose top has 78 digits, so a number with no bound, or one past
+/// this, is stored as `String`.
+pub const MAX_DECIMAL_PRECISION: u32 = 76;
 
 impl ChType {
     /// The type a value has once it is known to be there.
@@ -73,14 +74,12 @@ impl ChType {
     }
 }
 
-/// Bytes ClickHouse uses for a `Decimal` of the given precision. Every Decimal
-/// the derivation produces is capped at [`MAX_DECIMAL_PRECISION`], so the
-/// 256-bit width never comes up and the value always fits the `i128` carrying it.
 pub fn decimal_bytes(precision: u32) -> Result<usize> {
     match precision {
         1..=9 => Ok(4),
         10..=18 => Ok(8),
-        19..=MAX_DECIMAL_PRECISION => Ok(16),
+        19..=38 => Ok(16),
+        39..=MAX_DECIMAL_PRECISION => Ok(32),
         other => bail!("unsupported Decimal precision {other}"),
     }
 }
@@ -410,6 +409,12 @@ mod tests {
             typed(FieldType::BigInt {
                 precision: Some(39),
             }),
+            typed(FieldType::BigInt {
+                precision: Some(76),
+            }),
+            typed(FieldType::BigInt {
+                precision: Some(77),
+            }),
             typed(FieldType::BigInt { precision: Some(0) }),
             field("BigInt"),
             typed(FieldType::BigDecimal {
@@ -417,6 +422,9 @@ mod tests {
             }),
             typed(FieldType::BigDecimal {
                 config: Some((39, 2)),
+            }),
+            typed(FieldType::BigDecimal {
+                config: Some((77, 2)),
             }),
             typed(FieldType::BigDecimal {
                 config: Some((10, 11)),
@@ -428,10 +436,13 @@ mod tests {
             rendered_types,
             [
                 "Decimal(38,0)",
+                "Decimal(39,0)",
+                "Decimal(76,0)",
                 "String",
                 "String",
                 "String",
                 "Decimal(10,8)",
+                "Decimal(39,2)",
                 "String",
                 "String",
                 "String",
@@ -441,12 +452,14 @@ mod tests {
 
     /// The sorting-key validator refuses what stores as a String, so the two
     /// have to agree on every precision — including the ones outside
-    /// `decimal_bytes`, which a plain `precision <= 38` bound reads as numeric.
+    /// `decimal_bytes`, which a plain `precision <= 76` bound reads as numeric.
     #[test]
     fn the_sorting_key_predicate_agrees_with_the_column_it_renders() {
         let cases = [
             (Some(38), 0),
             (Some(39), 0),
+            (Some(76), 0),
+            (Some(77), 0),
             (Some(0), 0),
             (None, 0),
             (Some(10), 8),
@@ -527,7 +540,20 @@ mod tests {
 
     #[test]
     fn precision_fixes_the_backing_width() {
-        let widths = [9u32, 10, 18, 19, 38].map(|precision| decimal_bytes(precision).unwrap());
-        assert_eq!(widths, [4, 8, 8, 16, 16]);
+        let widths = [9u32, 10, 18, 19, 38, 39, 76, 77]
+            .map(|precision| decimal_bytes(precision).map_err(|error| error.to_string()));
+        assert_eq!(
+            widths,
+            [
+                Ok(4),
+                Ok(8),
+                Ok(8),
+                Ok(16),
+                Ok(16),
+                Ok(32),
+                Ok(32),
+                Err("unsupported Decimal precision 77".to_string())
+            ]
+        );
     }
 }

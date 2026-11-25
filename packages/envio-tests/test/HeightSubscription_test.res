@@ -544,9 +544,9 @@ describe("Height subscription", () => {
       await sync->answerQuery(~fromBlock=101, ~toBlock=101)
 
       // Recruiting the fallback answers this wait inside the stall callback
-      // that recruited it.
+      // that recruited it, four blocks past sync, which is held for it.
       await indexer.advanceTime(50)
-      await sync.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
+      await fallback.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
       await sync.expectNewHeightCalls(1)
       let stallWarnings = () =>
         indexer.infoAndAboveLogs()
@@ -629,6 +629,115 @@ describe("Height subscription", () => {
       fallback.resolveGetHeightOrThrow(101)
       await sync.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
       t.expect(fallback.heightSubscriptionCalls).toEqual([])
+    },
+  )
+
+  // https://github.com/enviodev/hyperindex/issues/1829
+  scenario->Scenario.it(
+    "Polls a held source behind its quiet stream, so it is used again once its height moves",
+    ~sources=[
+      {chain: 1337, methods: streaming},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 5},
+    ],
+    ~sourceTiming={
+      newBlockStallTimeoutRealtime: 20,
+      stalledPollingInterval: 50,
+      reducedPollingInterval: 10,
+    },
+    async (~t as _, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      await reachRealtime(~sync)
+      await sync->goLive(~indexer)
+      // Sync stops at 101, its stream connected and silent. The stalled wait
+      // recruits the fallback two blocks ahead, which holds sync.
+      sync.setAutoHeight(101)
+      fallback.setAutoHeight(103)
+      await indexer.advanceTime(20)
+      await fallback->answerQuery(~fromBlock=102, ~toBlock=103)
+      await sync.expectNewHeightCallsAtLeast(1)
+
+      // Sync moves on without a word from its stream, and the next wait is
+      // still inside its stall window, so only the hold's own poll asks it.
+      sync.setAutoHeight(150)
+      await indexer.advanceTime(10)
+      await sync.expectNewHeightCalls(1)
+      fallback.setAutoHeight(104)
+      await indexer.advanceTime(5)
+      await sync.expectItemsQueries([{fromBlock: 104, reply: LeavePending}])
+    },
+  )
+
+  // https://github.com/enviodev/hyperindex/issues/1829
+  scenario->Scenario.it(
+    "Keeps polling a held source after its stream reconnects and goes quiet again",
+    ~sources=[
+      {chain: 1337, methods: streaming},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 5},
+    ],
+    ~sourceTiming={
+      newBlockStallTimeoutRealtime: 20,
+      stalledPollingInterval: 50,
+      reducedPollingInterval: 10,
+    },
+    async (~t as _, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      await reachRealtime(~sync)
+      await sync->goLive(~indexer)
+      sync.setAutoHeight(101)
+      fallback.setAutoHeight(103)
+      await indexer.advanceTime(20)
+      await fallback->answerQuery(~fromBlock=102, ~toBlock=103)
+
+      // The held source's stream drops and comes back. The catch-up poll on
+      // reconnect answers the same height, which proves the new connection.
+      sync.setHeightSubscriptionStatus(Down({reason: Closed}))
+      sync.setHeightSubscriptionStatus(Live)
+      await indexer.advanceTime(0)
+      await sync.expectNewHeightCallsAtLeast(1)
+
+      // Sync moves on without a word from its stream.
+      sync.setAutoHeight(150)
+      await indexer.advanceTime(10)
+      await sync.expectNewHeightCallsAtLeast(1)
+      fallback.setAutoHeight(104)
+      await indexer.advanceTime(5)
+      await sync.expectItemsQueries([{fromBlock: 104, reply: LeavePending}])
+    },
+  )
+
+  // https://github.com/enviodev/hyperindex/issues/1829
+  scenario->Scenario.it(
+    "Doesn't poll a held source for each height its stream pushes",
+    ~sources=[
+      {chain: 1337, methods: streaming},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 5},
+    ],
+    ~sourceTiming={
+      newBlockStallTimeoutRealtime: 20,
+      stalledPollingInterval: 50,
+      reducedPollingInterval: 1_000,
+    },
+    async (~t as _, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      await reachRealtime(~sync)
+      await sync->goLive(~indexer)
+      // Sync stops at 101, far behind the fallback's 1000, which holds it.
+      sync.setAutoHeight(101)
+      fallback.setAutoHeight(1000)
+      await indexer.advanceTime(20)
+      await fallback->answerQuery(~fromBlock=102, ~toBlock=1000)
+      await sync.expectNewHeightCallsAtLeast(1)
+
+      // Resyncing: its stream pushes every height it reaches, all still far
+      // behind. Each push is a height already, so none should cost a poll.
+      for height in 102 to 106 {
+        sync.triggerHeightSubscription(height)
+        await indexer.advanceTime(1)
+      }
+      await sync.expectNewHeightCalls(0)
     },
   )
 
