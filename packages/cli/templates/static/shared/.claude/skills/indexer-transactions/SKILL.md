@@ -64,7 +64,8 @@ filter:
   reverted transaction emits no events, so it is opt-in. `[0, 1]` runs on
   every mined transaction, `[0]` on reverted ones only. HyperSync has a
   status for every transaction; an RPC node has none before Byzantium
-  (mainnet block 4,370,000), so over RPC only `[0, 1]` runs on those.
+  (mainnet block 4,370,000), so over RPC any other list stops the indexer
+  with an error there: use HyperSync, or `[0, 1]`.
 - A filter naming no `from` or `to` runs on every transaction of the
   chain. It is allowed, and warned about at startup.
 - An address that isn't 20 bytes, an empty list or a `status` value other

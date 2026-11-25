@@ -232,9 +232,28 @@ pub(crate) async fn read(
             }
             responses::check_transaction(&transaction, &fields)
                 .map_err(|error| EnrichError::from_response(block_number, error))?;
-            let status = receipt_fields
-                .filter(|fields| fields & bit(EvmTxField::Status) != 0)
-                .and(transaction.status)
+            let status_read = receipt_fields.is_some_and(|fields| fields & bit(EvmTxField::Status) != 0);
+            // A node serves pre-Byzantium receipts with `root` and no `status`.
+            // Matching none would silently skip every transaction of those
+            // blocks, and asking again gets the same receipt.
+            if status_read
+                && transaction.status.is_none()
+                && matched.iter().any(|registration| registration.filter.status.is_some())
+            {
+                return Err(EnrichError::FieldSelection {
+                    block_number,
+                    error: anyhow::anyhow!(
+                        "the RPC receipt of transaction {} in block {block_number} has no \
+                         status (blocks before Byzantium have none), so an onTransaction \
+                         `status` filter can't be decided over RPC. Index these blocks \
+                         with HyperSync, or list `status: [0, 1]` to run on every transaction.",
+                        call.hash.encode_hex()
+                    ),
+                });
+            }
+            let status = transaction
+                .status
+                .filter(|_| status_read)
                 .map(|status| status.to_u8() as u64);
             let runs = matched
                 .iter()

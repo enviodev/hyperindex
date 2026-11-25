@@ -1182,8 +1182,8 @@ export type EvmOnTransactionFilter = {
      * succeeded, `0` reverted. Absent is `[1]`: a reverted transaction emits
      * no events, and runs a handler only when `[0]` or `[0, 1]` asks for it.
      * HyperSync has a status for every transaction. An RPC node has none
-     * before Byzantium (mainnet block 4,370,000), so over RPC only `[0, 1]`
-     * runs on those transactions. */
+     * before Byzantium (mainnet block 4,370,000), so over RPC any other list
+     * stops the indexer with an error on those blocks. */
     readonly status?: readonly (0 | 1)[];
   };
 };
