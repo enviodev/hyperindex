@@ -613,3 +613,93 @@ fn decode_benchmark() {
     }
     println!("\n{}\n", report.join("\n"));
 }
+
+/// The process's own view of itself: resident memory now and at its peak,
+/// and its thread count.
+fn process_status() -> (u64, u64, u64) {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap();
+    let field = |name: &str| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap()
+    };
+    (
+        field("VmRSS:") * 1024,
+        field("VmHWM:") * 1024,
+        field("Threads:"),
+    )
+}
+
+/// What bounding the runtime buys: resident memory, threads and time for many
+/// pages at once on a runtime sized for a large host against a bounded one.
+/// Resident memory is per process, so each configuration runs on its own:
+///
+/// ```text
+/// RUNTIME=unbounded DECODE=transport ROUNDS=10 cargo test --release --lib runtime_bounding_benchmark -- --ignored --nocapture
+/// ```
+///
+/// `RUNTIME` is `unbounded` (32 workers, tokio's default blocking pool) or
+/// `bounded` (4 workers, 4 blocking threads); `DECODE` is `transport`
+/// (`get_items`) or `baseline` (hypersync-client's rows).
+#[test]
+#[ignore = "benchmark: one configuration per process, in release, with --nocapture"]
+fn runtime_bounding_benchmark() {
+    const PAGES_AT_ONCE: usize = 32;
+    let rounds: usize = std::env::var("ROUNDS").map_or(10, |rounds| rounds.parse().unwrap());
+    static SCENARIO: Scenario = Scenario {
+        name: "client-filtered, 1% kept",
+        logs: 100_000,
+        blocks: 10_000,
+        kept_one_in: 100,
+        client_filtered: true,
+    };
+    let runtime_kind = std::env::var("RUNTIME").unwrap_or_else(|_| "unbounded".to_string());
+    let decode = std::env::var("DECODE").unwrap_or_else(|_| "transport".to_string());
+    let stage = match decode.as_str() {
+        "transport" => Stage::GetItems,
+        "baseline" => Stage::Rows,
+        other => panic!("unknown DECODE {other}"),
+    };
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder.enable_all();
+    match runtime_kind.as_str() {
+        "unbounded" => builder.worker_threads(32),
+        "bounded" => builder.worker_threads(4).max_blocking_threads(4),
+        other => panic!("unknown RUNTIME {other}"),
+    };
+    let runtime = builder.build().unwrap();
+
+    let (indexer, _) = make_indexer(&SCENARIO);
+    let indexer = Arc::new(indexer);
+    let (rss_before, _, _) = process_status();
+    let mut max_threads = 0;
+    let started = Instant::now();
+    for _ in 0..rounds {
+        let tasks: Vec<_> = (0..PAGES_AT_ONCE)
+            .map(|_| {
+                let indexer = indexer.clone();
+                runtime.spawn(async move { run_stage(&indexer, &SCENARIO, stage).await })
+            })
+            .collect();
+        runtime.block_on(async {
+            for task in tasks {
+                task.await.unwrap();
+            }
+        });
+        max_threads = max_threads.max(process_status().2);
+    }
+    let elapsed = started.elapsed();
+    let (rss_after, rss_peak, _) = process_status();
+    println!(
+        "\nRUNTIME={runtime_kind} DECODE={decode}: {} pages in {:.2}s, threads up to {max_threads}, \
+         RSS {} before, {} after, peak {}\n",
+        PAGES_AT_ONCE * rounds,
+        elapsed.as_secs_f64(),
+        megabytes(rss_before),
+        megabytes(rss_after),
+        megabytes(rss_peak),
+    );
+}
