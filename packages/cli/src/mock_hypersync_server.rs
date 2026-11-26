@@ -60,6 +60,9 @@ struct State {
     /// covering the queried range, so a test only has to pin the pages it
     /// cares about.
     responses: VecDeque<Value>,
+    /// HTTP-level replies for `/height`, one per request. An exhausted queue
+    /// answers with `height`.
+    height_replies: VecDeque<Value>,
     /// Rows the server holds the way HyperSync holds a chain: a query no queued
     /// response answers gets the rows its selection matches. See `chain_page`.
     chain: Option<Value>,
@@ -141,6 +144,20 @@ impl MockHyperSyncServer {
             .context("parse mock hypersync response spec")
             .map_err(err)?;
         self.state.lock().unwrap().responses.push_back(value);
+        Ok(())
+    }
+
+    /// Queue an HTTP-level reply for the next `/height` request, in the shape
+    /// `raw_reply` reads.
+    #[napi]
+    pub fn push_height_reply(&self, spec: String) -> napi::Result<()> {
+        let value: Value = serde_json::from_str(&spec)
+            .context("parse mock hypersync height reply")
+            .map_err(err)?;
+        if raw_reply(&value).is_none() {
+            return Err(err("a height reply needs a `status`"));
+        }
+        self.state.lock().unwrap().height_replies.push_back(value);
         Ok(())
     }
 
@@ -226,7 +243,14 @@ async fn handle_connection(
         let path = request.path.split('?').next().unwrap_or_default();
         match (request.method.as_str(), path) {
             ("GET", HEIGHT_PATH) => {
-                let height = state.lock().unwrap().height;
+                let (reply, height) = {
+                    let mut state = state.lock().unwrap();
+                    (state.height_replies.pop_front(), state.height)
+                };
+                if let Some(raw) = reply.as_ref().and_then(raw_reply) {
+                    write_raw_reply(&mut stream, &raw).await?;
+                    continue;
+                }
                 write_response(
                     &mut stream,
                     200,
@@ -315,13 +339,7 @@ async fn answer_query(
     // A spec carrying a status answers at the HTTP level instead of with a
     // page: rate limiting and payload-too-large are statuses the client acts on.
     if let Some(raw) = spec.as_ref().and_then(raw_reply) {
-        let headers: Vec<(&str, &str)> = raw
-            .headers
-            .iter()
-            .map(|(name, value)| (name.as_str(), value.as_str()))
-            .collect();
-        mock_http::write_response(stream, raw.status, &headers, raw.body.as_bytes()).await?;
-        return Ok(());
+        return write_raw_reply(stream, &raw).await;
     }
     let page = serde_json::from_str(&body)
         .context("expected a JSON query body")
@@ -550,6 +568,16 @@ fn raw_reply(spec: &Value) -> Option<RawReply> {
             .unwrap_or_default()
             .to_string(),
     })
+}
+
+async fn write_raw_reply(stream: &mut TcpStream, raw: &RawReply) -> Result<()> {
+    let headers: Vec<(&str, &str)> = raw
+        .headers
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
+    mock_http::write_response(stream, raw.status, &headers, raw.body.as_bytes()).await?;
+    Ok(())
 }
 
 async fn write_response(
