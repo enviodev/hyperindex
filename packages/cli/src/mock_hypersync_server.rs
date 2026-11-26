@@ -63,6 +63,14 @@ struct State {
     /// Rows the server holds the way HyperSync holds a chain: a query no queued
     /// response answers gets the rows its selection matches. See `chain_page`.
     chain: Option<Value>,
+    /// One page, encoded ahead of time, answering every query. Serving it costs
+    /// the server no encoding, so a benchmark measures only the client.
+    fixed_page: Option<FixedPage>,
+}
+
+struct FixedPage {
+    plain: Arc<Vec<u8>>,
+    cached: Arc<Vec<u8>>,
 }
 
 /// A HyperSync server bound to a localhost port, ephemeral unless one is given.
@@ -174,6 +182,23 @@ impl MockHyperSyncServer {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+impl MockHyperSyncServer {
+    /// Answer every query from now on with the page `spec` encodes. See
+    /// `build_page` for the spec shape; it must carry `nextBlock`. Returns the
+    /// size of the encoded page.
+    #[cfg(test)]
+    pub(crate) fn serve_fixed_page(&self, spec: &Value) -> Result<usize> {
+        let encode = |wrap| build_page(Some(spec), &Value::Null, 0, wrap).map(Arc::new);
+        let page = FixedPage {
+            plain: encode(Wrap::Plain)?,
+            cached: encode(Wrap::Cached)?,
+        };
+        let size = page.plain.len();
+        self.state.lock().unwrap().fixed_page = Some(page);
+        Ok(size)
     }
 }
 
@@ -303,6 +328,16 @@ async fn answer_query(
     body: String,
     wrap: Wrap,
 ) -> Result<()> {
+    let fixed_page = {
+        let state = state.lock().unwrap();
+        state.fixed_page.as_ref().map(|page| match wrap {
+            Wrap::Plain => page.plain.clone(),
+            Wrap::Cached => page.cached.clone(),
+        })
+    };
+    if let Some(page) = fixed_page {
+        return write_response(stream, 200, "application/octet-stream", &page).await;
+    }
     let (spec, chain, height) = {
         let mut state = state.lock().unwrap();
         state.queries.push(body.clone());

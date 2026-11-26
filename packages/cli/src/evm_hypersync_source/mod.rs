@@ -18,6 +18,8 @@ use crate::evm_rpc_source;
 use crate::request_stats::{rate_limited_err, RequestStat};
 
 mod config;
+#[cfg(test)]
+mod decode_benchmark;
 pub(crate) mod query;
 pub(crate) mod selection;
 pub(crate) mod topic_filter;
