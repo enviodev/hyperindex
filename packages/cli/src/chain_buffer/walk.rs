@@ -1,7 +1,10 @@
 //! One forward walk over a range of the buffer: per block, the rows in key
-//! order, each row's matching registrations in index order, then the block
-//! handlers running on the block. Rows are matched and decoded here, on a
-//! worker thread; nothing about a match is stored.
+//! order, each row's matching registrations in index order, each transaction's
+//! handlers ahead of its events, then the block handlers running on the block.
+//! Rows are matched and decoded here, on a worker thread; nothing about a
+//! match is stored.
+
+use std::iter::Peekable;
 
 use anyhow::Result;
 
@@ -9,6 +12,7 @@ use super::decoded::DecodedEvent;
 use super::deliver::{Columns, EMPTY_LINK};
 use super::evm::{self, log_column, LogView};
 use super::fuel::ReceiptView;
+use super::matching_transactions::TransactionView;
 use super::svm::InstructionView;
 use super::table::{make_key, RowRef, Snapshot};
 use super::{
@@ -50,6 +54,11 @@ pub(crate) enum Item {
         block_number: u64,
         registration: u32,
         skipped: bool,
+    },
+    Transaction {
+        block_number: u64,
+        transaction_index: u32,
+        registration: u32,
     },
     Decoded {
         block_number: u64,
@@ -126,6 +135,25 @@ pub(crate) fn build(
     })
 }
 
+/// The lowest block among the next row of each stream, the next decoded event
+/// and the next block handler run.
+fn first_block_to_walk<'r>(
+    rows: &mut Peekable<impl Iterator<Item = RowRef<'r>>>,
+    transactions: Option<&mut Peekable<impl Iterator<Item = RowRef<'r>>>>,
+    decoded: Option<&DecodedEvent>,
+    next_block_handler_run: Option<u64>,
+) -> Option<u64> {
+    [
+        rows.peek().map(RowRef::block_number),
+        transactions.and_then(|rows| rows.peek().map(RowRef::block_number)),
+        decoded.map(|event| event.block_number),
+        next_block_handler_run,
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+}
+
 struct Walker<'a> {
     shared: &'a Shared,
     snapshots: &'a Snapshots,
@@ -144,19 +172,20 @@ impl Walker<'_> {
             .events
             .rows_in_block_range(from_block, max_block)
             .peekable();
+        let mut transactions = (!self.shared.transaction_matcher.is_empty()).then(|| {
+            snapshots
+                .transactions
+                .rows_in_block_range(from_block, max_block)
+                .peekable()
+        });
         let mut block = from_block;
         loop {
-            let next = [
-                rows.peek().map(RowRef::block_number),
-                snapshots
-                    .decoded
-                    .get(self.decoded_at)
-                    .map(|event| event.block_number),
+            let next = first_block_to_walk(
+                &mut rows,
+                transactions.as_mut(),
+                snapshots.decoded.get(self.decoded_at),
                 self.shared.schedule.first_from(block),
-            ]
-            .into_iter()
-            .flatten()
-            .min()
+            )
             .filter(|next| *next <= max_block);
             let Some(next) = next else {
                 return Some(max_block);
@@ -165,21 +194,22 @@ impl Walker<'_> {
             while let Some(row) = rows.next_if(|row| row.block_number() == next) {
                 block_rows.push(row);
             }
-            self.walk_block(next, &block_rows, false);
+            let mut block_transactions = Vec::new();
+            if let Some(transactions) = transactions.as_mut() {
+                while let Some(row) = transactions.next_if(|row| row.block_number() == next) {
+                    block_transactions.push(row);
+                }
+            }
+            self.walk_block(next, &block_rows, &block_transactions, false);
             if self.items.len() >= target_items {
                 // The blocks up to the next one holding anything are done too.
-                let following = [
-                    rows.peek().map(RowRef::block_number),
-                    snapshots
-                        .decoded
-                        .get(self.decoded_at)
-                        .map(|event| event.block_number),
+                let following = first_block_to_walk(
+                    &mut rows,
+                    transactions.as_mut(),
+                    snapshots.decoded.get(self.decoded_at),
                     next.checked_add(1)
                         .and_then(|after| self.shared.schedule.first_from(after)),
-                ]
-                .into_iter()
-                .flatten()
-                .min();
+                );
                 return Some(match following {
                     Some(following) if following <= max_block => following - 1,
                     _ => max_block,
@@ -204,7 +234,7 @@ impl Walker<'_> {
                 .snapshots
                 .decoded
                 .partition_point(|event| event.block_number < *block);
-            self.walk_block(*block, &rows, true);
+            self.walk_block(*block, &rows, &[], true);
             last = Some(*block);
             if self.items.len() >= target_items {
                 break;
@@ -213,7 +243,16 @@ impl Walker<'_> {
         last
     }
 
-    fn walk_block(&mut self, block_number: u64, rows: &[RowRef], contract_register_only: bool) {
+    /// A transaction's handlers run ahead of the first event, fetched or
+    /// decoded, of that transaction or a later one; an event naming no
+    /// transaction moves none. The rest run after the block's events.
+    fn walk_block(
+        &mut self,
+        block_number: u64,
+        rows: &[RowRef],
+        transactions: &[RowRef],
+        contract_register_only: bool,
+    ) {
         let decoded = &self.snapshots.decoded;
         let decoded_end = self.decoded_at
             + decoded[self.decoded_at..]
@@ -221,6 +260,7 @@ impl Walker<'_> {
         let block_decoded = &decoded[self.decoded_at..decoded_end];
         self.decoded_at = decoded_end;
 
+        let mut transactions = transactions.iter().peekable();
         let mut decoded_events = block_decoded
             .iter()
             .filter(|event| !event.is_block)
@@ -228,13 +268,20 @@ impl Walker<'_> {
         for row in rows {
             while let Some(event) = decoded_events.next_if(|event| event.log_index < row.position())
             {
+                self.push_transactions_through(&mut transactions, event.transaction_index);
                 self.push_decoded(event, contract_register_only);
+            }
+            if transactions.peek().is_some() {
+                let index = row.u64_at(log_column::TRANSACTION_INDEX).map(|i| i as u32);
+                self.push_transactions_through(&mut transactions, index);
             }
             self.push_row(row, contract_register_only);
         }
         for event in decoded_events {
+            self.push_transactions_through(&mut transactions, event.transaction_index);
             self.push_decoded(event, contract_register_only);
         }
+        self.push_transactions_through(&mut transactions, Some(u32::MAX));
         if contract_register_only {
             return;
         }
@@ -266,6 +313,30 @@ impl Walker<'_> {
                 registration: handler.index,
                 skipped,
             });
+        }
+    }
+
+    fn push_transactions_through<'r>(
+        &mut self,
+        transactions: &mut Peekable<impl Iterator<Item = &'r RowRef<'r>>>,
+        transaction_index: Option<u32>,
+    ) {
+        let Some(through) = transaction_index else {
+            return;
+        };
+        while let Some(row) = transactions.next_if(|row| row.position() <= through as u64) {
+            let shared = self.shared;
+            let items = &mut self.items;
+            shared.transaction_matcher.for_each_match(
+                &TransactionView::of_row(row),
+                |registration| {
+                    items.push(Item::Transaction {
+                        block_number: row.block_number(),
+                        transaction_index: row.position() as u32,
+                        registration: registration.index,
+                    })
+                },
+            );
         }
     }
 
@@ -486,6 +557,17 @@ impl Shared {
                 None,
                 Some((*block_number, self.event_block_mask(*registration))),
             ),
+            Item::Transaction {
+                block_number,
+                transaction_index,
+                registration,
+            } => {
+                let (transaction_mask, block_mask) = self.on_transaction_masks(*registration);
+                (
+                    Some(((*block_number, *transaction_index), transaction_mask)),
+                    Some((*block_number, block_mask)),
+                )
+            }
             Item::Block {
                 block_number,
                 registration,
@@ -519,5 +601,95 @@ impl Shared {
                 }),
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hypersync_client::format::{Address, Hex};
+    use hypersync_client::simple_types::Transaction;
+
+    use super::*;
+    use crate::address_store::test_support::evm_store;
+    use crate::chain_buffer::evm::{push_transaction, EvmTxField};
+    use crate::chain_buffer::matching_transactions::OnTransactionRegistrationInput;
+    use crate::chain_buffer::page::{Page, PageData};
+    use crate::chain_buffer::{ChainBuffer, ChainBufferConfig, RegistrationsInput};
+
+    const SENDER: &str = "0x00000000000000000000000000000000000000aa";
+
+    fn registration(index: i64, from: Option<&str>) -> OnTransactionRegistrationInput {
+        OnTransactionRegistrationInput {
+            index,
+            from: from.map(|from| vec![from.to_string()]),
+            to: None,
+            status: None,
+            transaction_field_mask: 0.0,
+            block_field_mask: 0.0,
+        }
+    }
+
+    fn transaction(block_number: u64, index: u64, from: Option<&str>) -> Transaction {
+        Transaction {
+            block_number: Some(block_number.into()),
+            transaction_index: Some(index.into()),
+            from: from.map(|from| Address::decode_hex(from).unwrap()),
+            ..Default::default()
+        }
+    }
+
+    fn walked(rows: &[(Transaction, u64)]) -> Vec<(u64, u32, u32)> {
+        let store = evm_store(&[]);
+        let buffer = ChainBuffer::make(
+            ChainBufferConfig {
+                registrations: RegistrationsInput::Evm {
+                    registrations: vec![],
+                },
+                should_checksum: false,
+                contract_register_indexes: vec![],
+                block_handlers: vec![],
+                transaction_masks: vec![],
+                event_block_masks: vec![],
+                transaction_registrations: vec![
+                    registration(0, Some(SENDER)),
+                    registration(1, None),
+                ],
+            },
+            &store,
+        )
+        .unwrap();
+        let mut page = PageData::new(Ecosystem::Evm);
+        let mut builder = page.transactions.builder();
+        for (row, fetched) in rows {
+            push_transaction(&mut builder, row, *fetched).unwrap();
+        }
+        page.add_transactions(builder.finish());
+        buffer.merge_page(&Page::from_data(page), 0, false);
+        buffer
+            .build_items_for_test(0, 100)
+            .into_iter()
+            .map(|item| match item {
+                Item::Transaction {
+                    block_number,
+                    transaction_index,
+                    registration,
+                } => (block_number, transaction_index, registration),
+                _ => panic!("only transaction items were stored"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn transactions_run_their_handlers_in_order_and_a_row_without_the_filters_field_runs_none_of_its(
+    ) {
+        let from_bit = 1 << EvmTxField::From as u64;
+        assert_eq!(
+            walked(&[
+                (transaction(7, 2, Some(SENDER)), from_bit),
+                (transaction(7, 0, None), from_bit),
+                (transaction(9, 1, Some(SENDER)), 0),
+            ]),
+            vec![(7, 0, 1), (7, 2, 0), (7, 2, 1), (9, 1, 1)]
+        );
     }
 }

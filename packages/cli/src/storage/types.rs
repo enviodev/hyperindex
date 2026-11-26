@@ -170,11 +170,6 @@ pub struct ProgressDiff {
     pub progress_block: i32,
 }
 
-pub struct CacheTable {
-    pub table_name: String,
-    pub rows: i32,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

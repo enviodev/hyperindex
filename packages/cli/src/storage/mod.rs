@@ -77,17 +77,12 @@ pub struct AddChain {
 /// drives. Only their rows are trimmed: a sibling process driving another
 /// chain may be mid-write above its frontier.
 pub struct Resume {
-    pub committed: Vec<ResumedChain>,
+    pub committed: types::Frontier,
 }
 
 pub struct Resumed {
     pub chains: Vec<ResumedChain>,
     pub addresses: ResultSet,
     pub reorg_checkpoints: Vec<types::ReorgCheckpoint>,
-}
-
-pub struct StoredConfigRead {
-    pub config: types::StoredConfig,
-    /// The addresses the config declared, as the stored rows hold them.
-    pub config_addresses: ResultSet,
+    pub caches: Vec<effect_cache::StoredCache>,
 }

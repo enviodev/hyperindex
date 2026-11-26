@@ -51,7 +51,7 @@ let makeStore = () => {
       Promise.resolve()
     },
   }
-  let store = TestIndexerState.make(~persistence=TestIndexerState.readyPersistence(~storage))
+  let store = TestIndexerState.make(~storage)
   (store, setChainMetaCalls, writeBatchChainMetaCalls)
 }
 

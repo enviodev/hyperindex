@@ -24,6 +24,9 @@ type waiter = {
   // feed because two waits can overlap on one source after a rollback, and one
   // of them giving up on the stream is not the other one doing so.
   mutable distrustsStream: bool,
+  // Never takes a stream's word for it, whatever its connection does. For a
+  // waiter on a source whose stream is the very thing that may have stopped.
+  pollsBehindStream: bool,
 }
 
 // What a waiter's own wait can do to it afterwards. Both are inert once the
@@ -163,17 +166,26 @@ let shouldPoll = (feed: t) =>
   feed.waiters->Array.length > 0 &&
     switch feed.stream {
     | NeverEnabled | Disconnected => true
-    | Connected({proven}) => !proven || feed.waiters->Array.some(waiter => waiter.distrustsStream)
+    | Connected({proven}) =>
+      !proven ||
+      feed.waiters->Array.some(waiter => waiter.distrustsStream || waiter.pollsBehindStream)
     }
 
 // Ends a sleep that is only a cadence, and leaves a backoff alone. Safe to call
 // from anywhere, including from things that have just made the loop's job
 // smaller: the loop re-reads `shouldPoll` when it wakes and stops if there is
 // nothing left to do.
+//
+// Waiters that only poll behind the stream want a steady, slow poll, so while
+// they are all the loop has, a wake that leaves it something to do would only
+// send a request early: a held source whose stream pushes each height it
+// reaches would be asked for its height on every push.
 let wakeCadence = (feed: t) =>
   switch feed.sleeping {
-  | Some({kind: Cadence, wake}) => wake()
-  | Some({kind: Backoff}) | None => ()
+  | Some({kind: Cadence, wake})
+    if !(feed->shouldPoll) || !(feed.waiters->Array.every(waiter => waiter.pollsBehindStream)) =>
+    wake()
+  | Some({kind: Cadence}) | Some({kind: Backoff}) | None => ()
   }
 
 // The source answered, so the wait its failures earned is no longer owed —
@@ -570,14 +582,20 @@ let stop = (feed: t) => {
 // Fires once, at the first height above `knownHeight`, from a push, a poll or a
 // height another part of the indexer observed. What comes back acts on this
 // waiter alone, and does nothing once it is gone.
-let onHeightAbove = (feed: t, ~knownHeight, ~interval, ~onHeight): subscription =>
+let onHeightAbove = (
+  feed: t,
+  ~knownHeight,
+  ~interval,
+  ~onHeight,
+  ~pollsBehindStream=false,
+): subscription =>
   if feed.knownHeight > knownHeight {
     // Already past it: a wait that starts after a query moved the head has
     // nothing to wait for.
     onHeight(feed.knownHeight)
     {unsubscribe: () => (), distrustStream: () => ()}
   } else {
-    let waiter = {knownHeight, onHeight, interval, distrustsStream: false}
+    let waiter = {knownHeight, onHeight, interval, distrustsStream: false, pollsBehindStream}
     feed.waiters->Array.push(waiter)->ignore
     feed->syncPolling
     {

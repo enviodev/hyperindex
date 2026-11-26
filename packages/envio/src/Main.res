@@ -3,24 +3,16 @@ let getIndexerState = () =>
 let setIndexerState = (state: IndexerState.t) =>
   EnvioGlobal.value.indexerState = Some(state->(Utils.magic: IndexerState.t => unknown))
 
-// Persistence is set by Main.start before handler modules load, so that
+// The initial state is set by Main.start before handler modules load, so that
 // the exported indexer value can lazily expose DB state (startBlock,
 // endBlock, isRealtime, dynamic contract addresses) once it's ready.
-let getGlobalPersistence = () =>
-  EnvioGlobal.value.persistence->(Utils.magic: option<unknown> => option<Persistence.t>)
-let setGlobalPersistence = (persistence: Persistence.t) =>
-  EnvioGlobal.value.persistence = Some(persistence->(Utils.magic: Persistence.t => unknown))
-
-let getInitialState = (): option<Persistence.initialState> => {
-  switch getGlobalPersistence() {
-  | Some(persistence) =>
-    switch persistence.storageStatus {
-    | Ready(initialState) => Some(initialState)
-    | _ => None
-    }
-  | None => None
-  }
-}
+let getInitialState = () =>
+  EnvioGlobal.value.initialState->(Utils.magic: option<unknown> => option<Persistence.initialState>)
+// None while a run is starting, so the getters read the config rather than a
+// previous run's state.
+let setGlobalInitialState = (initialState: option<Persistence.initialState>) =>
+  EnvioGlobal.value.initialState =
+    initialState->(Utils.magic: option<Persistence.initialState> => option<unknown>)
 
 let getInitialChainState = (~chainId: ChainId.t): option<Persistence.initialChainState> =>
   getInitialState()->Option.flatMap(initialState =>
@@ -301,6 +293,11 @@ let getGlobalIndexer = (): 'indexer => {
     let _ = RollbackCommit.register(callback->(Utils.magic: 'a => RollbackCommit.callback))
   }
 
+  let getChainsObject = config => {
+    let (chains, _) = buildChainsObject(~config)
+    chains->(Utils.magic: {..} => dict<unknown>)
+  }
+
   let onBlockFn = (rawOptions: 'a, handler: 'b) => {
     HandlerRegister.throwIfFinishedRegistration(~methodName="onBlock")
     let raw = rawOptions->(Utils.magic: 'a => {"name": string, "where": unknown, "fields": unknown})
@@ -309,10 +306,19 @@ let getGlobalIndexer = (): 'indexer => {
       ~where=raw["where"],
       ~fields=raw["fields"],
       ~handler=handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>),
-      ~getChainsObject=config => {
-        let (chains, _) = buildChainsObject(~config)
-        chains->(Utils.magic: {..} => dict<unknown>)
-      },
+      ~getChainsObject,
+    )
+  }
+
+  let onTransactionFn = (rawOptions: 'a, handler: 'b) => {
+    HandlerRegister.throwIfFinishedRegistration(~methodName="onTransaction")
+    let raw = rawOptions->(Utils.magic: 'a => {"name": string, "where": unknown, "fields": unknown})
+    HandlerRegister.registerOnTransaction(
+      ~name=raw["name"],
+      ~where=raw["where"],
+      ~fields=raw["fields"],
+      ~handler=handler->(Utils.magic: 'b => Internal.onTransactionArgs => promise<unit>),
+      ~getChainsObject,
     )
   }
 
@@ -332,7 +338,8 @@ let getGlobalIndexer = (): 'indexer => {
     | Some(k) => k
     | None => {
         let keys = switch Config.load().ecosystem.name {
-        | Evm | Fuel => [
+        | (Evm | Fuel) as ecosystem =>
+          [
             "name",
             "description",
             "chainIds",
@@ -340,6 +347,7 @@ let getGlobalIndexer = (): 'indexer => {
             "onEvent",
             "contractRegister",
             "onBlock",
+            ...ecosystem === Evm ? ["onTransaction"] : [],
             "~internalAndWillBeRemovedSoon_onRollbackCommit",
           ]
         | Svm => [
@@ -373,6 +381,8 @@ let getGlobalIndexer = (): 'indexer => {
     | "onInstruction" => onInstructionFn->Utils.magic
     | "contractRegister" => contractRegisterFn->Utils.magic
     | "onBlock" | "onSlot" => onBlockFn->Utils.magic
+    // Reached on Fuel and SVM too, where registering says why it can't.
+    | "onTransaction" => onTransactionFn->Utils.magic
     | "~internalAndWillBeRemovedSoon_onRollbackCommit" => onRollbackCommitFn->Utils.magic
     | _ =>
       JsError.throwWithMessage(
@@ -412,8 +422,8 @@ let getGlobalIndexer = (): 'indexer => {
   Utils.Proxy.make(Utils.Object.createNullObject(), traps)->(Utils.magic: {..} => 'indexer)
 }
 
-let migrateStorage = (persistence, ~config: Config.t, ~logger, ~reset) =>
-  persistence->Persistence.init(
+let migrateStorage = async (storage, ~config: Config.t, ~logger, ~reset) => {
+  let _: Persistence.prepared = await storage->Persistence.prepare(
     ~logger,
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
@@ -426,21 +436,21 @@ let migrateStorage = (persistence, ~config: Config.t, ~logger, ~reset) =>
     // A migration command runs once and exits, with nobody watching it recover:
     // an unreachable chain should say so now rather than hold the command open.
     ~startBlockRetry=StartBlockResolver.Once,
-    ~resume=false,
   )
+}
 
 let migrate = async (~logger, ~reset) => {
   let config = Config.load()
-  let persistence = Storage.makePersistenceFromConfig(~config, ~logger)
-  await persistence->migrateStorage(~config, ~logger, ~reset)
-  await persistence.storage.close()
+  let storage = Storage.makeStorageFromEnv(~config, ~logger)
+  await storage->migrateStorage(~config, ~logger, ~reset)
+  await storage.close()
 }
 
 let dropSchema = async (~logger) => {
   let config = Config.load()
-  let persistence = Storage.makePersistenceFromConfig(~config, ~logger)
-  await persistence.storage.reset()
-  await persistence.storage.close()
+  let storage = Storage.makeStorageFromEnv(~config, ~logger)
+  await storage.reset()
+  await storage.close()
 }
 
 // Rejection carried by `onError`: the failure is already logged with full
@@ -451,7 +461,6 @@ exception FatalError(exn)
   let startIndexer = async (
     ~config: Config.t,
     ~logger,
-    ~persistence: option<Persistence.t>=?,
     ~reset=false,
     ~isTest=false,
     ~exitAfterFirstEventBlock=false,
@@ -464,14 +473,8 @@ exception FatalError(exn)
     // Set by `envio dev` via the public config's `isDev` field; `envio start`
     // leaves it false so the process exits cleanly when indexing completes.
     let isDevelopmentMode = !isTest && config.isDev
-    // Initialized first so the exported indexer value contains state from the
-    // database when handler files are loaded (they may access the indexer at
-    // module top level).
-    let persistence = switch persistence {
-    | Some(p) => p
-    | None => Storage.makePersistenceFromConfig(~config, ~logger)
-    }
-    setGlobalPersistence(persistence)
+    let storage = Storage.makeStorageFromEnv(~config, ~logger)
+    setGlobalInitialState(None)
     let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
     // A worker's supervisor has checked the handlers already, and the test
     // indexer leaves type checking to the user's test setup.
@@ -479,10 +482,13 @@ exception FatalError(exn)
       isTest || Worker.isEnabled
         ? Promise.resolve()
         : HandlerLoader.typeCheck(~config, ~logger, ~autoLoadFiles)
-    let _ = await Promise.all2((
-      persistence->Persistence.initForRun(~logger, ~config, ~reset, ~isDevelopmentMode),
+    let (initialState, ()) = await Promise.all2((
+      storage->Persistence.initForRun(~logger, ~config, ~reset, ~isDevelopmentMode),
       typeCheck,
     ))
+    // Before handler files load: they may read the indexer's chains at module
+    // top level, which should show the database's state.
+    setGlobalInitialState(Some(initialState))
 
     // Loads user handler files, which register handler/contractRegister/where
     // state into the global `HandlerRegister` registry as a side effect; this
@@ -522,8 +528,7 @@ exception FatalError(exn)
     let envioVersion = Utils.EnvioPackage.value.version
 
     let getMetrics = () => getIndexerState()->Option.map(IndexerState.toMetrics)
-    let dumpEffectCache = () =>
-      (persistence->Persistence.getInitializedStorageOrThrow).dumpEffectCache()
+    let dumpEffectCache = () => storage.dumpEffectCache()
 
     // A worker reports through its supervisor, which owns the one server and the
     // one display the run has.
@@ -542,8 +547,8 @@ exception FatalError(exn)
     let state = IndexerState.makeFromDbState(
       ~config,
       ~logger,
-      ~persistence,
-      ~initialState=persistence->Persistence.getInitializedState,
+      ~storage,
+      ~initialState,
       ~registrationsByChainId,
       ~isDevelopmentMode,
       ~shouldUseTui,
@@ -570,7 +575,6 @@ exception FatalError(exn)
 // again — `planForRun` refuses an isolated config.
 let start = async (
   ~logger,
-  ~persistence: option<Persistence.t>=?,
   ~reset=false,
   ~isTest=false,
   ~exitAfterFirstEventBlock=false,
@@ -593,14 +597,6 @@ let start = async (
   switch isTest ? None : Supervisor.planForRun(~config) {
   | Some(workers) => await Supervisor.run(~config, ~logger, ~workers, ~reset)
   | None =>
-    await startIndexer(
-      ~config,
-      ~logger,
-      ~persistence?,
-      ~reset,
-      ~isTest,
-      ~exitAfterFirstEventBlock,
-      ~patchConfig?,
-    )
+    await startIndexer(~config, ~logger, ~reset, ~isTest, ~exitAfterFirstEventBlock, ~patchConfig?)
   }
 }

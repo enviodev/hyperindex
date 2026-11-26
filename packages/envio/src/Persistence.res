@@ -1,10 +1,3 @@
-// A module for the persistence layer
-// This is currently in a WIP state
-// but in the future we should make all DB and in-memory state
-// interactions to this layer with DI and easy for testing.
-// Currently there are quite many code spread across
-// DbFunctions, Db, Migrations, InMemoryStore modules which use codegen code directly.
-
 // The type reflects an cache table in the db
 // It might be present even if the effect is not used in the application.
 // `initialState.cache` is keyed by `tableName` (the full cache address), so a
@@ -18,7 +11,8 @@ type effectCacheRecord = {
   mutable count: int,
 }
 
-type initialChainState = {
+// Where a chain stands, as its row in the storage holds it.
+type chainProgress = {
   id: ChainId.t,
   startBlock: int,
   endBlock: option<int>,
@@ -28,10 +22,28 @@ type initialChainState = {
   numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Date.t>,
+  sourceBlockNumber: int,
+}
+
+type initialChainState = {
+  ...chainProgress,
   // Every address the chain indexes, columnar — config-declared and dynamically
   // registered alike. The chain's address store seeds straight from it.
   addressRows: AddressRows.seedRows,
-  sourceBlockNumber: int,
+}
+
+let withAddressRows = (progress: chainProgress, addressRows): initialChainState => {
+  id: progress.id,
+  startBlock: progress.startBlock,
+  endBlock: progress.endBlock,
+  maxReorgDepth: progress.maxReorgDepth,
+  progressBlockNumber: progress.progressBlockNumber,
+  progressBlockTime: progress.progressBlockTime,
+  numEventsProcessed: progress.numEventsProcessed,
+  firstEventBlockNumber: progress.firstEventBlockNumber,
+  timestampCaughtUpToHeadOrEndblock: progress.timestampCaughtUpToHeadOrEndblock,
+  sourceBlockNumber: progress.sourceBlockNumber,
+  addressRows,
 }
 
 type initialState = {
@@ -128,13 +140,20 @@ type storage = {
   // partitions and its config addresses, as `initialize` would have created
   // them. The chains already there are left untouched.
   addChain: (~chainConfig: Config.chain, ~contractMapping: ContractMapping.t) => promise<unit>,
-  // `chainIds` is what this run drives. An isolated run resumes a subset of
-  // the stored chains, and ClickHouse's resume trims past each resumed chain's
-  // checkpoint, so chains a sibling process is still writing must stay out.
+  // `chainIds` is what this process indexes, and all it reads: a split run's
+  // sibling reads its own chains, whose addresses can number tens of millions.
+  // Only reads, so a resume refused on what it found leaves the stores alone.
   resumeInitialState: (
     ~chainIds: array<ChainId.t>,
     ~contractMapping: ContractMapping.t,
   ) => promise<initialState>,
+  // Takes the chains over once their resume is accepted: ClickHouse is trimmed
+  // past `committed`, the frontier the resume read, which is where the run's
+  // checkpoint ids continue. Chains a sibling process is still writing must
+  // stay out of it.
+  takeOver: (~committed: Frontier.t) => promise<unit>,
+  // Where the chains stand, for a supervisor, which indexes none of them.
+  readChainProgress: (~chainIds: array<ChainId.t>) => promise<array<chainProgress>>,
   // Returns rows matching the filter.
   // Field values are serialized and rows parsed with the table's field schemas.
   // `ConnectionLost` when the connection went, which a load can simply run
@@ -222,18 +241,12 @@ type storage = {
   close: unit => promise<unit>,
 }
 
-type storageStatus =
-  | Unknown
-  | Initializing(promise<unit>)
-  | Ready(initialState)
-
-type t = {
-  userEntities: array<Internal.entityConfig>,
-  allEntities: array<Internal.entityConfig>,
-  allEnums: array<Table.enumConfig<Table.enum>>,
-  mutable storageStatus: storageStatus,
-  mutable storage: storage,
-}
+// What `prepare` found the storage holding once it is fit for the config.
+type prepared =
+  // Nothing: it built the storage, and there is nothing to resume.
+  | Created(initialState)
+  // An earlier run's, with the contract ids its rows were stored under.
+  | Existing({contractMapping: ContractMapping.t})
 
 exception StorageError({message: string, reason: exn})
 
@@ -250,255 +263,257 @@ exception CommitUncertain(string)
 // need, so it's printed once, without a stack trace.
 exception Refused(string)
 
-let make = (~userEntities, ~allEnums, ~storage) => {
-  let allEntities = userEntities
-  {
-    userEntities,
-    allEntities,
-    allEnums,
-    storageStatus: Unknown,
-    storage,
+// A refusal is all the operator needs to read; anything else is logged with
+// what it was doing.
+let throwRefusalOrLoggedFailure = (exn, ~logger) =>
+  switch exn {
+  | Refused(message) => JsError.throwWithMessage(message)
+  | exn =>
+    exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to initialize the indexer storage.`)
   }
-}
 
-let init = {
-  async (
-    persistence,
-    ~logger,
-    ~chainConfigs: array<Config.chain>,
-    ~contractMapping,
-    ~envioInfo,
-    ~resetCommand,
-    ~runCommand,
-    ~reset=false,
-    ~lowercaseAddresses=false,
-    // An `envio start --chain` run. It needs the schema to exist already:
-    // initializing under it would create rows for this process's chains only,
-    // leaving the ones it skipped with no state for their own processes to
-    // resume. It is also the one run that may add its chain to the schema.
-    ~isolated=false,
-    // Whether this process is the one that tells the operator the run resumed.
-    // A supervisor says it once for the whole run, so the workers it forked
-    // keep it to their own log files.
-    ~announceResume=true,
-    ~startBlockRetry=StartBlockResolver.UntilItAnswers,
-    ~sourceTiming=?,
-    // Off for a migration, which checks an existing storage and leaves it:
-    // resuming takes ClickHouse back to what Postgres committed, fencing off and
-    // trimming whatever a run still indexing goes on writing.
-    ~resume=true,
-    // Set for a per-chain schema, which can take a new chain under its own
-    // `envio start --chain` process.
-    ~addChainCommand: option<ChainId.t => string>=?,
-  ) => {
-    try {
-      let shouldRun = switch persistence.storageStatus {
-      | Unknown => true
-      | Initializing(promise) => {
-          await promise
-          reset
-        }
-      | Ready(_) => reset
-      }
-      if shouldRun {
-        let resolveRef = ref(%raw(`null`))
-        let promise = Promise.make((resolve, _) => {
-          resolveRef := resolve
-        })
-        persistence.storageStatus = Initializing(promise)
-        let holding = reset ? Nothing : await persistence.storage.holding()
-        if holding === Stranded {
-          throw(Refused(Config.strandedMessage(~resetCommand)))
-        }
-        if holding === Nothing {
-          if isolated {
-            throw(
-              Refused(
-                "`envio start --chain` needs a database that is already set up. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
-              ),
-            )
-          }
-          logger->Logger.info(`Initializing the indexer storage...`)
-          // Only runs once per schema (this branch is the "first deploy or
-          // reset" gate), which is exactly when a `latest` start block must be
-          // resolved: every later resume reads `envio_chains.start_block` back
-          // verbatim instead of re-running this.
-          let waitsOnAnRpc = chainConfigs->Array.some((chain: Config.chain) =>
-            switch chain.startBlock {
-            | Latest => true
-            | Block(_) => false
-            }
-          )
-          let chainConfigs = await chainConfigs->StartBlockResolver.resolveAllOrThrow(
-            ~logger,
-            ~lowercaseAddresses,
-            ~retry=startBlockRetry,
-            ~timing=?sourceTiming,
-          )
-
-          // The RPC answers when it does, and another indexer can set the
-          // storage up meanwhile: it's checked again before it's built over.
-          if waitsOnAnRpc && !reset && (await persistence.storage.holding()) !== Nothing {
-            throw(Refused(Config.setUpMeanwhileMessage))
-          }
-          let initialState = await persistence.storage.initialize(
-            ~chainConfigs,
-            ~contractMapping,
-            ~envioInfo,
-          )
-          logger->Logger.info(`The indexer storage is ready. Starting indexing!`)
-          persistence.storageStatus = Ready(initialState)
-        } else if (
-          // In case of a race condition,
-          // we want to set the initial status to Ready only once.
-          switch persistence.storageStatus {
-          | Initializing(_) => true
-          | _ => false
-          }
-        ) {
-          let resumeLevel = announceResume ? #info : #trace
-          logger->Logger.logAt(
-            resumeLevel,
-            resume
-              ? `Found existing indexer storage. Resuming indexing state...`
-              : `Found existing indexer storage.`,
-          )
-          let stored = await persistence.storage.readStoredConfig()
-          let incompatible = paths => Refused(
-            ResumePlan.incompatibleMessage(
-              paths,
-              ~envioInfo,
-              ~resetCommand,
-              ~runCommand,
-              ~addChainCommands=switch addChainCommand {
-              // An `envio start --chain` run meets the same storage, and is
-              // refused for it before it adds anything.
-              | Some(_) if holding === Diverged || holding === Outdated => []
-              | Some(addChainCommand) =>
-                paths
-                ->ResumePlan.newChainIdsWhenOnlyChange(
-                  ~stored,
-                  ~envioInfo,
-                  ~chainConfigs,
-                  ~contractMapping,
-                  ~lowercaseAddresses,
-                )
-                ->Array.map(addChainCommand)
-              | None => []
-              },
-            ),
-          )
-          switch ResumePlan.make(
-            ~stored,
-            ~envioInfo,
-            ~chainConfigs,
-            ~contractMapping,
-            ~lowercaseAddresses,
-            ~isolated,
-          ) {
-          | Incompatible(changedPaths) => throw(incompatible(changedPaths))
-          // After Incompatible: a config change is reported first, since its message names what to revert.
-          | _ if holding === Diverged => throw(Refused(Config.divergedMessage(~resetCommand)))
-          | _ if holding === Outdated => throw(incompatible([ResumePlan.olderEnvio]))
-          | Resume => ()
-          | AddChain(chainConfig) =>
-            logger->Logger.info(
-              `Adding the chain to the existing indexer storage...`,
-              ~params={"chainId": chainConfig.id},
-            )
-            // The same resolution `initialize` runs, and for the same reason:
-            // this is the one time the chain's row is written.
-            let chainConfig =
-              (
-                await [chainConfig]->StartBlockResolver.resolveAllOrThrow(
-                  ~logger,
-                  ~lowercaseAddresses,
-                  ~retry=startBlockRetry,
-                  ~timing=?sourceTiming,
-                )
-              )->Array.getUnsafe(0)
-            await persistence.storage.addChain(
-              ~chainConfig,
-              ~contractMapping=stored.contractMapping,
-            )
-          }
-          if resume {
-            let initialState = await persistence.storage.resumeInitialState(
-              ~chainIds=chainConfigs->Array.map(chain => chain.id),
-              ~contractMapping=stored.contractMapping,
-            )
-            persistence.storageStatus = Ready(initialState)
-            let progress = Dict.make()
-            initialState.chains->Array.forEach(c => {
-              progress->ChainId.Dict.set(c.id, c.progressBlockNumber)
-            })
-            logger->Logger.logAt(
-              resumeLevel,
-              `Successfully resumed indexing state! Continuing from the last checkpoint.`,
-              ~params={"progress": progress},
-            )
-          } else {
-            persistence.storageStatus = Unknown
-          }
-        }
-        resolveRef.contents()
-      }
-    } catch {
-    | Refused(message) => JsError.throwWithMessage(message)
-    | exn =>
-      exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to initialize the indexer storage.`)
+// Makes the storage fit the config: builds it when there is none, refuses one
+// the config can't continue, and adds a chain the config only gained. It reads
+// none of the state indexing starts from: that is `resume`'s, for the chains
+// of the process indexing them.
+let prepare = async (
+  storage: storage,
+  ~logger,
+  ~chainConfigs: array<Config.chain>,
+  ~contractMapping,
+  ~envioInfo,
+  ~resetCommand,
+  ~runCommand,
+  ~reset=false,
+  ~lowercaseAddresses=false,
+  // An `envio start --chain` run. It needs the schema to exist already:
+  // initializing under it would create rows for this process's chains only,
+  // leaving the ones it skipped with no state for their own processes to
+  // resume. It is also the one run that may add its chain to the schema.
+  ~isolated=false,
+  ~startBlockRetry=StartBlockResolver.UntilItAnswers,
+  ~sourceTiming=?,
+  // Set for a per-chain schema, which can take a new chain under its own
+  // `envio start --chain` process.
+  ~addChainCommand: option<ChainId.t => string>=?,
+): prepared =>
+  try {
+    let holding = reset ? Nothing : await storage.holding()
+    if holding === Stranded {
+      throw(Refused(Config.strandedMessage(~resetCommand)))
     }
+    if holding === Nothing {
+      if isolated {
+        throw(
+          Refused(
+            "`envio start --chain` needs a database that is already set up. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
+          ),
+        )
+      }
+      logger->Logger.info(`Initializing the indexer storage...`)
+      // Only runs once per schema (this branch is the "first deploy or
+      // reset" gate), which is exactly when a `latest` start block must be
+      // resolved: every later resume reads `envio_chains.start_block` back
+      // verbatim instead of re-running this.
+      let waitsOnAnRpc = chainConfigs->Array.some((chain: Config.chain) =>
+        switch chain.startBlock {
+        | Latest => true
+        | Block(_) => false
+        }
+      )
+      let chainConfigs = await chainConfigs->StartBlockResolver.resolveAllOrThrow(
+        ~logger,
+        ~lowercaseAddresses,
+        ~retry=startBlockRetry,
+        ~timing=?sourceTiming,
+      )
+
+      // The RPC answers when it does, and another indexer can set the
+      // storage up meanwhile: it's checked again before it's built over.
+      if waitsOnAnRpc && !reset && (await storage.holding()) !== Nothing {
+        throw(Refused(Config.setUpMeanwhileMessage))
+      }
+      let initialState = await storage.initialize(~chainConfigs, ~contractMapping, ~envioInfo)
+      logger->Logger.info(`The indexer storage is ready. Starting indexing!`)
+      Created(initialState)
+    } else {
+      logger->Logger.info(`Found existing indexer storage.`)
+      let stored = await storage.readStoredConfig()
+      let incompatible = paths => Refused(
+        ResumePlan.incompatibleMessage(
+          paths,
+          ~envioInfo,
+          ~resetCommand,
+          ~runCommand,
+          ~addChainCommands=switch addChainCommand {
+          // An `envio start --chain` run meets the same storage, and is
+          // refused for it before it adds anything.
+          | Some(_) if holding === Diverged || holding === Outdated => []
+          | Some(addChainCommand) =>
+            paths
+            ->ResumePlan.newChainIdsWhenOnlyChange(
+              ~stored,
+              ~envioInfo,
+              ~chainConfigs,
+              ~contractMapping,
+            )
+            ->Array.map(addChainCommand)
+          | None => []
+          },
+        ),
+      )
+      switch ResumePlan.make(~stored, ~envioInfo, ~chainConfigs, ~contractMapping, ~isolated) {
+      | Incompatible(changedPaths) => throw(incompatible(changedPaths))
+      // After Incompatible: a config change is reported first, since its message names what to revert.
+      | _ if holding === Diverged => throw(Refused(Config.divergedMessage(~resetCommand)))
+      | _ if holding === Outdated => throw(incompatible([ResumePlan.olderEnvio]))
+      | Resume => ()
+      | AddChain(chainConfig) =>
+        logger->Logger.info(
+          `Adding the chain to the existing indexer storage...`,
+          ~params={"chainId": chainConfig.id},
+        )
+        // The same resolution `initialize` runs, and for the same reason:
+        // this is the one time the chain's row is written.
+        let chainConfig =
+          (
+            await [chainConfig]->StartBlockResolver.resolveAllOrThrow(
+              ~logger,
+              ~lowercaseAddresses,
+              ~retry=startBlockRetry,
+              ~timing=?sourceTiming,
+            )
+          )->Array.getUnsafe(0)
+        await storage.addChain(~chainConfig, ~contractMapping=stored.contractMapping)
+      }
+      Existing({contractMapping: stored.contractMapping})
+    }
+  } catch {
+  | exn => exn->throwRefusalOrLoggedFailure(~logger)
   }
-}
+
+// The commands a refusal names, for the command the operator ran.
+let resetCommandForRun = (~config, ~isDevelopmentMode) =>
+  (isDevelopmentMode ? "envio dev -r" : "envio start -r")->Config.withProjectFlags(~config)
+let runCommandForRun = (~config, ~isDevelopmentMode) =>
+  (isDevelopmentMode ? "envio dev" : "envio start")->Config.withProjectFlags(~config)
+
+// Takes over the chains this process indexes from what earlier runs stored.
+// Taking over trims ClickHouse back to what Postgres committed for them, so it
+// is only for a process about to index them, and only once what it read holds
+// up. The config's addresses are checked here rather than in `prepare`: they
+// sit in the address table among every registered one, which only the resume
+// of their chain reads.
+let resume = async (
+  storage: storage,
+  ~logger,
+  ~config: Config.t,
+  ~isDevelopmentMode,
+  ~contractMapping,
+) =>
+  try {
+    let chainConfigs = config.chainMap->ChainMap.values
+    let chainIds = chainConfigs->Array.map(chain => chain.id)
+    let initialState = await storage.resumeInitialState(~chainIds, ~contractMapping)
+    switch chainConfigs
+    ->Array.filterMap(chainConfig =>
+      initialState.chains
+      ->Array.find(chain => chain.id === chainConfig.id)
+      ->Option.map(chain => (chainConfig, chain.addressRows))
+    )
+    ->ResumePlan.changedConfigAddressPaths(
+      ~ecosystem=(config.ecosystem.name :> string),
+      ~contractMapping,
+      ~lowercaseAddresses=config.lowercaseAddresses,
+    ) {
+    | [] => ()
+    | changedPaths =>
+      throw(
+        Refused(
+          changedPaths->ResumePlan.incompatibleMessage(
+            ~envioInfo=config.envioInfo,
+            ~resetCommand=resetCommandForRun(~config, ~isDevelopmentMode),
+            ~runCommand=Some(runCommandForRun(~config, ~isDevelopmentMode)),
+          ),
+        ),
+      )
+    }
+    await storage.takeOver(~committed=initialState.checkpointFrontier)
+    let progress = Dict.make()
+    initialState.chains->Array.forEach(chain =>
+      progress->ChainId.Dict.set(chain.id, chain.progressBlockNumber)
+    )
+    logger->Logger.info(
+      `Successfully resumed indexing state! Continuing from the last checkpoint.`,
+      ~params={"progress": progress},
+    )
+    initialState
+  } catch {
+  | exn => exn->throwRefusalOrLoggedFailure(~logger)
+  }
 
 // Brings the schema up to date for a run that is about to start, as opposed to
 // a migration command: what a config change prints names the command the
 // operator ran, and an unreachable chain is waited on rather than reported,
 // since somebody is watching the run come up.
-let initForRun = (
-  persistence,
+let prepareForRun = (
+  storage: storage,
   ~logger,
   ~config: Config.t,
   ~reset,
   ~isDevelopmentMode,
-  ~announceResume=!Worker.isEnabled,
   ~startBlockRetry=?,
   ~sourceTiming=?,
 ) =>
-  persistence->init(
+  storage->prepare(
     ~logger,
-    ~announceResume,
     ~startBlockRetry?,
     ~sourceTiming?,
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
     ~envioInfo=config.envioInfo,
-    ~resetCommand=(isDevelopmentMode ? "envio dev -r" : "envio start -r")->Config.withProjectFlags(
-      ~config,
-    ),
-    ~runCommand=Some(
-      (isDevelopmentMode ? "envio dev" : "envio start")->Config.withProjectFlags(~config),
-    ),
+    ~resetCommand=resetCommandForRun(~config, ~isDevelopmentMode),
+    ~runCommand=Some(runCommandForRun(~config, ~isDevelopmentMode)),
     ~lowercaseAddresses=config.lowercaseAddresses,
     ~isolated=config.isolated,
     ~addChainCommand=?config->Config.addChainCommand,
   )
 
-let getInitializedStorageOrThrow = persistence => {
-  switch persistence.storageStatus {
-  | Unknown
-  | Initializing(_) =>
-    JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
-  | Ready(_) => persistence.storage
+// What a process indexing the config's chains starts from.
+let initForRun = async (
+  storage: storage,
+  ~logger,
+  ~config: Config.t,
+  ~reset,
+  ~isDevelopmentMode,
+  ~startBlockRetry=?,
+  ~sourceTiming=?,
+) =>
+  switch await storage->prepareForRun(
+    ~logger,
+    ~config,
+    ~reset,
+    ~isDevelopmentMode,
+    ~startBlockRetry?,
+    ~sourceTiming?,
+  ) {
+  | Created(initialState) => initialState
+  | Existing({contractMapping}) =>
+    await storage->resume(~logger, ~config, ~isDevelopmentMode, ~contractMapping)
   }
-}
 
-let getInitializedState = persistence => {
-  switch persistence.storageStatus {
-  | Unknown
-  | Initializing(_) =>
-    JsError.throwWithMessage(`Failed to access the initial state. The Persistence layer is not initialized.`)
-  | Ready(initialState) => initialState
+// Where every chain of a split run stands. The supervisor indexes none of them,
+// so it resumes none either: each worker resumes its own.
+let initForSupervisor = async (storage: storage, ~logger, ~config: Config.t, ~reset) =>
+  switch await storage->prepareForRun(~logger, ~config, ~reset, ~isDevelopmentMode=config.isDev) {
+  | Created(initialState) => initialState.chains->Array.map(chain => (chain :> chainProgress))
+  | Existing(_) =>
+    try {
+      await storage.readChainProgress(
+        ~chainIds=config.chainMap->ChainMap.values->Array.map(chain => chain.id),
+      )
+    } catch {
+    | exn => exn->throwRefusalOrLoggedFailure(~logger)
+    }
   }
-}
