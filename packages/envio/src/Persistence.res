@@ -114,6 +114,17 @@ type rollbackRemoval = {
   scope: Internal.chainScope,
 }
 
+// A chain that owes the events a config change added their history.
+type addedEventsDebt = {
+  chainId: ChainId.t,
+  events: ResumePlan.addedEvents,
+  // Where the catch-up ends: the chain's progress when its process started on
+  // it. `None` until then.
+  untilBlock: option<int>,
+  // The last block the catch-up has indexed. `None` before its first batch.
+  progressBlock: option<int>,
+}
+
 type holding = StorageClient.holding = Nothing | Initialized | Stranded | Diverged | Outdated
 
 type storage = {
@@ -140,6 +151,17 @@ type storage = {
   // partitions and its config addresses, as `initialize` would have created
   // them. The chains already there are left untouched.
   addChain: (~chainConfig: Config.chain, ~contractMapping: ContractMapping.t) => promise<unit>,
+  // Stores the config that gained `events` together with the debt it brings:
+  // every chain the storage holds owes those events their history.
+  startAddedEvents: (~envioInfo: JSON.t, ~events: ResumePlan.addedEvents) => promise<unit>,
+  readAddedEvents: (~chainIds: array<ChainId.t>) => promise<array<addedEventsDebt>>,
+  // Pins where each chain's catch-up ends at the chain's progress. Only for
+  // the process that drives the chains, before it indexes them any further:
+  // nothing else can say their progress has stopped moving. A chain already
+  // begun is left as it is.
+  beginAddedEvents: (~chainIds: array<ChainId.t>) => promise<unit>,
+  // Clears the debt of the chains that have begun.
+  finishAddedEvents: (~chainIds: array<ChainId.t>) => promise<unit>,
   // `chainIds` is what this process indexes, and all it reads: a split run's
   // sibling reads its own chains, whose addresses can number tens of millions.
   // Only reads, so a resume refused on what it found leaves the stores alone.
@@ -296,6 +318,10 @@ let prepare = async (
   // Set for a per-chain schema, which can take a new chain under its own
   // `envio start --chain` process.
   ~addChainCommand: option<ChainId.t => string>=?,
+  // Set by `envio start --backfill-added-events`.
+  ~backfillAddedEvents=false,
+  // Named in a refusal whose whole change is events the flag can take.
+  ~backfillAddedEventsCommand: option<string>=?,
 ): prepared =>
   try {
     let holding = reset ? Nothing : await storage.holding()
@@ -360,9 +386,29 @@ let prepare = async (
             ->Array.map(addChainCommand)
           | None => []
           },
+          ~backfillAddedEventsCommand=?switch backfillAddedEventsCommand {
+          | Some(_)
+            if holding === Initialized &&
+            stored->ResumePlan.addedEventsRefusal(~envioInfo)->Option.isNone &&
+            ResumePlan.isAddedEventsOnlyChange(
+              ~stored,
+              ~envioInfo,
+              ~chainConfigs,
+              ~contractMapping,
+              ~isolated,
+            ) => backfillAddedEventsCommand
+          | _ => None
+          },
         ),
       )
-      switch ResumePlan.make(~stored, ~envioInfo, ~chainConfigs, ~contractMapping, ~isolated) {
+      switch ResumePlan.make(
+        ~stored,
+        ~envioInfo,
+        ~chainConfigs,
+        ~contractMapping,
+        ~isolated,
+        ~backfillAddedEvents,
+      ) {
       | Incompatible(changedPaths) => throw(incompatible(changedPaths))
       // After Incompatible: a config change is reported first, since its message names what to revert.
       | _ if holding === Diverged => throw(Refused(Config.divergedMessage(~resetCommand)))
@@ -385,6 +431,16 @@ let prepare = async (
             )
           )->Array.getUnsafe(0)
         await storage.addChain(~chainConfig, ~contractMapping=stored.contractMapping)
+      | AddEvents(events) =>
+        switch stored->ResumePlan.addedEventsRefusal(~envioInfo) {
+        | Some(message) => throw(Refused(message))
+        | None =>
+          logger->Logger.info(
+            `Taking the events config.yaml gained into the existing indexer storage. Each chain indexes them from its start block up to where it stands, and carries on at the head meanwhile.`,
+            ~params={"events": events},
+          )
+          await storage.startAddedEvents(~envioInfo, ~events)
+        }
       }
       Existing({contractMapping: stored.contractMapping})
     }
@@ -478,6 +534,10 @@ let prepareForRun = (
     ~lowercaseAddresses=config.lowercaseAddresses,
     ~isolated=config.isolated,
     ~addChainCommand=?config->Config.addChainCommand,
+    ~backfillAddedEvents=config.backfillAddedEvents,
+    ~backfillAddedEventsCommand=?isDevelopmentMode
+      ? None
+      : Some("envio start --backfill-added-events"->Config.withProjectFlags(~config)),
   )
 
 // What a process indexing the config's chains starts from.

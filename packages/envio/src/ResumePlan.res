@@ -13,13 +13,22 @@ type stored = {
   envioInfo: option<JSON.t>,
   chains: array<storedChain>,
   contractMapping: ContractMapping.t,
+  // The chains that still owe the events an earlier config change added their
+  // history.
+  addedEventsChainIds: array<ChainId.t>,
 }
+
+// The events contracts gained since the storage was built, by contract name.
+type addedEvents = dict<array<string>>
 
 type t =
   | Resume
   // Configured since the storage was built, and the only chain its
   // `envio start --chain` process drives.
   | AddChain(Config.chain)
+  // Events on contracts the storage already knows, in a run started with
+  // `--backfill-added-events`.
+  | AddEvents(addedEvents)
   | Incompatible(array<string>)
 
 // The part of a chain's config its storage keeps, shaped so a stored chain and
@@ -51,6 +60,107 @@ let withChains = (envioInfo: JSON.t, ~chains: array<(ChainId.t, JSON.t)>) =>
 
 let olderEnvio = "storage was initialized by an older envio version"
 
+%%private(
+  let eventName = (event: JSON.t) =>
+    switch event {
+    | Object(fields) =>
+      switch fields->Dict.get("name") {
+      | Some(String(name)) => Some(name)
+      | _ => None
+      }
+    | _ => None
+    }
+)
+
+%%private(
+  let eventsOf = (contract: dict<JSON.t>) =>
+    switch contract->Dict.get("events") {
+    | Some(Array(events)) => events
+    | _ => []
+    }
+)
+
+%%private(
+  let isSubsetOfAbi = (~stored: array<JSON.t>, ~current: array<JSON.t>) => {
+    let spell = item => item->Config.canonicalJson->JSON.stringify
+    let currentItems = Utils.Set.fromArray(current->Array.map(spell))
+    stored->Array.every(item => currentItems->Utils.Set.has(item->spell))
+  }
+)
+
+// The record `current` would leave without the events its contracts gained
+// over `stored`, with those events and the paths config.yaml spells them by.
+// An event is told apart by its name, and the events both hold are put in the
+// stored order, so a new event listed ahead of an old one doesn't read as a
+// change to the old one. A contract only one of the two declares is left as it
+// is, for the comparison to report.
+let withoutAddedEvents = (~stored: JSON.t, ~current: JSON.t) => {
+  let addedEvents: addedEvents = Dict.make()
+  let paths = []
+  let withoutAdded = switch (stored, current) {
+  | (Object(storedFields), Object(currentFields)) =>
+    let rebuilt = currentFields->Dict.copy
+    Config.ecosystemFields->Array.forEach(ecosystem =>
+      switch (storedFields->Dict.get(ecosystem), currentFields->Dict.get(ecosystem)) {
+      | (Some(Object(storedEcosystem)), Some(Object(currentEcosystem))) =>
+        switch (storedEcosystem->Dict.get("contracts"), currentEcosystem->Dict.get("contracts")) {
+        | (Some(Object(storedContracts)), Some(Object(currentContracts))) =>
+          let rebuiltContracts = currentContracts->Dict.copy
+          currentContracts->Dict.forEachWithKey((contract, contractName) =>
+            switch (storedContracts->Dict.get(contractName), contract) {
+            | (Some(Object(storedContract)), Object(currentContract)) =>
+              let storedEvents = storedContract->eventsOf
+              let currentEvents = currentContract->eventsOf
+              let storedNames = Utils.Set.fromArray(storedEvents->Array.filterMap(eventName))
+              let added =
+                currentEvents
+                ->Array.filterMap(eventName)
+                ->Array.filter(name => !(storedNames->Utils.Set.has(name)))
+              if added->Utils.Array.notEmpty {
+                addedEvents->Dict.set(contractName, added)
+                added->Array.forEach(
+                  name =>
+                    paths
+                    ->Array.push(`${ecosystem}.contracts.${contractName}.events.${name}`)
+                    ->ignore,
+                )
+                let rebuiltContract = currentContract->Dict.copy
+                rebuiltContract->Dict.set(
+                  "events",
+                  Array(
+                    storedEvents->Array.filterMap(
+                      storedEvent =>
+                        currentEvents->Array.find(
+                          event => event->eventName == storedEvent->eventName,
+                        ),
+                    ),
+                  ),
+                )
+                switch (storedContract->Dict.get("abi"), currentContract->Dict.get("abi")) {
+                | (Some(Array(storedAbi)), Some(Array(currentAbi)))
+                  if isSubsetOfAbi(~stored=storedAbi, ~current=currentAbi) =>
+                  rebuiltContract->Dict.set("abi", Array(storedAbi))
+                | _ => ()
+                }
+                rebuiltContracts->Dict.set(contractName, Object(rebuiltContract))
+              }
+            | _ => ()
+            }
+          )
+          let rebuiltEcosystem = currentEcosystem->Dict.copy
+          rebuiltEcosystem->Dict.set("contracts", Object(rebuiltContracts))
+          rebuilt->Dict.set(ecosystem, Object(rebuiltEcosystem))
+        | _ => ()
+        }
+      | _ => ()
+      }
+    )
+    JSON.Object(rebuilt)
+  | _ => current
+  }
+  (withoutAdded, addedEvents, paths)
+}
+
 // `envioInfo` is the running config's, `chainConfigs` the chains this process
 // drives. An isolated process answers for `envioInfo` and its own chains only:
 // the ones it leaves out are checked, and added, by the processes that drive
@@ -61,6 +171,7 @@ let make = (
   ~chainConfigs: array<Config.chain>,
   ~contractMapping: ContractMapping.t,
   ~isolated: bool,
+  ~backfillAddedEvents=false,
 ) =>
   switch stored.envioInfo {
   | None => Incompatible([olderEnvio])
@@ -107,15 +218,79 @@ let make = (
       ~stored=storedEnvioInfo->withChains(~chains=storedEntries),
       ~current=envioInfo->withChains(~chains=currentEntries),
     )
-    let changedPaths =
-      stored.contractMapping->ContractMapping.isEqual(contractMapping)
-        ? changedPaths
-        : changedPaths->Array.concat(["contracts"])
+    let hasSameContracts = stored.contractMapping->ContractMapping.isEqual(contractMapping)
+    let changedPaths = hasSameContracts ? changedPaths : changedPaths->Array.concat(["contracts"])
     switch (changedPaths, added) {
     | ([], None) => Resume
     | ([], Some(chain)) => AddChain(chain)
+    | (changedPaths, None) if hasSameContracts =>
+      let (withoutAdded, addedEvents, addedEventPaths) = withoutAddedEvents(
+        ~stored=storedEnvioInfo,
+        ~current=envioInfo,
+      )
+      let isOnlyChange =
+        addedEventPaths->Utils.Array.notEmpty &&
+          Config.diffPaths(
+            ~stored=storedEnvioInfo->withChains(~chains=storedEntries),
+            ~current=withoutAdded->withChains(~chains=currentEntries),
+          )->Utils.Array.isEmpty
+      switch (isOnlyChange, backfillAddedEvents) {
+      | (true, true) => AddEvents(addedEvents)
+      | (true, false) => Incompatible(addedEventPaths)
+      | (false, _) => Incompatible(changedPaths)
+      }
     | (changedPaths, _) => Incompatible(changedPaths)
     }
+  }
+
+// Whether the events config.yaml gained are the whole of what changed, which
+// is when `--backfill-added-events` can take them.
+let isAddedEventsOnlyChange = (
+  ~stored: stored,
+  ~envioInfo: JSON.t,
+  ~chainConfigs: array<Config.chain>,
+  ~contractMapping: ContractMapping.t,
+  ~isolated: bool,
+) =>
+  switch make(
+    ~stored,
+    ~envioInfo,
+    ~chainConfigs,
+    ~contractMapping,
+    ~isolated,
+    ~backfillAddedEvents=true,
+  ) {
+  | AddEvents(_) => true
+  | Resume | AddChain(_) | Incompatible(_) => false
+  }
+
+// Why the added events can't be taken into this storage, when they can't.
+let addedEventsRefusal = (stored: stored, ~envioInfo: JSON.t) =>
+  switch stored.addedEventsChainIds {
+  | [] =>
+    switch envioInfo {
+    | Object(fields)
+      if switch fields->Dict.get("storage") {
+      | Some(Object(storage)) => storage->Dict.get("clickhouse") == Some(Boolean(true))
+      | _ => false
+      } =>
+      Some(
+        "`--backfill-added-events` doesn't support ClickHouse storage yet: its rows are kept by checkpoint, and the added events are indexed outside the chain's checkpoint order.",
+      )
+    | Object(fields) if fields->Dict.get("saveFullHistory") == Some(Boolean(true)) =>
+      Some(
+        "`--backfill-added-events` can't be used with `save_full_history: true`: the added events are indexed after the ones already stored, so their rows can't join a history kept in block order.",
+      )
+    | _ => None
+    }
+  | chainIds =>
+    Some(
+      `An earlier \`--backfill-added-events\` run hasn't finished on chain ${chainIds
+        ->Array.map(ChainId.toString)
+        ->Array.join(
+          ", ",
+        )}. Start the indexer with the config that run used and let it finish before adding more events.`,
+    )
   }
 
 // The paths of the config addresses each resumed chain gained or lost since it
@@ -225,6 +400,7 @@ let incompatibleMessage = (
   ~resetCommand: string,
   ~runCommand: option<string>,
   ~addChainCommands: array<string>=[],
+  ~backfillAddedEventsCommand: option<string>=?,
 ) => {
   let hasClickhouse = switch envioInfo {
   | Object(d) =>
@@ -240,5 +416,6 @@ let incompatibleMessage = (
     ~runCommand,
     ~hasClickhouse,
     ~addChainCommands,
+    ~backfillAddedEventsCommand?,
   )
 }

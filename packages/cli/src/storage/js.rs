@@ -14,8 +14,8 @@ use super::effect_cache::{CacheEvent, Scope, StoredCache};
 use super::rows::ResultSet;
 use super::schema::{effect_cache_fields, raw_event_fields, Encoding, Field, Schema};
 use super::types::{
-    Addresses, Bounds, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Frontier, Progress,
-    ResumedChain,
+    AddedEventsProgress, Addresses, Bounds, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint,
+    Frontier, Progress, ResumedChain,
 };
 use super::{AddChain, Holding, Initialize, Store, WriteError};
 use crate::clickhouse;
@@ -162,6 +162,15 @@ pub struct StoredConfigOutput {
     pub envio_info: Option<String>,
     pub contract_names: Option<Vec<String>>,
     pub chains: Vec<ChainConfig>,
+    pub added_events_chain_ids: Vec<i64>,
+}
+
+#[napi(object)]
+pub struct AddedEventsOutput {
+    pub chain_id: i64,
+    pub events: String,
+    pub until_block: Option<i32>,
+    pub progress_block: Option<i32>,
 }
 
 #[napi(object)]
@@ -293,6 +302,7 @@ pub struct EffectCacheWriteInput {
 pub struct BatchInput {
     pub rollback: Option<RollbackWriteInput>,
     pub progress: Vec<Progress>,
+    pub added_events_progress: Vec<AddedEventsProgress>,
     pub raw_events: Option<u32>,
     pub changes: Vec<ChangesInput>,
     pub chain_meta: Vec<ChainMeta>,
@@ -669,7 +679,53 @@ impl JsStorage {
             envio_info: stored.envio_info,
             contract_names: stored.contract_names,
             chains: stored.chains,
+            added_events_chain_ids: stored.added_events_chain_ids,
         })
+    }
+
+    #[napi]
+    pub async fn start_added_events(&self, envio_info: String, events: String) -> napi::Result<()> {
+        self.inner
+            .start_added_events(&envio_info, &events)
+            .await
+            .map_err(to_napi)
+    }
+
+    #[napi]
+    pub async fn read_added_events(
+        &self,
+        chain_ids: Vec<i64>,
+    ) -> napi::Result<Vec<AddedEventsOutput>> {
+        let added = self
+            .inner
+            .read_added_events(&chain_ids)
+            .await
+            .map_err(to_napi)?;
+        Ok(added
+            .into_iter()
+            .map(|added| AddedEventsOutput {
+                chain_id: added.chain_id,
+                events: added.events,
+                until_block: added.until_block,
+                progress_block: added.progress_block,
+            })
+            .collect())
+    }
+
+    #[napi]
+    pub async fn begin_added_events(&self, chain_ids: Vec<i64>) -> napi::Result<()> {
+        self.inner
+            .begin_added_events(&chain_ids)
+            .await
+            .map_err(to_napi)
+    }
+
+    #[napi]
+    pub async fn finish_added_events(&self, chain_ids: Vec<i64>) -> napi::Result<()> {
+        self.inner
+            .finish_added_events(&chain_ids)
+            .await
+            .map_err(to_napi)
     }
 
     /// Resumes the chains this process indexes.
@@ -1046,6 +1102,7 @@ impl JsStorage {
         Ok(Batch {
             rollback,
             progress: batch.progress,
+            added_events_progress: batch.added_events_progress,
             raw_events,
             changes,
             chain_meta: batch.chain_meta,

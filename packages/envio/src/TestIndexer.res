@@ -579,6 +579,13 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     JsError.throwWithMessage(
       "TestIndexer: addChain should not be called; the initial state is derived from config.",
     ),
+  startAddedEvents: async (~envioInfo as _, ~events as _) =>
+    JsError.throwWithMessage(
+      "TestIndexer: startAddedEvents should not be called; the initial state is derived from config.",
+    ),
+  readAddedEvents: async (~chainIds as _) => [],
+  beginAddedEvents: async (~chainIds as _) => (),
+  finishAddedEvents: async (~chainIds as _) => (),
   resumeInitialState: async (~chainIds as _, ~contractMapping as _) =>
     JsError.throwWithMessage(
       "TestIndexer: resumeInitialState should not be called; the initial state is derived from config.",

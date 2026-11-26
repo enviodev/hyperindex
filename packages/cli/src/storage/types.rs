@@ -138,6 +138,30 @@ pub struct StoredConfig {
     pub envio_info: Option<String>,
     pub contract_names: Option<Vec<String>>,
     pub chains: Vec<ChainConfig>,
+    /// The chains still owing the events an earlier config change added their
+    /// history.
+    pub added_events_chain_ids: Vec<i64>,
+}
+
+/// A chain that owes the events a config change added their history.
+#[derive(Clone, Debug)]
+pub struct AddedEvents {
+    pub chain_id: i64,
+    /// The added events as the runtime recorded them; storage doesn't read it.
+    pub events: String,
+    /// Where the catch-up ends: the chain's progress when its process started
+    /// on it. None until then.
+    pub until_block: Option<i32>,
+    /// The last block the catch-up has indexed. None before its first batch.
+    pub progress_block: Option<i32>,
+}
+
+/// How far a batch of a chain's catch-up on added events got.
+#[derive(Clone, Debug)]
+#[napi_derive::napi(object)]
+pub struct AddedEventsProgress {
+    pub chain_id: i64,
+    pub progress_block: i32,
 }
 
 #[derive(Clone, Debug)]

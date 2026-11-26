@@ -5,7 +5,10 @@
 use std::sync::Arc;
 
 use super::changes::ChangeSet;
-use super::types::{Addresses, Bounds, ChainMeta, Checkpoints, DiffCheckpoint, Frontier, Progress};
+use super::types::{
+    AddedEventsProgress, Addresses, Bounds, ChainMeta, Checkpoints, DiffCheckpoint, Frontier,
+    Progress,
+};
 use crate::columnar::Arena;
 
 pub struct RollbackWrite {
@@ -30,6 +33,9 @@ pub struct EffectCacheWrite {
 pub struct Batch {
     pub rollback: Option<RollbackWrite>,
     pub progress: Vec<Progress>,
+    /// Set instead of `progress` by a batch of a catch-up on added events,
+    /// which leaves the chains' own progress, frontier and checkpoints alone.
+    pub added_events_progress: Vec<AddedEventsProgress>,
     pub raw_events: Option<Arena>,
     pub changes: Vec<Arc<ChangeSet>>,
     pub chain_meta: Vec<ChainMeta>,

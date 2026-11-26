@@ -16,7 +16,7 @@ use super::handoff::{Failure, Gate, Handoff, WriteError};
 use super::rows::ResultSet;
 use super::schema::{Entity, Schema};
 use super::types::{
-    Bounds, ChainMeta, Frontier, ProgressDiff, ResumedChain, Sequence, StoredConfig,
+    AddedEvents, Bounds, ChainMeta, Frontier, ProgressDiff, ResumedChain, Sequence, StoredConfig,
 };
 use super::{AddChain, Holding, Initialize, Resume, Resumed, Store};
 use crate::clickhouse;
@@ -127,6 +127,22 @@ impl Storage {
 
     pub async fn read_stored_config(&self) -> Result<StoredConfig> {
         self.postgres.read_stored_config().await
+    }
+
+    pub async fn start_added_events(&self, envio_info: &str, events: &str) -> Result<()> {
+        self.postgres.start_added_events(envio_info, events).await
+    }
+
+    pub async fn read_added_events(&self, chain_ids: &[i64]) -> Result<Vec<AddedEvents>> {
+        self.postgres.read_added_events(chain_ids).await
+    }
+
+    pub async fn begin_added_events(&self, chain_ids: &[i64]) -> Result<()> {
+        self.postgres.begin_added_events(chain_ids).await
+    }
+
+    pub async fn finish_added_events(&self, chain_ids: &[i64]) -> Result<()> {
+        self.postgres.finish_added_events(chain_ids).await
     }
 
     /// Postgres keeps only the checkpoints anchoring its history, and a

@@ -381,6 +381,9 @@ Start the indexer. Runs codegen automatically before launching so the on-disk ty
 * `--chain <CHAIN_ID>` — Index only this chain, leaving the others to their own `envio start --chain` processes. Repeat the flag for several chains.
 
    Only needed to place chains yourself. Requires a per-chain schema, migrated before any process starts, and a separate `ENVIO_INDEXER_PORT` per process. A chain added to config.yaml after the migration joins the database when its process names only that chain.
+* `--backfill-added-events` — Keep the database when config.yaml only gained events on contracts it already had: index just the new events from the start block up to where each chain stands, then continue.
+
+   Only for handlers that write rows of their own event and read nothing other events write: the new events are indexed after the ones already stored, not in block order with them.
 
 
 

@@ -261,6 +261,10 @@ let makeInternal = (
   ~knownHeight=0,
   ~isResumed=false,
   ~sourceTiming=?,
+  // Narrows what the chain fetches to these registrations, leaving out its
+  // block handlers too. The chain still knows every registration, so an item
+  // names the same one it would under an unnarrowed run.
+  ~fetchesRegistration: option<Internal.onEventRegistration => bool>=?,
 ): t => {
   // Handler binding + `where`-derived fetch state, and onBlock registrations,
   // are already collected by `HandlerRegister.finishRegistration`, keyed by
@@ -276,10 +280,14 @@ let makeInternal = (
   // A block handler without `_gte` counts its interval from the chain's start
   // block. Spelled out here because a source matching blocks to handlers needs
   // the origin, and the chain's start block is only resolved by now.
-  let onBlockRegistrations = onBlockRegistrations->Array.map(reg => {
-    ...reg,
-    startBlock: Some(reg.startBlock->Option.getOr(startBlock)),
-  })
+  let onBlockRegistrations = switch fetchesRegistration {
+  | Some(_) => []
+  | None =>
+    onBlockRegistrations->Array.map(reg => {
+      ...reg,
+      startBlock: Some(reg.startBlock->Option.getOr(startBlock)),
+    })
+  }
 
   chainConfig.contracts->Array.forEach(contract => {
     switch contract.startBlock {
@@ -308,7 +316,10 @@ let makeInternal = (
     ~progressBlockNumber,
     ~startBlock,
     ~endBlock,
-    ~onEventRegistrations,
+    ~onEventRegistrations=switch fetchesRegistration {
+    | Some(fetchesRegistration) => onEventRegistrations->Array.filter(fetchesRegistration)
+    | None => onEventRegistrations
+    },
     ~knownHeight,
     ~chainId=chainConfig.id,
     ~onNotice=notice => logger->logFetchStateNotice(notice),
@@ -434,6 +445,7 @@ let makeFromDbState = (
   // The indexer's root logger; the chain's own adds its id.
   ~logger,
   ~sourceTiming=?,
+  ~fetchesRegistration=?,
 ) => {
   let logger = logger->Logger.withChainId(chainConfig.id)
 
@@ -467,6 +479,7 @@ let makeFromDbState = (
     ~knownHeight=resumedChainState.sourceBlockNumber,
     ~isResumed=true,
     ~sourceTiming?,
+    ~fetchesRegistration?,
   )
 }
 

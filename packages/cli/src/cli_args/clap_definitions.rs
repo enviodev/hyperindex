@@ -152,6 +152,14 @@ pub struct StartArgs {
     ///config.yaml after the migration joins the database when its process names only that chain.
     #[arg(long = "chain", value_name = "CHAIN_ID")]
     pub chains: Vec<u64>,
+
+    ///Keep the database when config.yaml only gained events on contracts it already had: index
+    ///just the new events from the start block up to where each chain stands, then continue.
+    ///
+    ///Only for handlers that write rows of their own event and read nothing other events write:
+    ///the new events are indexed after the ones already stored, not in block order with them.
+    #[arg(long = "backfill-added-events", action, conflicts_with = "restart")]
+    pub backfill_added_events: bool,
 }
 
 #[derive(Debug, Args)]

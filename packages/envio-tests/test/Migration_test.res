@@ -1,9 +1,10 @@
 open Vitest
 
 // What a restart does with a config.yaml or schema edited since the database
-// was built. The one migration applied in place is a chain added under
-// `envio start --chain`; every other change to what the database holds is
-// refused and needs a resync. What config.yaml owns but the database doesn't —
+// was built. Two migrations are applied in place: a chain added under
+// `envio start --chain`, and events added to contracts the database already
+// has under `envio start --backfill-added-events`. Every other change to what
+// the database holds is refused and needs a resync. What config.yaml owns but the database doesn't —
 // sources, block lag, a contract's start block — is read on every start. A
 // migration the indexer learns to apply flips its case here from `Refused`.
 
@@ -52,6 +53,7 @@ let deployment = (
   ~name="migration",
   ~chains,
   ~contracts=["Token"],
+  ~events=["Transfer()"],
   ~schema=schema,
   ~addressFormat="checksum",
   ~storage="",
@@ -67,8 +69,12 @@ contracts:${contracts
       ->Array.map(contract =>
         `
   - name: ${contract}
-    events:
-      - event: Transfer()`
+    events:${events
+          ->Array.map(event =>
+            `
+      - event: ${event}`
+          )
+          ->Array.join("")}`
       )
       ->Array.join("")}
 chains:${chains->Array.join("")}${storage}`,
@@ -286,6 +292,89 @@ describe("Changing the chains of a deployment", () => {
     ~edited=with137Moved,
     ~chains=[137],
     ~expected=Refused(["chains.137.startBlock"]),
+  )
+})
+
+describe("Changing the events a contract indexes", () => {
+  let withApproval = deployment(~chains=[chain(1)], ~events=["Transfer()", "Approval()"])
+
+  // An event added under `envio start --backfill-added-events` is taken into
+  // the database: AddedEvents_test.res states what that run indexes.
+  // https://github.com/enviodev/hyperindex/issues/1878
+  Migration.it(
+    "Refuses an event added to a contract, naming it",
+    ~deployed,
+    ~edited=withApproval,
+    ~expected=Refused(["evm.contracts.Token.events.Approval"]),
+  )
+
+  Migration.it(
+    "Refuses an event added ahead of the existing one, naming only the new one",
+    ~deployed,
+    ~edited=deployment(~chains=[chain(1)], ~events=["Approval()", "Transfer()"]),
+    ~expected=Refused(["evm.contracts.Token.events.Approval"]),
+  )
+
+  // Events and ABI entries are compared by position, and the ABI is held in
+  // name order, so the event that stays is reported as changed.
+  Migration.it(
+    "Refuses a removed event",
+    ~deployed=withApproval,
+    ~edited=deployed,
+    ~expected=Refused([
+      "evm.contracts.Token.abi[0].name",
+      "evm.contracts.Token.abi[1]",
+      "evm.contracts.Token.events[1]",
+    ]),
+  )
+
+  Migration.it(
+    "Refuses a removed event under --backfill-added-events",
+    ~deployed=withApproval,
+    ~edited=deployed,
+    ~backfillAddedEvents=true,
+    ~expected=Refused([
+      "evm.contracts.Token.abi[0].name",
+      "evm.contracts.Token.abi[1]",
+      "evm.contracts.Token.events[1]",
+    ]),
+  )
+
+  Migration.it(
+    "Refuses an added event alongside another change under --backfill-added-events",
+    ~deployed,
+    ~edited=deployment(
+      ~chains=[chain(1)],
+      ~events=["Transfer()", "Approval()"],
+      ~schema=schema ++ "\ntype Extra {\n  id: ID!\n}\n",
+    ),
+    ~backfillAddedEvents=true,
+    ~expected=Refused([
+      "evm.contracts.Token.abi[0].name",
+      "evm.contracts.Token.abi[1]",
+      "evm.contracts.Token.events[1]",
+    ]),
+  )
+
+  Migration.it(
+    "Refuses an added event alongside a changed chain under --backfill-added-events",
+    ~deployed,
+    ~edited=deployment(~chains=[chain(1, ~startBlock="2")], ~events=["Transfer()", "Approval()"]),
+    ~backfillAddedEvents=true,
+    ~expected=Refused([
+      "evm.contracts.Token.abi[0].name",
+      "evm.contracts.Token.abi[1]",
+      "evm.contracts.Token.events[1]",
+      "chains.1.startBlock",
+    ]),
+  )
+
+  Migration.it(
+    "Refuses an event that came with a new contract under --backfill-added-events",
+    ~deployed,
+    ~edited=deployment(~chains=[chain(1)], ~contracts=["Token", "Vault"]),
+    ~backfillAddedEvents=true,
+    ~expected=Refused(["evm.contracts.Vault", "contracts"]),
   )
 })
 
