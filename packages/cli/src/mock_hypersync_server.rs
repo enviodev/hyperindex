@@ -851,8 +851,12 @@ fn encode_table(rows: Option<&Value>, kind_of: fn(&str) -> Result<Kind>) -> Resu
     let schema = Arc::new(Schema::new(fields));
     let mut out = Vec::new();
     {
-        let mut writer =
-            FileWriter::try_new(&mut out, &schema).context("create arrow ipc writer")?;
+        // HyperSync compresses every buffer with ZSTD.
+        let options = arrow::ipc::writer::IpcWriteOptions::default()
+            .try_with_compression(Some(arrow::ipc::CompressionType::ZSTD))
+            .context("set arrow ipc compression")?;
+        let mut writer = FileWriter::try_new_with_options(&mut out, &schema, options)
+            .context("create arrow ipc writer")?;
         if !columns.is_empty() {
             let batch = RecordBatch::try_new(schema.clone(), columns)
                 .context("build arrow record batch")?;

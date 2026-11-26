@@ -25,6 +25,8 @@ use reqwest::{Method, StatusCode, Url};
 /// addresses would go unseen. Rebuilding the client this often bounds that.
 const MAX_CONNECTION_AGE: Duration = Duration::from_secs(60);
 
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// How many downloaded chunks may wait for the unpacker.
 const CHUNKS_IN_FLIGHT: usize = 4;
 
@@ -222,6 +224,10 @@ impl Transport {
 fn build_http_client(user_agent: &str) -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(user_agent)
+        // Without it a dead address holds the connection in SYN_SENT until the
+        // request timeout. Hyper splits it across the resolved addresses and
+        // moves on to the next.
+        .connect_timeout(CONNECT_TIMEOUT)
         .build()
         .context("build http client")
 }
@@ -461,6 +467,32 @@ fn read_rollback_guard(response: &query_response::Reader) -> Result<Option<Rollb
     }))
 }
 
+/// The bytes of one block of an IPC file, checked to lie inside it.
+///
+/// This keeps arrow's own unchecked reads in bounds, but the server is
+/// trusted: other corrupted lengths, such as a compressed buffer's
+/// uncompressed-length prefix, can still make arrow allocate without bound,
+/// as they could with its `FileReader`.
+fn block_bytes(file: &Buffer, block: &arrow::ipc::Block) -> Result<Buffer> {
+    let offset = usize::try_from(block.offset()).context("IPC block offset")?;
+    let metadata_length =
+        usize::try_from(block.metaDataLength()).context("IPC block metadata length")?;
+    // arrow reads the continuation marker and metadata length, 8 bytes,
+    // without checking the block holds them.
+    anyhow::ensure!(metadata_length >= 8, "IPC block metadata is too short");
+    let length = usize::try_from(block.bodyLength())
+        .context("IPC block body length")?
+        .checked_add(metadata_length)
+        .context("IPC block length overflows")?;
+    anyhow::ensure!(
+        offset
+            .checked_add(length)
+            .is_some_and(|end| end <= file.len()),
+        "IPC block is out of bounds"
+    );
+    Ok(file.slice_with_length(offset, length))
+}
+
 /// The record batches of an Arrow IPC file, their arrays laid over `file`
 /// without copying.
 fn read_ipc_file(file: &Buffer) -> Result<Vec<RecordBatch>> {
@@ -486,23 +518,367 @@ fn read_ipc_file(file: &Buffer) -> Result<Vec<RecordBatch>> {
         footer.schema().context("IPC footer has no schema")?,
     ));
     let mut decoder = arrow::ipc::reader::FileDecoder::new(schema, footer.version());
-    let block_bytes = |block: &arrow::ipc::Block| {
-        let length = block.bodyLength() as usize + block.metaDataLength() as usize;
-        file.slice_with_length(block.offset() as usize, length)
-    };
     for block in footer.dictionaries().iter().flatten() {
         decoder
-            .read_dictionary(block, &block_bytes(block))
+            .read_dictionary(block, &block_bytes(file, block)?)
             .context("read IPC dictionary")?;
     }
+    // A footer without the list would read as an empty table: a corrupted
+    // response silently losing its rows.
+    let blocks = footer
+        .recordBatches()
+        .context("IPC footer has no record batches")?;
     let mut batches = Vec::new();
-    for block in footer.recordBatches().iter().flatten() {
+    for block in blocks.iter() {
         if let Some(batch) = decoder
-            .read_record_batch(block, &block_bytes(block))
+            .read_record_batch(block, &block_bytes(file, block)?)
             .context("read IPC record batch")?
         {
             batches.push(batch);
         }
     }
     Ok(batches)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::array::{Array, ArrayData};
+
+    fn bytes_in_range(data: &ArrayData, range: &std::ops::Range<usize>) -> (usize, usize) {
+        let mut inside = 0;
+        let mut outside = 0;
+        let buffers = data
+            .buffers()
+            .iter()
+            .chain(data.nulls().map(|nulls| nulls.buffer()));
+        for buffer in buffers {
+            if range.contains(&(buffer.as_ptr() as usize)) {
+                inside += buffer.len();
+            } else {
+                outside += buffer.len();
+            }
+        }
+        for child in data.child_data() {
+            let (child_inside, child_outside) = bytes_in_range(child, range);
+            inside += child_inside;
+            outside += child_outside;
+        }
+        (inside, outside)
+    }
+
+    fn log_batch(rows: u64) -> RecordBatch {
+        RecordBatch::try_from_iter([(
+            "block_number",
+            Arc::new(arrow::array::UInt64Array::from_iter_values(0..rows))
+                as arrow::array::ArrayRef,
+        )])
+        .unwrap()
+    }
+
+    /// An IPC file as HyperSync writes one: every buffer ZSTD compressed.
+    fn ipc_file(batch: &RecordBatch) -> Vec<u8> {
+        let options = arrow::ipc::writer::IpcWriteOptions::default()
+            .try_with_compression(Some(arrow::ipc::CompressionType::ZSTD))
+            .unwrap();
+        let mut out = Vec::new();
+        let mut writer = arrow::ipc::writer::FileWriter::try_new_with_options(
+            &mut out,
+            &batch.schema(),
+            options,
+        )
+        .unwrap();
+        writer.write(batch).unwrap();
+        writer.finish().unwrap();
+        drop(writer);
+        out
+    }
+
+    /// `valid` with its first record batch block's metadata length set to
+    /// `metadata_length`.
+    fn with_block_metadata_length(valid: &[u8], metadata_length: i32) -> Vec<u8> {
+        let footer_length =
+            arrow::ipc::reader::read_footer_length(valid[valid.len() - 10..].try_into().unwrap())
+                .unwrap();
+        let footer_start = valid.len() - 10 - footer_length;
+        let footer = arrow::ipc::root_as_footer(&valid[footer_start..valid.len() - 10]).unwrap();
+        let block = footer.recordBatches().unwrap().get(0);
+        let mut needle = block.offset().to_le_bytes().to_vec();
+        needle.extend(block.metaDataLength().to_le_bytes());
+        let position = footer_start
+            + valid[footer_start..]
+                .windows(needle.len())
+                .position(|window| window == needle)
+                .unwrap();
+        let mut out = valid.to_vec();
+        out[position + 8..position + 12].copy_from_slice(&metadata_length.to_le_bytes());
+        out
+    }
+
+    /// `valid` with its first block's body length grown past the end of the
+    /// file.
+    fn with_block_past_the_end(valid: &[u8]) -> Vec<u8> {
+        let footer_length =
+            arrow::ipc::reader::read_footer_length(valid[valid.len() - 10..].try_into().unwrap())
+                .unwrap();
+        let footer_start = valid.len() - 10 - footer_length;
+        let footer = arrow::ipc::root_as_footer(&valid[footer_start..valid.len() - 10]).unwrap();
+        let block = footer.recordBatches().unwrap().get(0);
+        let mut needle = block.metaDataLength().to_le_bytes().to_vec();
+        needle.extend([0; 4]);
+        needle.extend(block.bodyLength().to_le_bytes());
+        let position = footer_start
+            + valid[footer_start..]
+                .windows(needle.len())
+                .position(|window| window == needle)
+                .unwrap();
+        let mut out = valid.to_vec();
+        out[position + 8..position + 16].copy_from_slice(&(1i64 << 40).to_le_bytes());
+        out
+    }
+
+    /// An IPC file whose footer has a schema but no record batch list.
+    fn without_record_batches() -> Vec<u8> {
+        let mut builder = flatbuffers::FlatBufferBuilder::new();
+        let schema = arrow::ipc::convert::schema_to_fb_offset(&mut builder, &log_batch(1).schema());
+        let mut footer = arrow::ipc::FooterBuilder::new(&mut builder);
+        footer.add_version(arrow::ipc::MetadataVersion::V5);
+        footer.add_schema(schema);
+        let footer = footer.finish();
+        builder.finish(footer, None);
+        let footer = builder.finished_data();
+        let mut out = b"ARROW1\0\0".to_vec();
+        out.extend_from_slice(footer);
+        out.extend((footer.len() as i32).to_le_bytes());
+        out.extend(b"ARROW1");
+        out
+    }
+
+    #[test]
+    fn a_malformed_ipc_file_is_an_error() {
+        let valid = ipc_file(&log_batch(100));
+        let mut bad_footer_length = valid.clone();
+        let trailer = bad_footer_length.len() - 10;
+        bad_footer_length[trailer..trailer + 4].copy_from_slice(&i32::MAX.to_le_bytes());
+        let cases = [
+            ("empty", vec![]),
+            ("magic only", b"ARROW1".to_vec()),
+            ("second half", valid[valid.len() / 2..].to_vec()),
+            ("footer length past the start", bad_footer_length),
+            ("block past the end", with_block_past_the_end(&valid)),
+            ("no metadata", with_block_metadata_length(&valid, 0)),
+            (
+                "metadata shorter than its prefix",
+                with_block_metadata_length(&valid, 7),
+            ),
+            ("no record batch list", without_record_batches()),
+        ];
+        let outcomes: Vec<(&str, String)> = cases
+            .into_iter()
+            .map(|(case, file)| {
+                let outcome = std::panic::catch_unwind(|| read_ipc_file(&Buffer::from_vec(file)));
+                let described = match outcome {
+                    Ok(Ok(batches)) => format!("read {} batches", batches.len()),
+                    Ok(Err(error)) => format!("error: {error}"),
+                    Err(_) => "panicked".to_string(),
+                };
+                (case, described)
+            })
+            .collect();
+        assert_eq!(
+            outcomes,
+            vec![
+                ("empty", "error: not an Arrow IPC file: 0 bytes".to_string()),
+                (
+                    "magic only",
+                    "error: not an Arrow IPC file: 6 bytes".to_string()
+                ),
+                (
+                    "second half",
+                    "error: IPC block is out of bounds".to_string()
+                ),
+                (
+                    "footer length past the start",
+                    "error: IPC footer longer than the file".to_string()
+                ),
+                (
+                    "block past the end",
+                    "error: IPC block is out of bounds".to_string()
+                ),
+                (
+                    "no metadata",
+                    "error: IPC block metadata is too short".to_string()
+                ),
+                (
+                    "metadata shorter than its prefix",
+                    "error: IPC block metadata is too short".to_string()
+                ),
+                (
+                    "no record batch list",
+                    "error: IPC footer has no record batches".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_compressed_ipc_file_reads_back() {
+        let batch = log_batch(100);
+        assert_eq!(
+            read_ipc_file(&Buffer::from_vec(ipc_file(&batch))).unwrap(),
+            vec![batch]
+        );
+    }
+
+    // https://github.com/enviodev/hyperindex/issues/1691
+    #[cfg(target_os = "linux")]
+    #[tokio::test(start_paused = true)]
+    async fn an_unreachable_address_fails_at_the_connect_timeout() {
+        // Linux drops SYNs once the accept queue is full, like a blackholed
+        // address.
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let listener = socket.listen(0).unwrap().into_std().unwrap();
+        let address = listener.local_addr().unwrap();
+        // Filled with blocking connects: the paused clock would expire a
+        // timeout before a loopback handshake completed. It has to end on a
+        // timed out connect, or the address refuses rather than drops and the
+        // request below would fail without any timeout.
+        let mut fillers = Vec::new();
+        loop {
+            match std::net::TcpStream::connect_timeout(&address, Duration::from_millis(50)) {
+                Ok(stream) => fillers.push(stream),
+                Err(error) if error.kind() == std::io::ErrorKind::TimedOut => break,
+                Err(error) => panic!("filling the accept queue: {error}"),
+            }
+        }
+        let transport = Transport::new(
+            &format!("http://{address}"),
+            "00000000-0000-0000-0000-000000000000".to_string(),
+            "test".to_string(),
+            Duration::from_secs(60),
+            Format::Json,
+        )
+        .unwrap();
+        // The paused clock jumps to whichever timeout fires first, so the
+        // elapsed time names the timer.
+        let start = tokio::time::Instant::now();
+        let result = transport.height().await;
+        let elapsed = start.elapsed();
+        assert!(
+            result.is_err()
+                && elapsed >= CONNECT_TIMEOUT
+                && elapsed < CONNECT_TIMEOUT + Duration::from_secs(1),
+            "{result:?} after {elapsed:?}"
+        );
+    }
+
+    /// What a real HyperSync response looks like on the wire and once read:
+    /// the HTTP version, the body and unpacked sizes, and how much of each
+    /// table's arrays stays in the message rather than being decompressed.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "live: needs ENVIO_API_TOKEN and network access to eth.hypersync.xyz"]
+    async fn live_response_shape() {
+        let query: Query = serde_json::from_value(serde_json::json!({
+            "from_block": 20_000_000,
+            "to_block": 20_000_200,
+            "logs": [{"topics": [["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"]]}],
+            "field_selection": {
+                "block": ["number", "hash", "timestamp"],
+                "transaction": ["block_number", "transaction_index", "hash"],
+                "log": ["address", "data", "log_index", "topic0", "topic1", "topic2", "topic3",
+                        "block_number", "transaction_index"],
+            },
+        }))
+        .unwrap();
+        let transport = Transport::new(
+            "https://eth.hypersync.xyz",
+            std::env::var("ENVIO_API_TOKEN").unwrap(),
+            "hyperindex-live-test".to_string(),
+            Duration::from_secs(60),
+            Format::CapnProto {
+                should_cache_queries: false,
+            },
+        )
+        .unwrap();
+        let body =
+            write_request(|request| request.build_full_query_from_query(&query, false)).unwrap();
+        let response = transport
+            .request(Method::POST, &["query", "arrow-ipc", "capnp"])
+            .unwrap()
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        let http_version = format!("{:?}", response.version());
+        let body = response.bytes().await.unwrap();
+        let message = capnp::serialize_packed::read_message(&body[..], reader_options()).unwrap();
+        let segments_bytes: usize = {
+            use capnp::message::ReaderSegments;
+            let segments = message.into_segments();
+            (0..segments.len())
+                .map(|index| segments.get_segment(index as u32).unwrap().len())
+                .sum()
+        };
+        let message = capnp::serialize_packed::read_message(&body[..], reader_options()).unwrap();
+        let data = message
+            .get_root::<query_response::Reader>()
+            .unwrap()
+            .get_data()
+            .unwrap();
+        let mut report = vec![format!(
+            "HTTP {http_version}, body {} bytes, unpacked {segments_bytes} bytes",
+            body.len()
+        )];
+        for (table, file) in [
+            ("blocks", data.get_blocks().unwrap()),
+            ("transactions", data.get_transactions().unwrap()),
+            ("logs", data.get_logs().unwrap()),
+        ] {
+            let buffer = Buffer::from_slice_ref(file);
+            let range_of_copy =
+                (buffer.as_ptr() as usize)..(buffer.as_ptr() as usize + buffer.len());
+            let batches = read_ipc_file(&buffer).unwrap();
+            let (mut inside, mut outside, mut rows) = (0, 0, 0);
+            for batch in &batches {
+                rows += batch.num_rows();
+                for column in batch.columns() {
+                    let (column_inside, column_outside) =
+                        bytes_in_range(&column.to_data(), &range_of_copy);
+                    inside += column_inside;
+                    outside += column_outside;
+                }
+            }
+            let footer_compression = {
+                let trailer_start = file.len() - 10;
+                let footer_length = arrow::ipc::reader::read_footer_length(
+                    file[trailer_start..].try_into().unwrap(),
+                )
+                .unwrap();
+                let footer =
+                    arrow::ipc::root_as_footer(&file[trailer_start - footer_length..trailer_start])
+                        .unwrap();
+                let block = footer.recordBatches().unwrap().get(0);
+                let message = arrow::ipc::root_as_message(
+                    &file[block.offset() as usize + 8
+                        ..block.offset() as usize + block.metaDataLength() as usize],
+                )
+                .unwrap();
+                format!(
+                    "{:?}",
+                    message
+                        .header_as_record_batch()
+                        .and_then(|batch| batch.compression())
+                        .map(|compression| compression.codec())
+                )
+            };
+            report.push(format!(
+                "{table}: {rows} rows, file {} bytes, {} batches, codec {footer_compression}, \
+                 array bytes in the file {inside}, decompressed {outside}",
+                file.len(),
+                batches.len()
+            ));
+        }
+        println!("\n{}\n", report.join("\n"));
+    }
 }

@@ -25,7 +25,10 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["raw_value"] }
 serde_yaml = "0.9.19"
 regex = "1.12"
-reqwest = { version = "0.11", features = ["json"] }
+# rustls with the OS certificate store, as hypersync-client chose: custom CAs
+# (corporate proxies, containers) verify, and HyperSync negotiates HTTP/2 over
+# ALPN, which native-tls doesn't offer without an extra feature.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "http2"] }
 strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
 tokio = { version = "1.49", features = [
@@ -112,6 +115,8 @@ integration_tests = ["hypersync_health"]
 napi-build = "=2.3.1"
 
 [dev-dependencies]
+# Builds an IPC footer arrow's writer can't: one listing no record batches.
+flatbuffers = "25"
 tempdir = "0.3.7"
 paste = "1.0.15"
 tracing-subscriber = "0.3.22"
@@ -120,12 +125,3 @@ insta = "1.48.0"
 vt100 = "0.16.2"
 proptest = "1"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
-
-# NOTE: this is needed for aarch64 linux, since linking of openssl has caused issues via the package manager
-#       See here for this workaround: https://docs.rs/openssl/latest/openssl/#vendored
-#   It should be possible to use a linked version of openssl, but after hours of trying I (Jason) was unsuccessful.
-[target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
-openssl = { version = "0.10.75", features = ["vendored"] }
-
-[target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.dependencies]
-openssl = { version = "0.10.75", features = ["vendored"] }
