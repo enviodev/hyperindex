@@ -1,10 +1,9 @@
 //! A query's transaction registrations as HyperSync transaction selections,
 //! which the server filters on.
 
-use napi::bindgen_prelude::Either;
+use hypersync_client::{format::Address, net_types};
 
 use super::push_unique;
-use super::wire_query::{TransactionFilter, TransactionSelection};
 use crate::chain_buffer::matching::transactions::OnTransactionRegistration;
 use crate::evm::fields::{BlockField, TransactionField};
 use crate::evm::rpc_fields::tx_fields_in;
@@ -12,38 +11,37 @@ use crate::evm::rpc_fields::tx_fields_in;
 #[derive(Debug, PartialEq)]
 pub(crate) struct BuiltTransactionSelection {
     /// One per distinct filter.
-    pub filters: Vec<TransactionFilter>,
+    pub filters: Vec<net_types::TransactionFilter>,
     /// What the handlers read, and what matching the returned rows reads.
     pub transaction_fields: Vec<TransactionField>,
     pub block_fields: Vec<BlockField>,
 }
 
 impl BuiltTransactionSelection {
-    pub(crate) fn selections(&self) -> Vec<Either<TransactionSelection, TransactionFilter>> {
-        self.filters.iter().cloned().map(Either::B).collect()
+    pub(crate) fn selections(&self) -> Vec<net_types::TransactionSelection> {
+        self.filters
+            .iter()
+            .cloned()
+            .map(net_types::TransactionSelection::new)
+            .collect()
     }
 }
 
-fn hex_list(values: &[[u8; 20]]) -> Option<Vec<String>> {
-    (!values.is_empty()).then(|| {
-        values
-            .iter()
-            .map(|value| crate::hex::to_hex(value))
-            .collect()
-    })
+fn addresses(values: &[[u8; 20]]) -> Vec<Address> {
+    values.iter().copied().map(Address::from).collect()
 }
 
 pub(crate) fn build(registrations: &[&OnTransactionRegistration]) -> BuiltTransactionSelection {
-    let mut filters: Vec<TransactionFilter> = Vec::new();
+    let mut filters: Vec<net_types::TransactionFilter> = Vec::new();
     let (mut transaction_mask, mut block_mask) = (0, 0);
     for registration in registrations {
         let filter = &registration.filter;
         transaction_mask |= registration.transaction_mask | filter.fields_read();
         block_mask |= registration.block_mask;
-        let built = TransactionFilter {
-            from: hex_list(&filter.from),
-            to: hex_list(&filter.to),
-            status: filter.status.map(i64::from),
+        let built = net_types::TransactionFilter {
+            from: addresses(&filter.from),
+            to: addresses(&filter.to),
+            status: filter.status,
             ..Default::default()
         };
         push_unique(&mut filters, built);
@@ -101,13 +99,13 @@ mod tests {
             built,
             BuiltTransactionSelection {
                 filters: vec![
-                    TransactionFilter {
-                        from: Some(vec![A.to_string()]),
+                    net_types::TransactionFilter {
+                        from: vec![Address::try_from(A).unwrap()],
                         status: Some(1),
                         ..Default::default()
                     },
-                    TransactionFilter {
-                        to: Some(vec![A.to_string()]),
+                    net_types::TransactionFilter {
+                        to: vec![Address::try_from(A).unwrap()],
                         ..Default::default()
                     },
                 ],

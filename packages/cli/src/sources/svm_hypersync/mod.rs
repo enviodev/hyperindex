@@ -4,13 +4,12 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 pub(crate) mod config;
-mod query;
 mod transaction_counts;
 
 use hypersync_client_solana::from_arrow::blocks_from_arrow;
 use hypersync_client_solana::simple_types as simple;
 use hypersync_client_solana::RateLimitInfo;
-use hypersync_solana_net_types::field_selection::SolanaFieldSelection;
+use hypersync_solana_net_types::field_selection::{BlockField, SolanaFieldSelection};
 use hypersync_solana_net_types::query::SolanaQuery;
 
 use crate::chain_buffer::matching::svm::SvmMatcher;
@@ -27,7 +26,6 @@ use crate::sources::failure::ClientError;
 use crate::sources::request_stats::RequestStat;
 use crate::svm::types;
 pub(crate) use config::SvmClientConfig;
-use query::SvmQuery;
 
 /// The marker the client leaves in the error chain on a 429. It exposes no
 /// typed variant for a rate limit — the 429 is folded into an `anyhow` context
@@ -92,16 +90,6 @@ impl SvmHyperSyncClient {
             counts,
         })
     }
-
-    /// Execute one raw Solana HyperSync page. Event queries and block-hash
-    /// queries convert only the tables they actually consume.
-    async fn get_raw(&self, query: SvmQuery) -> Result<simple::SolanaResponse, ClientError> {
-        let query: SolanaQuery = query
-            .try_into()
-            .context("parse solana query")
-            .map_err(map_err)?;
-        self.run_query(&query).await
-    }
 }
 
 pub(crate) struct SvmHyperSyncClient {
@@ -140,25 +128,16 @@ impl SvmHyperSyncClient {
         &self,
         block_numbers: &[u32],
     ) -> (Result<Page, ClientError>, Vec<RequestStat>) {
-        let fields = query::FieldSelection {
-            block: Some(vec!["slot".to_string(), "blockhash".to_string()]),
-            ..Default::default()
-        };
         let aggregate = Page::from_data(PageData::new(Ecosystem::Svm));
         let (result, request_stats) = paginate_block_hashes(
             block_numbers,
             &aggregate,
             |request_from, to_slot_exclusive| {
-                let fields = fields.clone();
                 async move {
-                    let query = SvmQuery {
-                        from_slot: request_from,
-                        to_slot: Some(to_slot_exclusive),
-                        include_all_blocks: Some(true),
-                        fields: Some(fields),
-                        ..Default::default()
-                    };
-                    let response = self.get_raw(query).await?;
+                    let query = block_hash_query(request_from, to_slot_exclusive)
+                        .context("parse solana query")
+                        .map_err(map_err)?;
+                    let response = self.run_query(&query).await?;
                     let (next, last_returned, mut page) =
                         block_hash_page(response).map_err(map_err)?;
                     // Each advancing cursor proves its half-open range was
@@ -320,6 +299,19 @@ struct CountedPage {
     next_slot: u64,
     blocks: Vec<simple::Block>,
     counts: HashMap<u64, SvmTransactionCounts>,
+}
+
+fn block_hash_query(from_slot: i64, to_slot_exclusive: i64) -> Result<SolanaQuery> {
+    Ok(SolanaQuery {
+        from_slot: u64::try_from(from_slot).context("from_slot must be non-negative")?,
+        to_slot: Some(u64::try_from(to_slot_exclusive).context("to_slot must be non-negative")?),
+        include_all_blocks: true,
+        field_selection: SolanaFieldSelection {
+            block: vec![BlockField::Slot, BlockField::Blockhash],
+            ..Default::default()
+        },
+        ..Default::default()
+    })
 }
 
 /// Convert only the values needed by the block-hash paginator: the advancing
@@ -563,7 +555,7 @@ mod tests {
     use crate::chain_buffer::walk::Item;
     use crate::chain_buffer::{ChainBuffer, ChainBufferConfig};
     use crate::js_value::test_value::JsValue;
-    use query::InstructionSelection;
+    use hypersync_solana_net_types::query::InstructionSelection;
     use selection::SvmProgramInput;
 
     const TOKEN_METADATA_PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
@@ -602,17 +594,17 @@ mod tests {
         eprintln!("current slot: {}", height);
         let from = height.saturating_sub(10_000).max(0);
 
-        let q = SvmQuery {
-            from_slot: from,
-            to_slot: Some(height),
-            instruction_calls: Some(vec![InstructionSelection {
-                executing_account: Some(vec![TOKEN_METADATA_PROGRAM.into()]),
+        let q = SolanaQuery {
+            from_slot: from as u64,
+            to_slot: Some(height as u64),
+            instruction_calls: vec![InstructionSelection {
+                executing_account: vec![TOKEN_METADATA_PROGRAM.parse().unwrap()],
                 ..Default::default()
-            }]),
+            }],
             ..Default::default()
         };
 
-        let resp = client.get_raw(q).await.expect("collect");
+        let resp = client.run_query(&q).await.expect("collect");
         eprintln!(
             "got {} instructions / next_slot={}",
             resp.instruction_calls.len(),
@@ -629,6 +621,35 @@ mod tests {
             );
             assert!(!ix.data.as_deref().unwrap_or_default().is_empty());
         }
+    }
+
+    #[test]
+    fn a_block_hash_query_selects_every_slot_of_its_range() {
+        assert_eq!(
+            serde_json::to_value(block_hash_query(5, 8).unwrap()).unwrap(),
+            serde_json::json!({
+                "from_slot": 5,
+                "to_slot": 8,
+                "instruction_calls": [],
+                "transactions": [],
+                "logs": [],
+                "account_activity": [],
+                "include_all_blocks": true,
+                "field_selection": {
+                    "block": ["slot", "blockhash"],
+                    "transaction": [],
+                    "instruction_call": [],
+                    "log": [],
+                    "account_activity": [],
+                    "reward": [],
+                },
+                "max_num_blocks": null,
+                "max_num_transactions": null,
+                "max_num_instructions": null,
+                "max_num_logs": null,
+                "max_num_account_activity": null,
+            })
+        );
     }
 
     /// The error shape the client's retry loop produces on a 429: the marker

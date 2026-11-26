@@ -1,7 +1,10 @@
 use std::sync::{Arc, Once};
 
 use anyhow::{Context, Result};
-use hypersync_client::{simple_types, RateLimitResponse};
+use hypersync_client::{
+    format::{Address, LogArgument},
+    net_types, simple_types, RateLimitResponse,
+};
 
 use crate::address_store::AddressSet;
 use crate::chain_buffer::{
@@ -23,13 +26,14 @@ use crate::sources::failure::ClientError;
 use crate::sources::request_stats::RequestStat;
 
 pub(crate) mod config;
+mod field_selection;
 mod transaction_selection;
 mod types;
-pub(crate) mod wire_query;
 
 pub(crate) use config::ClientConfig;
+use field_selection::field_selection;
+use net_types::LogField;
 use types::RollbackGuard;
-use wire_query::{LogField, LogFilter, LogSelection, Query};
 
 static LOGGER_INIT: Once = Once::new();
 
@@ -66,8 +70,10 @@ pub(crate) struct EvmHyperSyncClient {
 impl EvmHyperSyncClient {
     /// Execute one raw HyperSync page. Public methods decide how much of the
     /// response to convert for their specific caller.
-    async fn get_raw(&self, query: Query) -> Result<hypersync_client::QueryResponse, ClientError> {
-        let query = query.try_into().context("parse query")?;
+    async fn get_raw(
+        &self,
+        query: net_types::Query,
+    ) -> Result<hypersync_client::QueryResponse, ClientError> {
         let res = self
             .inner
             .get_with_rate_limit(&query)
@@ -114,14 +120,17 @@ impl EvmHyperSyncClient {
             block_numbers,
             &aggregate,
             |request_from, to_block_exclusive| async move {
-                let query = Query {
-                    from_block: request_from,
-                    to_block: Some(to_block_exclusive),
-                    include_all_blocks: Some(true),
-                    field_selection: wire_query::FieldSelection {
-                        block: Some(vec![BlockField::Number, BlockField::Hash]),
-                        ..Default::default()
-                    },
+                let query = net_types::Query {
+                    from_block: u64::try_from(request_from).context("from_block must be >= 0")?,
+                    to_block: Some(
+                        u64::try_from(to_block_exclusive).context("to_block must be >= 0")?,
+                    ),
+                    include_all_blocks: true,
+                    field_selection: field_selection(
+                        &[BlockField::Number, BlockField::Hash],
+                        &[],
+                        &[],
+                    ),
                     ..Default::default()
                 };
                 let response = self.get_raw(query).await?;
@@ -228,24 +237,37 @@ impl EvmHyperSyncClient {
             }
         }
 
-        let query = Query {
-            from_block: block_query.from_block as i64,
-            to_block: block_query.to_block.map(|b| b as i64 + 1),
-            logs: selects_logs.then(|| {
-                built
-                    .log_selections
-                    .into_iter()
-                    .map(log_selection_from_built)
-                    .collect()
-            }),
-            transactions: selects_transactions.then(|| built_transactions.selections()),
-            field_selection: wire_query::FieldSelection {
-                block: Some(validated_block_fields.clone()),
-                transaction: (selects_logs || selects_transactions).then_some(transaction_fields),
+        let logs = if selects_logs {
+            built
+                .log_selections
+                .iter()
+                .map(log_selection_from_built)
+                .collect::<Result<Vec<_>>>()
+                .context("parse query")
+                .map_err(map_err)?
+        } else {
+            Vec::new()
+        };
+        let query = net_types::Query {
+            from_block: block_query.from_block,
+            to_block: block_query.to_block.map(|b| b + 1),
+            logs,
+            transactions: if selects_transactions {
+                built_transactions.selections()
+            } else {
+                Vec::new()
+            },
+            field_selection: field_selection(
+                &validated_block_fields,
+                if selects_logs || selects_transactions {
+                    &transaction_fields
+                } else {
+                    &[]
+                },
                 // Everything get_items reads off the log: decode inputs, the
                 // flattened item fields, and the transaction-store keys.
-                log: selects_logs.then(|| {
-                    vec![
+                if selects_logs {
+                    &[
                         LogField::Address,
                         LogField::Data,
                         LogField::LogIndex,
@@ -256,9 +278,11 @@ impl EvmHyperSyncClient {
                         LogField::BlockNumber,
                         LogField::TransactionIndex,
                     ]
-                }),
-            },
-            include_all_blocks: Some(block_query.include_all_blocks()),
+                } else {
+                    &[]
+                },
+            ),
+            include_all_blocks: block_query.include_all_blocks(),
             ..Default::default()
         };
 
@@ -345,13 +369,30 @@ pub(crate) struct ItemsQuery {
     pub reorgable_from: Option<i64>,
 }
 
-fn log_selection_from_built(
-    built: BuiltLogSelection,
-) -> napi::bindgen_prelude::Either<LogSelection, LogFilter> {
-    napi::bindgen_prelude::Either::B(LogFilter {
-        address: Some(built.addresses().to_vec()),
-        topics: Some(built.topics),
-    })
+fn log_selection_from_built(built: &BuiltLogSelection) -> Result<net_types::LogSelection> {
+    let address = built
+        .addresses()
+        .iter()
+        .map(|address| Address::try_from(address.as_str()))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("Failed to parse address")?;
+    let mut topics = arrayvec::ArrayVec::new();
+    for topic_vec in &built.topics {
+        if topics.is_full() {
+            anyhow::bail!("Log filter has more than 4 topics");
+        }
+        let parsed_topics = topic_vec
+            .iter()
+            .map(|topic| LogArgument::try_from(topic.as_str()))
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("Failed to parse topic")?;
+        topics.push(parsed_topics);
+    }
+    Ok(net_types::LogSelection::new(net_types::LogFilter {
+        address,
+        address_filter: None,
+        topics,
+    }))
 }
 
 /// What a page covered. Its rows are in the `Page` returned beside it.
@@ -1178,6 +1219,174 @@ mod tests {
             })
             .collect();
         (next_blocks, requested_from)
+    }
+
+    const TOKEN: &str = "0x1000000000000000000000000000000000000001";
+    const SENDER: &str = "0x2000000000000000000000000000000000000002";
+
+    /// A client over a served chain of blocks 0..=100, with an event, a
+    /// transaction and a block registration.
+    fn served_client() -> (
+        crate::sources::testing::mock_hypersync_server::MockHyperSyncServer,
+        EvmHyperSyncClient,
+        ChainBuffer,
+        crate::address_store::AddressStore,
+    ) {
+        let server = crate::sources::testing::mock_hypersync_server::MockHyperSyncServer::new(
+            Some(100),
+            None,
+        )
+        .unwrap();
+        let blocks: Vec<serde_json::Value> = (0..=100)
+            .map(|number| serde_json::json!({"number": number, "timestamp": number, "hash": format!("0x{number:064x}")}))
+            .collect();
+        server
+            .serve_chain(serde_json::json!({"blocks": blocks, "logs": []}).to_string())
+            .unwrap();
+        let store = evm_store(&[("Token", &[TOKEN])]);
+        let transfer_topic0 = format!("0x{}", "ab".repeat(32));
+        let buffer = ChainBuffer::make(
+            chain_buffer::ChainBufferConfig {
+                registrations: crate::chain_buffer::RegistrationsInput::Evm {
+                    registrations: vec![crate::evm::registration::OnEventRegistrationInput {
+                        index: 0,
+                        sighash: Some(transfer_topic0.clone()),
+                        topic_count: 3,
+                        event_name: "Transfer".to_string(),
+                        contract_name: "Token".to_string(),
+                        is_wildcard: false,
+                        depends_on_addresses: true,
+                        start_block: None,
+                        topic_filters: vec![crate::evm::topic_filter::TopicFilterInput {
+                            topic0: Some(vec![transfer_topic0]),
+                            topic1: Some(vec![format!("0x{:0>64}", &SENDER[2..])]),
+                            topic2: Some(vec![]),
+                            topic3: Some(vec![]),
+                        }],
+                        block_fields: vec![],
+                        transaction_fields: vec![],
+                        params: vec![],
+                    }],
+                },
+                should_checksum: false,
+                contract_register_indexes: vec![],
+                block_handlers: vec![BlockHandlerInput {
+                    index: 0,
+                    start_block: 0,
+                    end_block: None,
+                    interval: 10,
+                    block_field_mask: Some(hash_handler_mask() as f64),
+                }],
+                transaction_masks: vec![(1 << EvmTxField::Hash as u64) as f64],
+                event_block_masks: vec![0.0],
+                transaction_registrations: vec![
+                    crate::chain_buffer::matching::transactions::OnTransactionRegistrationInput {
+                        index: 0,
+                        from: Some(vec![SENDER.to_string()]),
+                        to: None,
+                        status: Some(1),
+                        transaction_field_mask: (1 << EvmTxField::Hash as u64) as f64,
+                        block_field_mask: 0.0,
+                    },
+                ],
+            },
+            &store,
+        )
+        .unwrap();
+        let client = EvmHyperSyncClient::new(
+            ClientConfig {
+                url: server.url(),
+                api_token: "00000000-0000-0000-0000-000000000000".to_string(),
+                http_req_timeout_millis: 10_000,
+                serialization_format: config::SerializationFormat::Json,
+                enable_query_caching: false,
+                log_filter: "error".to_string(),
+            },
+            "test".to_string(),
+            &buffer,
+        )
+        .unwrap();
+        (server, client, buffer, store)
+    }
+
+    fn sent_queries(
+        server: &crate::sources::testing::mock_hypersync_server::MockHyperSyncServer,
+    ) -> Vec<serde_json::Value> {
+        server
+            .take_queries()
+            .iter()
+            .map(|query| serde_json::from_str(query).unwrap())
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_items_query_sends_its_log_transaction_and_block_selections() {
+        let (server, client, buffer, store) = served_client();
+        client
+            .get_items(
+                ItemsQuery {
+                    from_block: 0,
+                    to_block: Some(49),
+                    on_event_registration_indexes: vec![0],
+                    on_block_registration_indexes: vec![0],
+                    on_transaction_registration_indexes: vec![0],
+                    client_filtered_contracts: None,
+                    reorgable_from: None,
+                },
+                &crate::address_store::test_support::set_of(&store, &["Token"]),
+                &buffer,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            sent_queries(&server),
+            vec![serde_json::json!({
+                "from_block": 0,
+                "to_block": 50,
+                "logs": [{
+                    "address": [TOKEN],
+                    "topics": [
+                        [format!("0x{}", "ab".repeat(32))],
+                        [format!("0x{:0>64}", &SENDER[2..])],
+                        [],
+                        [],
+                    ],
+                }],
+                "transactions": [{"from": [SENDER], "status": 1}],
+                "include_all_blocks": true,
+                "field_selection": {
+                    "block": ["hash", "number", "timestamp"],
+                    "transaction": ["block_number", "from", "hash", "status", "transaction_index"],
+                    "log": [
+                        "address",
+                        "block_number",
+                        "data",
+                        "log_index",
+                        "topic0",
+                        "topic1",
+                        "topic2",
+                        "topic3",
+                        "transaction_index",
+                    ],
+                },
+            })]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_block_hash_query_selects_every_block_of_its_range() {
+        let (server, client, _buffer, _store) = served_client();
+        let (result, _stats) = client.get_block_hashes(&[5, 7]).await;
+        result.unwrap();
+        assert_eq!(
+            sent_queries(&server),
+            vec![serde_json::json!({
+                "from_block": 5,
+                "to_block": 8,
+                "include_all_blocks": true,
+                "field_selection": {"block": ["hash", "number"]},
+            })]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
