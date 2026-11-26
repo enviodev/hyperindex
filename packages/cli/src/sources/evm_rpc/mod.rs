@@ -3,7 +3,6 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::Semaphore;
 
 mod classify;
 pub(crate) mod client;
@@ -37,7 +36,6 @@ use transactions::TransactionRead;
 
 pub(crate) struct EvmRpcClientConfig {
     pub url: String,
-    pub max_concurrent_requests: Option<i64>,
     pub headers: Option<HashMap<String, String>>,
     // Sync-tuning knobs for the paging AIMD state (see `interval::SyncConfig`).
     pub initial_block_interval: i64,
@@ -323,12 +321,6 @@ impl EvmRpcClient {
         logger: &Logger,
         bound_fields_json: Vec<String>,
     ) -> anyhow::Result<EvmRpcClient> {
-        let max_concurrent_requests = cfg
-            .max_concurrent_requests
-            .filter(|v| *v > 0)
-            .map_or(JsonRpcClient::default_max_concurrent_requests(), |v| {
-                (v as usize).min(Semaphore::MAX_PERMITS)
-            });
         // A zero value would make `fromBlock + interval - 1` underflow, and a
         // zero timeout would cancel every request before it left.
         let positive_u64 = |value: i64, name: &str| {
@@ -347,7 +339,7 @@ impl EvmRpcClient {
         let inner = JsonRpcClient::new(
             cfg.url,
             request_timeout_millis,
-            max_concurrent_requests,
+            JsonRpcClient::default_max_concurrent_requests(),
             cfg.headers,
         )?;
         let chain = buffer.shared();

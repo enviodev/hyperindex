@@ -606,7 +606,6 @@ fn make_chain_sources(
             let client = EvmRpcClient::new(
                 EvmRpcClientConfig {
                     url: rpc.url,
-                    max_concurrent_requests: None,
                     headers: rpc.headers,
                     initial_block_interval: i64::from(
                         sync.initial_block_interval.unwrap_or(10_000),
