@@ -72,6 +72,7 @@ let runQuery = async (
       toBlock: Some(toBlock),
       onEventRegistrationIndexes: registrationIndexes,
       onBlockRegistrationIndexes: [],
+      onTransactionRegistrationIndexes: [],
       clientFilteredContracts: None,
     },
     ~addressSet=usdcSet,

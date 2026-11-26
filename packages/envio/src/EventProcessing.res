@@ -9,7 +9,7 @@ exception ProcessingError({message: string, exn: exn, item: Internal.item})
 // An event registered only for its contract register has no handler to run.
 let hasHandler = (item: Internal.item) =>
   switch item {
-  | Block(_) => true
+  | Block(_) | Transaction(_) => true
   | Event(_) => (item->Internal.castUnsafeEventItem).onEventRegistration.handler !== None
   }
 
@@ -19,6 +19,8 @@ let invokeHandler = (runtime: HandlerRuntime.t, item: Internal.item) => {
   switch item {
   | Block({onBlockRegistration: {handler}, blockNumber, ?block}) =>
     handler(Ecosystem.makeOnBlockArgs(~blockNumber, ~block, ~ecosystem, ~context))
+  | Transaction({onTransactionRegistration: {handler}, ?transaction}) =>
+    handler({transaction: transaction->Option.getUnsafe, context})
   | Event(_) =>
     let handler = (item->Internal.castUnsafeEventItem).onEventRegistration.handler->Option.getUnsafe
     handler({event: item->Ecosystem.getItemEvent(~ecosystem), context})
@@ -47,13 +49,14 @@ let eventStat = (runtime: HandlerRuntime.t, item: Internal.item) =>
         (item->Internal.castUnsafeEventItem).onEventRegistration.eventConfig,
       ),
     )
-  | Block(_) => None
+  | Block(_) | Transaction(_) => None
   }
 
 let handlerErrorMessage = (item: Internal.item) =>
   `Unexpected error in the ${switch item {
     | Block(_) => "block"
     | Event(_) => "event"
+    | Transaction({onTransactionRegistration: {name}}) => `"${name}" transaction`
     }} handler. Please handle the error to keep the indexer running smoothly.`
 
 let runHandlerOrThrow = async (item: Internal.item, ~checkpointId, ~runtime: HandlerRuntime.t) =>

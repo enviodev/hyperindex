@@ -47,7 +47,13 @@ let makeItem = (
 let buildJoined = async (items, ~registrations, ~ecosystem=Ecosystem.Evm) =>
   await TestChainBuffer.pageOf(items, ~ecosystem)->TestChainBuffer.buildAll(
     ~buffer=TestChainBuffer.decodedBuffer(~onEventRegistrations=registrations, ~ecosystem),
-    ~context={chainId, onEventRegistrations: registrations, onBlockRegistrations: []},
+    ~context={
+      chainId,
+      ecosystem,
+      onEventRegistrations: registrations,
+      onBlockRegistrations: [],
+      onTransactionRegistrations: [],
+    },
   )
 
 let rawTx = (item: Internal.item) =>
@@ -85,7 +91,7 @@ describe("A build's joins", () => {
     },
   )
 
-  Async.it("leaves an item's own transaction and block alone", async t => {
+  Async.it("keeps an item's own transaction and block, the block on the transaction", async t => {
     let selecting = registration(~index=0, ~transactionMask=2., ~blockMask=2.)
     let taken = await [
       makeItem(
@@ -97,7 +103,7 @@ describe("A build's joins", () => {
       ),
     ]->buildJoined(~registrations=[selecting])
     t.expect((rawTx(taken->Array.getUnsafe(0)), rawBlock(taken->Array.getUnsafe(0)))).toEqual((
-      %raw(`{"id": "0xfuel"}`),
+      %raw(`{"id": "0xfuel", "block": {"height": 1}}`),
       %raw(`{"height": 1}`),
     ))
   })
@@ -146,7 +152,7 @@ describe("A build's joins", () => {
     ->buildJoined(~registrations=[plain])
     let at = Array.getUnsafe(taken, ...)
     t.expect((rawTx(at(0))->Nullable.toOption, rawTx(at(0)) === rawTx(at(1)))).toEqual((
-      Some(%raw(`{}`)),
+      Some(%raw(`{"block": {}}`)),
       false,
     ))
   })
@@ -166,7 +172,7 @@ describe("A build's joins", () => {
         transaction =>
           transaction->(Utils.magic: Internal.eventTransaction => dict<unknown>)->Dict.keysToArray,
       ),
-    ).toEqual(Some([]))
+    ).toEqual(Some(["block"]))
   })
 
   Async.it("shares a transaction between items selecting different fields of it", async t => {

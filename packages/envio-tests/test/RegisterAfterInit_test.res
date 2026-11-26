@@ -32,6 +32,9 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
     case "onBlockInHandler":
       indexer.onBlock({ name: "onblock_late", where: ({ chain }) => chain.id === 1 }, async () => {});
       return;
+    case "onTransactionInHandler":
+      indexer.onTransaction({ name: "ontransaction_late", where: () => true }, async () => {});
+      return;
   }
 });
 `,
@@ -69,6 +72,16 @@ describe("Registering after initialization", () => {
     const indexer = createTestIndexer();
 
     await t.expect(run(indexer, "onBlockInHandler")).rejects.toThrow();
+  });
+
+  it("rejects an onTransaction registered from inside a handler", async (t) => {
+    const indexer = createTestIndexer();
+
+    await t
+      .expect(run(indexer, "onTransactionInHandler"))
+      .rejects.toThrow(
+        "Cannot call \`indexer.onTransaction\` after the indexer has started. Make sure all handlers are registered at the top level of your handler module.",
+      );
   });
 });
 `,

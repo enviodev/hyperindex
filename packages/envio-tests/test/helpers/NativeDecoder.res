@@ -84,6 +84,7 @@ let decodeLogs = async (
           blockHandlers: [],
           transactionMasks: [],
           eventBlockMasks: [],
+          transactionRegistrations: [],
         },
         addressStore,
       )
@@ -94,6 +95,7 @@ let decodeLogs = async (
           partitionId: "0",
           onEventRegistrationIndexes: eventRegistrations->Array.map(reg => reg.index),
           onBlockRegistrationIndexes: [],
+          onTransactionRegistrationIndexes: [],
           clientFilteredContracts: None,
           retry: 0,
           // Far below the head, where a page's blocks aren't checked one by one.

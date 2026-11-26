@@ -293,6 +293,11 @@ let getGlobalIndexer = (): 'indexer => {
     let _ = RollbackCommit.register(callback->(Utils.magic: 'a => RollbackCommit.callback))
   }
 
+  let getChainsObject = config => {
+    let (chains, _) = buildChainsObject(~config)
+    chains->(Utils.magic: {..} => dict<unknown>)
+  }
+
   let onBlockFn = (rawOptions: 'a, handler: 'b) => {
     HandlerRegister.throwIfFinishedRegistration(~methodName="onBlock")
     let raw = rawOptions->(Utils.magic: 'a => {"name": string, "where": unknown, "fields": unknown})
@@ -301,10 +306,19 @@ let getGlobalIndexer = (): 'indexer => {
       ~where=raw["where"],
       ~fields=raw["fields"],
       ~handler=handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>),
-      ~getChainsObject=config => {
-        let (chains, _) = buildChainsObject(~config)
-        chains->(Utils.magic: {..} => dict<unknown>)
-      },
+      ~getChainsObject,
+    )
+  }
+
+  let onTransactionFn = (rawOptions: 'a, handler: 'b) => {
+    HandlerRegister.throwIfFinishedRegistration(~methodName="onTransaction")
+    let raw = rawOptions->(Utils.magic: 'a => {"name": string, "where": unknown, "fields": unknown})
+    HandlerRegister.registerOnTransaction(
+      ~name=raw["name"],
+      ~where=raw["where"],
+      ~fields=raw["fields"],
+      ~handler=handler->(Utils.magic: 'b => Internal.onTransactionArgs => promise<unit>),
+      ~getChainsObject,
     )
   }
 
@@ -324,7 +338,8 @@ let getGlobalIndexer = (): 'indexer => {
     | Some(k) => k
     | None => {
         let keys = switch Config.load().ecosystem.name {
-        | Evm | Fuel => [
+        | (Evm | Fuel) as ecosystem =>
+          [
             "name",
             "description",
             "chainIds",
@@ -332,6 +347,7 @@ let getGlobalIndexer = (): 'indexer => {
             "onEvent",
             "contractRegister",
             "onBlock",
+            ...ecosystem === Evm ? ["onTransaction"] : [],
             "~internalAndWillBeRemovedSoon_onRollbackCommit",
           ]
         | Svm => [
@@ -365,6 +381,8 @@ let getGlobalIndexer = (): 'indexer => {
     | "onInstruction" => onInstructionFn->Utils.magic
     | "contractRegister" => contractRegisterFn->Utils.magic
     | "onBlock" | "onSlot" => onBlockFn->Utils.magic
+    // Reached on Fuel and SVM too, where registering says why it can't.
+    | "onTransaction" => onTransactionFn->Utils.magic
     | "~internalAndWillBeRemovedSoon_onRollbackCommit" => onRollbackCommitFn->Utils.magic
     | _ =>
       JsError.throwWithMessage(

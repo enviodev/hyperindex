@@ -52,6 +52,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
         toBlock: Some(12403139),
         onEventRegistrationIndexes: [0],
         onBlockRegistrationIndexes: [],
+        onTransactionRegistrationIndexes: [],
         clientFilteredContracts: None,
       },
       ~addressSet=addressStore->AddressStore.emptySet,

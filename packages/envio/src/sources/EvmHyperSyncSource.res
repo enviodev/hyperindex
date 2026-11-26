@@ -77,6 +77,9 @@ let make = (
         toBlock: selection->FetchState.sourceToBlock(~toBlock, ~knownHeight),
         onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
         onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
+        onTransactionRegistrationIndexes: selection.onTransactionRegistrations->Array.map(reg =>
+          reg.index
+        ),
         clientFilteredContracts: selection.clientFilteredContracts,
         ?reorgableFrom,
       },

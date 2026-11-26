@@ -87,7 +87,13 @@ let getItems = async (
   (
     await response.page->TestChainBuffer.buildAll(
       ~buffer=TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
-      ~context={chainId, onEventRegistrations, onBlockRegistrations: []},
+      ~context={
+        chainId,
+        ecosystem: Evm,
+        onEventRegistrations,
+        onBlockRegistrations: [],
+        onTransactionRegistrations: [],
+      },
     )
   )->Array.map(item => {
     let eventItem = item->Internal.castUnsafeEventItem
@@ -113,6 +119,7 @@ describe("SimulateSource routing", () => {
       dependsOnAddresses: true,
       onEventRegistrations: [regA],
       onBlockRegistrations: [],
+      onTransactionRegistrations: [],
     }
     let items = [
       item(~registration=regA, ~blockNumber=10, ~srcAddress=addr(0)),
@@ -148,6 +155,7 @@ describe("SimulateSource routing", () => {
       dependsOnAddresses: true,
       onEventRegistrations: [regA],
       onBlockRegistrations: [],
+      onTransactionRegistrations: [],
     }
 
     let routed = await getItems(
@@ -186,6 +194,7 @@ describe("SimulateSource routing", () => {
         dependsOnAddresses: true,
         onEventRegistrations: [regA],
         onBlockRegistrations: [],
+        onTransactionRegistrations: [],
         clientFilteredContracts: ["A"],
       },
     )
@@ -195,7 +204,12 @@ describe("SimulateSource routing", () => {
       ~items,
       ~store,
       ~addressSet,
-      ~selection={dependsOnAddresses: true, onBlockRegistrations: [], onEventRegistrations: [regA]},
+      ~selection={
+        dependsOnAddresses: true,
+        onBlockRegistrations: [],
+        onTransactionRegistrations: [],
+        onEventRegistrations: [regA],
+      },
     )
 
     t.expect({"clientFiltered": clientFiltered, "normal": normal}).toEqual({
@@ -230,6 +244,7 @@ describe("SimulateSource routing", () => {
       dependsOnAddresses: true,
       onEventRegistrations: [regWildcard],
       onBlockRegistrations: [],
+      onTransactionRegistrations: [],
     }
     let items = [
       item(
@@ -292,6 +307,7 @@ describe("SimulateSource routing", () => {
       ~selection={
         dependsOnAddresses: true,
         onBlockRegistrations: [],
+        onTransactionRegistrations: [],
         onEventRegistrations: [regOpen, regRestricted],
       },
     )
@@ -321,6 +337,7 @@ describe("SimulateSource routing", () => {
       ~selection={
         dependsOnAddresses: true,
         onBlockRegistrations: [],
+        onTransactionRegistrations: [],
         onEventRegistrations: [regFirst],
       },
     )
@@ -331,6 +348,7 @@ describe("SimulateSource routing", () => {
       ~selection={
         dependsOnAddresses: true,
         onBlockRegistrations: [],
+        onTransactionRegistrations: [],
         onEventRegistrations: [regFirst, regSecond],
       },
     )

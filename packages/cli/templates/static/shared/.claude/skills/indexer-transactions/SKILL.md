@@ -1,19 +1,132 @@
 ---
 name: indexer-transactions
 description: >-
-  Use when a handler needs transaction or block data — event.transaction /
-  event.block, and the `fields` option that selects what they carry. There is no
-  onTransaction handler; transaction data arrives through event handlers.
+  Use when a handler needs transaction or block data, or must run on
+  transactions themselves: indexer.onTransaction for every mined transaction a
+  filter matches (wallet activity, calls to a contract, reverted calls), and
+  the `fields` option that selects what event.transaction / event.block carry.
 metadata:
   managed-by: envio
 ---
 
-# Transaction and Block Data
+# Transactions and Block Data
 
-There is no `onTransaction` handler. Transaction and block data reach a handler
-through `event.transaction` and `event.block`.
+## Transaction Handlers
 
-They carry only the fields the handler asks for. List them in `fields`:
+`indexer.onTransaction` runs on every mined transaction its filter matches,
+whether or not it emitted a log: a plain transfer from a wallet, a call to a
+contract that logs nothing, a reverted call. No contract address or
+`config.yaml` entry is needed beyond the chain itself.
+
+```ts
+import { indexer } from "envio";
+
+indexer.onTransaction(
+  {
+    name: "TreasuryActivity",
+    where: ({ chain }) =>
+      chain.id === 1 && { transaction: { from: ["0x1111111111111111111111111111111111111111"], status: [0, 1] } },
+    fields: { transaction: ["hash", "to", "value", "status"], block: ["timestamp"] },
+  },
+  async ({ transaction, context }) => {
+    context.TreasuryTx.set({
+      id: transaction.hash,
+      to: transaction.to ?? "contract creation",
+      value: transaction.value,
+      reverted: transaction.status === 0,
+      timestamp: transaction.block.timestamp,
+    });
+  },
+);
+```
+
+`where` is required and runs once per configured chain at registration. Return
+`false` to skip the chain, `true` to run on every succeeded transaction, or a
+filter:
+
+```ts
+{
+  transaction: {
+    from?: string[];     // senders
+    to?: string[];       // recipients; a contract creation has none and never matches
+    status?: (0 | 1)[];  // outcomes to run on: 1 succeeded, 0 reverted; absent is [1]
+  }
+}
+```
+
+- Fields are ANDed, values within a field are ORed: `{ from: [S], to: [A, B] }`
+  matches a transaction `S` sends to `A` or `B`.
+- To run on calls of one function, filter on `to` and check the calldata's
+  selector in the handler (`transaction.input.startsWith("0xa9059cbb")`, with
+  `input` in `fields`). A call made inside another contract's call is not a
+  transaction: use the event it emits instead.
+- A handler runs on succeeded transactions unless `status` lists `0`: a
+  reverted transaction emits no events, so it is opt-in. `[0, 1]` runs on
+  every mined transaction, `[0]` on reverted ones only. HyperSync has a
+  status for every transaction; an RPC node has none before Byzantium
+  (mainnet block 4,370,000), so over RPC any other list stops the indexer
+  with an error there: use HyperSync, or `[0, 1]`.
+- A filter naming no `from` or `to` runs on every transaction of the
+  chain. Over RPC that reads every block in full.
+- An address that isn't 20 bytes, an empty list or a `status` value other
+  than 0 or 1 throws at registration.
+- Several handlers may match one transaction: each runs, in registration order.
+
+What the handler gets:
+
+- The handler gets `{ transaction, context }`. `transaction` is an
+  `EvmTransaction`, the type of `event.transaction` too, so one function can
+  take either: `transaction.block.number` is always there, anything else,
+  `transactionIndex`, `hash`, `from` and `to` included, is listed in `fields`,
+  with the names below. A field the filter compares is fetched but readable
+  only when listed. Reading an unlisted field is a type error.
+- `context` is an event handler's: entities, effects, `log`, `chain.id`,
+  `isPreload`. The handler runs in the preload pass too.
+- A transaction's handlers run before the event handlers of that transaction
+  and after the events of earlier ones. Block handlers run last in the block.
+
+Fetching: HyperSync filters on the server. RPC has no transaction filter, so it
+reads every block in full (100 blocks per request page) and filters locally,
+reading a receipt for each transaction the call matched to check its status,
+unless the filter lists `status: [0, 1]` and no receipt field (`status`,
+`gasUsed`, `effectiveGasPrice`, ...) is read. Over RPC, a filter naming no
+`from` or `to` costs every block in full.
+
+Limits: EVM only. Filter values are static: `chain.<Contract>.addresses` can't
+be used, list the addresses. No block range: a handler runs from the chain's
+`start_block`. A transaction handler can't register contracts. `raw_events`
+rows are written for events only.
+
+Testing: simulate a transaction as `{ transaction: {...}, block: {...} }`. Only
+the fields given are set, so a filter on a field left out doesn't match;
+`status` defaults to 1. `transactionIndex` defaults to the block's next free index and `hash` to one
+made from the block number and that index. An event belongs to the block's
+transaction at its `transaction.transactionIndex` (0 by default, settable when
+the event selects it): it runs after that transaction's handlers and reads the
+fields the transaction item and the transaction's other events give; a field
+given twice must agree.
+
+```ts
+await indexer.process({
+  chains: {
+    1: {
+      startBlock: 0,
+      endBlock: 10,
+      simulate: [
+        {
+          transaction: { from: "0x1111111111111111111111111111111111111111", to: "0xdAC17F958D2ee523a2206206994597C13D831ec7", input: "0xa9059cbb", value: 5n, status: 1 },
+          block: { number: 3, timestamp: 1_700_000_003 },
+        },
+      ],
+    },
+  },
+});
+```
+
+## Transaction and Block Data on Events
+
+`event.transaction` and `event.block` carry only the fields the handler asks
+for. List them in `fields`:
 
 ```ts
 indexer.onEvent(
@@ -33,8 +146,9 @@ indexer.onEvent(
 Reading a field you didn't list is a type error. `event.block.number` is
 available without listing it.
 
-Available on `indexer.onEvent` and `indexer.contractRegister`. Two handlers on
-the same event can list different fields.
+Available on `indexer.onEvent`, `indexer.contractRegister` and
+`indexer.onTransaction`. Two handlers on the same event can list different
+fields.
 
 Write the list inline, as above. To reuse one, declare it `as const`:
 

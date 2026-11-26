@@ -1080,13 +1080,11 @@ impl ProjectTemplate {
         let selection = event_field_selection
             .as_ref()
             .unwrap_or(global_field_selection);
+        let block_fields = Self::field_names_to_ts_tuple(&selection.block_fields);
         (
+            format!("EvmBlock<{{ block: {block_fields} }}>"),
             format!(
-                "EvmBlock<{{ block: {} }}>",
-                Self::field_names_to_ts_tuple(&selection.block_fields)
-            ),
-            format!(
-                "EvmTransaction<{{ transaction: {} }}>",
+                "EvmTransaction<{{ block: {block_fields}, transaction: {} }}>",
                 Self::field_names_to_ts_tuple(&selection.transaction_fields)
             ),
         )
