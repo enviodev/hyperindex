@@ -49,7 +49,7 @@ function argsSchemaOf(resolver) {
 const argsNormalisers = new WeakMap();
 const positionNormalisers = new WeakMap();
 
-const accepts = (schema, value) => {
+const schemaAcceptsValue = (schema, value) => {
   try {
     S.parseOrThrow(value, schema);
     return true;
@@ -61,18 +61,18 @@ const accepts = (schema, value) => {
 function argsNormaliserOf(resolver) {
   let normalise = argsNormalisers.get(resolver);
   if (normalise === undefined) {
-    normalise = fieldsNormaliser(resolver.args);
+    normalise = buildFieldsNormaliser(resolver.args ?? {});
     argsNormalisers.set(resolver, normalise);
   }
   return normalise;
 }
 
-function fieldsNormaliser(fields) {
+function buildFieldsNormaliser(fields) {
   const steps = [];
   for (const [key, schema] of Object.entries(fields)) {
     // Assigning this key would set the copy's prototype rather than a field.
     if (key === "__proto__") continue;
-    const normalise = positionNormaliser(schema);
+    const normalise = buildPositionNormaliser(schema);
     if (normalise !== null) steps.push([key, normalise]);
   }
   if (steps.length === 0) return null;
@@ -92,8 +92,8 @@ function fieldsNormaliser(fields) {
   };
 }
 
-function elementsNormaliser(element) {
-  const normalise = positionNormaliser(element);
+function buildElementsNormaliser(element) {
+  const normalise = buildPositionNormaliser(element);
   if (normalise === null) return null;
   return (value) => {
     let out = value;
@@ -108,7 +108,7 @@ function elementsNormaliser(element) {
   };
 }
 
-function positionNormaliser(schema) {
+function buildPositionNormaliser(schema) {
   // Shared schemas are walked once. The entry is reserved before its fields
   // are walked, as the manifest reserves a type's name, so an input type that
   // lists itself among its fields terminates: the inner occurrence defers to
@@ -126,8 +126,8 @@ function positionNormaliser(schema) {
   // Asked of the schema rather than read off its tag, so a null it already
   // takes is left alone: an optional JSON scalar keeps receiving the caller's
   // `null`, where rewriting it would change what a handler sees today.
-  const nullIsAbsent = outer === "option" && !accepts(schema, null);
-  const absentIsNull = outer === "null" && !accepts(schema, undefined);
+  const nullIsAbsent = outer === "option" && !schemaAcceptsValue(schema, null);
+  const absentIsNull = outer === "null" && !schemaAcceptsValue(schema, undefined);
 
   let core = schema;
   for (let tag = tagOf(core); tag.kind === "option" || tag.kind === "null"; tag = tagOf(core)) {
@@ -139,11 +139,11 @@ function positionNormaliser(schema) {
   let inner = null;
   if (named !== undefined) {
     if (named.input && named.fields) {
-      const fields = fieldsNormaliser(named.fields);
+      const fields = buildFieldsNormaliser(named.fields);
       inner = fields === null ? null : (value) => (isPlainObject(value) ? fields(value) : value);
     }
   } else if (tagOf(core).kind === "array") {
-    const elements = elementsNormaliser(core.t._0);
+    const elements = buildElementsNormaliser(core.t._0);
     inner = elements === null ? null : (value) => (Array.isArray(value) ? elements(value) : value);
   }
 

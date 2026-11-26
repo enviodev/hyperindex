@@ -397,6 +397,24 @@ describe("resolver arguments: null and absent", () => {
 // The check that keeps the parser and the published schema from drifting apart
 // again: every position is found by walking the manifest, not the schemas, and
 // is then sent null, nothing, and a value.
+describe("resolver arguments: a resolver object without args", () => {
+  // `createResolver` always fills `args` in; the manifest and the argument
+  // schema both read a missing one as "no arguments", and so does this.
+  it("dispatches a resolver whose args were never set", async () => {
+    const { args: _args, ...withoutArgs } = declare("nullArgsNoArgsKey", {});
+    const dispatchWithoutArgs = createDispatcher({
+      resolvers: [withoutArgs as ReturnType<typeof declare>],
+      pool: { forResolver: () => ({}) },
+      exposeErrors: true,
+    });
+    const request = { selection: {}, role: "public", requestId: "test" };
+    expect({
+      noArgs: await dispatchWithoutArgs({ ...request, field: "nullArgsNoArgsKey" }),
+      empty: await dispatchWithoutArgs({ ...request, field: "nullArgsNoArgsKey", args: {} }),
+    }).toEqual({ noArgs: { data: "{}" }, empty: { data: "{}" } });
+  });
+});
+
 describe("resolver arguments: every published position", () => {
   const manifest = buildManifest(resolvers) as {
     resolvers: Array<{ name: string; args: Array<{ name: string; type: string }> }>;
