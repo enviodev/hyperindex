@@ -132,7 +132,6 @@ type storedConfig = {
   envioInfo?: string,
   contractNames?: array<string>,
   chains: array<storedChain>,
-  configAddresses: queryResult,
 }
 
 type resumedChain = {
@@ -158,10 +157,19 @@ type reorgCheckpoint = {
   blockHash: string,
 }
 
+// `chainId` is left out for a cross-chain cache.
+type storedEffectCache = {
+  effectName: string,
+  chainId?: ChainId.t,
+  tableName: string,
+  rows: int,
+}
+
 type resumed = {
   chains: array<resumedChain>,
   addresses: queryResult,
   reorgCheckpoints: array<reorgCheckpoint>,
+  caches: array<storedEffectCache>,
 }
 
 type progressDiff = {
@@ -171,14 +179,6 @@ type progressDiff = {
 }
 
 type rollbackData = {removed: queryResult, restored: queryResult}
-
-// `chainId` is left out for a cross-chain cache.
-type storedEffectCache = {
-  effectName: string,
-  chainId?: ChainId.t,
-  tableName: string,
-  rows: int,
-}
 
 // An optional field is left out rather than null, both ways: the addon refuses
 // a null for one, and leaves out one it has no value for.
@@ -352,8 +352,17 @@ type holding =
 
 @send external readStoredConfig: t => promise<storedConfig> = "readStoredConfig"
 
-// Resumes the chains this run drives, the only ones ClickHouse trims.
+// What the chains this process indexes resume from. Only reads.
 @send external resume: (t, array<ChainId.t>) => promise<resumed> = "resume"
+
+// Trims ClickHouse back to the frontier a resume read for its chains, and
+// fences off writes another process still makes to them.
+@send
+external takeOverClickhouse: (t, bounds) => promise<unit> = "takeOverClickhouse"
+
+@send
+external readChainProgress: (t, array<ChainId.t>) => promise<array<resumedChain>> =
+  "readChainProgress"
 
 @send external setChainMeta: (t, array<chainMeta>) => promise<unit> = "setChainMeta"
 
@@ -387,11 +396,11 @@ external rollbackProgressDiff: (t, bounds) => promise<array<progressDiff>> = "ro
 
 @send external rollbackData: (t, int, bounds) => promise<rollbackData> = "rollbackData"
 
-// Uploads the caches saved under the directory first when `upload` says to,
-// logging how that went.
+// Uploads the caches saved under the directory, logging how that went, then
+// answers the stored caches serving the chains.
 @send
-external restoreEffectCache: (t, string, bool) => promise<array<storedEffectCache>> =
-  "restoreEffectCache"
+external uploadEffectCache: (t, string, array<ChainId.t>) => promise<array<storedEffectCache>> =
+  "uploadEffectCache"
 
 // Never rejects: a dump that doesn't finish is logged.
 @send external dumpEffectCache: (t, string) => promise<unit> = "dumpEffectCache"

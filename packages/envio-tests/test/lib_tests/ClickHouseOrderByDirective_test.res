@@ -123,25 +123,37 @@ type Token @storage(clickhouse: {orderBy: ["amount"]}) {
 
   it("Rejects a BigInt with no precision", t => {
     t.expect(parseError(schema("BigInt", ""))).toBe(
-      "Invalid storage for `Token`. `clickhouse.orderBy` sorts by `amount`, which stores a BigInt that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N)` with N <= 38 to the BigInt it stores so it sorts as a numeric Decimal.",
+      "Invalid storage for `Token`. `clickhouse.orderBy` sorts by `amount`, which stores a BigInt that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N)` with N <= 76 to the BigInt it stores so it sorts as a numeric Decimal.",
     )
   })
 
+  // https://github.com/enviodev/hyperindex/issues/1816
+  it("Sorts by a BigInt and a BigDecimal as wide as a 256-bit Decimal", t => {
+    let config = parse(`
+type Token @storage(clickhouse: {orderBy: ["amount", "price"]}) {
+  id: ID!
+  amount: BigInt! @config(precision: 76)
+  price: BigDecimal! @config(precision: 76, scale: 18)
+}
+`)
+    t.expect(config.userEntitiesByName->Dict.get("Token")->Option.isSome).toBe(true)
+  })
+
   it("Rejects a BigInt whose precision overflows a Decimal", t => {
-    t.expect(parseError(schema("BigInt", " @config(precision: 39)"))).toBe(
-      "Invalid storage for `Token`. `clickhouse.orderBy` sorts by `amount`, which stores a BigInt that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N)` with N <= 38 to the BigInt it stores so it sorts as a numeric Decimal.",
+    t.expect(parseError(schema("BigInt", " @config(precision: 77)"))).toBe(
+      "Invalid storage for `Token`. `clickhouse.orderBy` sorts by `amount`, which stores a BigInt that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N)` with N <= 76 to the BigInt it stores so it sorts as a numeric Decimal.",
     )
   })
 
   it("Rejects a BigDecimal with no precision", t => {
     t.expect(parseError(schema("BigDecimal", ""))).toBe(
-      "Invalid storage for `Token`. `clickhouse.orderBy` sorts by `amount`, which stores a BigDecimal that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N, scale: M)` with M <= N <= 38 to the BigDecimal it stores so it sorts as a numeric Decimal.",
+      "Invalid storage for `Token`. `clickhouse.orderBy` sorts by `amount`, which stores a BigDecimal that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N, scale: M)` with M <= N <= 76 to the BigDecimal it stores so it sorts as a numeric Decimal.",
     )
   })
 
   it("Rejects a BigDecimal whose scale overflows its precision", t => {
     t.expect(parseError(schema("BigDecimal", " @config(precision: 10, scale: 20)"))).toBe(
-      "Invalid storage for `Token`. `clickhouse.orderBy` sorts by `amount`, which stores a BigDecimal that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N, scale: M)` with M <= N <= 38 to the BigDecimal it stores so it sorts as a numeric Decimal.",
+      "Invalid storage for `Token`. `clickhouse.orderBy` sorts by `amount`, which stores a BigDecimal that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N, scale: M)` with M <= N <= 76 to the BigDecimal it stores so it sorts as a numeric Decimal.",
     )
   })
 })

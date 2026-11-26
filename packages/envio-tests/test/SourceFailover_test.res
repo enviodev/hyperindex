@@ -62,6 +62,45 @@ let failOver = async (~failing: MockSource.t, ~next: MockSource.t, ~fromBlock, ~
   await next.expectItemsQueries([{fromBlock, retryCount: 3, reply: upTo(toBlock)}])
 }
 
+// What an operator is told about a source by name, such as it falling behind.
+let sourceLogs = (indexer: IndexerRunner.t) =>
+  indexer.infoAndAboveLogs()->Array.filterMap(({msg}) =>
+    msg->String.startsWith("MockSource ") ? Some(msg) : None
+  )
+
+// How many times items queries moved to another source.
+let switchCount = (indexer: IndexerRunner.t) =>
+  indexer.infoAndAboveLogs()->Array.filter(({msg}) => msg == "Switching data-source")->Array.length
+
+// Two addresses, one partition each, so one query can still be in flight on a
+// source while the other partition's wait holds it.
+let twoPartitionScenario = Scenario.make(
+  ~configYaml=`
+name: source-failover-two-partitions
+rollback_on_reorg: false
+chains:
+  - id: 1337
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    max_reorg_depth: 0
+    contracts:
+      - name: Gravatar
+        address:
+          - "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+          - "0x1111111111111111111111111111111111111111"
+        events:
+          - event: "TestEvent()"
+`,
+  ~schema=`
+type Gravatar {
+  id: ID!
+  owner: String!
+}
+`,
+)
+
 describe("Source failover", () => {
   scenario->Scenario.it(
     "Retries on same source twice before switching, then alternates every second retry",
@@ -101,7 +140,8 @@ describe("Source failover", () => {
         ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 50],
       )
       await fallback.expectItemsQueries([{retryCount: 13, reply: LeavePending}])
-      await sync.expectNewHeightCalls(1)
+      // The first height, and the poll the hold starts on failing over.
+      await sync.expectNewHeightCalls(2)
       t.expect((
         early,
         indexer.allLogsAsJson()->Array.filterMap(
@@ -115,6 +155,356 @@ describe("Source failover", () => {
         [],
         [100., 200., 400., 800., 1000., 1000., 1000., 1000., 1000., 1000., 1000., 1000., 1000.],
       ))
+    },
+  )
+
+  // https://github.com/enviodev/hyperindex/issues/1829
+  scenario->Scenario.it(
+    "Keeps a source that fell behind off queries until its own height moves",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~sourceTiming={
+      recoveryTimeout: 200.,
+      newBlockStallTimeoutRealtime: 10,
+      stalledPollingInterval: 50,
+      reducedPollingInterval: 1_000,
+    },
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
+      // Sync stops following the chain at 100. The fallback, recruited once the
+      // wait stalls, is a single block ahead: too little to tell a stopped
+      // source from a block sync hasn't polled yet, so sync takes the query.
+      sync.setAutoHeight(100)
+      fallback.setAutoHeight(101)
+      await indexer.advanceTime(10)
+      let early = await Scenario.failThroughBackoff(
+        ~indexer,
+        ~source=sync,
+        ~alsoWatching=[fallback],
+        ~reply=Fail(Source.SourceBehindHead({blockNumber: 150, requestStats: []})),
+        ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 50],
+      )
+      await fallback.expectItemsQueries([{fromBlock: 101, retryCount: 13, reply: upTo(101)}])
+
+      // Long past the recovery timeout, but sync's height is still 100.
+      await indexer.advanceTime(200)
+      fallback.setAutoHeight(102)
+      await indexer.advanceTime(50)
+      await fallback.expectItemsQueries([{fromBlock: 102, reply: upTo(102)}])
+
+      // One block is enough, short of the block it couldn't serve: the source
+      // is following its chain again.
+      sync.setAutoHeight(101)
+      await indexer.advanceTime(1_000)
+      fallback.setAutoHeight(103)
+      await indexer.advanceTime(50)
+      await sync.expectItemsQueries([{fromBlock: 103, reply: LeavePending}])
+      t.expect((
+        early,
+        fallback.pendingItemsQueries,
+        indexer->sourceLogs,
+        indexer->switchCount,
+      )).toEqual((
+        [],
+        [],
+        [
+          "MockSource is still catching up to block 150. This is a delay on the provider's side; indexing will continue automatically, using another data source if one is configured.",
+        ],
+        2,
+      ))
+    },
+  )
+
+  scenario->Scenario.it(
+    "Holds a source a stalled wait finds more than a block behind, without querying it, until its height moves",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~sourceTiming={
+      newBlockStallTimeoutRealtime: 10,
+      stalledPollingInterval: 50,
+      reducedPollingInterval: 1_000,
+    },
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
+      sync.setAutoHeight(100)
+      fallback.setAutoHeight(102)
+      await indexer.advanceTime(10)
+      await fallback.expectItemsQueries([{fromBlock: 101, reply: upTo(102)}])
+      fallback.setAutoHeight(103)
+      await indexer.advanceTime(50)
+      await fallback.expectItemsQueries([{fromBlock: 103, reply: upTo(103)}])
+
+      sync.setAutoHeight(104)
+      await indexer.advanceTime(1_000)
+      fallback.setAutoHeight(104)
+      await indexer.advanceTime(50)
+      await sync.expectItemsQueries([{fromBlock: 104, reply: LeavePending}])
+      t.expect((
+        sync.pendingItemsQueries->Array.map(query => query.fromBlock),
+        indexer->sourceLogs,
+        indexer->switchCount,
+      )).toEqual(([104], [], 2))
+    },
+  )
+
+  scenario->Scenario.it(
+    "Keeps a held source off queries while it moves but stays more than 200 blocks behind",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~sourceTiming={
+      newBlockStallTimeoutRealtime: 10,
+      stalledPollingInterval: 50,
+      reducedPollingInterval: 1_000,
+    },
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
+      sync.setAutoHeight(100)
+      fallback.setAutoHeight(400)
+      await indexer.advanceTime(10)
+      await fallback.expectItemsQueries([{fromBlock: 101, reply: upTo(400)}])
+
+      // Resyncing: it moves, but is still 250 blocks behind.
+      sync.setAutoHeight(150)
+      await indexer.advanceTime(1_000)
+      fallback.setAutoHeight(401)
+      await indexer.advanceTime(50)
+      await fallback.expectItemsQueries([{fromBlock: 401, reply: upTo(401)}])
+
+      // Within 200 blocks of the head.
+      sync.setAutoHeight(250)
+      await indexer.advanceTime(1_000)
+      fallback.setAutoHeight(402)
+      await indexer.advanceTime(50)
+      await sync.expectItemsQueries([{fromBlock: 402, reply: LeavePending}])
+      t.expect((indexer->sourceLogs, indexer->switchCount)).toEqual(([], 2))
+    },
+  )
+
+  // https://github.com/enviodev/hyperindex/issues/1829
+  twoPartitionScenario->Scenario.it(
+    "Keeps a source held when a query sent before the hold succeeds",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~maxAddrInPartition=1,
+    ~sourceTiming={newBlockStallTimeout: 10, reducedPollingInterval: 1_000},
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      // Sync never answers the first height; the fallback, recruited once that
+      // stalls, reports 200.
+      fallback.setAutoHeight(200)
+      await indexer.advanceTime(10)
+      // Sync stopped at 100. Partition 1's first range stays in flight on it.
+      await sync.expectItemsQueries([
+        {partitionId: "0", fromBlock: 1, reply: upTo(100)},
+        {partitionId: "1", fromBlock: 1, reply: LeavePending},
+      ])
+      let waits = [100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 50]
+      for retryCount in 0 to waits->Array.length - 1 {
+        await sync.expectItemsQueries([
+          {
+            partitionId: "0",
+            retryCount,
+            reply: Fail(Source.SourceBehindHead({blockNumber: 101, requestStats: []})),
+          },
+        ])
+        await indexer.advanceTime(waits->Array.getUnsafe(retryCount))
+      }
+      await fallback.expectItemsQueries([
+        {partitionId: "0", fromBlock: 101, retryCount: 13, reply: upTo(200)},
+      ])
+
+      // The range it was sent before the hold is one it can serve, which shows
+      // nothing about the head.
+      await sync.expectItemsQueries([{partitionId: "1", fromBlock: 1, reply: upTo(100)}])
+      await fallback.expectItemsQueries([{partitionId: "1", fromBlock: 101, reply: LeavePending}])
+      t.expect(sync.pendingItemsQueries).toEqual([])
+    },
+  )
+
+  twoPartitionScenario->Scenario.it(
+    "Doesn't hold a source that was benched while its query was in flight",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~maxAddrInPartition=1,
+    ~sourceTiming={reducedPollingInterval: 100},
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectNewHeightCalls(1)
+      await sync.expectItemsQueries([
+        {partitionId: "0", fromBlock: 1, reply: LeavePending},
+        {partitionId: "1", fromBlock: 1, reply: LeavePending},
+      ])
+      let behindHead = MockSource.Fail(Source.SourceBehindHead({blockNumber: 1, requestStats: []}))
+      let waits = [100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000]
+      (sync.pendingItemsQueries->Array.getUnsafe(0)->MockSource.control).fail(
+        Source.SourceBehindHead({blockNumber: 1, requestStats: []}),
+      )
+      await indexer.advanceTime(waits->Array.getUnsafe(0))
+      for retryCount in 1 to waits->Array.length - 1 {
+        await sync.expectItemsQueries([{partitionId: "0", retryCount, reply: behindHead}])
+        await indexer.advanceTime(waits->Array.getUnsafe(retryCount))
+      }
+      // The attempt that fails the source over is in flight when partition 1's
+      // query benches the source.
+      await sync.expectItemsQueries([{partitionId: "0", retryCount: 12, reply: LeavePending}])
+      await sync.expectItemsQueries([
+        {
+          partitionId: "1",
+          fromBlock: 1,
+          reply: Fail(Source.GetItemsError(UnsupportedSelection({message: "test disable"}))),
+        },
+      ])
+      await fallback.expectItemsQueries([{partitionId: "1", fromBlock: 1, reply: LeavePending}])
+      await sync.expectItemsQueries([{partitionId: "0", retryCount: 12, reply: behindHead}])
+      await indexer.advanceTime(50)
+      await fallback.expectItemsQueries([{partitionId: "0", retryCount: 13, reply: LeavePending}])
+
+      // Nothing waits on a benched source, so nothing polls it.
+      await indexer.advanceTime(500)
+      await sync.expectNewHeightCalls(0)
+      t.expect(sync.pendingItemsQueries).toEqual([])
+    },
+  )
+
+  scenario->Scenario.it(
+    "Keeps retrying a held fallback once the sync source is benched",
+    ~sources=[{chain: 1337}, {chain: 1337, sourceFor: Fallback}],
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([{fromBlock: 1, reply: unsupported}])
+      // The fallback is held once it has been behind the head through the
+      // window, and there is no other source left to try.
+      let early = await Scenario.failThroughBackoff(
+        ~indexer,
+        ~source=fallback,
+        ~reply=Fail(Source.SourceBehindHead({blockNumber: 1, requestStats: []})),
+        ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000],
+      )
+      await fallback.expectItemsQueries([{fromBlock: 1, retryCount: 13, reply: LeavePending}])
+      t.expect((early, sync.pendingItemsQueries)).toEqual(([], []))
+    },
+  )
+
+  scenario->Scenario.it(
+    "Moves a query between held sources rather than retrying the same one",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~sourceTiming={newBlockStallTimeoutRealtime: 10, stalledPollingInterval: 50},
+    async (~t, ~indexer, ~source) => {
+      let sync0 = source(1337)
+      let sync1 = source(1337, ~index=1)
+      let fallback = source(1337, ~index=2)
+      sync0.resolveGetHeightOrThrow(100)
+      sync1.setAutoHeight(100)
+      await sync0.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
+      // Both sync sources stop at 100; the stalled wait recruits the fallback
+      // two blocks ahead and holds them both.
+      sync0.setAutoHeight(100)
+      fallback.setAutoHeight(102)
+      await indexer.advanceTime(10)
+      // The one source still working can't serve the query.
+      await fallback.expectItemsQueries([{fromBlock: 101, reply: impossible}])
+      let early = await Scenario.failThroughBackoff(
+        ~indexer,
+        ~source=sync0,
+        ~alsoWatching=[sync1],
+        ~reply=Fail(Source.SourceBehindHead({blockNumber: 101, requestStats: []})),
+        ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000],
+      )
+      await sync1.expectItemsQueries([{fromBlock: 101, retryCount: 13, reply: LeavePending}])
+      t.expect((early, sync0.pendingItemsQueries)).toEqual(([], []))
+    },
+  )
+
+  scenario->Scenario.it(
+    "Keeps a held source's last failure when it moves but stays far behind",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~sourceTiming={
+      newBlockStallTimeoutRealtime: 10,
+      stalledPollingInterval: 50,
+      reducedPollingInterval: 1_000,
+    },
+    async (~t, ~indexer, ~source) => {
+      let sync0 = source(1337)
+      let sync1 = source(1337, ~index=1)
+      let fallback = source(1337, ~index=2)
+      sync0.resolveGetHeightOrThrow(100)
+      sync1.setAutoHeight(100)
+      await sync0.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
+      // Both sync sources stop at 100, far behind the fallback's 1000, which
+      // holds them both. The fallback can't serve the query.
+      sync0.setAutoHeight(100)
+      fallback.setAutoHeight(1000)
+      await indexer.advanceTime(10)
+      await fallback.expectItemsQueries([{fromBlock: 101, reply: impossible}])
+
+      let behindHead = MockSource.Fail(
+        Source.SourceBehindHead({blockNumber: 101, requestStats: []}),
+      )
+      // Which held source each attempt lands on, and the backoff after it. The
+      // last resort takes the one that failed longest ago.
+      let attempts = [
+        (sync0, 100),
+        (sync0, 200),
+        (sync0, 400),
+        (sync0, 800),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync0, 1000),
+        (sync1, 2000),
+        (sync1, 4000),
+        (sync0, 8000),
+        (sync0, 16000),
+      ]
+      for retryCount in 0 to attempts->Array.length - 1 {
+        let (mock, wait) = attempts->Array.getUnsafe(retryCount)
+        await mock.expectItemsQueries([{fromBlock: 101, retryCount, reply: behindHead}])
+        if retryCount === attempts->Array.length - 1 {
+          // Sync0 has just failed, after sync1 did. It moves, but is still 899
+          // blocks behind, so it stays held.
+          sync0.setAutoHeight(101)
+        }
+        await indexer.advanceTime(wait)
+      }
+      await sync1.expectItemsQueries([{fromBlock: 101, retryCount: 17, reply: LeavePending}])
+      t.expect(sync0.pendingItemsQueries).toEqual([])
     },
   )
 

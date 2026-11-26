@@ -7,6 +7,7 @@ use anyhow::{bail, Context, Result};
 
 use super::ch_type::ChType;
 use super::ddl::Column;
+use super::row_binary::{self, Rounding};
 use super::table::Table;
 use super::{literal, quoted, quoted_list, table_ref};
 use crate::entity_filter::{Condition, Operator, ValueKind};
@@ -115,9 +116,6 @@ fn number(text: &str) -> Result<&str> {
     }
 }
 
-/// The widest scale a Decimal256 holds.
-const MAX_DECIMAL_SCALE: u32 = 76;
-
 /// An integer as the canonical text a BigInt is kept as, which is what lets
 /// two of them be compared by their text.
 fn integer(text: &str) -> Result<String> {
@@ -207,23 +205,27 @@ pub(super) fn decimal_key(text: &str) -> Result<String> {
     })
 }
 
-/// The scale a value is compared at against a Decimal column of `column_scale`:
-/// wide enough to keep every fractional digit the value spells, so it isn't
-/// compared as a rounded neighbour, as far as a Decimal256 has room beside its
-/// whole part. A value cut there is past what any such column holds anyway.
-fn decimal_scale(text: &str, column_scale: u32) -> u32 {
-    let (mantissa, exponent) = match text.split_once(['e', 'E']) {
-        Some((mantissa, exponent)) => (mantissa, exponent.parse::<i64>().unwrap_or(0)),
-        None => (text, 0),
-    };
-    let (whole, fraction) = mantissa
-        .trim_start_matches(['-', '+'])
-        .split_once('.')
-        .unwrap_or((mantissa.trim_start_matches(['-', '+']), ""));
-    let whole_digits = (whole.trim_start_matches('0').len() as i64 + exponent).max(0);
-    let fraction_digits = (fraction.len() as i64 - exponent).max(0);
-    let room = (i64::from(MAX_DECIMAL_SCALE) - whole_digits).max(0);
-    i64::from(column_scale).max(fraction_digits).min(room) as u32
+/// A value as the statement spells it, and whether the column holds it
+/// exactly. A bound with more places than a Decimal column's scale lies
+/// between two values the column holds and is spelled as the one above it:
+/// ClickHouse compares Decimals of two scales by scaling the coarser one up,
+/// and a value near the top of a precision-76 column scaled up wraps past 256
+/// bits, answering the comparison wrong without an error.
+struct Spelled {
+    sql: String,
+    exact: bool,
+}
+
+fn decimal_ceiling(text: &str, scale: u32) -> Result<Spelled> {
+    let text = number(text)?;
+    let ceiling = row_binary::decimal_at_scale(text, scale, Rounding::Ceiling)?;
+    Ok(Spelled {
+        sql: format!(
+            "toDecimal256({}, {scale})",
+            literal(&row_binary::decimal_text(ceiling, scale))
+        ),
+        exact: ceiling == row_binary::decimal_at_scale(text, scale, Rounding::Floor)?,
+    })
 }
 
 /// One element as the column's own type reads it.
@@ -232,8 +234,11 @@ fn element(
     kind: ValueKind,
     field_type: &FieldType,
     ch_type: &ChType,
-) -> Result<String> {
-    Ok(match kind {
+) -> Result<Spelled> {
+    if let (ValueKind::Number, ChType::Decimal { scale, .. }) = (kind, ch_type) {
+        return decimal_ceiling(text, *scale);
+    }
+    let sql = match kind {
         ValueKind::Text | ValueKind::Enum | ValueKind::Json => literal(text),
         ValueKind::Boolean => match text {
             "true" | "false" => text.to_string(),
@@ -255,19 +260,10 @@ fn element(
                 literal(&integer_key(&integer(text)?))
             }
             ChType::String => literal(&decimal_key(text)?),
-            // Decimals of two scales compare exactly, so the value keeps
-            // every digit it has past the column's.
-            ChType::Decimal { scale, .. } => {
-                let text = number(text)?;
-                format!(
-                    "toDecimal256({}, {})",
-                    literal(text),
-                    decimal_scale(text, *scale)
-                )
-            }
             _ => number(text)?.to_string(),
         },
-    })
+    };
+    Ok(Spelled { sql, exact: true })
 }
 
 /// The column as a filter compares it: a number kept as text is read as the
@@ -288,24 +284,34 @@ fn compared(column: &Column, kind: ValueKind) -> String {
 }
 
 /// A value: one element for a scalar column, the list's own for a list column.
-fn value(column: &Column, condition: &Condition, value: &[Option<String>]) -> Result<String> {
+/// Lists compare element by element, so a list's first inexact element decides
+/// any comparison that reaches it, and the list is spelled up to it.
+fn value(column: &Column, condition: &Condition, value: &[Option<String>]) -> Result<Spelled> {
     let render = |text: &Option<String>, ch_type: &ChType| match text {
-        None => Ok("NULL".to_string()),
+        None => Ok(Spelled {
+            sql: "NULL".to_string(),
+            exact: true,
+        }),
         Some(text) => element(text, condition.kind, &column.field.field_type, ch_type),
     };
     if condition.is_list {
         let ChType::Array(inner) = column.ch_type.base() else {
             bail!("`{}` is not a list column", column.row_name());
         };
-        let inner = inner.base();
-        Ok(format!(
-            "[{}]",
-            value
-                .iter()
-                .map(|text| render(text, inner))
-                .collect::<Result<Vec<_>>>()?
-                .join(", ")
-        ))
+        let mut elements = Vec::with_capacity(value.len());
+        let mut exact = true;
+        for text in value {
+            let spelled = render(text, inner.base())?;
+            elements.push(spelled.sql);
+            if !spelled.exact {
+                exact = false;
+                break;
+            }
+        }
+        Ok(Spelled {
+            sql: format!("[{}]", elements.join(", ")),
+            exact,
+        })
     } else {
         match value {
             [text] => render(text, column.ch_type.base()),
@@ -365,12 +371,17 @@ fn condition(
             {
                 return Ok(format!("{compared} IN {list}"));
             }
+            // A candidate the column can't hold exactly equals none of its values.
             let candidates = condition
                 .values
                 .iter()
                 .map(|candidate| value(column, condition, candidate))
+                .filter(|spelled| spelled.as_ref().map_or(true, |spelled| spelled.exact))
+                .map(|spelled| spelled.map(|spelled| spelled.sql))
                 .collect::<Result<Vec<_>>>()?;
-            if condition.is_list {
+            if candidates.is_empty() {
+                "false".to_string()
+            } else if condition.is_list {
                 format!(
                     "({})",
                     candidates
@@ -387,17 +398,19 @@ fn condition(
             let [candidate] = condition.values.as_slice() else {
                 bail!("A {operator:?} filter takes exactly one value");
             };
-            let sql_operator = match operator {
-                Operator::Gt => ">",
-                Operator::Lt => "<",
-                Operator::Gte => ">=",
-                Operator::Lte => "<=",
+            let spelled = value(column, condition, candidate)?;
+            // Spelled as the value above it, an inexact bound equals nothing
+            // the column holds, so `> b` and `>= b` both find what `>=` it
+            // does, and `< b` and `<= b` what `<` it does.
+            let sql_operator = match (operator, spelled.exact) {
+                (Operator::Eq, false) => return Ok("false".to_string()),
+                (Operator::Gt, true) => ">",
+                (Operator::Lte, true) => "<=",
+                (Operator::Gt | Operator::Gte, _) => ">=",
+                (Operator::Lt | Operator::Lte, _) => "<",
                 _ => "=",
             };
-            format!(
-                "{compared} {sql_operator} {}",
-                value(column, condition, candidate)?
-            )
+            format!("{compared} {sql_operator} {}", spelled.sql)
         }
     })
 }
@@ -802,24 +815,70 @@ mod tests {
         );
     }
 
-    /// A Decimal256 holds 76 digits between its whole part and its scale, so
-    /// a value keeps every fractional digit it has only as far as its whole
-    /// part leaves room: a scale past that is refused by the server, failing
-    /// the whole load.
+    /// A bound is compared at a Decimal column's own scale. One between two
+    /// values the column holds is spelled as the one above it, with the
+    /// operator that keeps its meaning; a list is spelled up to its first such
+    /// element, which decides any comparison that reaches it.
     #[test]
-    fn a_decimal_value_keeps_its_digits_as_far_as_a_decimal_holds_them() {
+    fn a_decimal_bound_is_compared_at_the_columns_scale() {
+        let decimal = |name: &str, is_array| crate::storage::schema::Field {
+            field_type: FieldType::BigDecimal {
+                config: Some((38, 2)),
+            },
+            is_array,
+            ..column(name, "BigDecimal")
+        };
+        let table = Table::new(
+            &entity_input(
+                "Price",
+                vec![
+                    column("id", "String"),
+                    decimal("amount", false),
+                    decimal("amounts", true),
+                ],
+            ),
+            "db",
+            ChainIdMode::Int32,
+        )
+        .unwrap();
+        let filter = |column: &str, operator, values: &[&[&str]]| {
+            let filter = Condition {
+                operator,
+                is_list: column == "amounts",
+                values: values
+                    .iter()
+                    .map(|value| value.iter().map(|text| Some(text.to_string())).collect())
+                    .collect(),
+                ..eq(column, ValueKind::Number, "")
+            };
+            condition(&table, &filter, None).map_err(|error| error.to_string())
+        };
+        let rendered = [
+            filter("amount", Operator::Gt, &[&["0.001"]]),
+            filter("amount", Operator::Gte, &[&["-0.001"]]),
+            filter("amount", Operator::Lt, &[&["15e-3"]]),
+            filter("amount", Operator::Lte, &[&["1.5e3"]]),
+            filter("amount", Operator::Eq, &[&["0.001"]]),
+            filter("amount", Operator::In, &[&["1.5"], &["0.001"]]),
+            filter("amount", Operator::In, &[&["0.001"]]),
+            filter("amounts", Operator::Lte, &[&["0.01", "4.995", "7"]]),
+            filter("amounts", Operator::Gt, &[&["0.01", "5"]]),
+            filter("amounts", Operator::Eq, &[&["0.01", "4.995"]]),
+        ];
         assert_eq!(
+            rendered,
             [
-                ("1.555", 2),
-                ("1.5", 2),
-                (&format!("1.{}", "5".repeat(80)), 2),
-                ("12345678901234567.5", 60),
-                ("1.5e3", 2),
-                ("15e-3", 2),
-                ("-0.5", 2),
+                Ok("`amount` >= toDecimal256('0.01', 2)".to_string()),
+                Ok("`amount` >= toDecimal256('0.00', 2)".to_string()),
+                Ok("`amount` < toDecimal256('0.02', 2)".to_string()),
+                Ok("`amount` <= toDecimal256('1500.00', 2)".to_string()),
+                Ok("false".to_string()),
+                Ok("`amount` IN (toDecimal256('1.50', 2))".to_string()),
+                Ok("false".to_string()),
+                Ok("`amounts` < [toDecimal256('0.01', 2), toDecimal256('5.00', 2)]".to_string()),
+                Ok("`amounts` > [toDecimal256('0.01', 2), toDecimal256('5.00', 2)]".to_string()),
+                Ok("false".to_string()),
             ]
-            .map(|(text, scale)| decimal_scale(text, scale)),
-            [3, 2, 75, 59, 2, 3, 2]
         );
     }
 

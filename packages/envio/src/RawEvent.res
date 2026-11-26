@@ -43,7 +43,7 @@ let eventItemsOnePerLog = (items: array<Internal.item>, ~keep: Internal.eventIte
       } else {
         None
       }
-    | Internal.Block(_) => None
+    | Internal.Block(_) | Internal.Transaction(_) => None
     }
   )
 }
@@ -74,6 +74,8 @@ let make = (
     transaction
     ->(Utils.magic: 'transaction => option<dict<unknown>>)
     ->convertFieldsToJson
+  // An EVM transaction carries its block, which `block_fields` holds.
+  transactionFields->(Utils.magic: JSON.t => dict<unknown>)->Dict.delete("block")
 
   blockFields->cleanUpRawEventFieldsInPlace
 

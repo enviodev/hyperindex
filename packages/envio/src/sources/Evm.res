@@ -1,7 +1,7 @@
 // EVM's concrete item payload. Erased to `Internal.eventPayload` on the item
 // and recovered here via `toPayload`. HyperSync omits `transaction` (it lives
 // raw in the per-chain store and is written onto the payload at batch prep);
-// RPC/simulate build it inline.
+// RPC builds it inline.
 type payload = {
   contractName: string,
   eventName: string,

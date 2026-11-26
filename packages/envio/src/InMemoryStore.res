@@ -128,7 +128,7 @@ let prepareRollbackDiff = async (
 ) => {
   let diffFrontier =
     state->IndexerState.beginRollbackDiff(~floors, ~progressedChains, ~rolledBackAddresses)
-  let persistence = state->IndexerState.persistence
+  let storage = state->IndexerState.storage
   let sequence = (state->IndexerState.config).checkpointSequence
   let diffCheckpointId = scope =>
     switch sequence->CheckpointSequence.findForScope(diffFrontier, ~scope) {
@@ -142,12 +142,9 @@ let prepareRollbackDiff = async (
   let deletedEntities = Dict.make()
   let setEntities = Dict.make()
 
-  let _ = await persistence.allEntities
+  let _ = await (state->IndexerState.config).userEntities
   ->Array.map(async entityConfig => {
-    let (removals, restoredEntities) = await persistence.storage.getRollbackData(
-      ~entityConfig,
-      ~floors,
-    )
+    let (removals, restoredEntities) = await storage.getRollbackData(~entityConfig, ~floors)
 
     removals->Array.forEach(({entityId, scope}: Persistence.rollbackRemoval) => {
       deletedEntities->Utils.Dict.push(entityConfig.name, entityId)
