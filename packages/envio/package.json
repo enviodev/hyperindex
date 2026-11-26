@@ -51,7 +51,8 @@
     "express": "4.22.3",
     "@rescript/runtime": "12.3.1",
     "rescript-schema": "9.5.1",
-    "dotenv": "16.4.5"
+    "dotenv": "16.4.5",
+    "postgres": "3.4.8"
   },
   "devDependencies": {
     "rescript": "12.3.1",
