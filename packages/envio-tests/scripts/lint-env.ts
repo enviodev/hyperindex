@@ -22,7 +22,7 @@ const allowed = new Set([
   "run/Supervisor.res",
 ]);
 
-const reads = /\bEnv\.|\bEnvSafe\.|process\.env|Process\.process\.env|dotenv/;
+const reads = /process\.env|dotenv/;
 
 const files = (dir: string): string[] =>
   readdirSync(dir).flatMap((name) => {

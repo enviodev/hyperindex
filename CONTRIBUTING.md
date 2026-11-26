@@ -102,8 +102,8 @@ Navigation cheat-sheet (useful for code search / AI):
 - CLI entry point: `packages/cli/src/lib.rs`
 - Command definitions: `packages/cli/src/commands.rs`
 - Arg parsing: `packages/cli/src/cli_args/`
-- EVM helpers: `packages/cli/src/evm/`
-- Fuel helpers: `packages/cli/src/fuel/`
+- Ecosystem helpers (EVM, Fuel, SVM): `packages/cli/src/ecosystems/`
+- Fetching: `ARCHITECTURE.md`
 
 ## Indexer Runtime Architecture
 
@@ -129,7 +129,7 @@ Configuration layer:
 
 - `Config.res` – strongly typed runtime config. Parsed from the JSON the Rust CLI embeds in the `Command` payload (primed via `Config.prime` in `Bin.res`), or, when called outside the CLI (worker threads, test harnesses), lazy-loaded via the `getConfigJson` NAPI call.
 - Handler registrations (`indexer.onEvent(...)`) land in `HandlerRegister.res` at module load time and are merged into `Config.t` on the next `Config.load()` (see `buildContractEvents`).
-- Environment variables (`.env`) feed `Env.res`, consumed by `Storage` / `ClickHouse` for connection settings.
+- Environment variables (`.env` included) are read and validated in Rust (`packages/cli/src/indexer_env.rs`) and reach the runtime as `config.env` (`IndexerEnv.res`).
 
 Persistence layer:
 

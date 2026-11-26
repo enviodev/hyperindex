@@ -1,8 +1,7 @@
 // Every indexer under test gets its own ClickHouse database, the same way it
 // gets its own Postgres schema, so files can run in parallel against one server.
 //
-// The runtime reads `ENVIO_CLICKHOUSE_*` when its config is built, so pointing
-// a run at its own database is a matter of setting them before that.
+// A run reaches its database through its config's `env.clickHouse`.
 
 let host = () =>
   switch %raw(`process.env.ENVIO_CLICKHOUSE_HOST`)->Nullable.toOption {
@@ -21,10 +20,6 @@ let password = () =>
   | None => "testing"
   | Some(password) => password
   }
-
-let setEnv: (string, string) => unit = %raw(`(key, value) => {
-  process.env[key] = value;
-}`)
 
 // Runs a statement over the HTTP interface, which needs no client dependency.
 let exec: (~host: string, ~username: string, ~password: string, string) => promise<string> = %raw(`
@@ -48,46 +43,21 @@ let query = statement => exec(~host=host(), ~username=username(), ~password=pass
 
 let make = TestPgSchema.make
 
-// Points the runtime at `database`. The env is process-global, so this must run
-// with no await between it and the storage that reads it — otherwise a second
-// run starting in between would redirect this one's writes.
-let use = (~database) => {
-  setEnv("ENVIO_CLICKHOUSE_HOST", host())
-  setEnv("ENVIO_CLICKHOUSE_USERNAME", username())
-  setEnv("ENVIO_CLICKHOUSE_PASSWORD", password())
-  setEnv("ENVIO_CLICKHOUSE_DATABASE", database)
+// The database of the run that last took one, for a test to read back.
+%%private(let current = ref(None))
+
+// The settings that point a run's config at `database`.
+let use = (~database): IndexerEnv.clickHouse => {
+  current := Some(database)
+  {host: host(), username: username(), password: password(), database, replicated: false}
 }
 
 let drop = async (~database) => {
   let _ = await query(`DROP DATABASE IF EXISTS \`${database}\``)
 }
 
-let envNames = [
-  "ENVIO_CLICKHOUSE_HOST",
-  "ENVIO_CLICKHOUSE_USERNAME",
-  "ENVIO_CLICKHOUSE_PASSWORD",
-  "ENVIO_CLICKHOUSE_DATABASE",
-]
-
-// The env `use` sets, as it was before, for a run to put back once it is done:
-// a later run in the same worker that provides no database of its own must not
-// find this one's.
-let savedEnv = () => {
-  let env = NodeJs.Process.process.env
-  let saved = envNames->Array.map(name => (name, env->Dict.get(name)))
-  () =>
-    saved->Array.forEach(((name, value)) =>
-      switch value {
-      | Some(value) => env->Dict.set(name, value)
-      | None => env->Dict.delete(name)
-      }
-    )
-}
-
-// The database the current run is pointed at, set by `use`.
 let currentDatabase = () =>
-  switch %raw(`process.env.ENVIO_CLICKHOUSE_DATABASE`)->Nullable.toOption {
-  | Some("") | None =>
-    JsError.throwWithMessage("No ClickHouse database is configured for this run.")
+  switch current.contents {
   | Some(database) => database
+  | None => JsError.throwWithMessage("No ClickHouse database is configured for this run.")
   }

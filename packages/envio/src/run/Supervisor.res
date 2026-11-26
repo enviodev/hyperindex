@@ -162,8 +162,8 @@ let fork = (
       isDev,
     }->S.reverseConvertToJsonStringOrThrow(Worker.configSchema),
   )
-  // The worker's slice of the budgets. Read when the worker's own Env module
-  // loads, which is why they ride in the spawn environment rather than a message.
+  // The worker's slice of the budgets. The worker reads its environment before
+  // anything else, which is why they ride in it rather than in a message.
   env->Dict.set("ENVIO_PG_MAX_CONNECTIONS", worker.maxConnections->Int.toString)
   memoryBudgets(~workerCount, ~env=indexerEnv)->Array.forEach(((name, share)) =>
     env->Dict.set(name, share)

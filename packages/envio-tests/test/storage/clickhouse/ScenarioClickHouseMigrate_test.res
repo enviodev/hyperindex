@@ -62,7 +62,7 @@ describe("A migration beside a run that is indexing", () => {
     ])
     await indexer.getBatchWritePromise()
 
-    let config = scenario.config
+    let config = indexer.config
     let logger = Logger.makeInMemory()
     let storage = Storage.makeStorageFromEnv(
       ~config,

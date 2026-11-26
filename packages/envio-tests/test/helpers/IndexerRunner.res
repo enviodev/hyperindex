@@ -102,6 +102,8 @@ type rec t = {
   // The snapshot a worker reports to its supervisor.
   snapshot: unit => Metrics.t,
   pgSchema: string,
+  // The config the indexer runs under, storage settings included.
+  config: Config.t,
   // Skipped, without calling back, when the run's config keeps no entity in
   // Postgres, as the harness ClickHouse leg does.
   usePostgresSql: (StorageClient.t => promise<unit>) => promise<unit>,
@@ -258,9 +260,8 @@ let run = async (
   // included, with the chains it drives (`None`: every chain), so mocked
   // sources answer for the one now running their chain.
   ~onIndexerStarted: (t, ~chains: option<array<ChainId.t>>) => unit=(_, ~chains as _) => (),
-  // Leaves the `ENVIO_CLICKHOUSE_*` settings to the environment rather than
-  // pointing them at a database of the run's own, for a test about a run that
-  // has none.
+  // Gives the run no ClickHouse settings at all instead of a database of its
+  // own, for a test about a run that has none.
   ~provideClickHouse=true,
   // Starts the first process the way `envio start --chain` does, on storage
   // nothing has set up yet.
@@ -313,7 +314,6 @@ let run = async (
   // indexer at it drops it, so a run that never does needs no server.
   let clickHouseDatabase = provideClickHouse ? Some(TestClickHouse.make()) : None
   let usedClickHouse = ref(false)
-  let restoreClickHouseEnv = TestClickHouse.savedEnv()
 
   // The builder is only reachable here and from `restart`, so it takes just
   // what differs between them and reads the rest off this call.
@@ -326,11 +326,17 @@ let run = async (
     | Some(chainIds) => baseConfig->Config.isolate(~chainIds)
     | None => baseConfig
     }
-    switch clickHouseDatabase {
-    | Some(database) if config.storage.clickhouse =>
-      TestClickHouse.use(~database)
-      usedClickHouse := true
-    | _ => ()
+    let config = {
+      ...config,
+      env: {
+        ...config.env,
+        clickHouse: switch clickHouseDatabase {
+        | Some(database) if config.storage.clickhouse =>
+          usedClickHouse := true
+          TestClickHouse.use(~database)
+        | _ => {replicated: false}
+        },
+      },
     }
     let sql = TestPgSchema.client(~logger)
     clients->Array.push(sql)->ignore
@@ -881,6 +887,7 @@ let run = async (
         )
       },
       pgSchema,
+      config,
       usePostgresSql: check =>
         if config.userEntities->Array.some(e => e.storage.postgres) {
           check(sql)
@@ -969,7 +976,6 @@ let run = async (
   | Some(database) if usedClickHouse.contents => await attempt(() => TestClickHouse.drop(~database))
   | _ => ()
   }
-  restoreClickHouseEnv()
   await attempt(async () =>
     rmSync(cacheDir->NodeJs.Path.toString, {"recursive": true, "force": true})
   )

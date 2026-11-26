@@ -1220,7 +1220,12 @@ let fromPublic = (publicConfigJson: JSON.t, ~env=IndexerEnv.read()) => {
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
     ecosystem,
     maxAddrInPartition,
-    clientFilterAddressThreshold: env.clientFilterAddressThreshold,
+    // Caps one contract at a fifth of the chain's concurrency budget, so a
+    // single busy contract can't monopolise the query slots whatever the
+    // partition size.
+    clientFilterAddressThreshold: env.clientFilterAddressThreshold->Option.getOr(
+      maxAddrInPartition * FetchState.maxChainConcurrency / 5,
+    ),
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     reorgThresholdReadyTolerance: 100,
     lowercaseAddresses,
@@ -1543,10 +1548,11 @@ let divergedMessage = (~resetCommand) =>
       (resetCommand, startOver),
     ])}`
 
-// The returned value is a pure function of the JSON: it holds only event
-// definitions, never handler/contractRegister/where state (that's layered on
-// separately as `HandlerRegister.registrationsByChainId`). That purity is
-// what lets this memoize without invalidation.
+// The returned value depends only on the JSON and the environment as it was at
+// the first load: it holds only event definitions, never
+// handler/contractRegister/where state (that's layered on separately as
+// `HandlerRegister.registrationsByChainId`). That is what lets this memoize
+// until the next `prime`.
 let load = () =>
   switch cached.contents {
   | Some(c) => c

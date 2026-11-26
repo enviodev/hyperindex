@@ -43,14 +43,14 @@ describe("Announcing a resume", () => {
       let resumed = await indexer.restart()
       let supervisorLogger = Logger.makeInMemory()
       let storage = Storage.makeStorageFromEnv(
-        ~config=scenario.config,
+        ~config=resumed.config,
         ~logger=supervisorLogger,
         ~pgSchema=resumed.pgSchema,
         ~isHasuraEnabled=false,
       )
       let _ = await storage->Persistence.initForSupervisor(
         ~logger=supervisorLogger,
-        ~config=scenario.config,
+        ~config=resumed.config,
         ~reset=false,
       )
       await storage.close()

@@ -11,15 +11,17 @@ open! Logger
 
 // A logger's level is fixed when it is made, so each level gets its own, all
 // writing where the run's environment says.
+let settings = IndexerEnv.read().logger
+
 let loggerAt = level =>
   Logger.make({
-    strategy: IndexerEnv.read().logger.strategy,
-    logFile: IndexerEnv.read().logger.file,
+    strategy: settings.strategy,
+    logFile: settings.file,
     level,
-    fileLevel: IndexerEnv.read().logger.fileLevel,
+    fileLevel: settings.fileLevel,
   })
 
-let logger = loggerAt(IndexerEnv.read().logger.level->Option.getOr(#info))
+let logger = loggerAt(settings.level->Option.getOr(#info))
 
 // Per-item loggers are built by the ecosystem (the runtime gets it from
 // `config.ecosystem`); this standalone fixture constructs one directly.

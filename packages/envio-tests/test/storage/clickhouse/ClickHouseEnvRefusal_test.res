@@ -32,11 +32,6 @@ type Tally {
 
 describe("Starting with ClickHouse storage but no ClickHouse settings", () => {
   Async.it("refuses, naming every missing variable", async t => {
-    // A developer's shell or an earlier run in the same worker may have set
-    // them, and the refusal is only reachable with all four gone.
-    let env = NodeJs.Process.process.env
-    let restore = TestClickHouse.savedEnv()
-    TestClickHouse.envNames->Array.forEach(name => env->Dict.delete(name))
     let message = switch await scenario->Scenario.run(
       ~sources=[{chain: 1}],
       ~provideClickHouse=false,
@@ -46,7 +41,6 @@ describe("Starting with ClickHouse storage but no ClickHouse settings", () => {
     | exception JsExn(error) => error->JsExn.message->Option.getOr("")->IndexerRunner.stripLogsLink
     | exception error => `an unexpected failure: ${error->JSON.stringifyAny->Option.getOr("")}`
     }
-    restore()
 
     t.expect(message).toBe(
       "ClickHouse storage is enabled but required env vars are not set: ENVIO_CLICKHOUSE_HOST, ENVIO_CLICKHOUSE_USERNAME, ENVIO_CLICKHOUSE_PASSWORD, ENVIO_CLICKHOUSE_DATABASE. Please set them, disable clickhouse in the `storage` config, or run `envio dev` for a pre-configured local ClickHouse.",

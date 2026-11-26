@@ -72,7 +72,7 @@ type t = {
   // item takes about 360 bytes of process memory.
   indexingMaxBufferSize: int,
   maxPartitionSize: int,
-  clientFilterAddressThreshold: int,
+  clientFilterAddressThreshold?: int,
   // Uncommitted entity/effect changes plus unwritten batch items the store
   // holds before processing waits for the write cycle to catch up.
   inMemoryObjectsTarget: int,

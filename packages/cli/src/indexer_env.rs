@@ -9,7 +9,8 @@ use serde::Serialize;
 pub struct IndexerEnv {
     pub indexing_max_buffer_size: u32,
     pub max_partition_size: u32,
-    pub client_filter_address_threshold: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_filter_address_threshold: Option<u32>,
     pub in_memory_objects_target: u32,
     pub server_port: u16,
     pub tui: bool,
@@ -126,7 +127,7 @@ const LOG_LEVELS: [&str; 11] = [
     "silent",
 ];
 const HYPERSYNC_LOG_LEVELS: [&str; 5] = ["trace", "debug", "info", "warn", "error"];
-const SSL_MODES: [&str; 6] = ["true", "false", "require", "allow", "prefer", "verify-full"];
+const SSL_MODES: [&str; 4] = ["require", "allow", "prefer", "verify-full"];
 
 /// Collects every problem before failing, so one start names all of them.
 struct Reader<'a> {
@@ -183,9 +184,9 @@ impl Reader<'_> {
 
     fn u32(&mut self, name: &str) -> Option<u32> {
         self.parsed(name, |value| {
-            value
-                .parse::<u32>()
-                .map_err(|_| "a non-negative integer".to_string())
+            javascript_integer(value)
+                .and_then(|number| u32::try_from(number).ok())
+                .ok_or_else(|| "a non-negative integer".to_string())
         })
     }
 
@@ -201,9 +202,8 @@ impl Reader<'_> {
 
     fn port(&mut self, name: &str) -> Option<u16> {
         self.parsed(name, |value| {
-            value
-                .parse::<u16>()
-                .ok()
+            javascript_integer(value)
+                .and_then(|number| u16::try_from(number).ok())
                 .filter(|port| *port > 0)
                 .ok_or_else(|| "a port between 1 and 65535".to_string())
         })
@@ -242,6 +242,14 @@ impl Reader<'_> {
         output.push(line.to_string());
         Err(output.join("\n"))
     }
+}
+
+/// An integer as JavaScript's `+value` reads one: surrounding whitespace,
+/// `5000.0` and `1e3` included.
+fn javascript_integer(value: &str) -> Option<i64> {
+    let number = value.trim().parse::<f64>().ok()?;
+    (number.is_finite() && number.fract() == 0.0 && number.abs() < 2f64.powi(53))
+        .then_some(number as i64)
 }
 
 pub fn parse_bool(value: &str) -> Option<bool> {
@@ -295,12 +303,6 @@ impl IndexerEnv {
         };
 
         let max_partition_size = env.u32("MAX_PARTITION_SIZE").unwrap_or(5_000);
-        // Caps one contract at a fifth of the chain's concurrency budget of 100
-        // partitions, so a single busy contract can't monopolise the query
-        // slots whatever the partition size.
-        let client_filter_address_threshold = env
-            .u32("ENVIO_CLIENT_FILTER_ADDRESS_THRESHOLD")
-            .unwrap_or(max_partition_size.saturating_mul(100) / 5);
 
         let metrics_port = env.port("METRICS_PORT").unwrap_or(9898);
         let server_port = env.port("ENVIO_INDEXER_PORT").unwrap_or(metrics_port);
@@ -352,7 +354,15 @@ impl IndexerEnv {
             let port = env.port("ENVIO_PG_PORT");
             let user = env.string("ENVIO_PG_USER");
             let database = env.string("ENVIO_PG_DATABASE");
-            let ssl_mode = env.one_of("ENVIO_PG_SSL_MODE", &SSL_MODES);
+            let ssl_mode = env.parsed("ENVIO_PG_SSL_MODE", |value| match parse_bool(value) {
+                Some(true) => Ok("true"),
+                Some(false) => Ok("false"),
+                None => SSL_MODES
+                    .iter()
+                    .find(|mode| **mode == value)
+                    .copied()
+                    .ok_or_else(|| format!("true, false or one of {}", SSL_MODES.join(", "))),
+            });
             DbEnv {
                 host: env.dev_default("ENVIO_PG_HOST", host, "localhost".to_string()),
                 port: env.dev_default("ENVIO_PG_PORT", port, 5433),
@@ -441,7 +451,7 @@ impl IndexerEnv {
         let value = IndexerEnv {
             indexing_max_buffer_size: env.u32("ENVIO_INDEXING_MAX_BUFFER_SIZE").unwrap_or(300_000),
             max_partition_size,
-            client_filter_address_threshold,
+            client_filter_address_threshold: env.u32("ENVIO_CLIENT_FILTER_ADDRESS_THRESHOLD"),
             in_memory_objects_target: env.u32("ENVIO_IN_MEMORY_OBJECTS_TARGET").unwrap_or(100_000),
             server_port,
             tui,
@@ -487,7 +497,7 @@ mod tests {
             IndexerEnv {
                 indexing_max_buffer_size: 300_000,
                 max_partition_size: 5_000,
-                client_filter_address_threshold: 100_000,
+                client_filter_address_threshold: None,
                 in_memory_objects_target: 100_000,
                 server_port: 9898,
                 tui: true,
@@ -553,6 +563,47 @@ mod tests {
                 env.hasura.response_limit
             ),
             (9000, "old".to_string(), "indexer".to_string(), Some(50))
+        );
+    }
+
+    // The values the JavaScript reader this replaced took: a number is anything
+    // `+value` reads as an integer, and the SSL mode's booleans take the same
+    // spellings as every other boolean.
+    #[test]
+    fn a_number_reads_as_javascript_reads_it() {
+        let env = read(&[
+            ("MAX_PARTITION_SIZE", " 2000 "),
+            ("ENVIO_IN_MEMORY_OBJECTS_TARGET", "5000.0"),
+            ("ENVIO_INDEXING_MAX_BUFFER_SIZE", "1e3"),
+            ("ENVIO_PG_PORT", "5432.0"),
+            ("ENVIO_PG_SSL_MODE", "1"),
+        ])
+        .unwrap();
+        assert_eq!(
+            (
+                env.max_partition_size,
+                env.in_memory_objects_target,
+                env.indexing_max_buffer_size,
+                env.db.port,
+                env.db.ssl_mode,
+            ),
+            (2000, 5000, 1000, 5432, "true")
+        );
+    }
+
+    #[test]
+    fn a_fraction_or_a_negative_is_not_a_count() {
+        assert_eq!(
+            read(&[
+                ("MAX_PARTITION_SIZE", "1.5"),
+                ("ENVIO_PG_MAX_CONNECTIONS", "-1")
+            ])
+            .unwrap_err(),
+            "========================================
+❌ Invalid environment variables:
+    MAX_PARTITION_SIZE: Expected a non-negative integer, received \"1.5\"
+    ENVIO_PG_MAX_CONNECTIONS: Expected a non-negative integer, received \"-1\"
+========================================"
         );
     }
 
