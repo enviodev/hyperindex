@@ -31,10 +31,6 @@ impl Address {
     pub fn new(address: &str) -> Result<Self> {
         address.parse()
     }
-
-    pub fn as_b256(&self) -> &B256 {
-        &self.0
-    }
 }
 
 impl FromStr for Address {

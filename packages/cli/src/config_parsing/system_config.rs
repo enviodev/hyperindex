@@ -38,7 +38,7 @@ use itertools::Itertools;
 use super::abi_compat::EventParam;
 use regex::Regex;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     env, fs,
     path::PathBuf,
 };
@@ -945,22 +945,6 @@ impl SystemConfig {
         self.contracts.get(name)
     }
 
-    pub fn get_entity_names(&self) -> Vec<EntityKey> {
-        let mut entity_names: Vec<EntityKey> = self
-            .schema
-            .entities
-            .values()
-            .map(|v| v.name.clone())
-            .collect();
-        //For consistent templating in alphabetical order
-        entity_names.sort();
-        entity_names
-    }
-
-    pub fn get_entity(&self, entity_name: &EntityKey) -> Option<&Entity> {
-        self.schema.entities.get(entity_name)
-    }
-
     pub fn get_entities(&self) -> Vec<&Entity> {
         let mut entities: Vec<&Entity> = self.schema.entities.values().collect();
         //For consistent templating in alphabetical order
@@ -968,50 +952,11 @@ impl SystemConfig {
         entities
     }
 
-    pub fn get_entity_map(&self) -> &EntityMap {
-        &self.schema.entities
-    }
-
-    pub fn get_gql_enum(&self, enum_name: &GraphqlEnumKey) -> Option<&GraphQLEnum> {
-        self.schema.enums.get(enum_name)
-    }
-
-    pub fn get_gql_enum_map(&self) -> &GraphQlEnumMap {
-        &self.schema.enums
-    }
-
     pub fn get_gql_enums(&self) -> Vec<&GraphQLEnum> {
         let mut enums: Vec<&GraphQLEnum> = self.schema.enums.values().collect();
         //For consistent templating in alphabetical order
         enums.sort_by_key(|e| e.name.clone());
         enums
-    }
-
-    pub fn get_gql_enum_names_set(&self) -> HashSet<EntityKey> {
-        self.schema.enums.keys().cloned().collect()
-    }
-
-    pub fn get_path_to_schema(&self) -> Result<PathBuf> {
-        let schema_path = path_utils::get_config_path_relative_to_root(
-            &self.parsed_project_paths,
-            PathBuf::from(&self.schema_path),
-        )
-        .context("Failed creating a relative path to schema")?;
-
-        Ok(schema_path)
-    }
-
-    pub fn get_all_paths_to_abi_files(&self) -> Result<Vec<PathBuf>> {
-        let mut filtered_unique_abi_files = self
-            .get_contracts()
-            .into_iter()
-            .filter_map(|c| c.abi.get_path())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
-
-        filtered_unique_abi_files.sort();
-        Ok(filtered_unique_abi_files)
     }
 
     pub fn from_human_config(
@@ -1793,13 +1738,6 @@ impl EvmAbi {
         )
     }
 
-    pub fn get_event_signatures(&self) -> Vec<String> {
-        self.typed
-            .events()
-            .map(Self::event_signature_from_abi_event)
-            .collect()
-    }
-
     fn from_source(
         abi_file_path: &Option<String>,
         source: &dyn ConfigSource,
@@ -2129,14 +2067,6 @@ pub enum SvmSchemaSource {
 }
 
 impl Abi {
-    fn get_path(&self) -> Option<PathBuf> {
-        match self {
-            Abi::Evm(abi) => abi.path.clone(),
-            Abi::Fuel(abi) => Some(abi.path_buf.clone()),
-            Abi::Svm(_) => None,
-        }
-    }
-
     fn fuel(fuel_abi: FuelAbi) -> Self {
         Abi::Fuel(Box::new(fuel_abi))
     }

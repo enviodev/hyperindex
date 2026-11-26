@@ -35,10 +35,6 @@ impl Address {
     pub fn to_checksum_hex_string(&self) -> String {
         self.0.to_checksum(None)
     }
-
-    pub fn as_alloy_address(&self) -> &AlloyAddress {
-        &self.0
-    }
 }
 
 impl FromStr for Address {
