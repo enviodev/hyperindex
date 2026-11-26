@@ -23,7 +23,13 @@ type timing = {
   clock?: Clock.t,
 }
 
-let make: (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime: bool, ~timing: timing=?) => t
+let make: (
+  ~sources: array<Source.t>,
+  ~logger: Logger.t,
+  ~isRealtime: bool,
+  ~fallbackStallTimeout: int=?,
+  ~timing: timing=?,
+) => t
 
 let getActiveSource: t => Source.t
 

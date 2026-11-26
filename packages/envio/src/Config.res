@@ -100,6 +100,9 @@ type chain = {
   blockThrottle: int,
   contracts: array<contract>,
   sourceConfig: sourceConfig,
+  // How long the chain waits for a new block before it recruits its fallback
+  // sources, when config.yaml says.
+  fallbackStallTimeout?: int,
 }
 
 // How a backend spells column names, mirroring `column_name_format` in
@@ -662,6 +665,19 @@ let contractMappingOf = (~chainConfigs: array<chain>): ContractMapping.t => {
   ContractMapping.make(~names)
 }
 
+// The shortest `fallback_stall_timeout` any of a chain's RPCs sets.
+let fallbackStallTimeoutOf = (sourceConfig: sourceConfig) =>
+  switch sourceConfig {
+  | EvmSourceConfig({rpcs}) =>
+    rpcs->Array.reduce(None, (shortest, rpc) =>
+      switch (shortest, rpc.syncConfig.fallbackStallTimeout) {
+      | (Some(a), Some(b)) => Some(Pervasives.min(a, b))
+      | (None, set) | (set, None) => set
+      }
+    )
+  | _ => None
+  }
+
 let getChain = (config, ~chainId) =>
   config.chainMap->ChainMap.has(chainId)
     ? chainId
@@ -1122,6 +1138,7 @@ let fromPublic = (publicConfigJson: JSON.t, ~env=IndexerEnv.read()) => {
       blockThrottle: publicChainConfig["blockThrottle"]->Option.getOr(0),
       contracts,
       sourceConfig,
+      fallbackStallTimeout: ?fallbackStallTimeoutOf(sourceConfig),
     }
   })
 

@@ -365,10 +365,19 @@ type timing = {
   clock?: Clock.t,
 }
 
-let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: timing={}) => {
+let make = (
+  ~sources: array<Source.t>,
+  ~logger: Logger.t,
+  ~isRealtime,
+  // Replaces both stall windows below.
+  ~fallbackStallTimeout=?,
+  ~timing: timing={},
+) => {
   let clock = timing.clock->Option.getOr(Clock.real)
-  let newBlockStallTimeout = timing.newBlockStallTimeout->Option.getOr(60_000)
-  let newBlockStallTimeoutRealtime = timing.newBlockStallTimeoutRealtime->Option.getOr(20_000)
+  let newBlockStallTimeout =
+    timing.newBlockStallTimeout->Option.getOr(fallbackStallTimeout->Option.getOr(60_000))
+  let newBlockStallTimeoutRealtime =
+    timing.newBlockStallTimeoutRealtime->Option.getOr(fallbackStallTimeout->Option.getOr(20_000))
   let stalledPollingInterval = timing.stalledPollingInterval->Option.getOr(5_000)
   let reducedPollingInterval = timing.reducedPollingInterval->Option.getOr(60_000)
   let recoveryTimeout = timing.recoveryTimeout->Option.getOr(60_000.0)
