@@ -1,0 +1,12 @@
+[
+  {"id": "rate-limit", "question": "A HyperSync server answers 429. Where is that turned into the failure the indexer waits on, and where is that failure handled?", "expected": ["packages/cli/src/sources/evm_hypersync/mod.rs", "packages/envio/src/sources/SourceManager.res"]},
+  {"id": "pg-port", "question": "What is the default Postgres port the indexer connects to, and in which file is it set?", "expected": ["packages/cli/src/indexer_env.rs"]},
+  {"id": "stall-window", "question": "How long does a chain wait for a new block before it starts polling its fallback RPCs, and where is that decided?", "expected": ["packages/envio/src/sources/SourceManager.res"]},
+  {"id": "narrow-range", "question": "An RPC provider refuses eth_getLogs because the block range is too large. Where is that error recognised and turned into a narrower retry?", "expected": ["packages/cli/src/sources/evm_rpc/classify.rs"]},
+  {"id": "failure-kinds", "question": "Which files define every kind of failure a data source can answer a request with?", "expected": ["packages/cli/src/sources/failure.rs", "packages/envio/src/sources/Source.res"]},
+  {"id": "hypersync-query", "question": "Where is the HyperSync query for an EVM partition's logs built before it is sent?", "expected": ["packages/cli/src/sources/evm_hypersync/mod.rs"]},
+  {"id": "svm-borsh", "question": "Where are Solana instruction arguments decoded from borsh into the values a handler receives?", "expected": ["packages/cli/src/ecosystems/svm/borsh_decoder.rs"]},
+  {"id": "restart-test", "question": "Which test states what a restart does with each kind of config change?", "expected": ["packages/envio-tests/test/storage/Migration_test.res"]},
+  {"id": "tui-decision", "question": "Where is it decided whether the indexer draws its terminal progress display?", "expected": ["packages/cli/src/indexer_env.rs"]},
+  {"id": "pg-write", "question": "Where does a processed batch get written to Postgres, on the Rust side?", "expected": ["packages/cli/src/storage/postgres/"]}
+]
