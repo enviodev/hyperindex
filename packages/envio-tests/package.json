@@ -8,7 +8,8 @@
     "watch": "rescript watch",
     "lint": "node scripts/lint-inputs.ts && node scripts/lint-env.ts",
     "test": "node scripts/lint-inputs.ts && node scripts/lint-env.ts && rescript && vitest run",
-    "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs"
+    "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs",
+    "bench": "rescript && vitest run --config vitest.bench.config.ts"
   },
   "devDependencies": {
     "@rescript/runtime": "12.3.1",

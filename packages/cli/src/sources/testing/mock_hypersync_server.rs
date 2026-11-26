@@ -381,11 +381,11 @@ fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
         .unwrap_or(u64::MAX)
         .min(height + 1)
         .max(from_block);
-    let rows = |table: &str| -> Vec<Value> {
+    let rows = |table: &str| -> &[Value] {
         chain
             .get(table)
             .and_then(Value::as_array)
-            .cloned()
+            .map(Vec::as_slice)
             .unwrap_or_default()
     };
     let number = |row: &Value, key: &str| row.get(key).and_then(Value::as_u64);
@@ -396,7 +396,7 @@ fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
         .unwrap_or_default();
 
     let logs: Vec<Value> = rows("logs")
-        .into_iter()
+        .iter()
         .filter(|log| {
             number(log, "block_number")
                 .is_some_and(|block| block >= from_block && block < next_block)
@@ -404,6 +404,7 @@ fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
                     .iter()
                     .any(|selection| log_matches(log, selection))
         })
+        .cloned()
         .collect();
     let transaction_selections = query
         .get("transactions")
@@ -417,7 +418,7 @@ fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
         )
     };
     let transactions: Vec<Value> = rows("transactions")
-        .into_iter()
+        .iter()
         .filter(|transaction| {
             number(transaction, "block_number")
                 .is_some_and(|block| block >= from_block && block < next_block)
@@ -426,23 +427,28 @@ fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
                     .any(|selection| transaction_matches(transaction, selection))
                     || logs.iter().any(|log| key(log) == key(transaction)))
         })
+        .cloned()
         .collect();
     let include_all_blocks = query
         .get("include_all_blocks")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let row_blocks: std::collections::HashSet<Option<u64>> = logs
+        .iter()
+        .chain(&transactions)
+        .map(|row| number(row, "block_number"))
+        .collect();
     let blocks: Vec<Value> = rows("blocks")
-        .into_iter()
+        .iter()
         .filter(|block| {
             if include_all_blocks {
                 number(block, "number")
                     .is_some_and(|block| block >= from_block && block < next_block)
             } else {
-                logs.iter()
-                    .chain(&transactions)
-                    .any(|row| number(row, "block_number") == number(block, "number"))
+                row_blocks.contains(&number(block, "number"))
             }
         })
+        .cloned()
         .collect();
 
     let selected = |table: &str, rows: Vec<Value>| -> Vec<Value> {
