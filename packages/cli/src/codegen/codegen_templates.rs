@@ -932,9 +932,9 @@ struct SelectedFieldTemplate {
 }
 
 pub struct ProjectTemplate {
-    /// Read by chain-config unit tests in this module. Not used by the
-    /// production codegen flow, hence the dead-code allowance.
-    #[allow(dead_code)]
+    /// Read by chain-config unit tests in this module; the codegen itself
+    /// doesn't use it.
+    #[cfg_attr(not(test), allow(dead_code))]
     chain_configs: Vec<NetworkConfigTemplate>,
     is_rescript: bool,
     indexer_code: Option<String>,

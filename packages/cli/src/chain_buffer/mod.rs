@@ -779,6 +779,7 @@ impl ChainBuffer {
     }
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn field_names<F: Copy>(variants: &[F], name: impl Fn(F) -> &'static str) -> Vec<String> {
     variants
         .iter()
@@ -789,33 +790,32 @@ fn field_names<F: Copy>(variants: &[F], name: impl Fn(F) -> &'static str) -> Vec
 // The field orders below are the bit positions of the selection masks, which
 // the ReScript field arrays are tested against. Reached only through the
 // addon's C ABI, which the test target does not build.
-
-#[allow(dead_code)]
 #[napi]
+#[cfg_attr(test, allow(dead_code))]
 pub fn evm_block_field_names() -> Vec<String> {
     field_names(EvmBlockField::VARIANTS, EvmBlockField::name)
 }
 
-#[allow(dead_code)]
 #[napi]
+#[cfg_attr(test, allow(dead_code))]
 pub fn evm_transaction_field_names() -> Vec<String> {
     field_names(EvmTxField::VARIANTS, EvmTxField::name)
 }
 
-#[allow(dead_code)]
 #[napi]
+#[cfg_attr(test, allow(dead_code))]
 pub fn svm_block_field_names() -> Vec<String> {
     field_names(svm::SvmBlockField::VARIANTS, svm::SvmBlockField::name)
 }
 
-#[allow(dead_code)]
 #[napi]
+#[cfg_attr(test, allow(dead_code))]
 pub fn svm_transaction_field_names() -> Vec<String> {
     field_names(svm::SvmTxField::VARIANTS, svm::SvmTxField::name)
 }
 
-#[allow(dead_code)]
 #[napi]
+#[cfg_attr(test, allow(dead_code))]
 pub fn fuel_block_field_names() -> Vec<String> {
     field_names(fuel::FuelBlockField::VARIANTS, fuel::FuelBlockField::name)
 }

@@ -2032,11 +2032,6 @@ pub fn arg_type_to_field_type(ty: &human_config::svm::ArgType) -> Result<SvmFiel
     })
 }
 
-// Suppress unused warnings on imports only referenced via paths above when
-// the enum-variant constructor isn't reached at compile time.
-#[allow(dead_code)]
-const _UNUSED_ENUM_VARIANT: Option<SvmEnumVariant> = None;
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Abi {
     Evm(EvmAbi),
