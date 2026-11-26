@@ -29,6 +29,8 @@
 - To edit runtime code, edit templates under `packages/cli/templates/` or `packages/envio/`, not the codegen output under `<project>/.envio/`.
 - Prefer reading `.res` modules directly; ignore compiled `.js` artifacts.
 - The napi boundary between the Rust addon (`#[napi]` exports) and ReScript (`Core.addon`) is internal, not a published API. Change both sides freely to get the better shape — don't keep an awkward export for compatibility. The addon must be rebuilt for ReScript tests to see the change (see below).
+- Fetching: see `ARCHITECTURE.md` for the layers and where each piece lives. Data sources are Rust (`packages/cli/src/sources/`, one napi class `NativeSource`); ReScript keeps the control around them (`packages/envio/src/sources/SourceManager.res`, `HeightFeed.res`, `FetchState.res`). A source call answers with a `Source.outcome`; expected failures are a `Source.failure`, never an exception.
+- The environment is read only in `Env.res` (and the entry modules `pnpm lint` allows) and in Rust's `src/env.rs`; logic reads config. `pnpm lint` (envio-tests), clippy and `layers.rs` refuse new reads elsewhere.
 
 ### Building the native addon
 

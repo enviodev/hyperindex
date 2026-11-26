@@ -2,7 +2,14 @@
 // aren't requests), with the time it took and how much it brought back.
 // SourceManager aggregates these per (source, method) into the
 // envio_source_request_* and envio_source_response_* metrics.
-type requestStat = RequestStat.t = {method: string, seconds: float, responseBlocks?: int}
+type requestStat = {
+  method: string,
+  seconds: float,
+  // Blocks the backend returned for this request, before any matching drops
+  // them. Absent for methods whose responses aren't measured in blocks, so a
+  // zero always means the request came back empty.
+  responseBlocks?: int,
+}
 
 // Every way a source call can fail that the caller is expected to handle. A
 // source never throws for one of these; an exception escaping a source is a

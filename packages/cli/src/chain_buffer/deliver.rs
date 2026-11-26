@@ -164,7 +164,7 @@ pub(crate) fn fuel_columns() -> Vec<ColumnRead> {
     ]
 }
 
-/// Named as `SvmHyperSyncClient.Items.item`'s fields.
+/// Named as `SvmEventItem.item`'s fields.
 pub(crate) fn svm_columns() -> Vec<ColumnRead> {
     vec![
         ColumnRead::scalar("slot", ReadKind::Float),

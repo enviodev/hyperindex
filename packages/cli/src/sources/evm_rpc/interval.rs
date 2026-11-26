@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-/// The sync-tuning knobs a `RpcSource` resolves in `EvmChain.getSyncConfig`
-/// (ReScript's `Config.sourceSync`) and passes in at construction, minus the
-/// fields that are not paging concerns: `fallbackStallTimeout` and
-/// `pollingInterval` stay JS-side scheduling, and `queryTimeoutMillis` bounds
-/// each request in the client rather than the range a page asks for.
+/// The sync-tuning knobs of an RPC source (config.yaml's sync options, with
+/// defaults filled in by `NativeSource`), minus the fields that are not paging
+/// concerns: `pollingInterval` is JS-side scheduling, and `queryTimeoutMillis`
+/// bounds each request in the client rather than the range a page asks for.
 #[derive(Clone, Copy)]
 pub struct SyncConfig {
     pub initial_block_interval: u64,

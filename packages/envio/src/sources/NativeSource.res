@@ -106,7 +106,7 @@ let toSource = (native: native, ~chainId, ~chainBuffer: BufferPage.buffer): Sour
   ) => {
     let query = {
       fromBlock,
-      ?toBlock,
+      toBlock: ?(selection->FetchState.sourceToBlock(~toBlock, ~knownHeight)),
       partitionId,
       onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
       onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
