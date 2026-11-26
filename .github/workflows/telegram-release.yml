@@ -102,12 +102,30 @@ jobs:
             body="${body:0:$max_body}"$'\n'"… read the full notes on GitHub"
           fi
 
-          # fenced ``` blocks -> <pre>; "## heading" -> <b>heading</b> (outside code)
+          # fenced ``` blocks -> <pre>; "## heading" -> <b>heading</b> (outside code);
+          # a PR or issue URL -> <a href="URL">#N</a>, except inside `code`, where
+          # Telegram forbids nested tags. Odd split parts sit outside backticks.
           # shellcheck disable=SC2016  # $0 below is awk's field var, not a shell expansion
           notes="$(printf '%s\n' "$body" | esc | awk '
+            function link_refs(text,   out, url, start, len) {
+              out = ""
+              while (match(text, /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(pull|issues)\/[0-9]+/)) {
+                start = RSTART; len = RLENGTH
+                url = substr(text, start, len)
+                out = out substr(text, 1, start - 1) "<a href=\"" url "\">#" substr(url, match(url, /[0-9]+$/)) "</a>"
+                text = substr(text, start + len)
+              }
+              return out text
+            }
             BEGIN { inpre = 0 }
             /^```/ { if (inpre) { print "</pre>"; inpre = 0 } else { print "<pre>"; inpre = 1 } next }
-            inpre == 0 && /^[[:space:]]*#{1,6}[[:space:]]+/ {
+            inpre == 1 { print; next }
+            {
+              n = split($0, parts, "`"); line = ""
+              for (i = 1; i <= n; i++) line = line (i > 1 ? "`" : "") (i % 2 == 1 ? link_refs(parts[i]) : parts[i])
+              $0 = line
+            }
+            /^[[:space:]]*#{1,6}[[:space:]]+/ {
               sub(/^[[:space:]]*#+[[:space:]]+/, ""); print "<b>" $0 "</b>"; next
             }
             { print }
