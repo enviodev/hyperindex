@@ -19,7 +19,7 @@ type handlerStat = {
   // Cumulative per-call preload time; exceeds preloadSeconds under parallel execution.
   mutable preloadSecondsTotal: float,
   mutable preloadPendingCount: int,
-  mutable preloadPendingTimerRef: float,
+  mutable preloadPendingTimerRef: Clock.timeRef,
   clock: Clock.t,
 }
 
@@ -35,7 +35,7 @@ type storageLoadStat = {
   mutable whereSize: float,
   mutable size: float,
   mutable pendingCount: int,
-  mutable pendingTimerRef: float,
+  mutable pendingTimerRef: Clock.timeRef,
 }
 
 type storageWriteStat = {
@@ -106,7 +106,7 @@ type t = {
   // Monotonic peer of indexerStartTime, on the run's clock. Elapsed run time is
   // derived from this so an NTP correction can't move it out of step with the
   // clock-based counters that get divided by it.
-  indexerStartTimeRef: float,
+  indexerStartTimeRef: Clock.timeRef,
   // When an entity's history was last pruned. No key = never pruned yet,
   // which counts as overdue.
   lastPrunedAtMillis: dict<float>,
@@ -147,7 +147,7 @@ type t = {
   // Set while the processing loop is idle after starving on an empty buffer;
   // None while processing or when the loop stopped for a reorg/shutdown. The
   // getter folds the in-progress interval in so a scrape mid-stall isn't stale.
-  mutable processingStalledOnFetchSince: option<float>,
+  mutable processingStalledOnFetchSince: option<Clock.timeRef>,
   mutable processingStalledOnStorageWriteSeconds: float,
   // One stat per contract/event metric series. Per-chain event configs share a
   // series, so the by-config map only spares a run from building the key.
@@ -223,7 +223,7 @@ let make = (
       ~holdRealtime,
     ),
     indexerStartTime: Date.make(),
-    indexerStartTimeRef: clock.now(),
+    indexerStartTimeRef: clock->Clock.readTimeRef,
     rollbackState: NoRollback,
     lastPrunedAtMillis: Dict.make(),
     scheduleProcessing: () => (),
@@ -510,7 +510,7 @@ let takeProcessingRequest = (state: t) => {
 // so only genuine buffer starvation is counted.
 let markProcessingStalledOnFetch = (state: t) =>
   if state.processingStalledOnFetchSince->Option.isNone {
-    state.processingStalledOnFetchSince = Some(state.clock.now())
+    state.processingStalledOnFetchSince = Some(state.clock->Clock.readTimeRef)
   }
 
 let recordStalledOnStorageWrite = (state: t, ~seconds) =>
@@ -795,7 +795,7 @@ let recordHandlerDuration = (stat: handlerStat, ~duration) => {
 }
 
 let startPreloadHandler = (stat: handlerStat) => {
-  let timerRef = stat.clock.now()
+  let timerRef = stat.clock->Clock.readTimeRef
   if stat.preloadPendingCount === 0 {
     stat.preloadPendingTimerRef = timerRef
   }
@@ -838,10 +838,10 @@ let getStorageLoadStat = (state: t, ~storage, ~operation) => {
 let startStorageLoad = (state: t, ~storage, ~operation) => {
   let stat = state->getStorageLoadStat(~storage, ~operation)
   if stat.pendingCount === 0 {
-    stat.pendingTimerRef = state.clock.now()
+    stat.pendingTimerRef = state.clock->Clock.readTimeRef
   }
   stat.pendingCount = stat.pendingCount + 1
-  state.clock.now()
+  state.clock->Clock.readTimeRef
 }
 
 let endStorageLoad = (state: t, timerRef, ~storage, ~operation, ~whereSize, ~size) => {

@@ -73,7 +73,7 @@ type requestStatSample = {
 type t = {
   sourcesState: array<sourceState>,
   logger: Logger.t,
-  mutable statusStart: float,
+  mutable statusStart: Clock.timeRef,
   mutable status: sourceManagerStatus,
   // Cumulative time spent in each status, rendered into the
   // envio_indexing_idle/source_waiting/source_querying_seconds counters.
@@ -415,7 +415,7 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
     reducedPollingInterval,
     recoveryTimeout,
     clock,
-    statusStart: clock.now(),
+    statusStart: clock->Clock.readTimeRef,
     status: Idle,
     idleSeconds: 0.,
     waitingForNewBlockSeconds: 0.,
@@ -437,7 +437,7 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
     sourceManager.waitingForNewBlockSeconds = sourceManager.waitingForNewBlockSeconds +. elapsed
   | Querying => sourceManager.queryingSeconds = sourceManager.queryingSeconds +. elapsed
   }
-  sourceManager.statusStart = sourceManager.clock.now()
+  sourceManager.statusStart = sourceManager.clock->Clock.readTimeRef
   sourceManager.status = newStatus
 }
 

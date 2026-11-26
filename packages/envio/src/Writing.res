@@ -348,7 +348,7 @@ let rec awaitCapacityLoop = async (state: IndexerState.t) => {
 let awaitCapacity = async (state: IndexerState.t) =>
   if state->isAtChangesLimit {
     let clock = state->IndexerState.clock
-    let timeRef = clock.now()
+    let timeRef = clock->Clock.readTimeRef
     await state->awaitCapacityLoop
     state->IndexerState.recordStalledOnStorageWrite(~seconds=clock->Clock.secondsSince(timeRef))
   }

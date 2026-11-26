@@ -42,8 +42,8 @@ let forEach: (t, effectCacheInMemTable => unit) => unit
 // Drop the cache tables but keep the rate-limit windows across a rollback.
 let resetForRollback: t => unit
 
-let startCall: effectStats => float
-let endCall: (effectStats, ~startTimerRef: float) => unit
+let startCall: effectStats => Clock.timeRef
+let endCall: (effectStats, ~startTimerRef: Clock.timeRef) => unit
 let queueEnqueued: (effectStats, ~count: int) => unit
 let queueDequeued: (effectStats, ~count: int) => unit
 let addQueueWaitSeconds: (effectStats, ~seconds: float) => unit

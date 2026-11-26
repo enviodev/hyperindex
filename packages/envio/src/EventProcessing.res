@@ -63,7 +63,7 @@ let runHandlerOrThrow = async (item: Internal.item, ~checkpointId, ~runtime: Han
   if item->hasHandler {
     //Include the load in time before handler
     let clock = runtime.params.indexerState->IndexerState.clock
-    let timeBeforeHandler = clock.now()
+    let timeBeforeHandler = clock->Clock.readTimeRef
     let scope = runtime->handlerScope(~item, ~checkpointId, ~isPreload=false)
     switch await RunScope.enter(scope, invokeHandler, runtime, item) {
     | exception exn =>
@@ -182,7 +182,7 @@ let processEventBatch = async (~batch: Batch.t, ~runtime: HandlerRuntime.t) => {
     await indexerState->Writing.awaitCapacity
 
     let clock = indexerState->IndexerState.clock
-    let timeRef = clock.now()
+    let timeRef = clock->Clock.readTimeRef
 
     if batch.items->Utils.Array.notEmpty {
       await batch->preloadBatchOrThrow(~runtime)

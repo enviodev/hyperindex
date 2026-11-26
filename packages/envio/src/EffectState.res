@@ -27,7 +27,7 @@ type effectStats = {
   mutable callSecondsTotal: float,
   mutable callCount: float,
   mutable activeCallsCount: int,
-  mutable prevCallStartTimerRef: float,
+  mutable prevCallStartTimerRef: Clock.timeRef,
   clock: Clock.t,
   mutable queueCount: int,
   mutable queueWaitSeconds: float,
@@ -106,7 +106,7 @@ let setUnregisteredCacheCount = (self: t, ~effectName, ~scope, ~count) => {
 // Bump the active count and extend the wall-clock callSeconds, which counts
 // overlapping calls once. Returns the call's start, for `endCall`.
 let startCall = (stats: effectStats) => {
-  let timerRef = stats.clock.now()
+  let timerRef = stats.clock->Clock.readTimeRef
   let hadActiveCalls = stats.activeCallsCount > 0
   stats.activeCallsCount = stats.activeCallsCount + 1
   if hadActiveCalls {
@@ -123,7 +123,7 @@ let startCall = (stats: effectStats) => {
 // record the call's own cumulative duration.
 let endCall = (stats: effectStats, ~startTimerRef) => {
   stats.activeCallsCount = stats.activeCallsCount - 1
-  let endedAt = stats.clock.now()
+  let endedAt = stats.clock->Clock.readTimeRef
   stats.callSeconds =
     stats.callSeconds +. Clock.secondsBetween(~from=stats.prevCallStartTimerRef, ~to=endedAt)
   stats.prevCallStartTimerRef = endedAt
