@@ -1255,6 +1255,15 @@ mod test {
         insta::assert_snapshot!(content);
     }
 
+    // https://github.com/enviodev/hyperindex/issues/1872
+    #[test]
+    fn typescript_test_file_for_bytes_events() {
+        let template = get_test_template_helper("bytes-events-config.yaml", &Language::TypeScript);
+        let content = template.imported_contracts[0]
+            .generate_typescript_test_content(false, template.first_chain_id);
+        insta::assert_snapshot!(content);
+    }
+
     // https://github.com/enviodev/hyperindex/issues/1678
     #[test]
     fn typescript_handler_for_json_bigint_events() {
