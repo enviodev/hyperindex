@@ -1,41 +1,11 @@
+//! HyperFuel's block and receipt tables, read in place: a row is a set of
+//! borrows into the response's columns, so a receipt no registration keeps
+//! costs nothing to read.
+
 use anyhow::{Context, Result};
-use hyperfuel_client::{ArrowBatch, ArrowResponse};
-use napi_derive::napi;
-use polars_arrow::array::{BinaryArray, Int64Array, StaticArray, UInt64Array, UInt8Array};
+use arrow::array::{BinaryArray, Int64Array, RecordBatch, UInt64Array, UInt8Array};
 
-#[napi(object)]
-#[derive(Clone)]
-pub struct Block {
-    pub id: String,
-    pub height: i64,
-    pub time: i64,
-}
-
-/// The page's receipt rows, decoded from Arrow but not yet matched — `get_event_items`
-/// turns each one into zero or more `EventItem`s. Numeric u64 columns stay raw
-/// here; they become JS BigInts only on the matched items.
-pub(crate) struct RawReceipt {
-    pub receipt_index: i64,
-    pub root_contract_id: Option<String>,
-    pub tx_id: String,
-    pub block_height: i64,
-    pub receipt_type: u8,
-    pub data: Option<Vec<u8>>,
-    pub rb: Option<u64>,
-    pub val: Option<u64>,
-    pub sub_id: Option<String>,
-    pub amount: Option<u64>,
-    pub asset_id: Option<String>,
-    pub to: Option<String>,
-    pub to_address: Option<String>,
-}
-
-pub(crate) struct RawResponse {
-    pub archive_height: Option<i64>,
-    pub next_block: i64,
-    pub receipts: Vec<RawReceipt>,
-    pub blocks: Vec<Block>,
-}
+use crate::arrow_columns::{bytes_at, column, primitive_at, u64_at};
 
 /// `MissingFields` is the shape the JS side recognizes (via the JSON payload
 /// protocol shared with hypersync_source) and converts to
@@ -52,294 +22,283 @@ impl From<anyhow::Error> for ConvertError {
     }
 }
 
-fn encode_hex(bytes: &[u8]) -> String {
-    format!("0x{}", faster_hex::hex_string(bytes))
-}
-
-fn hex_at(arr: &Option<&BinaryArray<i32>>, idx: usize) -> Option<String> {
-    arr.and_then(|a| a.get(idx)).map(encode_hex)
-}
-
-fn u64_at(arr: &Option<&UInt64Array>, idx: usize) -> Option<u64> {
-    arr.and_then(|a| a.get(idx))
-}
-
-fn i64_field(arr: &Option<&UInt64Array>, idx: usize, name: &str) -> Result<Option<i64>> {
-    u64_at(arr, idx)
-        .map(|v| v.try_into().with_context(|| format!("{name} overflow")))
+/// A value that has to fit an `i64`, as JS reads it.
+fn i64_value(value: Option<u64>, name: &str) -> Result<Option<u64>> {
+    value
+        .map(|value| {
+            i64::try_from(value).with_context(|| format!("{name} overflow"))?;
+            Ok(value)
+        })
         .transpose()
 }
 
-pub(crate) fn receipts_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<RawReceipt>, ConvertError> {
-    let mut out = Vec::new();
-    for batch in batches {
-        let receipt_index = batch.column::<UInt64Array>("receipt_index").ok();
-        let root_contract_id = batch.column::<BinaryArray<i32>>("root_contract_id").ok();
-        let tx_id = batch.column::<BinaryArray<i32>>("tx_id").ok();
-        let block_height = batch.column::<UInt64Array>("block_height").ok();
-        let receipt_type = batch.column::<UInt8Array>("receipt_type").ok();
-        let data = batch.column::<BinaryArray<i32>>("data").ok();
-        let rb = batch.column::<UInt64Array>("rb").ok();
-        let val = batch.column::<UInt64Array>("val").ok();
-        let sub_id = batch.column::<BinaryArray<i32>>("sub_id").ok();
-        let amount = batch.column::<UInt64Array>("amount").ok();
-        let asset_id = batch.column::<BinaryArray<i32>>("asset_id").ok();
-        let to = batch.column::<BinaryArray<i32>>("to").ok();
-        let to_address = batch.column::<BinaryArray<i32>>("to_address").ok();
-
-        for idx in 0..batch.chunk.len() {
-            let mut missing: Vec<String> = Vec::new();
-            let receipt_index_val = i64_field(&receipt_index, idx, "receipt.receiptIndex")?
-                .or_else(|| {
-                    missing.push("receipt.receiptIndex".into());
-                    None
-                });
-            let tx_id_val = hex_at(&tx_id, idx).or_else(|| {
-                missing.push("receipt.txId".into());
-                None
-            });
-            let block_height_val =
-                i64_field(&block_height, idx, "receipt.blockHeight")?.or_else(|| {
-                    missing.push("receipt.blockHeight".into());
-                    None
-                });
-            let receipt_type_val = receipt_type.and_then(|a| a.get(idx)).or_else(|| {
-                missing.push("receipt.receiptType".into());
-                None
-            });
-            if !missing.is_empty() {
-                return Err(ConvertError::MissingFields(missing));
-            }
-
-            out.push(RawReceipt {
-                receipt_index: receipt_index_val.unwrap(),
-                root_contract_id: hex_at(&root_contract_id, idx),
-                tx_id: tx_id_val.unwrap(),
-                block_height: block_height_val.unwrap(),
-                receipt_type: receipt_type_val.unwrap(),
-                data: data.and_then(|a| a.get(idx)).map(<[u8]>::to_vec),
-                rb: u64_at(&rb, idx),
-                val: u64_at(&val, idx),
-                sub_id: hex_at(&sub_id, idx),
-                amount: u64_at(&amount, idx),
-                asset_id: hex_at(&asset_id, idx),
-                to: hex_at(&to, idx),
-                to_address: hex_at(&to_address, idx),
-            });
-        }
+/// `value`, or `None` with `name` noted missing.
+fn required<T>(value: Option<T>, name: &str, missing: &mut Vec<String>) -> Option<T> {
+    if value.is_none() {
+        missing.push(name.to_string());
     }
-    Ok(out)
+    value
 }
 
-pub(crate) fn blocks_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<Block>, ConvertError> {
-    let mut out = Vec::new();
-    for batch in batches {
-        let id = batch.column::<BinaryArray<i32>>("id").ok();
-        let height = batch.column::<UInt64Array>("height").ok();
-        let time = batch.column::<Int64Array>("time").ok();
-
-        for idx in 0..batch.chunk.len() {
-            let mut missing: Vec<String> = Vec::new();
-            let id_val = hex_at(&id, idx).or_else(|| {
-                missing.push("block.id".into());
-                None
-            });
-            let height_val = i64_field(&height, idx, "block.height")?.or_else(|| {
-                missing.push("block.height".into());
-                None
-            });
-            let time_val = time.and_then(|a| a.get(idx)).or_else(|| {
-                missing.push("block.time".into());
-                None
-            });
-            if !missing.is_empty() {
-                return Err(ConvertError::MissingFields(missing));
-            }
-
-            out.push(Block {
-                id: id_val.unwrap(),
-                height: height_val.unwrap(),
-                time: time_val.unwrap(),
-            });
-        }
-    }
-    Ok(out)
+pub(crate) struct BlockColumns<'a> {
+    id: Option<&'a BinaryArray>,
+    height: Option<&'a UInt64Array>,
+    time: Option<&'a Int64Array>,
 }
 
-pub(crate) fn convert_response(res: ArrowResponse) -> Result<RawResponse, ConvertError> {
-    Ok(RawResponse {
-        archive_height: res
-            .archive_height
-            .map(i64::try_from)
-            .transpose()
-            .context("convert archive_height")
-            .map_err(ConvertError::Other)?,
-        next_block: res
-            .next_block
-            .try_into()
-            .context("convert next_block")
-            .map_err(ConvertError::Other)?,
-        receipts: receipts_from_arrow(&res.data.receipts)?,
-        blocks: blocks_from_arrow(&res.data.blocks)?,
-    })
+pub(crate) struct BlockRow<'a> {
+    pub(crate) id: &'a [u8],
+    pub(crate) height: u64,
+    pub(crate) time: i64,
+}
+
+impl<'a> BlockColumns<'a> {
+    pub(crate) fn of(batch: &'a RecordBatch) -> Result<Self> {
+        Ok(BlockColumns {
+            id: column(batch, "id")?,
+            height: column(batch, "height")?,
+            time: column(batch, "time")?,
+        })
+    }
+
+    pub(crate) fn row(&self, row: usize) -> Result<BlockRow<'a>, ConvertError> {
+        let mut missing = Vec::new();
+        let id = required(bytes_at(self.id, row), "block.id", &mut missing);
+        let height = required(
+            i64_value(u64_at(self.height, row), "block.height")?,
+            "block.height",
+            &mut missing,
+        );
+        let time = required(primitive_at(self.time, row), "block.time", &mut missing);
+        match (id, height, time) {
+            (Some(id), Some(height), Some(time)) => Ok(BlockRow { id, height, time }),
+            _ => Err(ConvertError::MissingFields(missing)),
+        }
+    }
+}
+
+pub(crate) struct ReceiptColumns<'a> {
+    receipt_index: Option<&'a UInt64Array>,
+    root_contract_id: Option<&'a BinaryArray>,
+    tx_id: Option<&'a BinaryArray>,
+    block_height: Option<&'a UInt64Array>,
+    receipt_type: Option<&'a UInt8Array>,
+    data: Option<&'a BinaryArray>,
+    rb: Option<&'a UInt64Array>,
+    val: Option<&'a UInt64Array>,
+    sub_id: Option<&'a BinaryArray>,
+    amount: Option<&'a UInt64Array>,
+    asset_id: Option<&'a BinaryArray>,
+    to: Option<&'a BinaryArray>,
+    to_address: Option<&'a BinaryArray>,
+}
+
+/// One receipt's fields, borrowed from the columns. The ids are raw bytes.
+pub(crate) struct ReceiptRow<'a> {
+    pub(crate) receipt_index: u64,
+    pub(crate) root_contract_id: Option<&'a [u8]>,
+    pub(crate) tx_id: &'a [u8],
+    pub(crate) block_height: u64,
+    pub(crate) receipt_type: u8,
+    pub(crate) data: Option<&'a [u8]>,
+    pub(crate) rb: Option<u64>,
+    pub(crate) val: Option<u64>,
+    pub(crate) sub_id: Option<&'a [u8]>,
+    pub(crate) amount: Option<u64>,
+    pub(crate) asset_id: Option<&'a [u8]>,
+    pub(crate) to: Option<&'a [u8]>,
+    pub(crate) to_address: Option<&'a [u8]>,
+}
+
+impl<'a> ReceiptColumns<'a> {
+    pub(crate) fn of(batch: &'a RecordBatch) -> Result<Self> {
+        Ok(ReceiptColumns {
+            receipt_index: column(batch, "receipt_index")?,
+            root_contract_id: column(batch, "root_contract_id")?,
+            tx_id: column(batch, "tx_id")?,
+            block_height: column(batch, "block_height")?,
+            receipt_type: column(batch, "receipt_type")?,
+            data: column(batch, "data")?,
+            rb: column(batch, "rb")?,
+            val: column(batch, "val")?,
+            sub_id: column(batch, "sub_id")?,
+            amount: column(batch, "amount")?,
+            asset_id: column(batch, "asset_id")?,
+            to: column(batch, "to")?,
+            to_address: column(batch, "to_address")?,
+        })
+    }
+
+    /// The receipt at `row`; one without a field every receipt has fails the
+    /// page, kept or not.
+    pub(crate) fn row(&self, row: usize) -> Result<ReceiptRow<'a>, ConvertError> {
+        let mut missing = Vec::new();
+        let receipt_index = required(
+            i64_value(u64_at(self.receipt_index, row), "receipt.receiptIndex")?,
+            "receipt.receiptIndex",
+            &mut missing,
+        );
+        let tx_id = required(bytes_at(self.tx_id, row), "receipt.txId", &mut missing);
+        let block_height = required(
+            i64_value(u64_at(self.block_height, row), "receipt.blockHeight")?,
+            "receipt.blockHeight",
+            &mut missing,
+        );
+        let receipt_type = required(
+            primitive_at(self.receipt_type, row),
+            "receipt.receiptType",
+            &mut missing,
+        );
+        let (Some(receipt_index), Some(tx_id), Some(block_height), Some(receipt_type)) =
+            (receipt_index, tx_id, block_height, receipt_type)
+        else {
+            return Err(ConvertError::MissingFields(missing));
+        };
+        Ok(ReceiptRow {
+            receipt_index,
+            root_contract_id: bytes_at(self.root_contract_id, row),
+            tx_id,
+            block_height,
+            receipt_type,
+            data: bytes_at(self.data, row),
+            rb: u64_at(self.rb, row),
+            val: u64_at(self.val, row),
+            sub_id: bytes_at(self.sub_id, row),
+            amount: u64_at(self.amount, row),
+            asset_id: bytes_at(self.asset_id, row),
+            to: bytes_at(self.to, row),
+            to_address: bytes_at(self.to_address, row),
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use polars_arrow::array::Array;
-    use polars_arrow::datatypes::{ArrowDataType, ArrowSchema, Field};
-    use polars_arrow::record_batch::RecordBatchT;
     use std::sync::Arc;
 
-    fn make_batch(fields: Vec<(Field, Box<dyn Array>)>) -> ArrowBatch {
-        let (schema_fields, arrays): (Vec<_>, Vec<_>) = fields.into_iter().unzip();
-        ArrowBatch {
-            chunk: Arc::new(RecordBatchT::new(arrays)),
-            schema: Arc::new(ArrowSchema::from(schema_fields)),
+    use arrow::array::ArrayRef;
+
+    use super::*;
+
+    fn batch(columns: Vec<(&str, ArrayRef)>) -> RecordBatch {
+        RecordBatch::try_from_iter(columns).unwrap()
+    }
+
+    fn binary(values: Vec<Option<&[u8]>>) -> ArrayRef {
+        Arc::new(BinaryArray::from(values))
+    }
+
+    fn u64s(values: Vec<Option<u64>>) -> ArrayRef {
+        Arc::new(UInt64Array::from(values))
+    }
+
+    fn u8s(values: Vec<Option<u8>>) -> ArrayRef {
+        Arc::new(UInt8Array::from(values))
+    }
+
+    fn i64s(values: Vec<Option<i64>>) -> ArrayRef {
+        Arc::new(Int64Array::from(values))
+    }
+
+    fn receipt_rows(batch: &RecordBatch) -> Result<Vec<String>, ConvertError> {
+        let columns = ReceiptColumns::of(batch)?;
+        (0..batch.num_rows())
+            .map(|row| {
+                let receipt = columns.row(row)?;
+                Ok(format!(
+                    "{} {} {} {} {:?} {:?} {:?} {:?}",
+                    receipt.receipt_index,
+                    crate::hex::to_hex(receipt.tx_id),
+                    receipt.block_height,
+                    receipt.receipt_type,
+                    receipt.root_contract_id.map(crate::hex::to_hex),
+                    receipt.data,
+                    receipt.rb,
+                    receipt.val,
+                ))
+            })
+            .collect()
+    }
+
+    fn missing(result: Result<Vec<String>, ConvertError>) -> Vec<String> {
+        match result {
+            Err(ConvertError::MissingFields(fields)) => fields,
+            Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
+            Ok(rows) => panic!("expected MissingFields, got {rows:?}"),
         }
     }
 
-    fn binary_field(name: &str, values: Vec<Option<&[u8]>>) -> (Field, Box<dyn Array>) {
-        (
-            Field::new(name, ArrowDataType::Binary, true),
-            Box::new(BinaryArray::<i32>::from_iter(values)),
-        )
-    }
-
-    fn u64_field(name: &str, values: Vec<Option<u64>>) -> (Field, Box<dyn Array>) {
-        (
-            Field::new(name, ArrowDataType::UInt64, true),
-            Box::new(UInt64Array::from(values)),
-        )
-    }
-
-    fn u8_field(name: &str, values: Vec<Option<u8>>) -> (Field, Box<dyn Array>) {
-        (
-            Field::new(name, ArrowDataType::UInt8, true),
-            Box::new(UInt8Array::from(values)),
-        )
-    }
-
-    fn i64_field(name: &str, values: Vec<Option<i64>>) -> (Field, Box<dyn Array>) {
-        (
-            Field::new(name, ArrowDataType::Int64, true),
-            Box::new(Int64Array::from(values)),
-        )
-    }
-
-    fn full_receipt_batch() -> ArrowBatch {
-        make_batch(vec![
-            u64_field("receipt_index", vec![Some(1)]),
-            binary_field("tx_id", vec![Some(&[0xab; 32])]),
-            u64_field("block_height", vec![Some(42)]),
-            u8_field("receipt_type", vec![Some(6)]),
-            binary_field("root_contract_id", vec![Some(&[0xcd; 32])]),
-            binary_field("data", vec![Some(&[0x01, 0x02])]),
-            u64_field("rb", vec![Some(7)]),
-        ])
-    }
-
     #[test]
-    fn converts_receipts_with_optional_columns_absent() {
-        let receipts = receipts_from_arrow(&[full_receipt_batch()]).unwrap();
-        assert_eq!(receipts.len(), 1);
-        let r = &receipts[0];
+    fn reads_a_receipt_with_optional_columns_absent() {
+        let receipts = batch(vec![
+            ("receipt_index", u64s(vec![Some(1)])),
+            ("tx_id", binary(vec![Some(&[0xab; 2])])),
+            ("block_height", u64s(vec![Some(42)])),
+            ("receipt_type", u8s(vec![Some(6)])),
+            ("root_contract_id", binary(vec![Some(&[0xcd; 2])])),
+            ("data", binary(vec![Some(&[0x01, 0x02])])),
+            ("rb", u64s(vec![Some(7)])),
+        ]);
         assert_eq!(
-            (
-                r.receipt_index,
-                r.tx_id.as_str(),
-                r.block_height,
-                r.receipt_type,
-                r.root_contract_id.as_deref(),
-                r.data.as_deref(),
-                r.rb,
-                r.val,
-            ),
-            (
-                1,
-                format!("0x{}", "ab".repeat(32)).as_str(),
-                42,
-                6,
-                Some(format!("0x{}", "cd".repeat(32)).as_str()),
-                Some(&[0x01, 0x02][..]),
-                Some(7),
-                None,
-            )
+            receipt_rows(&receipts).unwrap(),
+            vec!["1 0xabab 42 6 Some(\"0xcdcd\") Some([1, 2]) Some(7) None".to_string()]
         );
     }
 
     #[test]
-    fn missing_required_receipt_column_is_typed_error() {
-        // tx_id column not in the response at all
-        let batch = make_batch(vec![
-            u64_field("receipt_index", vec![Some(1)]),
-            u64_field("block_height", vec![Some(42)]),
-            u8_field("receipt_type", vec![Some(6)]),
+    fn a_missing_required_receipt_column_is_a_missing_field() {
+        let receipts = batch(vec![
+            ("receipt_index", u64s(vec![Some(1)])),
+            ("block_height", u64s(vec![Some(42)])),
+            ("receipt_type", u8s(vec![Some(6)])),
         ]);
-        match receipts_from_arrow(&[batch]) {
-            Err(ConvertError::MissingFields(fields)) => {
-                assert_eq!(fields, vec!["receipt.txId".to_string()])
-            }
-            Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
-            Ok(_) => panic!("expected MissingFields, got Ok"),
-        }
-    }
-
-    #[test]
-    fn null_required_receipt_value_is_typed_error() {
-        let batch = make_batch(vec![
-            u64_field("receipt_index", vec![None]),
-            binary_field("tx_id", vec![None]),
-            u64_field("block_height", vec![Some(42)]),
-            u8_field("receipt_type", vec![Some(6)]),
-        ]);
-        match receipts_from_arrow(&[batch]) {
-            Err(ConvertError::MissingFields(fields)) => assert_eq!(
-                fields,
-                vec![
-                    "receipt.receiptIndex".to_string(),
-                    "receipt.txId".to_string()
-                ]
-            ),
-            Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
-            Ok(_) => panic!("expected MissingFields, got Ok"),
-        }
-    }
-
-    #[test]
-    fn missing_block_time_is_typed_error() {
-        let batch = make_batch(vec![
-            binary_field("id", vec![Some(&[0xee; 32])]),
-            u64_field("height", vec![Some(42)]),
-        ]);
-        match blocks_from_arrow(&[batch]) {
-            Err(ConvertError::MissingFields(fields)) => {
-                assert_eq!(fields, vec!["block.time".to_string()])
-            }
-            Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
-            Ok(_) => panic!("expected MissingFields, got Ok"),
-        }
-    }
-
-    #[test]
-    fn converts_blocks() {
-        let batch = make_batch(vec![
-            binary_field("id", vec![Some(&[0xee; 32])]),
-            u64_field("height", vec![Some(42)]),
-            i64_field("time", vec![Some(1745179292)]),
-        ]);
-        let blocks = blocks_from_arrow(&[batch]).unwrap();
-        assert_eq!(blocks.len(), 1);
         assert_eq!(
-            (blocks[0].id.as_str(), blocks[0].height, blocks[0].time),
-            (format!("0x{}", "ee".repeat(32)).as_str(), 42, 1745179292i64)
+            missing(receipt_rows(&receipts)),
+            vec!["receipt.txId".to_string()]
         );
     }
 
     #[test]
-    fn empty_batches_convert_to_empty() {
-        assert_eq!(receipts_from_arrow(&[]).unwrap().len(), 0);
-        assert_eq!(blocks_from_arrow(&[]).unwrap().len(), 0);
+    fn a_null_required_receipt_value_is_a_missing_field() {
+        let receipts = batch(vec![
+            ("receipt_index", u64s(vec![None])),
+            ("tx_id", binary(vec![None])),
+            ("block_height", u64s(vec![Some(42)])),
+            ("receipt_type", u8s(vec![Some(6)])),
+        ]);
+        assert_eq!(
+            missing(receipt_rows(&receipts)),
+            vec![
+                "receipt.receiptIndex".to_string(),
+                "receipt.txId".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_block_without_its_time_is_a_missing_field() {
+        let blocks = batch(vec![
+            ("id", binary(vec![Some(&[0xee; 32])])),
+            ("height", u64s(vec![Some(42)])),
+        ]);
+        let result = BlockColumns::of(&blocks).unwrap().row(0).map(|_| ());
+        assert!(
+            matches!(&result, Err(ConvertError::MissingFields(fields)) if fields == &["block.time"]),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn reads_a_block() {
+        let blocks = batch(vec![
+            ("id", binary(vec![Some(&[0xee; 2])])),
+            ("height", u64s(vec![Some(42)])),
+            ("time", i64s(vec![Some(1745179292)])),
+        ]);
+        let block = BlockColumns::of(&blocks).unwrap().row(0).unwrap();
+        assert_eq!(
+            (crate::hex::to_hex(block.id), block.height, block.time),
+            ("0xeeee".to_string(), 42, 1745179292)
+        );
     }
 }

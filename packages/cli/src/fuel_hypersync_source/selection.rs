@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use anyhow::{anyhow, Context, Result};
-use hyperfuel_client::format::{Hash, Hex};
-use hyperfuel_client::net_types;
+use hyperfuel_format::{Hash, Hex};
+use hyperfuel_net_types as net_types;
 use napi_derive::napi;
 
 use crate::address_store::{AddressSet, StoreInner};

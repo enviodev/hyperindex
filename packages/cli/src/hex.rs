@@ -39,6 +39,17 @@ pub(crate) fn to_hex(bytes: &[u8]) -> String {
     s
 }
 
+/// `to_hex` into `out`, replacing what it held, so one buffer serves many
+/// values.
+pub(crate) fn write_hex(out: &mut String, bytes: &[u8]) {
+    let mut digits = std::mem::take(out).into_bytes();
+    digits.clear();
+    digits.extend_from_slice(b"0x");
+    digits.resize(2 + bytes.len() * 2, 0);
+    faster_hex::hex_encode(bytes, &mut digits[2..]).expect("sized for the input");
+    *out = String::from_utf8(digits).expect("hex digits are ASCII");
+}
+
 /// Decode exactly `len` bytes of `0x`-prefixed hex, or `None` when the string
 /// isn't that. Callers treat it as "not a well-formed value" rather than an
 /// error to surface.

@@ -105,6 +105,26 @@ pub(crate) fn reset() {
     PEAK_LIVE_BYTES.store(0, Ordering::Relaxed);
 }
 
+/// What one run of `work` allocates, on a runtime of its own whose threads
+/// are all counted, after a first run warms up connections and caches.
+pub(crate) fn allocations_of<Work, Run>(work: Work) -> AllocationTotals
+where
+    Work: Fn() -> Run,
+    Run: std::future::Future + Send + 'static,
+    Run::Output: Send + 'static,
+{
+    let _exclusive = measure_exclusively();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .on_thread_start(count_this_thread)
+        .build()
+        .unwrap();
+    runtime.block_on(runtime.spawn(work())).unwrap();
+    reset();
+    runtime.block_on(runtime.spawn(work())).unwrap();
+    totals()
+}
+
 pub(crate) fn totals() -> AllocationTotals {
     AllocationTotals {
         allocations: ALLOCATIONS.load(Ordering::Relaxed),

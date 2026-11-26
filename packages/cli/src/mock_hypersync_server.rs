@@ -43,6 +43,8 @@ use crate::mock_http;
 
 const QUERY_PATH: &str = "/query/arrow-ipc";
 const CAPNP_QUERY_PATH: &str = "/query/arrow-ipc/capnp";
+/// Solana HyperSync's query path; only a fixed body answers it.
+const SVM_QUERY_PATH: &str = "/query/arrow";
 const HEIGHT_PATH: &str = "/height";
 const HEIGHT_SSE_PATH: &str = "/height/sse";
 
@@ -200,6 +202,17 @@ impl MockHyperSyncServer {
         self.state.lock().unwrap().fixed_page = Some(page);
         Ok(size)
     }
+
+    /// Answer every query from now on with `body` as it is: a page another
+    /// chain's server encodes, on its own query path.
+    #[cfg(test)]
+    pub(crate) fn serve_fixed_body(&self, body: Vec<u8>) {
+        let body = Arc::new(body);
+        self.state.lock().unwrap().fixed_page = Some(FixedPage {
+            plain: body.clone(),
+            cached: body,
+        });
+    }
 }
 
 impl Drop for MockHyperSyncServer {
@@ -264,7 +277,9 @@ async fn handle_connection(
                 stream_heights(&mut stream, state, shutdown).await?;
                 return Ok(());
             }
-            ("POST", QUERY_PATH) => answer_query(&mut stream, &state, body, Wrap::Plain).await?,
+            ("POST", QUERY_PATH | SVM_QUERY_PATH) => {
+                answer_query(&mut stream, &state, body, Wrap::Plain).await?
+            }
             ("POST", CAPNP_QUERY_PATH) => match CapnpRequest::from_capnp_bytes(&request.body) {
                 // The client asks by id first when it caches queries, and sends
                 // the full query once told the id isn't known. Like HyperSync,

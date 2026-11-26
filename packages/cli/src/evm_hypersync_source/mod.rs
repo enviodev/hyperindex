@@ -18,7 +18,6 @@ use crate::chain_buffer::{
 use crate::evm_rpc_source;
 use crate::request_stats::{rate_limited_err, RequestStat};
 
-mod arrow_columns;
 mod config;
 #[cfg(test)]
 mod decode_benchmark;
@@ -29,7 +28,7 @@ mod transaction_selection;
 mod transport;
 pub(crate) mod types;
 
-use arrow_columns::{bytes_at, column, fixed_bytes_at, u64_at, LogColumns};
+use crate::arrow_columns::{bytes_at, column, fixed_bytes_at, u64_at};
 use config::ClientConfig;
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::BuiltLogSelection;
@@ -665,6 +664,34 @@ fn process_response(
     }
     page.add_blocks(rows.finish());
     Ok(page)
+}
+
+/// The columns of the log table a page reads.
+struct LogColumns<'a> {
+    block_number: Option<&'a UInt64Array>,
+    log_index: Option<&'a UInt64Array>,
+    transaction_index: Option<&'a UInt64Array>,
+    address: Option<&'a BinaryArray>,
+    data: Option<&'a BinaryArray>,
+    topics: [Option<&'a BinaryArray>; 4],
+}
+
+impl<'a> LogColumns<'a> {
+    fn of(batch: &'a RecordBatch) -> Result<Self> {
+        Ok(LogColumns {
+            block_number: column(batch, "block_number")?,
+            log_index: column(batch, "log_index")?,
+            transaction_index: column(batch, "transaction_index")?,
+            address: column(batch, "address")?,
+            data: column(batch, "data")?,
+            topics: [
+                column(batch, "topic0")?,
+                column(batch, "topic1")?,
+                column(batch, "topic2")?,
+                column(batch, "topic3")?,
+            ],
+        })
+    }
 }
 
 struct ObservedBlockColumns<'a> {

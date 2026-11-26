@@ -5,6 +5,7 @@ mod address_columns;
 mod address_store;
 #[cfg(test)]
 mod allocation_counter;
+mod arrow_columns;
 mod block_hash_pagination;
 mod block_selection;
 mod chain_buffer;
@@ -28,6 +29,7 @@ mod fuel;
 mod fuel_hypersync_source;
 mod hbs_templating;
 mod hex;
+mod hypersync_http;
 mod js_value;
 mod logger;
 mod mock_http;
