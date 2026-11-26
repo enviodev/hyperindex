@@ -206,7 +206,6 @@ pub(crate) async fn read_packed_message(
 
 /// The whole body in one buffer, sized up front when the server says how
 /// long it is.
-#[allow(dead_code)]
 pub(crate) async fn read_body(mut response: reqwest::Response) -> Result<Buffer> {
     let mut body = Vec::with_capacity(response.content_length().unwrap_or(0) as usize);
     while let Some(chunk) = response.chunk().await.context("read response body bytes")? {
@@ -321,6 +320,51 @@ pub(crate) fn read_ipc_file(file: &Buffer) -> Result<Vec<RecordBatch>> {
         }
     }
     Ok(batches)
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::time::Duration;
+
+    /// A local address that drops every connection attempt, like a
+    /// blackholed host: Linux drops SYNs once a listener's accept queue is
+    /// full.
+    pub(crate) struct Blackhole {
+        address: SocketAddr,
+        _listener: TcpListener,
+        _fillers: Vec<TcpStream>,
+    }
+
+    impl Blackhole {
+        pub(crate) fn new() -> Self {
+            let socket = tokio::net::TcpSocket::new_v4().unwrap();
+            socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+            let listener = socket.listen(0).unwrap().into_std().unwrap();
+            let address = listener.local_addr().unwrap();
+            // Filled with blocking connects: a paused clock would expire a
+            // timeout before a loopback handshake completed. It has to end on
+            // a timed out connect, or the address refuses rather than drops
+            // and a request would fail without any timeout.
+            let mut fillers = Vec::new();
+            loop {
+                match TcpStream::connect_timeout(&address, Duration::from_millis(50)) {
+                    Ok(stream) => fillers.push(stream),
+                    Err(error) if error.kind() == std::io::ErrorKind::TimedOut => break,
+                    Err(error) => panic!("filling the accept queue: {error}"),
+                }
+            }
+            Blackhole {
+                address,
+                _listener: listener,
+                _fillers: fillers,
+            }
+        }
+
+        pub(crate) fn url(&self) -> String {
+            format!("http://{}", self.address)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -494,26 +538,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test(start_paused = true)]
     async fn an_unreachable_address_fails_at_the_connect_timeout() {
-        // Linux drops SYNs once the accept queue is full, like a blackholed
-        // address.
-        let socket = tokio::net::TcpSocket::new_v4().unwrap();
-        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
-        let listener = socket.listen(0).unwrap().into_std().unwrap();
-        let address = listener.local_addr().unwrap();
-        // Filled with blocking connects: the paused clock would expire a
-        // timeout before a loopback handshake completed. It has to end on a
-        // timed out connect, or the address refuses rather than drops and the
-        // request below would fail without any timeout.
-        let mut fillers = Vec::new();
-        loop {
-            match std::net::TcpStream::connect_timeout(&address, Duration::from_millis(50)) {
-                Ok(stream) => fillers.push(stream),
-                Err(error) if error.kind() == std::io::ErrorKind::TimedOut => break,
-                Err(error) => panic!("filling the accept queue: {error}"),
-            }
-        }
+        let blackhole = test_support::Blackhole::new();
         let client = HttpClient::new(
-            &format!("http://{address}"),
+            &blackhole.url(),
             None,
             "test".to_string(),
             Duration::from_secs(60),

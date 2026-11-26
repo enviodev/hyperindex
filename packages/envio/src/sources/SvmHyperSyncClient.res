@@ -4,8 +4,6 @@ type cfg = {
   /** Optional bearer token for the HyperSync server. */
   apiToken?: string,
   httpReqTimeoutMillis?: int,
-  retryBaseMs?: int,
-  retryCeilingMs?: int,
 }
 
 module Registration = {
@@ -180,22 +178,13 @@ external classFromConfig: (
   BufferPage.buffer,
 ) => t = "fromConfig"
 
-let make = (
-  ~url,
-  ~apiToken=?,
-  ~httpReqTimeoutMillis=?,
-  ~retryBaseMs=?,
-  ~retryCeilingMs=?,
-  ~chainBuffer,
-) => {
+let make = (~url, ~apiToken=?, ~httpReqTimeoutMillis=?, ~chainBuffer) => {
   let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().svmHyperSyncClient->classFromConfig(
     {
       url,
       ?apiToken,
       ?httpReqTimeoutMillis,
-      ?retryBaseMs,
-      ?retryCeilingMs,
     },
     `hyperindex/${envioVersion}`,
     chainBuffer,
