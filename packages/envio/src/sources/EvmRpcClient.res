@@ -17,6 +17,7 @@ type nextPageParams = {
   partitionId: string,
   onEventRegistrationIndexes: array<int>,
   onBlockRegistrationIndexes: array<int>,
+  onTransactionRegistrationIndexes: array<int>,
   clientFilteredContracts: option<array<string>>,
   retry: int,
   // Blocks at or above this one can still be reorged, so each of them in the

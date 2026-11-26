@@ -46,6 +46,7 @@ let pushResponse = (server, page: page) =>
 
 type chain = {
   blocks: array<JSON.t>,
+  transactions?: array<JSON.t>,
   logs: array<JSON.t>,
 }
 

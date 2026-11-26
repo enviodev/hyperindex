@@ -194,6 +194,7 @@ describe("RpcSource - field selection end to end", () => {
       ~selection={
         dependsOnAddresses: true,
         onBlockRegistrations: [],
+        onTransactionRegistrations: [],
         onEventRegistrations: [(registration :> Internal.onEventRegistration)],
       },
       ~retry=0,
@@ -205,8 +206,19 @@ describe("RpcSource - field selection end to end", () => {
     )
     items->Array.map(item =>
       switch item {
-      | Internal.Event({payload}) => payload->Evm.toPayload
-      | Internal.Block(_) => JsError.throwWithMessage("unexpected onBlock item")
+      | Internal.Event({payload}) =>
+        let payload = payload->Evm.toPayload
+        // The transaction carries the item's block, which these cases don't
+        // read: they pin what the source fetches.
+        payload.transaction->Option.forEach(
+          transaction =>
+            transaction
+            ->(Utils.magic: Internal.eventTransaction => dict<unknown>)
+            ->Dict.delete("block"),
+        )
+        payload
+      | Internal.Block(_) | Internal.Transaction(_) =>
+        JsError.throwWithMessage("unexpected handler item")
       }
     )
   }
@@ -642,7 +654,12 @@ describe("RpcSource - empty selection", () => {
         ~addressSet=TestAddresses.makeStore()->AddressStore.emptySet,
         ~knownHeight=1,
         ~partitionId="0",
-        ~selection={dependsOnAddresses: true, onBlockRegistrations: [], onEventRegistrations: []},
+        ~selection={
+          dependsOnAddresses: true,
+          onBlockRegistrations: [],
+          onTransactionRegistrations: [],
+          onEventRegistrations: [],
+        },
         ~retry=0,
         ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource empty selection"}),
       )
@@ -732,6 +749,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             ~selection={
               dependsOnAddresses: true,
               onBlockRegistrations: [],
+              onTransactionRegistrations: [],
               onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
             },
             ~retry=0,
@@ -858,6 +876,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
           ~selection={
             dependsOnAddresses: true,
             onBlockRegistrations: [],
+            onTransactionRegistrations: [],
             onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
           },
           ~retry=0,
@@ -980,6 +999,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
         ~selection={
           dependsOnAddresses: true,
           onBlockRegistrations: [],
+          onTransactionRegistrations: [],
           onEventRegistrations: selectedRegistrations->Array.map(
             reg => (reg :> Internal.onEventRegistration),
           ),

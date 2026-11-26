@@ -11,6 +11,21 @@ type log = {
   address: string,
   topics: array<string>,
   data?: string,
+  // Defaults to the log index: every log its own transaction.
+  transactionIndex?: int,
+}
+
+// A mined transaction. `to` absent is a contract creation, `status` defaults
+// to 1 (succeeded).
+type transaction = {
+  blockNumber: int,
+  transactionIndex: int,
+  from: string,
+  to?: string,
+  input?: string,
+  value?: bigint,
+  status?: int,
+  gasUsed?: bigint,
 }
 
 type servers = {hyperSync: MockHyperSyncServer.t, rpc: MockRpcServer.t}
@@ -35,11 +50,39 @@ let addressTopic = address => address->String.toLowerCase->dropPrefix->word
 let uintTopic = n => n->BigInt.toString(~radix=16)->word
 
 let blockHash = blockNumber => blockNumber->Int.toString(~radix=16)->word
-// Every log is its own transaction, so nothing collapses two of them.
-let transactionHash = ({blockNumber, logIndex}) =>
-  ("a" ++ blockNumber->Int.toString(~radix=16) ++ "0" ++ logIndex->Int.toString(~radix=16))->word
+let transactionHashAt = (~blockNumber, ~transactionIndex) =>
+  ("a" ++ blockNumber->Int.toString(~radix=16) ++ "0" ++ transactionIndex->Int.toString(~radix=16))
+    ->word
+let logTransactionIndex = (log: log) => log.transactionIndex->Option.getOr(log.logIndex)
+let transactionHash = (log: log) =>
+  transactionHashAt(~blockNumber=log.blockNumber, ~transactionIndex=log->logTransactionIndex)
+let ownHash = (transaction: transaction) =>
+  transactionHashAt(
+    ~blockNumber=transaction.blockNumber,
+    ~transactionIndex=transaction.transactionIndex,
+  )
 
-let hyperSyncChain = (~logs, ~height): MockHyperSyncServer.chain => {
+let hexBigInt = value => "0x" ++ value->BigInt.toString(~radix=16)
+
+let hyperSyncTransaction = (transaction: transaction) => {
+  let row = dict{
+    "block_number": JSON.Number(transaction.blockNumber->Int.toFloat),
+    "transaction_index": JSON.Number(transaction.transactionIndex->Int.toFloat),
+    "hash": JSON.String(transaction->ownHash),
+    "from": JSON.String(transaction.from),
+    "input": JSON.String(transaction.input->Option.getOr("0x")),
+    "value": JSON.String(transaction.value->Option.getOr(0n)->hexBigInt),
+    "status": JSON.Number(transaction.status->Option.getOr(1)->Int.toFloat),
+    "gas_used": JSON.String(transaction.gasUsed->Option.getOr(21000n)->hexBigInt),
+  }
+  switch transaction.to {
+  | Some(to) => row->Dict.set("to", JSON.String(to))
+  | None => ()
+  }
+  JSON.Object(row)
+}
+
+let hyperSyncChain = (~logs, ~transactions=[], ~height): MockHyperSyncServer.chain => {
   blocks: Array.fromInitializer(~length=height + 1, number => JSON.Object(
     dict{
       "number": JSON.Number(number->Int.toFloat),
@@ -47,11 +90,12 @@ let hyperSyncChain = (~logs, ~height): MockHyperSyncServer.chain => {
       "hash": JSON.String(number->blockHash),
     },
   )),
-  logs: logs->Array.map(log => {
+  transactions: transactions->Array.map(hyperSyncTransaction),
+  logs: logs->Array.map((log: log) => {
     let row = dict{
       "block_number": JSON.Number(log.blockNumber->Int.toFloat),
       "log_index": JSON.Number(log.logIndex->Int.toFloat),
-      "transaction_index": JSON.Number(log.logIndex->Int.toFloat),
+      "transaction_index": JSON.Number(log->logTransactionIndex->Int.toFloat),
       "address": JSON.String(log.address),
       "data": JSON.String(log.data->Option.getOr("0x")),
     }
@@ -62,7 +106,7 @@ let hyperSyncChain = (~logs, ~height): MockHyperSyncServer.chain => {
   }),
 }
 
-let rpcLog = log => JSON.Object(
+let rpcLog = (log: log) => JSON.Object(
   dict{
     "address": JSON.String(log.address),
     "topics": JSON.Array(log.topics->Array.map(topic => JSON.String(topic))),
@@ -70,7 +114,7 @@ let rpcLog = log => JSON.Object(
     "blockNumber": JSON.String(log.blockNumber->hex),
     "blockHash": JSON.String(log.blockNumber->blockHash),
     "transactionHash": JSON.String(log->transactionHash),
-    "transactionIndex": JSON.String(log.logIndex->hex),
+    "transactionIndex": JSON.String(log->logTransactionIndex->hex),
     "logIndex": JSON.String(log.logIndex->hex),
     "removed": JSON.Boolean(false),
   },
@@ -121,7 +165,7 @@ let bloomBits = value => {
 // log's address and topics, each setting its three bits.
 let logsBloom = (logs: array<log>) => {
   let bytes = Array.make(~length=256, 0)
-  logs->Array.forEach(log =>
+  logs->Array.forEach((log: log) =>
     [log.address, ...log.topics]->Array.forEach(value =>
       value
       ->bloomBits
@@ -147,13 +191,15 @@ let rpcBlock = (~logs=[], blockNumber) => JSON.Object(
     "timestamp": JSON.String(blockNumber->hex),
     "hash": JSON.String(blockNumber->blockHash),
     "parentHash": JSON.String((blockNumber - 1)->Pervasives.max(0)->blockHash),
-    "logsBloom": JSON.String(logs->Array.filter(log => log.blockNumber == blockNumber)->logsBloom),
+    "logsBloom": JSON.String(
+      logs->Array.filter((log: log) => log.blockNumber == blockNumber)->logsBloom,
+    ),
   },
 )
 
 // A filter naming a `blockHash` (EIP-234) asks for that one block instead of a
 // range.
-let rpcFilterMatches = (filter: dict<JSON.t>, log) => {
+let rpcFilterMatches = (filter: dict<JSON.t>, log: log) => {
   let inRange = switch filter->Dict.get("blockHash") {
   | Some(JSON.String(hash)) => sameHex(hash, log.blockNumber->blockHash)
   | _ =>
@@ -175,12 +221,79 @@ let rpcFilterMatches = (filter: dict<JSON.t>, log) => {
   inRange && addressMatches && topicsMatch
 }
 
-let rpcResult = (~logs, ~height, ~method, ~params) => {
+// A transaction as `eth_getTransactionByHash` and a full block's
+// `transactions` spell it.
+let rpcTransaction = (transaction: transaction) => {
+  let object = dict{
+    "blockNumber": JSON.String(transaction.blockNumber->hex),
+    "blockHash": JSON.String(transaction.blockNumber->blockHash),
+    "transactionIndex": JSON.String(transaction.transactionIndex->hex),
+    "hash": JSON.String(transaction->ownHash),
+    "from": JSON.String(transaction.from),
+    "to": switch transaction.to {
+    | Some(to) => JSON.String(to)
+    | None => JSON.Null
+    },
+    "input": JSON.String(transaction.input->Option.getOr("0x")),
+    "value": JSON.String(transaction.value->Option.getOr(0n)->hexBigInt),
+    "gas": JSON.String("0x5208"),
+    "nonce": JSON.String(transaction.transactionIndex->hex),
+    "type": JSON.String("0x0"),
+  }
+  JSON.Object(object)
+}
+
+let rpcReceipt = (transaction: transaction) => JSON.Object(
+  dict{
+    "blockNumber": JSON.String(transaction.blockNumber->hex),
+    "blockHash": JSON.String(transaction.blockNumber->blockHash),
+    "transactionIndex": JSON.String(transaction.transactionIndex->hex),
+    "transactionHash": JSON.String(transaction->ownHash),
+    "from": JSON.String(transaction.from),
+    "to": switch transaction.to {
+    | Some(to) => JSON.String(to)
+    | None => JSON.Null
+    },
+    "status": JSON.String(transaction.status->Option.getOr(1)->hex),
+    "gasUsed": JSON.String(transaction.gasUsed->Option.getOr(21000n)->hexBigInt),
+    "cumulativeGasUsed": JSON.String(transaction.gasUsed->Option.getOr(21000n)->hexBigInt),
+    "effectiveGasPrice": JSON.String("0x1"),
+    "logsBloom": JSON.String("0x" ++ String.repeat("0", 512)),
+    "type": JSON.String("0x0"),
+  },
+)
+
+let findByHash = (transactions: array<transaction>, hash) =>
+  transactions->Array.find(transaction => sameHex(transaction->ownHash, hash))
+
+let rpcResult = (~logs, ~transactions=[], ~height, ~method, ~params) => {
   let arg = i => params->JSON.Decode.array->Option.getOrThrow->Array.getUnsafe(i)
+  let byHash = (hash, render) =>
+    switch transactions->findByHash(hash->JSON.Decode.string->Option.getOrThrow) {
+    | Some(transaction) => render(transaction)
+    | None => JSON.Null
+    }
   switch method {
   | "eth_chainId" => JSON.String("0x1")
   | "eth_blockNumber" => JSON.String(height->hex)
-  | "eth_getBlockByNumber" => arg(0)->quantity->rpcBlock(~logs)
+  | "eth_getBlockByNumber" =>
+    let blockNumber = arg(0)->quantity
+    switch (rpcBlock(~logs, blockNumber), arg(1)) {
+    | (JSON.Object(block), JSON.Boolean(true)) =>
+      block->Dict.set(
+        "transactions",
+        JSON.Array(
+          transactions
+          ->Array.filter(transaction => transaction.blockNumber == blockNumber)
+          ->Array.toSorted((a, b) => Int.compare(a.transactionIndex, b.transactionIndex))
+          ->Array.map(rpcTransaction),
+        ),
+      )
+      JSON.Object(block)
+    | (block, _) => block
+    }
+  | "eth_getTransactionByHash" => arg(0)->byHash(rpcTransaction)
+  | "eth_getTransactionReceipt" => arg(0)->byHash(rpcReceipt)
   | "eth_getLogs" =>
     let filter = arg(0)->JSON.Decode.object->Option.getOrThrow
     JSON.Array(logs->Array.filter(log => rpcFilterMatches(filter, log))->Array.map(rpcLog))
@@ -189,13 +302,13 @@ let rpcResult = (~logs, ~height, ~method, ~params) => {
 }
 
 // Both servers, for a file's whole suite.
-let serveDuringSuite = (~hyperSyncPort, ~rpcPort, ~height, ~logs) => {
+let serveDuringSuite = (~hyperSyncPort, ~rpcPort, ~height, ~logs, ~transactions=[]) => {
   let served = {hyperSyncPort, rpcPort, height, servers: None}
   Vitest.Async.beforeAll(async () => {
     let hyperSync = MockHyperSyncServer.make(~height, ~port=hyperSyncPort)
-    hyperSync->MockHyperSyncServer.serveChain(hyperSyncChain(~logs, ~height))
+    hyperSync->MockHyperSyncServer.serveChain(hyperSyncChain(~logs, ~transactions, ~height))
     let rpc = await MockRpcServer.makeWithParams(~port=rpcPort, ~getResult=(~method, ~params) =>
-      rpcResult(~logs, ~height, ~method, ~params)
+      rpcResult(~logs, ~transactions, ~height, ~method, ~params)
     )
     served.servers = Some({hyperSync, rpc})
   })
@@ -216,7 +329,8 @@ let servers = served =>
 // config.yaml `chains:` entries fetching from the served HyperSync or RPC
 // server, each stopping at the served height. `contracts` is the `contracts:`
 // list every chain gets, indented to sit under it.
-let chainsYaml = (served, ~hyperSync, ~rpc, ~contracts) => {
+// `rpcOptions` are more `rpc:` keys, indented to sit under it.
+let chainsYaml = (served, ~hyperSync, ~rpc, ~contracts, ~rpcOptions="") => {
   let chain = (id, source) =>
     `
   - id: ${id->Int.toString}
@@ -238,7 +352,7 @@ let chainsYaml = (served, ~hyperSync, ~rpc, ~contracts) => {
         `
     rpc:
       url: ${url(served.rpcPort)}
-      for: sync`,
+      for: sync${rpcOptions}`,
       )
     ),
   )->Array.join("")

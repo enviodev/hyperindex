@@ -3,11 +3,20 @@
 
 // Match a provided item to a processed one by its (chain, block, logIndex)
 // coordinate rather than object identity, so matching survives any copy or
-// transform of the item between the source and the batch.
+// transform of the item between the source and the batch. A simulated
+// transaction, by its (chain, block, transactionIndex): it reaches a batch only
+// as the item a build makes for a handler whose filter matched it.
+let eventKey = (~chainId, ~blockNumber, ~logIndex) =>
+  `${chainId->ChainId.toString}:${blockNumber->Int.toString}:${logIndex->Int.toString}`
+
+let transactionKey = (~chainId, ~blockNumber, ~transactionIndex) =>
+  `${chainId->ChainId.toString}:${blockNumber->Int.toString}:tx:${transactionIndex->Int.toString}`
+
 let itemKey = (item: Internal.item): string =>
   switch item {
-  | Internal.Event({chainId, blockNumber, logIndex}) =>
-    `${chainId->ChainId.toString}:${blockNumber->Int.toString}:${logIndex->Int.toString}`
+  | Internal.Event({chainId, blockNumber, logIndex}) => eventKey(~chainId, ~blockNumber, ~logIndex)
+  | Internal.Transaction({onTransactionRegistration: {chainId}, blockNumber, transactionIndex}) =>
+    transactionKey(~chainId, ~blockNumber, ~transactionIndex)
   | Internal.Block(_) => ""
   }
 
@@ -23,12 +32,19 @@ let makeFromConfig = (config: Config.t): option<t> => {
     ->ChainMap.values
     ->Array.flatMap(chainConfig =>
       switch chainConfig.sourceConfig {
-      | Config.SimulateSourceConfig({items}) =>
-        items->Array.mapWithIndex((item, index) => {
-          chainId: chainConfig.id,
-          index,
-          key: itemKey(item),
-        })
+      | Config.SimulateSourceConfig({items, itemSimulateIndexes, transactions}) =>
+        Array.concat(
+          items->Array.mapWithIndex((item, position) => {
+            chainId: chainConfig.id,
+            index: itemSimulateIndexes->Array.getUnsafe(position),
+            key: itemKey(item),
+          }),
+          transactions->Array.map(({simulateIndex, blockNumber, transactionIndex}) => {
+            chainId: chainConfig.id,
+            index: simulateIndex,
+            key: transactionKey(~chainId=chainConfig.id, ~blockNumber, ~transactionIndex),
+          }),
+        )
       | _ => []
       }
     )
@@ -52,7 +68,9 @@ let unroutedByChain = (t: t): array<(ChainId.t, array<int>)> => {
     if indicesByChain->Dict.get(key)->Option.isNone {
       chainOrder->Array.push(entry.chainId)->ignore
     }
-    indicesByChain->Utils.Dict.push(key, entry.index)
+    if !(indicesByChain->Dict.get(key)->Option.getOr([])->Array.includes(entry.index)) {
+      indicesByChain->Utils.Dict.push(key, entry.index)
+    }
   })
   chainOrder->Array.map(chainId => (
     chainId,
@@ -75,6 +93,6 @@ let failureMessage = (t: t): option<string> =>
       )
       ->Array.join("\n")
     Some(
-      `simulate: ${count->Int.toString} ${itemWord} you passed to simulate never reached a handler, so nothing ran for them. Each was filtered out before the handler, usually by a non-wildcard srcAddress that isn't indexed for the contract, or a where/block filter that excluded the event. Unrouted items, by index in each chain's simulate array:\n${lines}`,
+      `simulate: ${count->Int.toString} ${itemWord} you passed to simulate never reached a handler, so nothing ran for them. Each was filtered out before the handler, usually by a non-wildcard srcAddress that isn't indexed for the contract, a where/block filter that excluded the event, or, for a transaction, no onTransaction filter matching the fields it gives. Unrouted items, by index in each chain's simulate array:\n${lines}`,
     )
   }

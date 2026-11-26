@@ -5,8 +5,10 @@
 // carry.
 type context = {
   chainId: ChainId.t,
+  ecosystem: Ecosystem.name,
   onEventRegistrations: array<Internal.onEventRegistration>,
   onBlockRegistrations: array<Internal.onBlockRegistration>,
+  onTransactionRegistrations: array<Internal.onTransactionRegistration>,
 }
 
 // Which source item a row replays to, and so which conversion builds the
@@ -17,6 +19,7 @@ type format =
   | @as(2) SvmInstruction
   | @as(3) Block
   | @as(4) Decoded
+  | @as(5) Transaction
 
 @get_index external numberAt: (array<unknown>, int) => float = ""
 @get_index external valueAt: (array<unknown>, int) => 'a = ""
@@ -106,20 +109,30 @@ type links = {
 
 // Gives each item the transaction and block its links point at. Items of one
 // transaction or block share its object; where the batch selects no field of
-// either, each item gets an empty object of its own.
+// either, each item gets an empty object of its own. An EVM transaction also
+// carries its block, as an event's and a transaction handler's alike.
 %%private(
-  let attach = (items: array<Internal.item>, toRead: links, ~transactions, ~blocks) =>
+  let attach = (
+    items: array<Internal.item>,
+    toRead: links,
+    ~transactions,
+    ~blocks,
+    ~ecosystem: Ecosystem.name,
+  ) =>
     items->Array.forEachWithIndex((item, row) => {
-      switch toRead.transactionRows->valueAt(row)->(Utils.magic: unknown => Null.t<float>) {
+      let transaction = switch toRead.transactionRows
+      ->valueAt(row)
+      ->(Utils.magic: unknown => Null.t<float>) {
       | Value(link) =>
-        let payload = (item->Internal.castUnsafeEventItem).payload
-        if link < 0. {
-          payload->Internal.setPayloadTransaction(%raw(`{}`))
-        } else {
-          let transaction =
-            transactions
-            ->Array.getUnsafe(link->Float.toInt)
-            ->(Utils.magic: dict<unknown> => Internal.eventTransaction)
+        let transaction =
+          link < 0.
+            ? %raw(`{}`)
+            : transactions
+              ->Array.getUnsafe(link->Float.toInt)
+              ->(Utils.magic: dict<unknown> => Internal.eventTransaction)
+        switch item {
+        | Transaction(_) => item->Internal.setItemTransaction(transaction)
+        | Event({payload}) =>
           payload->Internal.setPayloadTransaction(transaction)
           if (
             transaction
@@ -128,23 +141,43 @@ type links = {
           ) {
             Svm.attachAccountActivities(payload, transaction)
           }
+        | Block(_) => ()
         }
-      | Null => ()
+        Some(transaction)
+      | Null => None
       }
-      switch toRead.blockRows->valueAt(row)->(Utils.magic: unknown => Null.t<float>) {
+      let block = switch toRead.blockRows
+      ->valueAt(row)
+      ->(Utils.magic: unknown => Null.t<float>) {
       | Value(link) =>
-        let holder = switch item {
-        | Event({payload}) => payload->Internal.payloadBlockHolder
-        | Block(_) => item->Internal.itemBlockHolder
-        }
-        holder->Internal.setHolderBlock(
+        let block =
           link < 0.
             ? %raw(`{}`)
             : blocks
               ->Array.getUnsafe(link->Float.toInt)
-              ->(Utils.magic: dict<unknown> => Internal.eventBlock),
+              ->(Utils.magic: dict<unknown> => Internal.eventBlock)
+        switch item {
+        | Event({payload}) => payload->Internal.payloadBlockHolder->Internal.setHolderBlock(block)
+        | Block(_) => item->Internal.itemBlockHolder->Internal.setHolderBlock(block)
+        | Transaction(_) => ()
+        }
+        Some(block)
+      | Null => None
+      }
+      // An event's transaction and block may also be its own, inline.
+      let (transaction, block) = switch item {
+      | Event({payload}) => (
+          payload->Internal.getPayloadTransaction->Nullable.toOption,
+          payload->Internal.getPayloadBlock->Nullable.toOption,
         )
-      | Null => ()
+      | Transaction(_) | Block(_) => (transaction, block)
+      }
+      switch (ecosystem, transaction, block) {
+      | (Evm, Some(transaction), Some(block)) =>
+        transaction
+        ->(Utils.magic: Internal.eventTransaction => Internal.blockHolder)
+        ->Internal.setHolderBlock(block)
+      | _ => ()
       }
     })
 )
@@ -207,6 +240,14 @@ let read = (rows: ChainBuffer.builtItems, ~context: context): array<Internal.ite
           ->(Utils.magic: Internal.onEventRegistration => Internal.evmOnEventRegistration),
           ~chainId=context.chainId,
         )
+      | Transaction =>
+        Internal.Transaction({
+          onTransactionRegistration: context.onTransactionRegistrations->Array.getUnsafe(
+            registrationIndex,
+          ),
+          blockNumber: blockNumbers->numberAt(row)->Float.toInt,
+          transactionIndex: transactionIndexes->numberAt(row)->Float.toInt,
+        })
       | Block =>
         let skipped: bool = skipped->valueAt(row)
         Internal.Block({
@@ -275,6 +316,7 @@ let read = (rows: ChainBuffer.builtItems, ~context: context): array<Internal.ite
       {transactionRows: linkColumn("transactionRow"), blockRows: linkColumn("blockRow")},
       ~transactions,
       ~blocks,
+      ~ecosystem=context.ecosystem,
     )
     items
   })

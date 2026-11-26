@@ -69,7 +69,8 @@ let make = (
 
     if (
       selection.onEventRegistrations->Utils.Array.isEmpty &&
-        selection.onBlockRegistrations->Utils.Array.isEmpty
+      selection.onBlockRegistrations->Utils.Array.isEmpty &&
+      selection.onTransactionRegistrations->Utils.Array.isEmpty
     ) {
       throw(
         Source.GetItemsError(
@@ -88,6 +89,9 @@ let make = (
         partitionId,
         onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
         onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
+        onTransactionRegistrationIndexes: selection.onTransactionRegistrations->Array.map(reg =>
+          reg.index
+        ),
         clientFilteredContracts: selection.clientFilteredContracts,
         retry,
         ?reorgableFrom,

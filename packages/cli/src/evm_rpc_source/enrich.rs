@@ -69,6 +69,9 @@ pub(crate) type TxKey = (u64, u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum FetchKey {
     Block(u64),
+    /// A block with its transactions in full, which answers a read of its
+    /// header too.
+    FullBlock(u64),
     Transaction([u8; 32]),
     Receipt([u8; 32]),
 }
@@ -76,9 +79,17 @@ pub(crate) enum FetchKey {
 impl FetchKey {
     fn method(&self) -> &'static str {
         match self {
-            FetchKey::Block(_) => "eth_getBlockByNumber",
+            FetchKey::Block(_) | FetchKey::FullBlock(_) => "eth_getBlockByNumber",
             FetchKey::Transaction(_) => "eth_getTransactionByHash",
             FetchKey::Receipt(_) => "eth_getTransactionReceipt",
+        }
+    }
+
+    /// An in-flight read whose answer also answers this one.
+    fn wider(&self) -> Option<FetchKey> {
+        match self {
+            FetchKey::Block(number) => Some(FetchKey::FullBlock(*number)),
+            _ => None,
         }
     }
 
@@ -87,6 +98,7 @@ impl FetchKey {
             // `false`: transaction hashes only. The logs already name every
             // transaction this page cares about.
             FetchKey::Block(number) => json!([format!("0x{number:x}"), false]),
+            FetchKey::FullBlock(number) => json!([format!("0x{number:x}"), true]),
             FetchKey::Transaction(hash) | FetchKey::Receipt(hash) => {
                 json!([format::Hash::from(*hash).encode_hex()])
             }
@@ -149,7 +161,7 @@ impl EnrichError {
     /// Carry a rejected response's own verdict on whether trying again is worth
     /// anything, rather than treating every unreadable response as a selection
     /// the provider cannot serve.
-    fn from_response(block_number: u64, error: ResponseError) -> Self {
+    pub(crate) fn from_response(block_number: u64, error: ResponseError) -> Self {
         match error {
             ResponseError::Unservable(error) => EnrichError::FieldSelection {
                 block_number,
@@ -285,14 +297,14 @@ pub(crate) struct EnrichRequest<'a> {
 /// Read one JSON-RPC result, sharing an identical request already in flight.
 /// Everything read here is something the chain must have, so a null answer is
 /// the node being behind `block_number` rather than an absence to be handled.
-async fn require(
+pub(crate) async fn require(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
     key: FetchKey,
     block_number: u64,
 ) -> Result<Arc<Json>, EnrichError> {
     let result = fetches
-        .get(key, || {
+        .get(key, key.wider(), || {
             let client = client.clone();
             let params = key.params();
             async move {
@@ -618,14 +630,21 @@ pub(crate) async fn fetch_block_hashes(
 }
 
 /// Read the given blocks' responses concurrently, undecoded, for a caller that
-/// needs them before the page is planned.
+/// needs them before the page is planned: with their transactions in full
+/// when `full`.
 pub(crate) async fn fetch_block_responses(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
     numbers: &[u64],
+    full: bool,
 ) -> Result<HashMap<u64, Arc<Json>>, EnrichError> {
     let responses = join_all(numbers.iter().map(|&number| async move {
-        require(client, fetches, FetchKey::Block(number), number)
+        let key = if full {
+            FetchKey::FullBlock(number)
+        } else {
+            FetchKey::Block(number)
+        };
+        require(client, fetches, key, number)
             .await
             .map(|response| (number, response))
     }))
