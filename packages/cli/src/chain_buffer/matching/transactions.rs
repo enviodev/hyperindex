@@ -9,7 +9,7 @@ use napi_derive::napi;
 use hypersync_client::simple_types::Transaction;
 
 use crate::chain_buffer::tables::table::RowRef;
-use crate::evm::fields::EvmTxField;
+use crate::ecosystems::evm::fields::EvmTxField;
 
 /// One `indexer.onTransaction` registration, as JS resolved it for a chain.
 #[napi(object)]

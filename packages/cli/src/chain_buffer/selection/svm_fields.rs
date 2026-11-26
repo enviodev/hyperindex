@@ -458,7 +458,7 @@ mod tests {
     fn handler_names_match_event_config_builder() {
         let res = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../envio/src/EventConfigBuilder.res"
+            "/../envio/src/handlers/EventConfigBuilder.res"
         ))
         .expect("read EventConfigBuilder.res");
         assert_eq!(
@@ -505,7 +505,7 @@ mod tests {
     fn svm_res_block_fields_match_store_ordinals() {
         let svm_res = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../envio/src/sources/Svm.res"
+            "/../envio/src/ecosystems/Svm.res"
         ))
         .expect("read Svm.res");
         let store_names = |counts: Option<bool>| {

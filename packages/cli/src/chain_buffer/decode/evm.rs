@@ -7,7 +7,9 @@ use alloy_primitives::B256;
 use anyhow::{Context, Result};
 use hypersync_client::format::{Hex, LogArgument};
 
-use crate::evm::registration::{EvmParams, OnEventRegistrationInput, ParamMeta, ParamSchema};
+use crate::ecosystems::evm::registration::{
+    EvmParams, OnEventRegistrationInput, ParamMeta, ParamSchema,
+};
 
 struct Registration {
     schema: Arc<ParamSchema>,

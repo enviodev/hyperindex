@@ -15,8 +15,8 @@ use hypersync_client::format::{Hex, LogArgument};
 
 use super::tables::evm::LogView;
 use crate::address_store::{AddressStore, StoreInner};
-use crate::evm::registration::OnEventRegistrationInput;
-use crate::evm::topic_filter::TopicFilterInput;
+use crate::ecosystems::evm::registration::OnEventRegistrationInput;
+use crate::ecosystems::evm::topic_filter::TopicFilterInput;
 use crate::registration_start_block::has_started;
 
 enum TopicConstraint {
@@ -351,7 +351,7 @@ mod tests {
     use super::*;
     use crate::address_store::test_support::evm_store;
     use crate::chain_buffer::decode::evm::EvmDecoder;
-    use crate::evm::registration::ParamMeta;
+    use crate::ecosystems::evm::registration::ParamMeta;
     use crate::js_value::test_value::JsValue;
     use alloy_dyn_abi::DynSolValue;
     use alloy_primitives::{hex, U256};

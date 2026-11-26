@@ -18,17 +18,17 @@ use super::types::{
     ResumedChain,
 };
 use super::{AddChain, Holding, Initialize, Store, WriteError};
-use crate::clickhouse;
-use crate::clickhouse::client::{Connection, Tuning};
-use crate::columnar::{self, Arena, ColumnKind};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::Condition;
 use crate::logger::{BoundLogger, Level, Logger};
-use crate::postgres;
-use crate::postgres::client::{self, PgConnectionOptions, SslSetting};
-use crate::postgres::error::{message_of, to_napi};
-use crate::postgres::indexes::IndexEvent;
-use crate::postgres::param::Param;
+use crate::storage::clickhouse;
+use crate::storage::clickhouse::client::{Connection, Tuning};
+use crate::storage::columnar::{self, Arena, ColumnKind};
+use crate::storage::postgres;
+use crate::storage::postgres::client::{self, PgConnectionOptions, SslSetting};
+use crate::storage::postgres::error::{message_of, to_napi};
+use crate::storage::postgres::indexes::IndexEvent;
+use crate::storage::postgres::param::Param;
 
 #[napi(object)]
 pub struct PostgresOptions {

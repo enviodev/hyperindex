@@ -25,8 +25,8 @@ use napi_derive::napi;
 use strum::VariantArray;
 
 use crate::address_store::AddressStore;
-use crate::evm::fields::{EvmBlockField, EvmTxField};
-use crate::evm::registration::OnEventRegistrationInput;
+use crate::ecosystems::evm::fields::{EvmBlockField, EvmTxField};
+use crate::ecosystems::evm::registration::OnEventRegistrationInput;
 use decoded::DecodedEvents;
 use deliver::{BuiltItems, Columns};
 use matching::transactions::{OnTransactionRegistrationInput, TransactionMatcher};

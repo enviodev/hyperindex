@@ -4,13 +4,13 @@ use crate::{
         init_config::{self, Ecosystem, Language},
         interactive_init::prompt_missing_init_args,
     },
+    codegen::{contract_import_templates, init_templates::InitTemplates},
     commands,
     config_parsing::{
         entity_parsing::Schema,
         human_config::HumanConfig,
         system_config::{get_envio_version, SystemConfig},
     },
-    hbs_templating::{contract_import_templates, init_templates::InitTemplates},
     project_paths::ParsedProjectPaths,
     template_dirs::TemplateDirs,
     utils::file_system,
@@ -295,7 +295,7 @@ pub async fn run_init_args(
     fs::create_dir_all(&workflows_dir).context("Failed creating .github/workflows")?;
     fs::write(
         workflows_dir.join("test.yaml"),
-        crate::hbs_templating::init_templates::render_test_workflow(pm),
+        crate::codegen::init_templates::render_test_workflow(pm),
     )
     .context("Failed writing .github/workflows/test.yaml")?;
 

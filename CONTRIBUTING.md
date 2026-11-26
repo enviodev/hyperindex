@@ -73,7 +73,7 @@ Top-level folders:
   - `src/config_parsing/` – configuration loading pipeline:
     - `human_config.rs` → reads user `config.yaml`.
     - `system_config.rs` → converts user config into the internal representation.
-  - `src/hbs_templating/codegen_templates.rs` – emits `<project>/.envio/types.d.ts`,
+  - `src/codegen/codegen_templates.rs` – emits `<project>/.envio/types.d.ts`,
     `<project>/envio-env.d.ts`, and (for ReScript projects) `<project>/src/Indexer.res`.
   - `templates/` – code scaffold used during `envio init` / contract import
     (`dynamic/` for Handlebars, `static/` for raw files).
@@ -162,7 +162,7 @@ Monitoring & health:
 Quick dev tips:
 
 - Library code under `packages/envio` → hot-recompile with `pnpm rescript -w`.
-- Changes that affect emitted types (`packages/cli/src/hbs_templating/codegen_templates.rs`, schema, config) require rerunning `pnpm codegen` in the consuming scenario.
+- Changes that affect emitted types (`packages/cli/src/codegen/codegen_templates.rs`, schema, config) require rerunning `pnpm codegen` in the consuming scenario.
 
 ### Case study: per-address `startBlock`
 
@@ -173,8 +173,8 @@ Need to expose a `startBlock` setting for every contract address in `config.yaml
 3.  Run `cargo test` – unit tests in `test/configs/*` should cover happy & failure cases.
 4.  Regenerate JSON-schemas for docs & validation: `make update-schemas`.
 5.  Mirror the new field in `system_config.rs`; convert it to an internal type that is easier for templates (e.g., `IndexingContract { address, start_block, abi, events }`).
-6.  Pass the enriched contract structs into `hbs_templating/codegen_templates.rs`.
-7.  Update the codegen output in `hbs_templating/codegen_templates.rs` (the `Indexer.res` builder for ReScript projects, the `.envio/types.d.ts` augmentation block for TypeScript) so per-address `startBlock` flows into the runtime.
+6.  Pass the enriched contract structs into `codegen/codegen_templates.rs`.
+7.  Update the codegen output in `codegen/codegen_templates.rs` (the `Indexer.res` builder for ReScript projects, the `.envio/types.d.ts` augmentation block for TypeScript) so per-address `startBlock` flows into the runtime.
 8.  Add the field to `Config.res`.
 9.  Compress the two previous arrays passed to `FetchState.res` `make` function (static vs dynamic contracts) into a single `array<IndexingContract>` that already contains `startBlock`.
 10. Inside `FetchState.res` in `make` function create the initial block-partitions from the `startBlock` of each contract.

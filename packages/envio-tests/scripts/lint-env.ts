@@ -19,7 +19,7 @@ const allowed = new Set([
   // Puts the variables the CLI resolved into the process its workers inherit.
   "Bin.res",
   // Hands the process environment to the workers it forks.
-  "Supervisor.res",
+  "run/Supervisor.res",
 ]);
 
 const reads = /\bEnv\.|\bEnvSafe\.|process\.env|Process\.process\.env|dotenv/;

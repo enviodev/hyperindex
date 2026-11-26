@@ -1,6 +1,6 @@
 use hypersync_client::net_types;
 
-use crate::evm::fields::{BlockField, TransactionField};
+use crate::ecosystems::evm::fields::{BlockField, TransactionField};
 
 pub(super) fn field_selection(
     block: &[BlockField],

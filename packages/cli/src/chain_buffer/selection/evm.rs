@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 
 use crate::address_store::AddressSet;
-use crate::evm::fields::{BlockField, TransactionField};
-use crate::evm::topic_filter::{TopicFilter, TopicFilters};
+use crate::ecosystems::evm::fields::{BlockField, TransactionField};
+use crate::ecosystems::evm::topic_filter::{TopicFilter, TopicFilters};
 
 /// One log selection of a built query: the emitters it reaches, and the
 /// 4-position topic filter (empty position = match any).
@@ -160,7 +160,7 @@ pub(crate) struct SelectionBuilder {
 
 impl SelectionBuilder {
     pub(crate) fn from_registrations(
-        registrations: &[crate::evm::registration::OnEventRegistrationInput],
+        registrations: &[crate::ecosystems::evm::registration::OnEventRegistrationInput],
     ) -> Result<Self> {
         let mut map = HashMap::new();
         for reg in registrations {
@@ -343,8 +343,8 @@ mod tests {
     use super::*;
     use crate::address_store::client_filtered_contracts::ClientFilteredContracts;
     use crate::address_store::test_support::{evm_store, set_of};
-    use crate::evm::registration::OnEventRegistrationInput;
-    use crate::evm::topic_filter::TopicFilterInput;
+    use crate::ecosystems::evm::registration::OnEventRegistrationInput;
+    use crate::ecosystems::evm::topic_filter::TopicFilterInput;
 
     const SIGHASH_A: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const SIGHASH_B: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

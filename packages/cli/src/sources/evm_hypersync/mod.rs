@@ -16,11 +16,11 @@ use crate::chain_buffer::{
     tables::evm::LogView,
     ChainBuffer, Ecosystem, EvmRegistrations, Shared,
 };
-use crate::evm::fields::{
+use crate::ecosystems::evm::fields::{
     block_field_missing, transaction_field_missing, BlockField, TransactionField,
 };
-use crate::evm::format::map_i64;
-use crate::evm::rpc_fields;
+use crate::ecosystems::evm::format::map_i64;
+use crate::ecosystems::evm::rpc_fields;
 use crate::sources::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::sources::failure::ClientError;
 use crate::sources::request_stats::RequestStat;
@@ -661,7 +661,7 @@ mod tests {
     use crate::chain_buffer::matching::ContractRegisters;
     use crate::chain_buffer::schedule::BlockHandlerInput;
     use crate::chain_buffer::tables::table::make_key;
-    use crate::evm::fields::{EvmBlockField, EvmTxField};
+    use crate::ecosystems::evm::fields::{EvmBlockField, EvmTxField};
     use hypersync_client::simple_types;
 
     fn empty_matcher() -> EvmMatcher {
@@ -673,25 +673,27 @@ mod tests {
     // dropped.
     fn zero_event_matcher() -> EvmMatcher {
         EvmMatcher::new(
-            &[crate::evm::registration::OnEventRegistrationInput {
-                index: 0,
-                sighash: Some(format!("0x{}", "00".repeat(32))),
-                topic_count: 1,
-                event_name: "Zero".to_string(),
-                contract_name: "Zero".to_string(),
-                is_wildcard: true,
-                depends_on_addresses: false,
-                start_block: None,
-                topic_filters: vec![crate::evm::topic_filter::TopicFilterInput {
-                    topic0: Some(vec![format!("0x{}", "00".repeat(32))]),
-                    topic1: Some(vec![]),
-                    topic2: Some(vec![]),
-                    topic3: Some(vec![]),
-                }],
-                block_fields: vec![],
-                transaction_fields: vec![],
-                params: vec![],
-            }],
+            &[
+                crate::ecosystems::evm::registration::OnEventRegistrationInput {
+                    index: 0,
+                    sighash: Some(format!("0x{}", "00".repeat(32))),
+                    topic_count: 1,
+                    event_name: "Zero".to_string(),
+                    contract_name: "Zero".to_string(),
+                    is_wildcard: true,
+                    depends_on_addresses: false,
+                    start_block: None,
+                    topic_filters: vec![crate::ecosystems::evm::topic_filter::TopicFilterInput {
+                        topic0: Some(vec![format!("0x{}", "00".repeat(32))]),
+                        topic1: Some(vec![]),
+                        topic2: Some(vec![]),
+                        topic3: Some(vec![]),
+                    }],
+                    block_fields: vec![],
+                    transaction_fields: vec![],
+                    params: vec![],
+                },
+            ],
             ContractRegisters::default(),
             &evm_store(&[("Zero", &[])]),
         )
@@ -1248,25 +1250,29 @@ mod tests {
         let buffer = ChainBuffer::make(
             chain_buffer::ChainBufferConfig {
                 registrations: crate::chain_buffer::RegistrationsInput::Evm {
-                    registrations: vec![crate::evm::registration::OnEventRegistrationInput {
-                        index: 0,
-                        sighash: Some(transfer_topic0.clone()),
-                        topic_count: 3,
-                        event_name: "Transfer".to_string(),
-                        contract_name: "Token".to_string(),
-                        is_wildcard: false,
-                        depends_on_addresses: true,
-                        start_block: None,
-                        topic_filters: vec![crate::evm::topic_filter::TopicFilterInput {
-                            topic0: Some(vec![transfer_topic0]),
-                            topic1: Some(vec![format!("0x{:0>64}", &SENDER[2..])]),
-                            topic2: Some(vec![]),
-                            topic3: Some(vec![]),
-                        }],
-                        block_fields: vec![],
-                        transaction_fields: vec![],
-                        params: vec![],
-                    }],
+                    registrations: vec![
+                        crate::ecosystems::evm::registration::OnEventRegistrationInput {
+                            index: 0,
+                            sighash: Some(transfer_topic0.clone()),
+                            topic_count: 3,
+                            event_name: "Transfer".to_string(),
+                            contract_name: "Token".to_string(),
+                            is_wildcard: false,
+                            depends_on_addresses: true,
+                            start_block: None,
+                            topic_filters: vec![
+                                crate::ecosystems::evm::topic_filter::TopicFilterInput {
+                                    topic0: Some(vec![transfer_topic0]),
+                                    topic1: Some(vec![format!("0x{:0>64}", &SENDER[2..])]),
+                                    topic2: Some(vec![]),
+                                    topic3: Some(vec![]),
+                                },
+                            ],
+                            block_fields: vec![],
+                            transaction_fields: vec![],
+                            params: vec![],
+                        },
+                    ],
                 },
                 should_checksum: false,
                 contract_register_indexes: vec![],

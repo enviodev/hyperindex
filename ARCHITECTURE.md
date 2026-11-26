@@ -10,12 +10,12 @@ imports from a layer above it.
 
 | Layer | Rust (`cli/src/`) | ReScript (`envio/src/`) |
 | --- | --- | --- |
-| Loop and planning | | `IndexerLoop`, `ChainState`, `ChainFetching`, `FetchState` |
-| Source control: which source, retries, heights | | `sources/SourceManager`, `sources/HeightFeed`, `sources/HeightStream`, `sources/HyperSyncSSE`, `sources/EvmRpcWs` |
+| Loop and planning | | `run/IndexerLoop`, `run/ChainState`, `fetching/ChainFetching`, `fetching/FetchState` |
+| Source control: which source, retries, heights | | `sources/SourceManager`, `sources/heights/` (`HeightFeed`, `HeightStream`, `HyperSyncSSE`, `EvmRpcWs`) |
 | Source contract | `sources/failure.rs`, `sources/native.rs` | `sources/Source`, `sources/NativeSource`, `sources/ChainSources`, `sources/SimulateSource` |
 | Clients | `sources/evm_hypersync/`, `sources/evm_rpc/`, `sources/fuel_hypersync/`, `sources/svm_hypersync/` | |
-| Chain data | `chain_buffer/` (`tables/`, `matching/`, `selection/`, `decode/`), `address_store/` | `sources/ChainBuffer`, `sources/BufferPage`, `sources/ChainRegistrations`, `sources/AddressStore` |
-| Ecosystems | `evm/`, `fuel/`, `svm/` | `Evm`, `Fuel`, `Svm` and their `*EventItem` modules |
+| Chain data | `chain_buffer/` (`tables/`, `matching/`, `selection/`, `decode/`), `address_store/` | `chainBuffer/` (`ChainBuffer`, `BufferPage`, `ChainRegistrations`, `AddressStore`) |
+| Ecosystems | `ecosystems/` (`evm/`, `fuel/`, `svm/`) | `ecosystems/` (`Evm`, `Fuel`, `Svm` and their `*EventItem` modules) |
 
 The ecosystem modules import nothing from the runtime above them; the chain
 data imports no source; nothing below the source contract reads the
@@ -53,3 +53,17 @@ the runtime uses in `cli/src/indexer_env.rs` (through `cli/src/env.rs`, the
 one module that touches it), and `Config.fromPublic` takes the result as
 `config.env` (`IndexerEnv.t`). Sources get theirs on each chain's source config
 (`Config.hyperSync`, an RPC's `syncConfig`).
+
+## Where the rest lives
+
+ReScript (`envio/src/`): entry points (`Envio`, `Api`, `Bin`, `Main`, `Core`,
+`Config`, `IndexerEnv`, `Internal`) sit at the root; `run/` is the process and
+its whole-indexer state (worker, supervisor, server, metrics); `processing/`
+runs handlers over a batch and rolls back; `handlers/` loads and registers user
+code; `storage/` writes and reads (`storage/db/` holds tables and SQL);
+`testing/` is `createTestIndexer` and simulate; `utils/` is shared primitives.
+
+Rust (`cli/src/`): `storage/` is the storage service with its backends
+(`postgres/`, `clickhouse/`, `columnar/`); `codegen/` renders the generated
+project files; `config_parsing/` turns config.yaml into the config the runtime
+reads; `executor/`, `cli_args/` and `commands.rs` are the CLI.

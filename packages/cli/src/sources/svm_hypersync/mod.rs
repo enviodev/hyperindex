@@ -21,10 +21,10 @@ use crate::chain_buffer::tables::svm::{
     SvmTransactionCounts,
 };
 use crate::chain_buffer::{ChainBuffer, Ecosystem, Shared, SvmRegistrations};
+use crate::ecosystems::svm::types;
 use crate::sources::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::sources::failure::ClientError;
 use crate::sources::request_stats::RequestStat;
-use crate::svm::types;
 pub(crate) use config::SvmClientConfig;
 
 /// The marker the client leaves in the error chain on a 429. It exposes no

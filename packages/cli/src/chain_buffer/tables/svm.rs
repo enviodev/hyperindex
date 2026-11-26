@@ -14,7 +14,7 @@ use crate::chain_buffer::deliver::{
     build_columns, cells, utf8, Column, Columns, SvmAccountActivityOut, SvmAccountTokenOut,
     SvmLamportsOut,
 };
-use crate::svm::types::bigint_u64;
+use crate::ecosystems::svm::types::bigint_u64;
 
 pub(crate) mod instruction_column {
     /// The program's id, base58: the bytes the address store keys it by.

@@ -6,25 +6,7 @@ use std::path::{Path, PathBuf};
 /// reads it where it starts and passes values in as config.
 const FORBIDDEN_IMPORTS: &[(&str, &[&str])] = &[
     (
-        "evm/",
-        &[
-            "crate::chain_buffer",
-            "crate::address_store",
-            "crate::sources",
-            "crate::env",
-        ],
-    ),
-    (
-        "fuel/",
-        &[
-            "crate::chain_buffer",
-            "crate::address_store",
-            "crate::sources",
-            "crate::env",
-        ],
-    ),
-    (
-        "svm/",
+        "ecosystems/",
         &[
             "crate::chain_buffer",
             "crate::address_store",
@@ -53,6 +35,13 @@ fn rust_files_under(directory: &Path) -> Vec<PathBuf> {
 #[test]
 fn layer_imports_point_down() {
     let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    // A moved directory would otherwise leave its rule matching nothing.
+    let missing: Vec<&str> = FORBIDDEN_IMPORTS
+        .iter()
+        .map(|(directory, _)| *directory)
+        .filter(|directory| !source_root.join(directory).is_dir())
+        .collect();
+    assert!(missing.is_empty(), "No such directories: {missing:?}");
     let mut violations = Vec::new();
     for file in rust_files_under(&source_root) {
         let relative_path = file

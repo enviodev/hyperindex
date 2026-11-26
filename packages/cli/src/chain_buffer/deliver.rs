@@ -12,10 +12,12 @@ use napi_derive::napi;
 
 use super::tables::table::RowRef;
 use super::walk::{Built, Item, ItemLinks};
-use crate::columnar::{js as columnar_js, Arena, ColumnSpec};
-use crate::evm::format::{AccessList as AccessListItem, Authorization as AuthorizationItem};
-use crate::evm::registration::{ParamCell, ParamSchema};
+use crate::ecosystems::evm::format::{
+    AccessList as AccessListItem, Authorization as AuthorizationItem,
+};
+use crate::ecosystems::evm::registration::{ParamCell, ParamSchema};
 use crate::js_value::JsTape;
+use crate::storage::columnar::{js as columnar_js, Arena, ColumnSpec};
 use crate::storage::rows::{ColumnRead, ReadKind};
 
 /// The columns of an arena, which JavaScript builds its views from.

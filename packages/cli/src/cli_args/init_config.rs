@@ -222,7 +222,7 @@ pub mod fuel {
             fuel::{Chain as ChainConfig, ContractConfig, EcosystemTag, EventConfig, HumanConfig},
             BaseConfig, ChainContract, StartBlock,
         },
-        fuel::{abi::FuelAbi, address::Address},
+        ecosystems::fuel::{abi::FuelAbi, address::Address},
     };
 
     use super::InitConfig;

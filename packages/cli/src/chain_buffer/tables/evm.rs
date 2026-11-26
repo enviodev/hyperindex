@@ -9,8 +9,8 @@ use strum::VariantArray;
 
 use super::table::{make_key, ChunkBuilder, ColumnKind, RowRef, Schema, MAX_POSITION};
 use crate::chain_buffer::deliver::{build_columns, cells, hex_quantity, Column, Columns};
-use crate::evm::fields::{EvmBlockField, EvmTxField};
-use crate::evm::format::{
+use crate::ecosystems::evm::fields::{EvmBlockField, EvmTxField};
+use crate::ecosystems::evm::format::{
     encode_address, map_i64, AccessList as AccessListItem, Authorization as AuthorizationItem,
 };
 

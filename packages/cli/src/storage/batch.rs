@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::changes::ChangeSet;
 use super::types::{Addresses, Bounds, ChainMeta, Checkpoints, DiffCheckpoint, Frontier, Progress};
-use crate::columnar::Arena;
+use crate::storage::columnar::Arena;
 
 pub struct RollbackWrite {
     pub bounds: Bounds,

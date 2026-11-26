@@ -9,7 +9,7 @@ use std::time::Instant;
 use tokio::sync::{Semaphore, SemaphorePermit};
 
 use super::classify::is_rate_limited;
-use crate::evm::rpc_fields::parse_hex_u64;
+use crate::ecosystems::evm::rpc_fields::parse_hex_u64;
 use crate::sources::request_stats::{RequestStat, Stats};
 
 /// JSON-RPC level errors are kept separate from transport/parse failures:

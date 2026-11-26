@@ -18,9 +18,9 @@ use crate::chain_buffer::matching::transactions::{
 };
 use crate::chain_buffer::page::PageData;
 use crate::chain_buffer::tables::evm::push_transaction;
-use crate::evm::fields::EvmTxField;
-use crate::evm::rpc_fields::{parse_hex_u64, tx_fields_in, tx_mask_of, Carrier};
-use crate::evm::rpc_responses as responses;
+use crate::ecosystems::evm::fields::EvmTxField;
+use crate::ecosystems::evm::rpc_fields::{parse_hex_u64, tx_fields_in, tx_mask_of, Carrier};
+use crate::ecosystems::evm::rpc_responses as responses;
 
 /// The transaction fields a registration needs a row to hold: what its
 /// handler reads and what its filter compares.

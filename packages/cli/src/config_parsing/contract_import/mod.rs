@@ -8,7 +8,7 @@ pub mod converters;
 use crate::{
     cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::chain_helpers::NetworkWithExplorer,
-    evm::{abi::AbiOrNestedAbi, address::Address},
+    ecosystems::evm::{abi::AbiOrNestedAbi, address::Address},
 };
 use alloy_json_abi::JsonAbi;
 use anyhow::{anyhow, Context};
@@ -102,7 +102,7 @@ async fn contract_import_with_timeout(
 
     match contract_import_response {
         ContractImportResponse::Contract { name, abi } => {
-            let mut abi = match crate::evm::abi::parse(None, &abi)
+            let mut abi = match crate::ecosystems::evm::abi::parse(None, &abi)
                 .context("Failed to read the ABI the block explorer returned")?
             {
                 AbiOrNestedAbi::Abi(abi) => abi,

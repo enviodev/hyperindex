@@ -18,7 +18,7 @@ use super::tables::table::{make_key, RowRef, Snapshot};
 use super::{
     decode, matching, Ecosystem, EvmRegistrations, Registrations, Shared, SvmRegistrations,
 };
-use crate::evm::registration::EvmParams;
+use crate::ecosystems::evm::registration::EvmParams;
 use crate::js_value::JsTape;
 
 pub(crate) enum Item {
@@ -615,7 +615,7 @@ mod tests {
     use crate::chain_buffer::page::{Page, PageData};
     use crate::chain_buffer::tables::evm::push_transaction;
     use crate::chain_buffer::{ChainBuffer, ChainBufferConfig, RegistrationsInput};
-    use crate::evm::fields::EvmTxField;
+    use crate::ecosystems::evm::fields::EvmTxField;
 
     const SENDER: &str = "0x00000000000000000000000000000000000000aa";
 

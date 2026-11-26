@@ -308,7 +308,11 @@ const realTime = [
 ];
 const sourceViolations: violation[] = [];
 // The run-wide timers outside the sources take the same clock.
-const clockedModules = ["LoadLayer.res", "EffectState.res", "Throttler.res"].map((name) =>
+const clockedModules = [
+  "processing/LoadLayer.res",
+  "processing/EffectState.res",
+  "utils/Throttler.res",
+].map((name) =>
   fileURLToPath(new URL(`../../envio/src/${name}`, import.meta.url)),
 );
 for (const path of [...resFiles(sourcesRoot), ...clockedModules]) {

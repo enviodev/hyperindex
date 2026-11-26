@@ -23,7 +23,7 @@
 ## Navigation
 
 - Rust CLI: `packages/cli`, entry at `lib.rs`, commands at `commands.rs`.
-- Config parsing pipeline: `human_config.rs` → `system_config.rs` → internal JSON → `hbs_templating/codegen_templates.rs` → `Config.res`.
+- Config parsing pipeline: `human_config.rs` → `system_config.rs` → internal JSON → `codegen/codegen_templates.rs` → `Config.res`.
 - Shared runtime library: `packages/envio`. Its tests: `packages/envio-tests`.
 - Scenario projects: `scenarios/` — `test_codegen`, `e2e_test`, `fuel_test`, `svm_test`.
 - To edit runtime code, edit templates under `packages/cli/templates/` or `packages/envio/`, not the codegen output under `<project>/.envio/`.

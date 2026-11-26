@@ -11,9 +11,9 @@ use super::batch::EffectCacheWrite;
 use super::schema::{ClickHouseOptions, Entity, Schema};
 use super::types::{Addresses, ChainConfig, Checkpoints, Frontier, Progress, ResumedChain};
 use super::{Batch, Holding, Initialize, Storage};
-use crate::clickhouse;
-use crate::columnar::{Arena, ColumnKind};
-use crate::postgres;
+use crate::storage::clickhouse;
+use crate::storage::columnar::{Arena, ColumnKind};
+use crate::storage::postgres;
 
 struct Live {
     storage: Storage,

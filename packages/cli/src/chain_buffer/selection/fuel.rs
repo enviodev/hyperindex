@@ -6,7 +6,7 @@ use hyperfuel_client::net_types;
 use napi_derive::napi;
 
 use crate::address_store::{AddressSet, StoreInner};
-use crate::fuel::log_decoder::{parse_abi, LogDecoder};
+use crate::ecosystems::fuel::log_decoder::{parse_abi, LogDecoder};
 use crate::registration_start_block::has_started;
 use fuel_abi_types::abi::unified_program::UnifiedProgramABI;
 
@@ -382,7 +382,7 @@ mod tests {
             start_block: None,
             kind,
             log_id: log_id.map(str::to_string),
-            abi: log_id.map(|id| crate::fuel::log_decoder::test_abi(id, "u8")),
+            abi: log_id.map(|id| crate::ecosystems::fuel::log_decoder::test_abi(id, "u8")),
         }
     }
 

@@ -347,7 +347,7 @@ mod tests {
             start_block: None,
             kind,
             log_id: log_id.map(str::to_string),
-            abi: log_id.map(|id| crate::fuel::log_decoder::test_abi(id, "u8")),
+            abi: log_id.map(|id| crate::ecosystems::fuel::log_decoder::test_abi(id, "u8")),
         }
     }
 
@@ -490,7 +490,7 @@ mod tests {
     #[test]
     fn log_data_its_abi_rejects_drops_only_that_registration() {
         let mut logs_u64 = reg_input(1, "C", FuelEventKind::LogData, true, Some("7"));
-        logs_u64.abi = Some(crate::fuel::log_decoder::test_abi("7", "u64"));
+        logs_u64.abi = Some(crate::ecosystems::fuel::log_decoder::test_abi("7", "u64"));
         let (_store, matcher) = build(
             &[
                 reg_input(0, "C", FuelEventKind::LogData, true, Some("7")),

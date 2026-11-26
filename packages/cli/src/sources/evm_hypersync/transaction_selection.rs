@@ -5,8 +5,8 @@ use hypersync_client::{format::Address, net_types};
 
 use super::push_unique;
 use crate::chain_buffer::matching::transactions::OnTransactionRegistration;
-use crate::evm::fields::{BlockField, TransactionField};
-use crate::evm::rpc_fields::tx_fields_in;
+use crate::ecosystems::evm::fields::{BlockField, TransactionField};
+use crate::ecosystems::evm::rpc_fields::tx_fields_in;
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct BuiltTransactionSelection {
@@ -59,7 +59,7 @@ mod tests {
     use crate::chain_buffer::matching::transactions::{
         OnTransactionRegistrationInput, TransactionMatcher,
     };
-    use crate::evm::fields::EvmTxField;
+    use crate::ecosystems::evm::fields::EvmTxField;
 
     const A: &str = "0x00000000000000000000000000000000000000aa";
 

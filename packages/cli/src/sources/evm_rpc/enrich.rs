@@ -30,12 +30,12 @@ use super::inflight::Inflight;
 use crate::chain_buffer::page::PageData;
 use crate::chain_buffer::tables::evm::{push_block, push_transaction};
 use crate::chain_buffer::Ecosystem;
-use crate::evm::fields::{BlockField, TransactionField};
-use crate::evm::rpc_fields::{
+use crate::ecosystems::evm::fields::{BlockField, TransactionField};
+use crate::ecosystems::evm::rpc_fields::{
     tx_fields_in, tx_mask_of, Carrier, BLOCK_KEY_MASK, BLOCK_OBSERVATION_MASK,
     TX_EAGER_EXCLUDED_MASK,
 };
-use crate::evm::rpc_responses::{self as responses, ResponseError};
+use crate::ecosystems::evm::rpc_responses::{self as responses, ResponseError};
 
 /// What the chain already holds of each block and transaction, so a page
 /// asks only for what it lacks.
@@ -446,8 +446,9 @@ pub(crate) async fn page(
 }
 
 /// What a transaction row built from its log holds: its key and hash.
-const LOG_TRANSACTION_FIELDS: u64 = (1 << crate::evm::fields::EvmTxField::TransactionIndex as u32)
-    | (1 << crate::evm::fields::EvmTxField::Hash as u32);
+const LOG_TRANSACTION_FIELDS: u64 = (1
+    << crate::ecosystems::evm::fields::EvmTxField::TransactionIndex as u32)
+    | (1 << crate::ecosystems::evm::fields::EvmTxField::Hash as u32);
 
 fn add_transactions(
     page: &mut PageData,
@@ -756,7 +757,7 @@ async fn read_opt(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evm::fields::{EvmBlockField, EvmTxField};
+    use crate::ecosystems::evm::fields::{EvmBlockField, EvmTxField};
     use std::sync::Mutex;
 
     /// What an earlier page left the chain holding, by the fields each row

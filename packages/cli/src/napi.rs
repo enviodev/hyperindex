@@ -1,6 +1,6 @@
 use crate::{
-    clap_definitions::CommandLineArgs, config_parsing::system_config::SystemConfig,
-    hbs_templating::codegen_templates::ProjectTemplate, project_paths::ParsedProjectPaths,
+    clap_definitions::CommandLineArgs, codegen::codegen_templates::ProjectTemplate,
+    config_parsing::system_config::SystemConfig, project_paths::ParsedProjectPaths,
 };
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};

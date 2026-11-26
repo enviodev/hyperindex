@@ -9,9 +9,9 @@ use strum::VariantArray;
 
 use super::tables::evm::{push_block, push_transaction};
 use super::tables::table::ChunkBuilder;
-use crate::evm::fields::{BlockField, EvmBlockField, EvmTxField};
-use crate::evm::rpc_fields::{parse_hex_u64, tx_fields_in};
-use crate::evm::rpc_responses;
+use crate::ecosystems::evm::fields::{BlockField, EvmBlockField, EvmTxField};
+use crate::ecosystems::evm::rpc_fields::{parse_hex_u64, tx_fields_in};
+use crate::ecosystems::evm::rpc_responses;
 
 /// The mask of the fields `object` names; a field's ordinal is its position
 /// in `variants`. A key naming no field is a typo the test would otherwise
