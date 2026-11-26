@@ -20,15 +20,16 @@ Dynamic contracts have no address — they're registered by `contractRegister`:
 contracts:
   - name: Factory
     events:
-      - event: PairCreated(indexed address token0, indexed address token1, address pair, uint256)
+      - event: PairCreated(address indexed token0, address indexed token1, address pair, uint256)
   - name: Pair
     # No address — registered dynamically
     events:
-      - event: Swap(indexed address sender, uint256 amount0In, ...)
+      - event: Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to)
       - event: Sync(uint112 reserve0, uint112 reserve1)
 
 chains:
   - id: 1
+    start_block: 0
     contracts:
       - name: Factory
         address:

@@ -151,6 +151,9 @@ pub enum Network {
 
     Darwinia = 46,
 
+    #[subenum(HypersyncChain)]
+    Elysium = 99901,
+
     #[subenum(
         HypersyncChain,
         NetworkWithExplorer,
@@ -606,6 +609,7 @@ impl Network {
             | Network::XdcTestnet
             | Network::Abstract
             | Network::Ab
+            | Network::Elysium
             | Network::Arc
             | Network::ArcTestnet
             | Network::Hyperliquid
@@ -689,6 +693,17 @@ mod test {
                 HypersyncChain::from_repr(5042).is_some()
             ),
             ("arc".to_string(), true)
+        );
+    }
+
+    #[test]
+    fn elysium_is_supported_by_hypersync() {
+        assert_eq!(
+            (
+                Network::from_network_id(99901).map(|n| n.to_string()).ok(),
+                HypersyncChain::from_repr(99901).is_some()
+            ),
+            (Some("elysium".to_string()), true)
         );
     }
 

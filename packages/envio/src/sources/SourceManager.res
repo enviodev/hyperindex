@@ -73,7 +73,7 @@ type requestStatSample = {
 type t = {
   sourcesState: array<sourceState>,
   logger: Logger.t,
-  mutable statusStart: Performance.timeRef,
+  mutable statusStart: Clock.timeRef,
   mutable status: sourceManagerStatus,
   // Cumulative time spent in each status, rendered into the
   // envio_indexing_idle/source_waiting/source_querying_seconds counters.
@@ -192,21 +192,21 @@ let getHeightStreamSamples = (sourceManager: t): array<heightStreamSample> => {
 let idleSeconds = (sourceManager: t) =>
   sourceManager.idleSeconds +.
   switch sourceManager.status {
-  | Idle => sourceManager.statusStart->Performance.secondsSince
+  | Idle => sourceManager.clock->Clock.secondsSince(sourceManager.statusStart)
   | _ => 0.
   }
 
 let waitingForNewBlockSeconds = (sourceManager: t) =>
   sourceManager.waitingForNewBlockSeconds +.
   switch sourceManager.status {
-  | WaitingForNewBlock => sourceManager.statusStart->Performance.secondsSince
+  | WaitingForNewBlock => sourceManager.clock->Clock.secondsSince(sourceManager.statusStart)
   | _ => 0.
   }
 
 let queryingSeconds = (sourceManager: t) =>
   sourceManager.queryingSeconds +.
   switch sourceManager.status {
-  | Querying => sourceManager.statusStart->Performance.secondsSince
+  | Querying => sourceManager.clock->Clock.secondsSince(sourceManager.statusStart)
   | _ => 0.
   }
 
@@ -415,7 +415,7 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
     reducedPollingInterval,
     recoveryTimeout,
     clock,
-    statusStart: Performance.now(),
+    statusStart: clock->Clock.readTimeRef,
     status: Idle,
     idleSeconds: 0.,
     waitingForNewBlockSeconds: 0.,
@@ -430,14 +430,14 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
 }
 
 let trackNewStatus = (sourceManager: t, ~newStatus) => {
-  let elapsed = sourceManager.statusStart->Performance.secondsSince
+  let elapsed = sourceManager.clock->Clock.secondsSince(sourceManager.statusStart)
   switch sourceManager.status {
   | Idle => sourceManager.idleSeconds = sourceManager.idleSeconds +. elapsed
   | WaitingForNewBlock =>
     sourceManager.waitingForNewBlockSeconds = sourceManager.waitingForNewBlockSeconds +. elapsed
   | Querying => sourceManager.queryingSeconds = sourceManager.queryingSeconds +. elapsed
   }
-  sourceManager.statusStart = Performance.now()
+  sourceManager.statusStart = sourceManager.clock->Clock.readTimeRef
   sourceManager.status = newStatus
 }
 

@@ -103,10 +103,9 @@ let callEffect = (
   ~effect: Internal.effect,
   ~arg: Internal.effectArgs,
   ~inMemTable: EffectState.effectCacheInMemTable,
-  ~timerRef,
   ~onError,
 ) => {
-  inMemTable.stats->EffectState.startCall(~timerRef)
+  let timerRef = inMemTable.stats->EffectState.startCall
 
   RunScope.enterEffect(arg, () => effect.handler(arg))
   ->Promise.thenResolve(output => {
@@ -133,7 +132,6 @@ let rec executeWithRateLimit = (
   ~onError,
   ~isFromQueue: bool,
 ) => {
-  let timerRef = Performance.now()
   let promises = []
 
   switch inMemTable.rateLimitState {
@@ -146,7 +144,6 @@ let rec executeWithRateLimit = (
           ~effect,
           ~arg=effectArgs->Array.getUnsafe(idx),
           ~inMemTable,
-          ~timerRef,
           ~onError,
         )->Utils.Promise.ignoreValue,
       )
@@ -179,7 +176,6 @@ let rec executeWithRateLimit = (
           ~effect,
           ~arg=immediateArgs->Array.getUnsafe(idx),
           ~inMemTable,
-          ~timerRef,
           ~onError,
         )->Utils.Promise.ignoreValue,
       )

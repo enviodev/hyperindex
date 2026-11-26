@@ -35,6 +35,17 @@ let real: t = {
   random: Math.random,
 }
 
+// A reading of one clock, for measuring a duration on it. Opaque, so it can't be
+// mixed up with other milliseconds or read against another clock's numbers.
+type timeRef
+
+let readTimeRef = (clock: t) => clock.now()->(Utils.magic: float => timeRef)
+
+let secondsBetween = (~from: timeRef, ~to: timeRef) =>
+  (to->(Utils.magic: timeRef => float) -. from->(Utils.magic: timeRef => float)) /. 1000.
+
+let secondsSince = (clock: t, since) => secondsBetween(~from=since, ~to=clock->readTimeRef)
+
 let delay = (clock: t, ~label, millis) =>
   Promise.make((resolve, _reject) => clock.setTimeout(~label, () => resolve(), millis)->ignore)
 
