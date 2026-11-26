@@ -152,6 +152,9 @@ struct Indexer {
     client: EvmHyperSyncClient,
     buffer: ChainBuffer,
     address_set: AddressSet,
+    /// For the stages that read the response themselves.
+    http: reqwest::Client,
+    url: String,
     _server: MockHyperSyncServer,
 }
 
@@ -196,6 +199,8 @@ fn make_indexer(scenario: &Scenario) -> (Indexer, usize) {
             client,
             buffer,
             address_set,
+            http: reqwest::Client::new(),
+            url: server.url(),
             _server: server,
         },
         body_bytes,
@@ -211,6 +216,17 @@ enum Stage {
     /// The whole of `get_items`: rows matched and the kept ones copied into
     /// the page's columns.
     GetItems,
+    /// What `Arrow` does inside hypersync-client, one copy at a time: the body
+    /// collected into one buffer,
+    BodyCollected,
+    /// then unpacked from Cap'n Proto's packed encoding,
+    BodyUnpacked,
+    /// then each table read by Arrow's `FileReader`, which copies its buffers.
+    ArrowCopied,
+    /// Prototype: the body unpacked as its chunks arrive, never held whole,
+    StreamedUnpack,
+    /// then Arrow's arrays laid over the unpacked message without copying.
+    StreamedZeroCopyArrow,
 }
 
 impl Stage {
@@ -219,11 +235,142 @@ impl Stage {
             Stage::Arrow => "fetch + arrow",
             Stage::Rows => "+ simple_types rows",
             Stage::GetItems => "+ match + page (get_items)",
+            Stage::BodyCollected => "body collected",
+            Stage::BodyUnpacked => "+ capnp unpacked",
+            Stage::ArrowCopied => "+ arrow FileReader",
+            Stage::StreamedUnpack => "streamed unpack",
+            Stage::StreamedZeroCopyArrow => "+ zero-copy arrow",
         }
     }
 }
 
-/// Runs one page through `stage`, returning the logs the page kept.
+async fn post_query(indexer: &Indexer) -> reqwest::Response {
+    // The fixed page answers any query.
+    indexer
+        .http
+        .post(format!("{}/query/arrow-ipc", indexer.url))
+        .body("{}")
+        .send()
+        .await
+        .unwrap()
+}
+
+fn capnp_options() -> capnp::message::ReaderOptions {
+    let mut options = capnp::message::ReaderOptions::new();
+    options
+        .nesting_limit(i32::MAX)
+        .traversal_limit_in_words(None);
+    options
+}
+
+/// The Arrow IPC files of the response's block, transaction and log tables.
+fn table_files<S: capnp::message::ReaderSegments>(
+    message: &capnp::message::Reader<S>,
+) -> [&[u8]; 3] {
+    let data = message
+        .get_root::<hypersync_net_types::hypersync_net_types_capnp::query_response::Reader>()
+        .unwrap()
+        .get_data()
+        .unwrap();
+    [
+        data.get_blocks().unwrap(),
+        data.get_transactions().unwrap(),
+        data.get_logs().unwrap(),
+    ]
+}
+
+fn read_file_copied(file: &[u8]) -> Vec<arrow::array::RecordBatch> {
+    arrow::ipc::reader::FileReader::try_new(std::io::Cursor::new(file), None)
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+fn read_file_zero_copy(file: &arrow::buffer::Buffer) -> Vec<arrow::array::RecordBatch> {
+    let trailer_start = file.len() - 10;
+    let footer_length =
+        arrow::ipc::reader::read_footer_length(file[trailer_start..].try_into().unwrap()).unwrap();
+    let footer =
+        arrow::ipc::root_as_footer(&file[trailer_start - footer_length..trailer_start]).unwrap();
+    let schema = Arc::new(arrow::ipc::convert::fb_to_schema(footer.schema().unwrap()));
+    let decoder = arrow::ipc::reader::FileDecoder::new(schema, footer.version());
+    footer
+        .recordBatches()
+        .unwrap()
+        .iter()
+        .filter_map(|block| {
+            let length = block.bodyLength() as usize + block.metaDataLength() as usize;
+            decoder
+                .read_record_batch(
+                    block,
+                    &file.slice_with_length(block.offset() as usize, length),
+                )
+                .unwrap()
+        })
+        .collect()
+}
+
+fn log_rows(batches: &[arrow::array::RecordBatch]) -> usize {
+    batches.iter().map(|batch| batch.num_rows()).sum()
+}
+
+/// A blocking reader over the chunks of a response body as they arrive, each
+/// dropped once read.
+struct ChunkReader {
+    current: bytes::Bytes,
+    chunks: tokio::sync::mpsc::Receiver<bytes::Bytes>,
+}
+
+impl std::io::Read for ChunkReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        use std::io::BufRead;
+        let available = self.fill_buf()?;
+        let length = available.len().min(out.len());
+        out[..length].copy_from_slice(&available[..length]);
+        self.consume(length);
+        Ok(length)
+    }
+}
+
+impl std::io::BufRead for ChunkReader {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        while self.current.is_empty() {
+            match self.chunks.blocking_recv() {
+                Some(chunk) => self.current = chunk,
+                None => break,
+            }
+        }
+        Ok(&self.current)
+    }
+
+    fn consume(&mut self, length: usize) {
+        bytes::Buf::advance(&mut self.current, length);
+    }
+}
+
+/// Unpacks the body while it downloads: the packed body is never held whole,
+/// only the unpacked message, in one allocation.
+async fn read_message_streamed(
+    indexer: &Indexer,
+) -> capnp::message::Reader<capnp::serialize::OwnedSegments> {
+    let mut response = post_query(indexer).await;
+    let (sender, chunks) = tokio::sync::mpsc::channel(4);
+    let unpack = tokio::task::spawn_blocking(move || {
+        let reader = ChunkReader {
+            current: bytes::Bytes::new(),
+            chunks,
+        };
+        capnp::serialize_packed::read_message(reader, capnp_options()).unwrap()
+    });
+    while let Some(chunk) = response.chunk().await.unwrap() {
+        sender.send(chunk).await.unwrap();
+    }
+    drop(sender);
+    unpack.await.unwrap()
+}
+
+/// Runs one page through `stage`, returning the logs the page kept, or for the
+/// stages that stop at Arrow, the log rows read.
 async fn run_stage(indexer: &Indexer, scenario: &Scenario, stage: Stage) -> usize {
     let raw_query = hypersync_client::net_types::Query {
         from_block: FIRST_BLOCK,
@@ -274,6 +421,52 @@ async fn run_stage(indexer: &Indexer, scenario: &Scenario, stage: Stage) -> usiz
             let kept = page.take().events.len();
             drop(page);
             kept
+        }
+        Stage::BodyCollected => {
+            let body = post_query(indexer).await.bytes().await.unwrap();
+            assert!(!body.is_empty());
+            0
+        }
+        Stage::BodyUnpacked => {
+            let body = post_query(indexer).await.bytes().await.unwrap();
+            let message =
+                capnp::serialize_packed::read_message(&body[..], capnp_options()).unwrap();
+            table_files(&message);
+            0
+        }
+        Stage::ArrowCopied => {
+            let body = post_query(indexer).await.bytes().await.unwrap();
+            let message =
+                capnp::serialize_packed::read_message(&body[..], capnp_options()).unwrap();
+            let [blocks, transactions, logs] = table_files(&message).map(read_file_copied);
+            drop((blocks, transactions));
+            assert_eq!(log_rows(&logs), scenario.logs);
+            0
+        }
+        Stage::StreamedUnpack => {
+            let message = read_message_streamed(indexer).await;
+            table_files(&message);
+            0
+        }
+        Stage::StreamedZeroCopyArrow => {
+            let message = read_message_streamed(indexer).await;
+            let files = table_files(&message).map(|file| (file.as_ptr() as usize, file.len()));
+            // The table files stay where they are when the reader gives up
+            // its segments: those own the one allocation they point into.
+            let segments: Arc<capnp::serialize::OwnedSegments> = Arc::new(message.into_segments());
+            let [blocks, transactions, logs] = files.map(|(pointer, length)| {
+                let file = unsafe {
+                    arrow::buffer::Buffer::from_custom_allocation(
+                        std::ptr::NonNull::new(pointer as *mut u8).unwrap(),
+                        length,
+                        segments.clone(),
+                    )
+                };
+                read_file_zero_copy(&file)
+            });
+            drop((blocks, transactions));
+            assert_eq!(log_rows(&logs), scenario.logs);
+            0
         }
     }
 }
@@ -363,6 +556,21 @@ fn measure(
 
 const CONCURRENT_PAGES: usize = 16;
 
+fn unpacked_message_bytes(indexer: &Arc<Indexer>) -> usize {
+    use capnp::message::ReaderSegments;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let indexer = indexer.clone();
+    let segments = runtime
+        .block_on(async move { read_message_streamed(&indexer).await })
+        .into_segments();
+    (0..segments.len())
+        .map(|index| segments.get_segment(index as u32).unwrap().len())
+        .sum()
+}
+
 fn megabytes(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / 1_000_000.0)
 }
@@ -404,7 +612,16 @@ fn decode_benchmark() {
             "time",
             "threads+"
         ));
+        report.push(format!(
+            "  unpacked message: {}",
+            megabytes(unpacked_message_bytes(&indexer) as u64)
+        ));
         for (stage, concurrency) in [
+            (Stage::BodyCollected, 1),
+            (Stage::BodyUnpacked, 1),
+            (Stage::ArrowCopied, 1),
+            (Stage::StreamedUnpack, 1),
+            (Stage::StreamedZeroCopyArrow, 1),
             (Stage::Arrow, 1),
             (Stage::Rows, 1),
             (Stage::GetItems, 1),
