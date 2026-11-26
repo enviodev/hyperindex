@@ -338,7 +338,7 @@ for (const path of [...resFiles(sourcesRoot), ...clockedModules]) {
 // it can only ask for "more than zero", which the metrics' millisecond rounding
 // turns into a coin flip. The files below still time on `Performance`, each for
 // the reason given; a new one needs a reason as good.
-const performanceRead = /\bPerformance\.(?:now|secondsSince|secondsBetween)\b/;
+const performanceRead = /\bPerformance\.(?:now|secondsSince)\b/;
 const realWork = "it times real I/O or CPU work, which virtual time would report as instant";
 const performanceAllowed: Record<string, string> = {
   "Clock.res": "it is the real clock",
@@ -368,7 +368,7 @@ for (const path of resFiles(runtimeRoot)) {
           line: index + 1,
           title: `${match[0]} times on the real clock`,
           fix:
-            "Time it on the run's clock (`state.clock`, `Clock.secondsSince`), so a scenario sets the " +
+            "Time it on the run's clock (`clock->Clock.readTimeRef`, then `Clock.secondsSince`), so a scenario sets the " +
             "duration with `indexer.delay` and `advanceTime` and asserts it exactly.",
         });
       }
