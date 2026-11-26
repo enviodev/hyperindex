@@ -96,15 +96,17 @@ Global contract definitions + chain-specific addresses:
 contracts:
   - name: ERC20
     events:
-      - event: Transfer(indexed address from, indexed address to, uint256 value)
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
 
 chains:
   - id: 1
+    start_block: 0
     contracts:
       - name: ERC20
         address:
           - 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
   - id: 137
+    start_block: 0
     contracts:
       - name: ERC20
         address:
