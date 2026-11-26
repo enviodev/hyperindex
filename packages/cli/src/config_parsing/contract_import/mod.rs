@@ -70,7 +70,8 @@ async fn contract_import_with_timeout(
         .build()
         .context("Failed building the contract import HTTP client")?;
     // The body read is as prone to a stall as the request itself, so both share
-    // one error path and one retry.
+    // one error path and one retry. Parsing is separate: reqwest reports a
+    // stalled body read as a decode error too.
     let fetched = async {
         client
             .get(format!(
@@ -80,17 +81,16 @@ async fn contract_import_with_timeout(
             ))
             .send()
             .await?
-            .json::<ContractImportResponse>()
+            .bytes()
             .await
     }
     .await;
 
     let contract_import_response: ContractImportResponse = match fetched {
-        Ok(response) => response,
         // A body that arrived but does not parse is the API's answer, not a
         // blip, so it fails on the spot.
-        Err(err) if err.is_decode() => {
-            return Err(err).context("Failed to parse Contract Import response")
+        Ok(body) => {
+            serde_json::from_slice(&body).context("Failed to parse Contract Import response")?
         }
         Err(err) => {
             // Just a few retries in case of a bad internet connection
