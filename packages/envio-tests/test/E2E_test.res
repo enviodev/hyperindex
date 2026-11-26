@@ -791,17 +791,11 @@ describe("E2E tests", () => {
         {
           fromBlock: 1,
           toBlock: Bounded(100),
-          // Simulate missing params error from HyperSync (converted to InvalidData by the source)
+          // A HyperSync page missing a required field.
           reply: Fail(
-            Source.GetItemsError(
-              FailedGettingItems({
-                requestStats: [],
-                attemptedToBlock: 100,
-                retry: ImpossibleForTheQuery({
-                  message: "Source returned invalid data with missing required fields: log.address",
-                }),
-              }),
-            ),
+            Source.WrongSourceForQuery({
+              message: "Source returned invalid data with missing required fields: log.address",
+            }),
           ),
         },
       ])
@@ -820,7 +814,7 @@ describe("E2E tests", () => {
       await sourceMockFallback.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
       t.expect(
         sourceMockPrimary.pendingItemsQueries,
-        ~message="Should keep using fallback source for the next query after ImpossibleForTheQuery",
+        ~message="Should keep using fallback source for the next query after WrongSourceForQuery",
       ).toEqual([])
     },
   )

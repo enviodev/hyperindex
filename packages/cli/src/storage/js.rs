@@ -369,7 +369,7 @@ impl JsStorage {
             ssl: SslSetting::parse(&pg.ssl).map_err(to_napi)?,
             max_connections: pg.max_connections as usize,
             application_name: Some(pg.application_name),
-            extra_ca_file: std::env::var_os("NODE_EXTRA_CA_CERTS").map(Into::into),
+            extra_ca_file: crate::env::var_os("NODE_EXTRA_CA_CERTS").map(Into::into),
             connect_timeout: std::time::Duration::from_secs(30),
             keepalive: client::Keepalive::default(),
         })

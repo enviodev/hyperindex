@@ -268,7 +268,7 @@ let read = (rows: ChainBuffer.builtItems, ~context: context): array<Internal.ite
         let item =
           svm
           ->Array.getUnsafe(row->detailRow)
-          ->(Utils.magic: dict<unknown> => SvmHyperSyncClient.Items.item)
+          ->(Utils.magic: dict<unknown> => SvmEventItem.item)
         item->SvmEventItem.toInternalItem(
           ~onEventRegistration=context.onEventRegistrations->Array.getUnsafe(registrationIndex),
           ~chainId=context.chainId,

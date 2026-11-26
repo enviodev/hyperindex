@@ -1776,7 +1776,7 @@ let maxInFlightChunksPerPartition = 12
 // Most parallel in-flight queries a single chain may have at once, across all
 // its partitions. Bounds source load on chains with many partitions, where the
 // per-partition cap alone would admit thousands of concurrent queries.
-let maxChainConcurrency = Env.maxChainConcurrency
+let maxChainConcurrency = 100
 
 // The items one response can bring back, which a probe reserves on a chain
 // with no density yet.

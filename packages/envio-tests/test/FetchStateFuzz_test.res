@@ -534,9 +534,9 @@ let failRandomly = fuzz =>
       fuzz.rng() < 0.5 && upper > query.fromBlock
         ? Some(randomInt(fuzz.rng, ~min=query.fromBlock, ~max=upper - 1))
         : None
-    let retry: Source.getItemsRetry = switch suggestedToBlock {
-    | Some(toBlock) => WithSuggestedToBlock({toBlock: toBlock})
-    | None => WithBackoff({message: "fuzz", backoffMillis: randomInt(fuzz.rng, ~min=0, ~max=300)})
+    let failure: Source.failure = switch suggestedToBlock {
+    | Some(toBlock) => NarrowRange({toBlock, attemptedToBlock: upper})
+    | None => Backoff({message: "fuzz", backoffMillis: randomInt(fuzz.rng, ~min=0, ~max=300)})
     }
     if !(fuzz.stale->Set.has(query)) {
       fuzz.awaitedRetries->Array.push({
@@ -546,9 +546,7 @@ let failRandomly = fuzz =>
       })
     }
     fuzz->note(`fail ${query->describeQuery}`)
-    (query->MockSource.control).fail(
-      Source.GetItemsError(FailedGettingItems({requestStats: [], attemptedToBlock: upper, retry})),
-    )
+    (query->MockSource.control).fail(failure, ~requestStats=[])
   | None => ()
   }
 

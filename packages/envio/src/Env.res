@@ -6,10 +6,6 @@
 let targetBufferSize = envSafe->EnvSafe.get("ENVIO_INDEXING_MAX_BUFFER_SIZE", S.option(S.int))
 let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fallback=5_000)
 
-// Most parallel in-flight queries a single chain may have at once, across all
-// its partitions (consumed as FetchState.maxChainConcurrency).
-let maxChainConcurrency = 100
-
 // Switch a single contract to client-side address filtering
 // once its registered address count crosses this threshold. Keeping addresses
 // server-side spreads the contract across ceil(count / maxAddrInPartition)
@@ -21,7 +17,7 @@ let clientFilterAddressThreshold =
   envSafe->EnvSafe.get(
     "ENVIO_CLIENT_FILTER_ADDRESS_THRESHOLD",
     S.int,
-    ~fallback=maxAddrInPartition * maxChainConcurrency / 5,
+    ~fallback=maxAddrInPartition * FetchState.maxChainConcurrency / 5,
   )
 
 // Target number of in-memory objects (uncommitted entity/effect changes plus
@@ -49,18 +45,27 @@ let envioApiToken = envSafe->EnvSafe.get("ENVIO_API_TOKEN", S.option(S.string))
 let hyperSyncClientTimeoutMillis =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_TIMEOUT_MILLIS", S.int, ~fallback=120_000)
 
+// How the HyperSync client serializes its queries.
+type hyperSyncSerializationFormat = | @as("Json") Json | @as("CapnProto") CapnProto
+
 let hypersyncClientSerializationFormat =
   envSafe->EnvSafe.get(
     "ENVIO_HYPERSYNC_CLIENT_SERIALIZATION_FORMAT",
-    HyperSyncClient.serializationFormatSchema,
+    S.enum([Json, CapnProto]),
     ~fallback=CapnProto,
   )
 
 let hypersyncClientEnableQueryCaching =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_ENABLE_QUERY_CACHING", S.bool, ~fallback=true)
 
-let hypersyncLogLevel =
-  envSafe->EnvSafe.get("ENVIO_HYPERSYNC_LOG_LEVEL", HyperSyncClient.logLevelSchema, ~fallback=#info)
+let rustLog = envSafe->EnvSafe.get("RUST_LOG", S.option(S.string))
+
+let hypersyncLogLevel: [#trace | #debug | #info | #warn | #error] =
+  envSafe->EnvSafe.get(
+    "ENVIO_HYPERSYNC_LOG_LEVEL",
+    S.enum([#trace, #debug, #info, #warn, #error]),
+    ~fallback=#info,
+  )
 
 module Logger = {
   let levelSchema: S.t<Logger.level> = S.enum([

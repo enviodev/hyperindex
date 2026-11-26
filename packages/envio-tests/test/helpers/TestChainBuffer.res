@@ -64,7 +64,7 @@ type evmLog = {
 // a log is read back through the item a batch would build.
 let evmLogsOf = async (
   page,
-  ~registrations: array<HyperSyncClient.Registration.input>,
+  ~registrations: array<ChainRegistrations.Evm.input>,
   ~addressStore,
 ): array<evmLog> => {
   let onEventRegistrations = Array.fromInitializer(

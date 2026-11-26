@@ -10,15 +10,15 @@ use anyhow::Result;
 
 use super::decoded::DecodedEvent;
 use super::deliver::{Columns, EMPTY_LINK};
-use super::evm::{self, log_column, LogView};
-use super::fuel::ReceiptView;
-use super::matching_transactions::TransactionView;
-use super::svm::InstructionView;
-use super::table::{make_key, RowRef, Snapshot};
+use super::matching::transactions::TransactionView;
+use super::tables::evm::{self, log_column, LogView};
+use super::tables::fuel::ReceiptView;
+use super::tables::svm::InstructionView;
+use super::tables::table::{make_key, RowRef, Snapshot};
 use super::{
-    decode, matching_fuel, Ecosystem, EvmRegistrations, Registrations, Shared, SvmRegistrations,
+    decode, matching, Ecosystem, EvmRegistrations, Registrations, Shared, SvmRegistrations,
 };
-use crate::evm_hypersync_source::types::EvmParams;
+use crate::evm::registration::EvmParams;
 use crate::js_value::JsTape;
 
 pub(crate) enum Item {
@@ -390,7 +390,7 @@ impl Walker<'_> {
 
     fn push_receipt(
         &mut self,
-        fuel: &matching_fuel::FuelMatcher,
+        fuel: &matching::fuel::FuelMatcher,
         row: &RowRef,
         contract_register_only: bool,
     ) {
@@ -611,10 +611,11 @@ mod tests {
 
     use super::*;
     use crate::address_store::test_support::evm_store;
-    use crate::chain_buffer::evm::{push_transaction, EvmTxField};
-    use crate::chain_buffer::matching_transactions::OnTransactionRegistrationInput;
+    use crate::chain_buffer::matching::transactions::OnTransactionRegistrationInput;
     use crate::chain_buffer::page::{Page, PageData};
+    use crate::chain_buffer::tables::evm::push_transaction;
     use crate::chain_buffer::{ChainBuffer, ChainBufferConfig, RegistrationsInput};
+    use crate::evm::fields::EvmTxField;
 
     const SENDER: &str = "0x00000000000000000000000000000000000000aa";
 

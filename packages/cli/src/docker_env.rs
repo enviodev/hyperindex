@@ -62,7 +62,7 @@ const NETWORK: &str = "envio-network";
 fn docker_socket_candidates() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
-    if let Ok(home) = std::env::var("HOME") {
+    if let Some(home) = crate::env::var("HOME") {
         // Docker Desktop 4.x+ (macOS / Linux Desktop)
         paths.push(PathBuf::from(&home).join(".docker/run/docker.sock"));
         // Older Docker Desktop (macOS)
@@ -76,12 +76,12 @@ fn podman_socket_candidates() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
     // Rootless: $XDG_RUNTIME_DIR/podman/podman.sock
-    if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
+    if let Some(xdg) = crate::env::var("XDG_RUNTIME_DIR") {
         paths.push(PathBuf::from(xdg).join("podman/podman.sock"));
     }
 
     // macOS Podman machine
-    if let Ok(home) = std::env::var("HOME") {
+    if let Some(home) = crate::env::var("HOME") {
         paths.push(PathBuf::from(&home).join(".local/share/containers/podman/machine/podman.sock"));
         paths.push(
             PathBuf::from(&home).join(".local/share/containers/podman/machine/qemu/podman.sock"),
@@ -160,7 +160,7 @@ async fn connect_docker() -> anyhow::Result<Docker> {
     // Try Docker defaults (respects DOCKER_HOST env var)
     if let Ok(docker) = Docker::connect_with_local_defaults() {
         if docker.ping().await.is_ok() {
-            if let Ok(host) = std::env::var("DOCKER_HOST") {
+            if let Some(host) = crate::env::var("DOCKER_HOST") {
                 println!("Connected to Docker via DOCKER_HOST ({host})");
             } else {
                 println!("Connected to Docker via default socket");
@@ -182,7 +182,7 @@ async fn connect_docker() -> anyhow::Result<Docker> {
     }
 
     // Try CONTAINER_HOST (Podman's equivalent of DOCKER_HOST)
-    if let Ok(host) = std::env::var("CONTAINER_HOST") {
+    if let Some(host) = crate::env::var("CONTAINER_HOST") {
         let path = socket_path_from_uri(&host);
         if let Some(docker) = try_socket(path).await {
             println!("Connected to Podman via CONTAINER_HOST ({host})");
@@ -227,7 +227,7 @@ async fn connect_docker() -> anyhow::Result<Docker> {
 }
 
 fn is_on_path(executable: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|path| {
+    crate::env::var_os("PATH").is_some_and(|path| {
         std::env::split_paths(&path).any(|directory| directory.join(executable).is_file())
     })
 }

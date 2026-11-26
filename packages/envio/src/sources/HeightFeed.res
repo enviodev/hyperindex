@@ -66,8 +66,8 @@ type pollSleep = Cadence | Backoff
 type sleeping = {mutable kind: pollSleep, wake: unit => unit}
 
 type pollOutcome =
-  | Answered(Source.getHeightResponse)
-  | Failed(exn)
+  | Answered(Source.outcome<int>)
+  | Threw(exn)
   // The source did not answer inside the window. One loop covers this feed and
   // it waits on one request at a time, so a call that never settles would stop
   // the height moving for the rest of the process rather than for one poll.
@@ -237,8 +237,8 @@ let recordHeight = (feed: t, height) =>
 // What an answer means for the feed, whoever asked for it. The poll loop and a
 // connect's catch-up both reach this, and an answer is worth the same from
 // either: the endpoint responded, and it responded with the head.
-let recordAnswer = (feed: t, ~generation, res: Source.getHeightResponse) => {
-  feed.recordRequestStats(res.requestStats)
+let recordAnswer = (feed: t, ~generation, ~height, ~requestStats) => {
+  feed.recordRequestStats(requestStats)
   feed->clearBackoff
   // Fetching the head is the whole job a connect's catch-up exists to do, so any
   // answer closes that gap too — as long as it was asked for after the
@@ -250,7 +250,7 @@ let recordAnswer = (feed: t, ~generation, res: Source.getHeightResponse) => {
   | Connected(_) if generation === feed.generation => feed.stream = Connected({proven: true})
   | _ => ()
   }
-  feed->recordHeight(res.height)
+  feed->recordHeight(height)
   // Answering may have been the last of the loop's reasons to run. Costs nothing
   // when the loop itself is the caller: it only sleeps after this returns.
   feed->wakeCadence
@@ -261,9 +261,12 @@ let recordAnswer = (feed: t, ~generation, res: Source.getHeightResponse) => {
 // again for something already known — but it does not clear the retry ramp the
 // way a timely answer does, because taking longer than the whole timeout is the
 // endpoint being unwell rather than well.
-let recordLateAnswer = (feed: t, res: Source.getHeightResponse) => {
-  feed.recordRequestStats(res.requestStats)
-  feed->recordHeight(res.height)
+let recordLateAnswer = (feed: t, outcome: Source.outcome<int>) => {
+  feed.recordRequestStats(outcome.requestStats)
+  switch outcome.result {
+  | Ok(height) => feed->recordHeight(height)
+  | Error(_) => ()
+  }
 }
 
 // One height request, with a bound on how long the caller waits for it. The
@@ -275,12 +278,12 @@ let recordLateAnswer = (feed: t, res: Source.getHeightResponse) => {
 let heightWithin = (feed: t): promise<pollOutcome> => {
   let timeoutId = ref(None)
   let timedOut = ref(false)
-  let request = feed.source.getHeightOrThrow()
+  let request = feed.source.getHeight()
 
   request
-  ->Promise.thenResolve(res =>
+  ->Promise.thenResolve(outcome =>
     if timedOut.contents {
-      feed->recordLateAnswer(res)
+      feed->recordLateAnswer(outcome)
     }
   )
   ->Promise.catch(_ => Promise.resolve())
@@ -288,8 +291,8 @@ let heightWithin = (feed: t): promise<pollOutcome> => {
 
   Promise.race([
     request
-    ->Promise.thenResolve(res => Answered(res))
-    ->Promise.catch(exn => Promise.resolve(Failed(exn))),
+    ->Promise.thenResolve(outcome => Answered(outcome))
+    ->Promise.catch(exn => Promise.resolve(Threw(exn))),
     Promise.make((resolve, _reject) =>
       timeoutId :=
         Some(
@@ -352,11 +355,11 @@ let nextRetryInterval = (feed: t) => {
 // The wait a poll that did not answer earns, and the line that says why it was
 // earned. Both ways a poll can fail come through here, so the ramp and what is
 // said about it stay one thing.
-let backOff = (feed: t, ~what, ~exn=?) => {
+let backOff = (feed: t, ~what, ~err: option<unknown>=?) => {
   let retryInterval = feed->nextRetryInterval
   feed.logger->Logger.trace(
     `Height retrieval from ${feed.source.name} source ${what}. Retrying in ${retryInterval->Int.toString}ms.`,
-    ~params={"err": exn->Option.map(Utils.prettifyExn)},
+    ~params={"err": err},
   )
   (retryInterval, Backoff)
 }
@@ -368,18 +371,18 @@ let backOff = (feed: t, ~what, ~exn=?) => {
 let pollOnce = async (feed: t) => {
   let generation = feed.generation
   switch await feed->heightWithin {
-  | Answered(res) =>
-    feed->recordAnswer(~generation, res)
+  | Answered({result: Ok(height), requestStats}) =>
+    feed->recordAnswer(~generation, ~height, ~requestStats)
     (feed->currentInterval, Cadence)
+  | Answered({result: Error(failure), requestStats}) =>
+    // The request reached the endpoint and is billed whether or not it
+    // answered, so it counts.
+    feed.recordRequestStats(requestStats)
+    feed->backOff(~what="failed", ~err=failure->(Utils.magic: Source.failure => unknown))
   | TimedOut =>
     feed->backOff(~what=`did not answer within ${(feed.pollTimeoutMillis / 1000)->Int.toString}s`)
-  | Failed(exn) =>
-    // The request reached the endpoint and is billed whether or not it
-    // answered, so it counts; unwrapping also keeps the log the provider's own
-    // message rather than the envelope carrying it.
-    let failure = exn->Source.unpackNativeRequestFailure
-    feed.recordRequestStats(failure.requestStats)
-    feed->backOff(~what="failed", ~exn=failure.cause)
+  | Threw(exn) =>
+    feed->backOff(~what="failed", ~err=exn->Utils.prettifyExn->(Utils.magic: exn => unknown))
   }
 }
 
@@ -427,11 +430,13 @@ let syncPolling = (feed: t) =>
 let catchUpWhileIdle = async (feed: t) => {
   let generation = feed.generation
   switch await feed->heightWithin {
-  | Answered(res) => feed->recordAnswer(~generation, res)
+  | Answered({result: Ok(height), requestStats}) =>
+    feed->recordAnswer(~generation, ~height, ~requestStats)
   // Nobody is waiting, so nothing is owed and there is nothing to retry: the
   // next wait polls on its own, and the next height the stream pushes lands
   // whatever happened here.
-  | Failed(_) | TimedOut => ()
+  | Answered({result: Error(_), requestStats}) => feed.recordRequestStats(requestStats)
+  | Threw(_) | TimedOut => ()
   }
 }
 

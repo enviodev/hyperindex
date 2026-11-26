@@ -1,6 +1,7 @@
 // Sits below `ChainState`/`Persistence` in the module graph so that
 // `StartBlockResolver` (called from `Persistence.prepare`) can build a chain's
 // sources without a dependency cycle.
+
 let make = (
   ~chainConfig: Config.chain,
   ~addressStore: AddressStore.t,
@@ -9,46 +10,35 @@ let make = (
   ~maxAddressesPerRequest: int,
 ): array<Source.t> => {
   let chainId = chainConfig.id
-  switch chainConfig.sourceConfig {
-  | Config.EvmSourceConfig({hypersync, rpcs}) =>
-    let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
-      let syncConfig = rpc.syncConfig
-      let ws = rpc.ws
-      let headers = rpc.headers
+  let native = (~hyperSync=?, ~rpcs=[]) =>
+    NativeSource.makeChainSources(
       {
-        url: rpc.url,
-        sourceFor: rpc.sourceFor,
-        ?syncConfig,
-        ?ws,
-        ?headers,
-      }
-    })
-    EvmChain.makeSources(
+        chainId: chainId->ChainId.toInt,
+        ecosystem: chainConfig.ecosystem,
+        ?hyperSync,
+        rpcs,
+        maxAddressesPerRequest,
+        userAgent: NativeSource.userAgent,
+      },
       ~chainId,
-      ~hyperSync=hypersync,
-      ~rpcs=evmRpcs,
       ~chainBuffer,
       ~logger,
-      ~maxAddressesPerRequest,
     )
-  | Config.FuelSourceConfig({hypersync}) => [
-      FuelHyperSyncSource.make({
-        chainId,
-        endpointUrl: hypersync,
-        apiToken: Env.envioApiToken,
-        chainBuffer,
-        logger,
+  switch chainConfig.sourceConfig {
+  | Config.EvmSourceConfig({hypersync, rpcs}) =>
+    native(
+      ~hyperSync=?hypersync,
+      ~rpcs=rpcs->Array.map((rpc): NativeSource.rpcConfig => {
+        url: rpc.url,
+        sourceFor: rpc.sourceFor,
+        ws: ?rpc.ws,
+        headers: ?rpc.headers,
+        syncConfig: rpc.syncConfig,
       }),
-    ]
-  | Config.SvmSourceConfig({hypersync}) => [
-      SvmHyperSyncSource.make({
-        chainId,
-        endpointUrl: hypersync,
-        apiToken: Env.envioApiToken,
-        clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
-        chainBuffer,
-      }),
-    ]
+    )
+  | Config.FuelSourceConfig({hypersync})
+  | Config.SvmSourceConfig({hypersync}) =>
+    native(~hyperSync=hypersync)
   | Config.SimulateSourceConfig({items, getBlock, endBlock, ?page}) => [
       SimulateSource.make(
         ~items,

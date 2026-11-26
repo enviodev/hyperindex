@@ -27,15 +27,12 @@ type Gravatar {
 `,
 )
 
-let withBackoff = Source.GetItemsError(
-  FailedGettingItems({
-    requestStats: [],
-    attemptedToBlock: 100,
-    retry: WithBackoff({message: "Failed getting data for the block range.", backoffMillis: 0}),
-  }),
-)
+let withBackoff = Source.Backoff({
+  message: "Failed getting data for the block range.",
+  backoffMillis: 0,
+})
 
-let behindHead = MockSource.Fail(Source.SourceBehindHead({blockNumber: 1, requestStats: []}))
+let behindHead = MockSource.Fail(Source.BehindHead({blockNumber: 1}))
 
 // The query retry lines carry the backoff they waited, which is the schedule
 // an operator reads in the logs.
@@ -240,12 +237,10 @@ describe("Items query retries on a single source", () => {
       await sync.expectItemsQueries([
         {
           retryCount: 0,
-          reply: Fail(
-            Source.SourceBehindHead({
-              blockNumber: 1,
-              requestStats: [{Source.method: "getLogs", seconds: 0.5}],
-            }),
-          ),
+          reply: FailAfterRequests({
+            failure: Source.BehindHead({blockNumber: 1}),
+            requestStats: [{Source.method: "getLogs", seconds: 0.5}],
+          }),
         },
       ])
       await indexer.advanceTime(100)
@@ -304,7 +299,7 @@ describe("Items query retries on a single source", () => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(100)
       await sync.expectItemsQueries([
-        {reply: Fail(JsError.make("Something went wrong")->(Utils.magic: JsError.t => exn))},
+        {reply: Throw(JsError.make("Something went wrong")->(Utils.magic: JsError.t => exn))},
       ])
       await Scenario.waitUntil(() => stopped->Array.length > 0, ~message="the indexer to stop")
       // Nothing retries it: the query is never asked again.
@@ -330,15 +325,7 @@ describe("Items query retries on a single source", () => {
           fromBlock: 1,
           toBlock: Unbounded,
           retryCount: 0,
-          reply: Fail(
-            Source.GetItemsError(
-              FailedGettingItems({
-                requestStats: [],
-                attemptedToBlock: 100,
-                retry: WithSuggestedToBlock({toBlock: 10}),
-              }),
-            ),
-          ),
+          reply: Fail(Source.NarrowRange({toBlock: 10, attemptedToBlock: 100})),
         },
       ])
       await sync.expectItemsQueries([
@@ -366,15 +353,7 @@ describe("Items query retries on a single source", () => {
       await sync.expectItemsQueries([
         {
           retryCount: 0,
-          reply: Fail(
-            Source.GetItemsError(
-              FailedGettingItems({
-                requestStats: [],
-                attemptedToBlock: 100,
-                retry: WithSuggestedToBlock({toBlock: 100}),
-              }),
-            ),
-          ),
+          reply: Fail(Source.NarrowRange({toBlock: 100, attemptedToBlock: 100})),
         },
       ])
       // The suggestion isn't applied, and the attempt counts towards the

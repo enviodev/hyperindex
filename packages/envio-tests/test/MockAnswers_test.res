@@ -460,7 +460,7 @@ The list replies only once every entry matches, but the indexer may send a query
     let mock = source(1)
     mock.resolveGetHeightOrThrow(300)
     await mock.expectItemsQueries([
-      {fromBlock: 1, reply: Fail(Source.SourceBehindHead({blockNumber: 50, requestStats: []}))},
+      {fromBlock: 1, reply: Fail(Source.BehindHead({blockNumber: 50}))},
     ])
     await indexer.advanceTime(100)
     await mock.expectItemsQueries([{retryCount: 1, reply: LeavePending}])
@@ -790,7 +790,7 @@ describe("MockSource waits for a burst to fully arrive", () => {
   Async.it("matches a fan-out of item queries only once all of it is pending", async t => {
     let mock = MockSource.make([#getItemsOrThrow])
     let query = partitionId =>
-      mock.source.getItemsOrThrow(
+      mock.source.getItems(
         ~fromBlock=0,
         ~toBlock=None,
         ~addressSet=TestAddresses.setOf([]),
@@ -799,7 +799,6 @@ describe("MockSource waits for a burst to fully arrive", () => {
         ~partitionId,
         ~selection=FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations=[]),
         ~retry=0,
-        ~logger=Logger.makeInMemory(),
       )->ignore
     query("0")
     let expectation = mock.expectItemsQueries([{reply: Respond({items: []})}])
@@ -817,9 +816,9 @@ Give each query its own entry, told apart by partitionId:
 
   Async.it("counts height calls only once all of them have arrived", async t => {
     let mock = MockSource.make([#getHeightOrThrow])
-    let _ = mock.source.getHeightOrThrow()
+    let _ = mock.source.getHeight()
     let expectation = mock.expectNewHeightCalls(1)
-    let _ = mock.source.getHeightOrThrow()
+    let _ = mock.source.getHeight()
     t.expect(await failureOf(expectation)).toEqual(
       Some(
         "expectNewHeightCalls expected 1 new height calls, but source for chain 1 has taken 2 since the last expectation (2 in all)",
@@ -830,7 +829,7 @@ Give each query its own entry, told apart by partitionId:
   Async.it("answers a block-hash lookup only once all of them have arrived", async t => {
     let mock = MockSource.make([#getBlockHashes])
     let lookUp = blockNumbers =>
-      mock.source.getBlockHashes(~blockNumbers, ~logger=Logger.makeInMemory())->ignore
+      (mock.source.getBlockHashes->Option.getOrThrow)(blockNumbers)->ignore
     lookUp([10])
     let expectation = mock.expectBlockHashLookup({blockNumbers: [10], reply: []})
     lookUp([20])

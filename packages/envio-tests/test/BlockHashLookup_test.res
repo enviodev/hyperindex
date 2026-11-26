@@ -87,7 +87,7 @@ describe("Block-hash lookups", () => {
     let mock = source(1)
     await reorgAtHead(~indexer, ~mock)
     await mock->awaitLookup(~count=1)
-    mock.failGetBlockHashes(Source.RateLimited({resetMs: 50, requestStats: []}))
+    mock.failGetBlockHashes(Source.RateLimited({resetMs: 50}))
     await indexer.advanceTime(50)
     await mock->finishRollback
 
@@ -149,7 +149,7 @@ describe("Block-hash lookups", () => {
     let mock = source(1)
     await reorgAtHead(~indexer, ~mock)
     await mock->awaitLookup(~count=1)
-    mock.failGetBlockHashes(JsError.make("connection reset")->(Utils.magic: JsError.t => exn))
+    mock.failGetBlockHashes(Source.Backoff({message: "connection reset"}))
     await indexer.advanceTime(100)
     await mock->finishRollback
     t.expect(
@@ -171,12 +171,9 @@ describe("Block-hash lookups", () => {
     let mock = source(1)
     await reorgAtHead(~indexer, ~mock)
     await mock->awaitLookup(~count=1)
-    // A native source reports the request both on the response and on the
-    // failure it carries, so a retry can still count it.
-    let requestStats = [{Source.method: "getBlockHashes", seconds: 0.1}]
     mock.failGetBlockHashes(
-      Source.SourceBehindHead({blockNumber: 200, requestStats}),
-      ~requestStats,
+      Source.BehindHead({blockNumber: 200}),
+      ~requestStats=[{Source.method: "getBlockHashes", seconds: 0.1}],
     )
     await indexer.advanceTime(100)
     await mock->finishRollback

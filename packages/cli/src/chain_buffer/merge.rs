@@ -3,9 +3,9 @@
 
 use napi_derive::napi;
 
-use super::matching_transactions::TransactionView;
+use super::matching::transactions::TransactionView;
 use super::page::PageData;
-use super::table::{make_key, Table, LAST_BLOCK};
+use super::tables::table::{make_key, Table, LAST_BLOCK};
 use super::{Ecosystem, Shared, Tables};
 
 /// The lowest block whose received hash differs from the stored one.

@@ -43,16 +43,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, contex
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
 let failWithBackoff = MockSource.Fail(
-  Source.GetItemsError(
-    FailedGettingItems({
-      requestStats: [],
-      attemptedToBlock: 301,
-      retry: WithBackoff({
-        message: "Failed getting data for the block range.",
-        backoffMillis: 5000,
-      }),
-    }),
-  ),
+  Source.Backoff({message: "Failed getting data for the block range.", backoffMillis: 5000}),
 )
 
 describe("A query in flight when a rollback lands", () => {

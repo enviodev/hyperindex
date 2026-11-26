@@ -1,23 +1,19 @@
 //! A chain's fetched data, from the moment a source returns it until the
 //! caller removes it: logs, instructions or receipts, their transactions and
 //! blocks, as sorted tables. The buffer keeps no processing state; a build
-//! reads a range of it, matching and decoding as it walks.
+//! reads a range of it, matching and decoding as it walks. Must not import
+//! sources.
 
 pub(crate) mod decode;
 pub(crate) mod decoded;
 pub(crate) mod deliver;
-pub(crate) mod evm;
-pub(crate) mod fuel;
 pub(crate) mod matching;
-pub(crate) mod matching_fuel;
-pub(crate) mod matching_svm;
-pub(crate) mod matching_transactions;
 pub(crate) mod merge;
 pub(crate) mod page;
 pub(crate) mod schedule;
+pub(crate) mod selection;
 pub(crate) mod simulate_evm;
-pub(crate) mod svm;
-pub(crate) mod table;
+pub(crate) mod tables;
 pub(crate) mod walk;
 
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -29,19 +25,21 @@ use napi_derive::napi;
 use strum::VariantArray;
 
 use crate::address_store::AddressStore;
-use crate::evm_hypersync_source::selection as evm_selection;
-use crate::evm_hypersync_source::types::OnEventRegistrationInput;
-use crate::fuel_hypersync_source::selection as fuel_selection;
-use crate::fuel_hypersync_source::selection::FuelOnEventRegistrationInput;
-use crate::svm_hypersync_source::selection as svm_selection;
-use crate::svm_hypersync_source::selection::SvmProgramInput;
+use crate::evm::fields::{EvmBlockField, EvmTxField};
+use crate::evm::registration::OnEventRegistrationInput;
 use decoded::DecodedEvents;
 use deliver::{BuiltItems, Columns};
-use matching_transactions::{OnTransactionRegistrationInput, TransactionMatcher};
+use matching::transactions::{OnTransactionRegistrationInput, TransactionMatcher};
 use merge::HashMismatch;
 use page::Page;
 use schedule::{BlockHandlerInput, Schedule};
+use selection::evm as evm_selection;
+use selection::fuel as fuel_selection;
+use selection::fuel::FuelOnEventRegistrationInput;
+use selection::svm as svm_selection;
+use selection::svm::SvmProgramInput;
 use table::{make_key, ChunkBuilder, RowRef, Schema, Table, LAST_BLOCK};
+use tables::{evm, fuel, svm, table};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Ecosystem {
@@ -138,12 +136,12 @@ pub(crate) struct EvmRegistrations {
 
 pub(crate) struct SvmRegistrations {
     pub(crate) selection: svm_selection::SelectionBuilder,
-    pub(crate) matcher: matching_svm::SvmMatcher,
+    pub(crate) matcher: matching::svm::SvmMatcher,
 }
 
 pub(crate) struct FuelRegistrations {
     pub(crate) selection: fuel_selection::SelectionBuilder,
-    pub(crate) matcher: matching_fuel::FuelMatcher,
+    pub(crate) matcher: matching::fuel::FuelMatcher,
 }
 
 pub(crate) enum Registrations {
@@ -178,7 +176,7 @@ impl Registrations {
                     &address_store.handle().read().unwrap(),
                 )?;
                 Registrations::Svm(Arc::new(SvmRegistrations {
-                    matcher: matching_svm::SvmMatcher::new(
+                    matcher: matching::svm::SvmMatcher::new(
                         &selection,
                         contract_registers.clone(),
                         address_store,
@@ -192,7 +190,7 @@ impl Registrations {
                         &registrations,
                         &address_store.handle().read().unwrap(),
                     )?,
-                    matcher: matching_fuel::FuelMatcher::new(
+                    matcher: matching::fuel::FuelMatcher::new(
                         &registrations,
                         contract_registers.clone(),
                         address_store,
@@ -795,13 +793,13 @@ fn field_names<F: Copy>(variants: &[F], name: impl Fn(F) -> &'static str) -> Vec
 #[allow(dead_code)]
 #[napi]
 pub fn evm_block_field_names() -> Vec<String> {
-    field_names(evm::EvmBlockField::VARIANTS, evm::EvmBlockField::name)
+    field_names(EvmBlockField::VARIANTS, EvmBlockField::name)
 }
 
 #[allow(dead_code)]
 #[napi]
 pub fn evm_transaction_field_names() -> Vec<String> {
-    field_names(evm::EvmTxField::VARIANTS, evm::EvmTxField::name)
+    field_names(EvmTxField::VARIANTS, EvmTxField::name)
 }
 
 #[allow(dead_code)]

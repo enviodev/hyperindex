@@ -1,3 +1,21 @@
+// An instruction as the chain buffer delivers it.
+type log = {
+  kind: Nullable.t<string>,
+  message: Nullable.t<string>,
+}
+
+type item = {
+  slot: int,
+  transactionIndex: int,
+  path: array<int>,
+  programId: string,
+  accounts: array<string>,
+  data: Uint8Array.t,
+  isInner: bool,
+  args: Nullable.t<unknown>,
+  logs: Nullable.t<array<log>>,
+}
+
 %%private(
   let namedAccounts = (
     ~slots: array<Internal.svmAccountSlot>,
@@ -23,10 +41,7 @@
     out
   }
 
-  let selectedLog = (
-    log: SvmHyperSyncClient.Items.log,
-    ~logFields: Utils.Set.t<string>,
-  ): Envio.svmLog => {
+  let selectedLog = (log: log, ~logFields: Utils.Set.t<string>): Envio.svmLog => {
     let out = Dict.make()
     if logFields->Utils.Set.has("kind") {
       switch log.kind->Nullable.toOption {
@@ -51,7 +66,7 @@
 // Named-account `.activity` is attached then too.
 // Unselected instruction keys must be omitted, not assigned `undefined`.
 let toSvmInstruction = (
-  item: SvmHyperSyncClient.Items.item,
+  item: item,
   ~programName,
   ~instructionName,
   ~eventConfig: Internal.svmInstructionEventConfig,
@@ -109,7 +124,7 @@ let toSvmInstruction = (
 }
 
 let toInternalItem = (
-  item: SvmHyperSyncClient.Items.item,
+  item: item,
   ~onEventRegistration: Internal.onEventRegistration,
   ~chainId,
 ): Internal.item => {

@@ -17,9 +17,9 @@ let contractRegisterIndexesOf = (onEventRegistrations: array<Internal.onEventReg
 
 @tag("ecosystem")
 type registrations =
-  | @as("evm") Evm({registrations: array<HyperSyncClient.Registration.input>})
-  | @as("svm") Svm({programs: array<SvmHyperSyncClient.Registration.program>})
-  | @as("fuel") Fuel({registrations: array<FuelHyperSyncClient.Registration.input>})
+  | @as("evm") Evm({registrations: array<ChainRegistrations.Evm.input>})
+  | @as("svm") Svm({programs: array<ChainRegistrations.Svm.program>})
+  | @as("fuel") Fuel({registrations: array<ChainRegistrations.Fuel.input>})
 
 let emptyRegistrations = (ecosystem: Ecosystem.name) =>
   switch ecosystem {
@@ -230,7 +230,7 @@ let makeForChain = (
           ->(Utils.magic: array<Internal.onEventRegistration> => array<
             Internal.evmOnEventRegistration,
           >)
-          ->HyperSyncClient.Registration.fromOnEventRegistrations,
+          ->ChainRegistrations.Evm.fromOnEventRegistrations,
         })
       | Svm =>
         Svm({
@@ -238,11 +238,11 @@ let makeForChain = (
           ->(Utils.magic: array<Internal.onEventRegistration> => array<
             Internal.svmOnEventRegistration,
           >)
-          ->SvmHyperSyncClient.Registration.fromOnEventRegistrations,
+          ->ChainRegistrations.Svm.fromOnEventRegistrations,
         })
       | Fuel =>
         Fuel({
-          registrations: onEventRegistrations->FuelHyperSyncClient.Registration.fromOnEventRegistrations,
+          registrations: onEventRegistrations->ChainRegistrations.Fuel.fromOnEventRegistrations,
         })
       },
       shouldChecksum,

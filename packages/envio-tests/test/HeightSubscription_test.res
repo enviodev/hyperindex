@@ -211,7 +211,7 @@ describe("Height subscription", () => {
       await mock.expectItemsQueries([
         {
           fromBlock: 101,
-          reply: Fail(Source.GetItemsError(UnsupportedSelection({message: "test disable"}))),
+          reply: Fail(Source.Unusable({message: "test disable"})),
         },
       ])
       await fallback->answerQuery(~fromBlock=101, ~toBlock=101)

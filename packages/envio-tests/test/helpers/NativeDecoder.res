@@ -3,12 +3,23 @@
 // registrations.
 let mockAddress = "0x000000000000000000000000000000000000abcd"
 
+// A selection naming registrations by index, which is all a native source
+// reads off it.
+let selectionOf = (registrationIndexes: array<int>): FetchState.selection => {
+  dependsOnAddresses: true,
+  onEventRegistrations: registrationIndexes->Array.map(index =>
+    {"index": index}->(Utils.magic: {"index": int} => Internal.onEventRegistration)
+  ),
+  onBlockRegistrations: [],
+  onTransactionRegistrations: [],
+}
+
 // Decodes logs through the production path: feed crafted logs to a mock
-// eth_getLogs endpoint, let EvmRpcClient keep the ones some registration
+// eth_getLogs endpoint, let the RPC source keep the ones some registration
 // matches, and build them from a chain buffer the way a batch does. Returns
 // one item per matching registration, carrying its id and flat decoded params.
 let decodeLogs = async (
-  ~eventRegistrations: array<HyperSyncClient.Registration.input>,
+  ~eventRegistrations: array<ChainRegistrations.Evm.input>,
   ~logs: array<(array<string>, string)>,
   // Contract that owns `mockAddress`, if any. Without one the emitter is
   // unregistered and only wildcard registrations route.
@@ -69,42 +80,26 @@ let decodeLogs = async (
       | None => addressStore->AddressStore.emptySet
       | Some(contractName) => addressStore->AddressStore.makeSet(~contractName)
       }
-      let client = EvmRpcClient.make(
+      let source = TestSources.rpc(
         ~url=mock.url,
-        ~syncConfig=EvmChain.getSyncConfig({}),
         ~chainBuffer=TestChainBuffer.forInputs(~evmRegistrations=eventRegistrations, ~addressStore),
-        ~maxAddressesPerRequest=Env.maxAddrInPartition,
-        ~logger=Logger.makeInMemory(),
       )
-      let knownBuffer = Core.getAddon().chainBuffer->ChainBuffer.make(
-        {
-          registrations: Evm({registrations: eventRegistrations}),
-          shouldChecksum: false,
-          contractRegisterIndexes: [],
-          blockHandlers: [],
-          transactionMasks: [],
-          eventBlockMasks: [],
-          transactionRegistrations: [],
-        },
-        addressStore,
+      let outcome = await source.getItems(
+        ~fromBlock=0,
+        ~toBlock=Some(0),
+        ~addressSet,
+        ~reorgableFrom=None,
+        // Far below the head, where a page's blocks aren't checked one by one.
+        ~knownHeight=1_000,
+        ~partitionId="0",
+        ~selection=selectionOf(eventRegistrations->Array.map(reg => reg.index)),
+        ~retry=0,
       )
-      let (_, page) = await client.getNextPage(
-        {
-          fromBlock: 0,
-          toBlockCeiling: 0,
-          partitionId: "0",
-          onEventRegistrationIndexes: eventRegistrations->Array.map(reg => reg.index),
-          onBlockRegistrationIndexes: [],
-          onTransactionRegistrationIndexes: [],
-          clientFilteredContracts: None,
-          retry: 0,
-          // Far below the head, where a page's blocks aren't checked one by one.
-          knownHeight: 1_000,
-        },
-        addressSet,
-        knownBuffer,
-      )
-      await page->TestChainBuffer.evmLogsOf(~registrations=eventRegistrations, ~addressStore)
+      switch outcome.result {
+      | Ok({page}) =>
+        await page->TestChainBuffer.evmLogsOf(~registrations=eventRegistrations, ~addressStore)
+      | Error(failure) => JsError.throwWithMessage(failure->Source.failureMessage)
+      }
     },
   )
 }

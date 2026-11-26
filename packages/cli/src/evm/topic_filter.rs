@@ -1,254 +1,115 @@
-use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::keccak256;
-use anyhow::{bail, Context, Result};
+use alloy_primitives::hex;
+use anyhow::{Context, Result};
+use hypersync_client::format::{Hex, LogArgument};
 use napi_derive::napi;
-use serde_json::Value;
 
-/// Encodes a user-facing handler filter value into the topic representation
-/// used by Solidity for an indexed event parameter.
-// Reached only through the addon's C ABI, which the test target does not build.
-#[allow(dead_code)]
-#[napi]
-pub fn encode_indexed_topic(abi_type: String, value: Value) -> napi::Result<String> {
-    encode_indexed_topic_inner(&abi_type, value)
-        .map_err(|error| napi::Error::from_reason(format!("{error:#}")))
+use crate::evm::registration::OnEventRegistrationInput;
+
+/// One alternative of a registration's resolved `where`, a constraint per topic
+/// position: `Some([])` matches any value, `Some(values)` one of `values`, and
+/// `None` is the "currently registered addresses of this contract" marker. Each
+/// position is spelled as `Option<...>` directly (not an alias) so the napi
+/// macro sees the field as optional.
+#[napi(object)]
+#[derive(Clone)]
+pub struct TopicFilterInput {
+    pub topic0: Option<Vec<String>>,
+    pub topic1: Option<Vec<String>>,
+    pub topic2: Option<Vec<String>>,
+    pub topic3: Option<Vec<String>>,
 }
 
-fn encode_indexed_topic_inner(abi_type: &str, value: Value) -> Result<String> {
-    let ty = DynSolType::parse(abi_type)
-        .with_context(|| format!("Failed to parse indexed event ABI type `{abi_type}`"))?;
-    let value = coerce_json_value(&ty, value)
-        .with_context(|| format!("Invalid filter value for indexed ABI type `{abi_type}`"))?;
-
-    let topic = match ty {
-        DynSolType::String => match value {
-            DynSolValue::String(value) => keccak256(value.as_bytes()).to_vec(),
-            _ => unreachable!("value was coerced from the matching type"),
-        },
-        DynSolType::Bytes => match value {
-            DynSolValue::Bytes(value) => keccak256(value).to_vec(),
-            _ => unreachable!("value was coerced from the matching type"),
-        },
-        DynSolType::Array(_) | DynSolType::FixedArray(_, _) | DynSolType::Tuple(_) => {
-            let mut preimage = Vec::new();
-            encode_topic_preimage(&value, &mut preimage)?;
-            keccak256(preimage).to_vec()
-        }
-        _ => {
-            let encoded = value.abi_encode();
-            if encoded.len() != 32 {
-                bail!(
-                    "Expected indexed scalar ABI type `{abi_type}` to encode to one word, got {} \
-                     bytes",
-                    encoded.len()
-                );
-            }
-            encoded
-        }
-    };
-
-    Ok(format!("0x{}", faster_hex::hex_string(&topic)))
+enum TopicConstraint {
+    Any,
+    /// Never empty: an empty value list crosses the boundary as `Any`.
+    Values(Vec<[u8; 32]>),
+    /// The topic must be the padded form of an address this partition holds
+    /// for the registration's own contract, at or before the log's block. A
+    /// query expands it to those addresses' topics. In matching, ownership is
+    /// the partition set's answer — the query materialised this position from
+    /// that same set, so a sibling selection's log carrying another
+    /// partition's address must not fan out here. The store answers only the
+    /// temporal half, dropping a value registered after the log's block that a
+    /// merged partition over-fetched.
+    ContractAddresses,
 }
 
-fn coerce_json_value(ty: &DynSolType, value: Value) -> Result<DynSolValue> {
-    match (ty, value) {
-        (DynSolType::Bool, Value::Bool(value)) => Ok(DynSolValue::Bool(value)),
-        (DynSolType::String, Value::String(value)) => Ok(DynSolValue::String(value)),
-        (DynSolType::Bytes, Value::String(value)) if value == "0x" || value.is_empty() => {
-            Ok(DynSolValue::Bytes(Vec::new()))
+impl TopicConstraint {
+    fn parse(input: Option<&Vec<String>>) -> Result<Self> {
+        Ok(match input {
+            None => TopicConstraint::ContractAddresses,
+            Some(values) if values.is_empty() => TopicConstraint::Any,
+            Some(values) => TopicConstraint::Values(
+                values
+                    .iter()
+                    .map(|v| {
+                        LogArgument::decode_hex(v)
+                            .map(|arg| **arg)
+                            .with_context(|| format!("decode topic filter value {v}"))
+                    })
+                    .collect::<Result<_>>()?,
+            ),
+        })
+    }
+
+    /// The position's values in a query, empty matching any.
+    fn materialize(&self, address_topics: &[String]) -> Vec<String> {
+        match self {
+            TopicConstraint::Any => Vec::new(),
+            TopicConstraint::Values(values) => values.iter().map(hex::encode_prefixed).collect(),
+            TopicConstraint::ContractAddresses => address_topics.to_vec(),
         }
-        (DynSolType::Address, Value::String(value)) => {
-            // Preserve the handler API's existing `viem.pad` behavior for
-            // short hex values while still using Alloy for validation and
-            // word encoding. Generated types intentionally allow `0x${string}`.
-            let digits = value
-                .strip_prefix("0x")
-                .or_else(|| value.strip_prefix("0X"))
-                .unwrap_or(&value);
-            let normalized =
-                if digits.len() <= 40 && digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                    format!("{digits:0>40}")
-                } else {
-                    value
-                };
-            DynSolType::Address
-                .coerce_str(&normalized)
-                .with_context(|| format!("Could not parse `{normalized}` as address"))
-        }
-        (DynSolType::Array(element_ty), Value::Array(values)) => values
-            .into_iter()
-            .enumerate()
-            .map(|(index, value)| {
-                coerce_json_value(element_ty, value)
-                    .with_context(|| format!("Invalid array element at index {index}"))
+    }
+}
+
+/// One DNF alternative: a constraint for each of the four topic positions.
+pub(crate) struct TopicFilter([TopicConstraint; 4]);
+
+impl TopicFilter {
+    pub(crate) fn materialize(&self, address_topics: &[String]) -> [Vec<String>; 4] {
+        self.0.each_ref().map(|c| c.materialize(address_topics))
+    }
+}
+
+/// A registration's resolved `where` in DNF: the outer Vec is an OR of
+/// alternatives. A registration with no `where` carries one alternative
+/// pinning topic0 to its signature. An empty DNF (`where: false`) matches
+/// nothing; such a registration is dropped before it reaches a source (see
+/// `HandlerRegister`).
+pub(crate) struct TopicFilters(Vec<TopicFilter>);
+
+impl TopicFilters {
+    pub(crate) fn parse(registration: &OnEventRegistrationInput) -> Result<Self> {
+        let alternatives = registration
+            .topic_filters
+            .iter()
+            .map(|input| {
+                Ok(TopicFilter([
+                    TopicConstraint::parse(input.topic0.as_ref())?,
+                    TopicConstraint::parse(input.topic1.as_ref())?,
+                    TopicConstraint::parse(input.topic2.as_ref())?,
+                    TopicConstraint::parse(input.topic3.as_ref())?,
+                ]))
             })
             .collect::<Result<Vec<_>>>()
-            .map(DynSolValue::Array),
-        (DynSolType::FixedArray(element_ty, expected_len), Value::Array(values)) => {
-            if values.len() != *expected_len {
-                bail!(
-                    "Expected fixed array of length {expected_len}, received {} values",
-                    values.len()
-                );
-            }
-            values
-                .into_iter()
-                .enumerate()
-                .map(|(index, value)| {
-                    coerce_json_value(element_ty, value)
-                        .with_context(|| format!("Invalid fixed-array element at index {index}"))
-                })
-                .collect::<Result<Vec<_>>>()
-                .map(DynSolValue::FixedArray)
-        }
-        (DynSolType::Tuple(component_types), Value::Array(values)) => {
-            if values.len() != component_types.len() {
-                bail!(
-                    "Expected tuple with {} components, received {} values",
-                    component_types.len(),
-                    values.len()
-                );
-            }
-            component_types
-                .iter()
-                .zip(values)
-                .enumerate()
-                .map(|(index, (component_ty, value))| {
-                    coerce_json_value(component_ty, value)
-                        .with_context(|| format!("Invalid tuple component at index {index}"))
-                })
-                .collect::<Result<Vec<_>>>()
-                .map(DynSolValue::Tuple)
-        }
-        (scalar_ty, Value::String(value)) => scalar_ty
-            .coerce_str(&value)
-            .with_context(|| format!("Could not parse `{value}` as {scalar_ty}")),
-        (scalar_ty @ (DynSolType::Int(_) | DynSolType::Uint(_)), Value::Number(value)) => scalar_ty
-            .coerce_str(&value.to_string())
-            .with_context(|| format!("Could not parse `{value}` as {scalar_ty}")),
-        (expected, actual) => bail!(
-            "Expected a value compatible with {expected}, received {}",
-            json_kind(&actual)
-        ),
-    }
-}
-
-/// Solidity's indexed-event preimage encoding recursively concatenates
-/// container members without offsets or length prefixes. Dynamic bytes and
-/// strings are right-padded to a multiple of 32 bytes.
-fn encode_topic_preimage(value: &DynSolValue, out: &mut Vec<u8>) -> Result<()> {
-    match value {
-        DynSolValue::String(value) => append_padded_bytes(value.as_bytes(), out),
-        DynSolValue::Bytes(value) => append_padded_bytes(value, out),
-        DynSolValue::Array(values)
-        | DynSolValue::FixedArray(values)
-        | DynSolValue::Tuple(values) => {
-            for value in values {
-                encode_topic_preimage(value, out)?;
-            }
-        }
-        scalar => {
-            let encoded = scalar.abi_encode();
-            if encoded.len() != 32 {
-                bail!(
-                    "Expected an indexed scalar container member to encode to one word, got {} \
-                     bytes",
-                    encoded.len()
-                );
-            }
-            out.extend_from_slice(&encoded);
-        }
-    }
-    Ok(())
-}
-
-fn append_padded_bytes(value: &[u8], out: &mut Vec<u8>) {
-    out.extend_from_slice(value);
-    let padding = (32 - value.len() % 32) % 32;
-    out.resize(out.len() + padding, 0);
-}
-
-fn json_kind(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "a boolean",
-        Value::Number(_) => "a number",
-        Value::String(_) => "a string",
-        Value::Array(_) => "an array",
-        Value::Object(_) => "an object",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn encodes_dynamic_array_like_solidity() {
-        assert_eq!(
-            encode_indexed_topic_inner("uint256[]", json!([50, 51])).unwrap(),
-            "0xde4717968916aced526cf22f9a203477a82ac23edb99e677f506e50d182b3c4d"
+            .context("parse topic filters")?;
+        // Without a signature (an anonymous event) an unconstrained topic0
+        // would fetch every log of the address — or of the chain, for a
+        // wildcard.
+        anyhow::ensure!(
+            registration.sighash.is_some()
+                || alternatives
+                    .iter()
+                    .all(|alternative| matches!(alternative.0[0], TopicConstraint::Values(_))),
+            "Registration {} of the anonymous event {} must filter topic0 by values in every \
+             alternative",
+            registration.index,
+            registration.event_name,
         );
+        Ok(Self(alternatives))
     }
 
-    #[test]
-    fn encodes_tuple_like_solidity() {
-        assert_eq!(
-            encode_indexed_topic_inner("(uint256,string)", json!(["50", "test"])).unwrap(),
-            "0xd0b8769ea9cd15d60ef1800406aa875a74f05fc702bedb0572ea99e06d18257d"
-        );
-    }
-
-    #[test]
-    fn encodes_nested_containers_like_solidity() {
-        assert_eq!(
-            encode_indexed_topic_inner(
-                "(uint256[],string[2])",
-                json!([["50", "51"], ["test", "test"]]),
-            )
-            .unwrap(),
-            "0x9d1a9024ca624fc8bfc4071fa581a206162ee435dfc42b756e1a70f1b5e4121c"
-        );
-    }
-
-    #[test]
-    fn keeps_empty_dynamic_values_empty_inside_containers() {
-        let expected_hash = keccak256([]);
-        let expected = format!("0x{}", faster_hex::hex_string(expected_hash.as_slice()));
-        assert_eq!(
-            encode_indexed_topic_inner("(string)", json!([""])).unwrap(),
-            expected
-        );
-        assert_eq!(
-            encode_indexed_topic_inner("(bytes)", json!(["0x"])).unwrap(),
-            expected
-        );
-        assert_eq!(
-            encode_indexed_topic_inner("bytes", json!("0x")).unwrap(),
-            "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
-        );
-    }
-
-    #[test]
-    fn keeps_scalar_topic_encoding_unhashed() {
-        assert_eq!(
-            encode_indexed_topic_inner("int8", json!(-1)).unwrap(),
-            "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-        );
-        assert_eq!(
-            encode_indexed_topic_inner("bytes4", json!("0x01020304")).unwrap(),
-            "0x0102030400000000000000000000000000000000000000000000000000000000"
-        );
-        assert_eq!(
-            encode_indexed_topic_inner("address", json!("0x000")).unwrap(),
-            "0x0000000000000000000000000000000000000000000000000000000000000000"
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_fixed_array_length() {
-        let error = encode_indexed_topic_inner("uint256[2]", json!([50])).unwrap_err();
-        assert!(format!("{error:#}").contains("Expected fixed array of length 2"));
+    pub(crate) fn alternatives(&self) -> &[TopicFilter] {
+        &self.0
     }
 }

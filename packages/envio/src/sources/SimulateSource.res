@@ -77,17 +77,12 @@ let make = (
     chainId,
     poweredByHyperSync: false,
     pollingInterval: 0,
-    getBlockHashes: (~blockNumbers as _, ~logger as _) => {
-      Promise.resolve({
-        Source.result: Ok(BufferPage.empty(~ecosystem)),
-        requestStats: [],
-      })
-    },
-    getHeightOrThrow: () => {
-      // Report at least height 1 so the engine doesn't treat 0 as "no blocks available"
-      Promise.resolve({Source.height: reportedHeight, requestStats: []})
-    },
-    getItemsOrThrow: (
+    getBlockHashes: Some(
+      _ => Promise.resolve({Source.result: Ok(BufferPage.empty(~ecosystem)), requestStats: []}),
+    ),
+    // At least height 1, so the engine doesn't treat 0 as "no blocks available".
+    getHeight: () => Promise.resolve({Source.result: Ok(reportedHeight), requestStats: []}),
+    getItems: (
       ~fromBlock,
       ~toBlock,
       ~addressSet,
@@ -96,7 +91,6 @@ let make = (
       ~partitionId as _,
       ~selection: FetchState.selection,
       ~retry as _,
-      ~logger as _,
     ) => {
       // Mirror a real backend: return only the items this query would match —
       // in the block range, part of the selection, at or after the
@@ -213,14 +207,13 @@ let make = (
       | None => ()
       }
       Promise.resolve({
-        Source.knownHeight: reportedHeight,
-        // EVM/Fuel keep transaction and block inline. SVM simulate adds a
-        // page of them so the items read them as a HyperSync page's do.
-        page: responsePage,
-        latestFetchedBlockNumber: toBlockQueried,
-        stats: {
-          totalTimeElapsed: 0.,
-        },
+        Source.result: Ok({
+          Source.knownHeight: Some(reportedHeight),
+          // EVM/Fuel keep transaction and block inline. SVM simulate adds a
+          // page of them so the items read them as a HyperSync page's do.
+          page: responsePage,
+          latestFetchedBlockNumber: toBlockQueried,
+        }),
         requestStats: [],
       })
     },

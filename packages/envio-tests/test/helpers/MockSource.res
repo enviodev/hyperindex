@@ -307,7 +307,12 @@ type reply =
   // outside the range it reports. Only for testing the indexer's defence
   // against one; `Respond` refuses it.
   | RespondUnchecked(itemsResponse)
-  | Fail(exn)
+  // A failure the source reports, as a real source does.
+  | Fail(Source.failure)
+  // The same, after the requests the failed call made.
+  | FailAfterRequests({failure: Source.failure, requestStats: array<Source.requestStat>})
+  // An exception escaping the source, which only a bug in it would raise.
+  | Throw(exn)
   | LeavePending
 
 type expectedItemsQuery = {
@@ -332,7 +337,8 @@ type expectedBlockHashLookup = {
 
 type pendingItemsQueryControl = {
   respond: itemsResponse => unit,
-  fail: exn => unit,
+  fail: (Source.failure, ~requestStats: array<Source.requestStat>) => unit,
+  throw: exn => unit,
 }
 @get external control: pendingItemsQuery => pendingItemsQueryControl = "__control"
 
@@ -411,7 +417,7 @@ type t = {
   // Answers every block-hash lookup in flight with a failure the source
   // reported, and throws when there is none. `requestStats` are the requests
   // the failed lookup made, reported on the response as a native source does.
-  failGetBlockHashes: (exn, ~requestStats: array<Source.requestStat>=?) => unit,
+  failGetBlockHashes: (Source.failure, ~requestStats: array<Source.requestStat>=?) => unit,
   // Waits for the rollback's block-hash lookup of exactly `blockNumbers`, then
   // replies with `reply`. A lookup of other blocks, or more than one pending,
   // fails at once naming what was asked. A rollback only looks up hashes when
@@ -546,6 +552,8 @@ let replyName = (reply: reply) =>
   | RespondWith(_) => "RespondWith"
   | RespondUnchecked(_) => "RespondUnchecked"
   | Fail(_) => "Fail"
+  | FailAfterRequests(_) => "FailAfterRequests"
+  | Throw(_) => "Throw"
   | LeavePending => "LeavePending"
   }
 
@@ -595,7 +603,7 @@ let make = (
   let getHeightOrThrowCalls = []
   let heightCallers: Map.t<
     int,
-    {"resolve": Source.getHeightResponse => unit, "reject": exn => unit},
+    {"resolve": Source.outcome<int> => unit, "reject": exn => unit},
   > = Map.make()
   let settleHeightCalls = (indices, answer) =>
     indices->Array.forEach(index =>
@@ -606,9 +614,10 @@ let make = (
       | None => ()
       }
     )
-  let answerHeight = height => caller => caller["resolve"]({Source.height, requestStats: []})
+  let answerHeight = height =>
+    caller => caller["resolve"]({Source.result: Ok(height), requestStats: []})
   let getBlockHashesCalls = []
-  let blockHashCallers: Map.t<int, Source.getBlockHashesResponse => unit> = Map.make()
+  let blockHashCallers: Map.t<int, Source.outcome<BufferPage.t> => unit> = Map.make()
   let settleBlockHashLookups = (ids, response) =>
     ids->Array.forEach(id =>
       switch blockHashCallers->Map.get(id) {
@@ -813,7 +822,7 @@ let make = (
     ~knownHeight,
     ~selection: FetchState.selection,
     ~addressSet: AddressSet.t,
-  ): Source.blockRangeFetchResponse => {
+  ): Source.itemsPage => {
     let items = response.items
     let blocks = response.blocks->Option.getOr([])
     let latestFetchedBlockNumber =
@@ -896,7 +905,7 @@ let make = (
       }
     })
     {
-      knownHeight: response.knownHeight->Option.getOr(knownHeight),
+      Source.knownHeight: Some(response.knownHeight->Option.getOr(knownHeight)),
       page: appendTransactions(
         BufferPage.fromItems(
           ~blocks=observedBlocks,
@@ -964,10 +973,6 @@ let make = (
         ),
       ),
       latestFetchedBlockNumber,
-      stats: {
-        totalTimeElapsed: 0.,
-      },
-      requestStats: response.requestStats->Option.getOr([]),
     }
   }
 
@@ -1058,7 +1063,7 @@ let make = (
       | Respond(response) => (query, Ok(response), true)
       | RespondWith(respond) => (query, Ok(respond(query)), true)
       | RespondUnchecked(response) => (query, Ok(response), false)
-      | Fail(exn) => (query, Error(exn), true)
+      | (Fail(_) | FailAfterRequests(_) | Throw(_)) as failure => (query, Error(failure), true)
       | LeavePending => JsError.throwWithMessage("A LeavePending entry never takes a reply")
       }
     })
@@ -1090,7 +1095,11 @@ let make = (
     replies->Array.forEach(((query, reply, _)) => {
       switch reply {
       | Ok(response) => (query->control).respond(response)
-      | Error(exn) => (query->control).fail(exn)
+      | Error(Fail(failure)) => (query->control).fail(failure, ~requestStats=[])
+      | Error(FailAfterRequests({failure, requestStats})) =>
+        (query->control).fail(failure, ~requestStats)
+      | Error(Throw(exn)) => (query->control).throw(exn)
+      | Error(Respond(_) | RespondWith(_) | RespondUnchecked(_) | LeavePending) => ()
       }
       repliedItemsQueries->Array.push(query)->ignore
     })
@@ -1195,10 +1204,10 @@ let make = (
       ledger
       ->Ledger.settleAllBlockHashLookups("resolveGetBlockHashes")
       ->settleBlockHashLookups(blockHashes->blockHashesResponse),
-    failGetBlockHashes: (exn, ~requestStats=[]) =>
+    failGetBlockHashes: (failure, ~requestStats=[]) =>
       ledger
       ->Ledger.settleAllBlockHashLookups("failGetBlockHashes")
-      ->settleBlockHashLookups({Source.result: Error(exn), requestStats}),
+      ->settleBlockHashLookups({Source.result: Error(failure), requestStats}),
     expectBlockHashLookup: async ({blockNumbers, reply}, ~within=2000.) => {
       let deadline = Date.now() +. within
       let rec awaitLookup = async () => {
@@ -1274,14 +1283,20 @@ let make = (
         poweredByHyperSync: false,
         chainId,
         pollingInterval,
-        getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
-          getBlockHashesCalls->Array.push(blockNumbers)->ignore
-          let id = ledger->Ledger.takeBlockHashLookup(blockNumbers)
-          let promise = Promise.make((resolve, _reject) => blockHashCallers->Map.set(id, resolve))
-          notifyArrival()
-          promise
-        }),
-        getHeightOrThrow: implement(#getHeightOrThrow, () => {
+        getBlockHashes: methods->Array.includes(#getBlockHashes)
+          ? Some(
+              blockNumbers => {
+                getBlockHashesCalls->Array.push(blockNumbers)->ignore
+                let id = ledger->Ledger.takeBlockHashLookup(blockNumbers)
+                let promise = Promise.make((resolve, _reject) =>
+                  blockHashCallers->Map.set(id, resolve)
+                )
+                notifyArrival()
+                promise
+              },
+            )
+          : None,
+        getHeight: implement(#getHeightOrThrow, () => {
           getHeightOrThrowCalls->Array.push(true)->ignore
           notifyArrival()
           let {index, height, failure} = ledger->Ledger.takeHeightCall
@@ -1296,7 +1311,7 @@ let make = (
               }})`,
           )
           switch (height->Nullable.toOption, failure->Nullable.toOption) {
-          | (Some(height), _) => Promise.resolve({Source.height, requestStats: []})
+          | (Some(height), _) => Promise.resolve({Source.result: Ok(height), requestStats: []})
           | (None, Some(message)) =>
             Promise.reject(JsError.make(message)->(Utils.magic: JsError.t => exn))
           | (None, None) =>
@@ -1305,7 +1320,7 @@ let make = (
             )
           }
         }),
-        getItemsOrThrow: implement(#getItemsOrThrow, (
+        getItems: implement(#getItemsOrThrow, (
           ~fromBlock,
           ~toBlock,
           ~addressSet,
@@ -1314,7 +1329,6 @@ let make = (
           ~partitionId,
           ~selection,
           ~retry,
-          ~logger as _,
         ) => {
           let addresses = addressSet->AddressSet.addresses
           let id =
@@ -1363,9 +1377,16 @@ let make = (
                   ~addressSet,
                 )
                 settle()
-                resolve(built)
+                resolve({
+                  Source.result: Ok(built),
+                  requestStats: response.requestStats->Option.getOr([]),
+                })
               },
-              fail: exn => {
+              fail: (failure, ~requestStats) => {
+                settle()
+                resolve({Source.result: Error(failure), requestStats})
+              },
+              throw: exn => {
                 settle()
                 reject(exn)
               },

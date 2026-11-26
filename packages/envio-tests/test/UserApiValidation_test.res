@@ -83,7 +83,10 @@ chains:
 
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(chain.sourceConfig).toEqual(
-      Config.EvmSourceConfig({hypersync: Some("https://1.hypersync.xyz"), rpcs: []}),
+      Config.EvmSourceConfig({
+        hypersync: Some(Config.hyperSync("https://1.hypersync.xyz")),
+        rpcs: [],
+      }),
     )
   })
 
@@ -105,12 +108,12 @@ chains:
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(chain.sourceConfig).toEqual(
       Config.EvmSourceConfig({
-        hypersync: Some("https://1.hypersync.xyz"),
+        hypersync: Some(Config.hyperSync("https://1.hypersync.xyz")),
         rpcs: [
           {
             url: "https://rpc.example.test",
             sourceFor: Source.Realtime,
-            syncConfig: None,
+            syncConfig: {},
             ws: None,
             headers: None,
           },
@@ -1241,7 +1244,7 @@ chains:
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     switch chain.sourceConfig {
-    | Config.EvmSourceConfig({hypersync: Some(url)}) =>
+    | Config.EvmSourceConfig({hypersync: Some({url})}) =>
       t.expect(url).toBe("https://eth.hypersync.xyz")
     | _ => t.expect("unexpected source").toBe("EVM HyperSync source")
     }
@@ -1655,7 +1658,7 @@ programs:
         chain => (
           chain.id->ChainId.toString,
           switch chain.sourceConfig {
-          | Config.SvmSourceConfig({hypersync}) => hypersync
+          | Config.SvmSourceConfig({hypersync: {url}}) => url
           | _ => "unexpected source"
           },
         ),
@@ -1684,7 +1687,7 @@ programs:
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     switch chain.sourceConfig {
-    | Config.SvmSourceConfig({hypersync: url}) =>
+    | Config.SvmSourceConfig({hypersync: {url}}) =>
       t.expect(url).toBe("https://custom.hypersync.test")
     | _ => t.expect("unexpected source").toBe("SVM HyperSync source")
     }

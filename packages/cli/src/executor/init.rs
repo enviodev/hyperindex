@@ -376,11 +376,11 @@ struct AgenticEnv {
 impl AgenticEnv {
     fn from_process() -> Self {
         Self {
-            envio_tui: std::env::var("ENVIO_TUI").ok(),
+            envio_tui: crate::env::var("ENVIO_TUI"),
             stdout_is_tty: std::io::stdout().is_terminal(),
-            claudecode: std::env::var("CLAUDECODE").is_ok(),
-            ci: std::env::var("CI").is_ok(),
-            term: std::env::var("TERM").ok(),
+            claudecode: crate::env::is_set("CLAUDECODE"),
+            ci: crate::env::is_set("CI"),
+            term: crate::env::var("TERM"),
         }
     }
 }

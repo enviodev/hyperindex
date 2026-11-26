@@ -22,7 +22,7 @@ let onQueryResponse = (
 ) =>
   if !(state->IndexerState.isStale(~stateId)) {
     let chainState = state->IndexerState.getChainState(~chainId)
-    let {page, latestFetchedBlockNumber, stats, knownHeight} = response
+    let {page, latestFetchedBlockNumber, totalTimeElapsed, knownHeight} = response
     // Read before the merge, which moves the page's rows out.
     let firstEventBlockNumber =
       state->IndexerState.exitAfterFirstEventBlock
@@ -32,7 +32,7 @@ let onQueryResponse = (
     let (reorgResult, merged) = chainState->ChainState.mergePage(~page, ~knownHeight)
 
     chainState->ChainState.recordBlockRangeFetch(
-      ~totalTimeElapsed=stats.totalTimeElapsed,
+      ~totalTimeElapsed,
       ~numEvents=merged.rowsKept,
       ~blockRangeSize=latestFetchedBlockNumber - query.fromBlock + 1,
     )

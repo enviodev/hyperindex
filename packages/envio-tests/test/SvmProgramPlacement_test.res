@@ -320,7 +320,7 @@ programs:
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(chain.sourceConfig).toEqual(
-      Config.SvmSourceConfig({hypersync: "https://custom.hypersync.test"}),
+      Config.SvmSourceConfig({hypersync: Config.hyperSync("https://custom.hypersync.test")}),
     )
   })
 
@@ -341,7 +341,7 @@ programs:
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(chain.sourceConfig).toEqual(
-      Config.SvmSourceConfig({hypersync: "https://solana.hypersync.xyz"}),
+      Config.SvmSourceConfig({hypersync: Config.hyperSync("https://solana.hypersync.xyz")}),
     )
   })
 })

@@ -10,12 +10,11 @@ use napi::bindgen_prelude::ArrayBuffer;
 use napi::Env;
 use napi_derive::napi;
 
-use super::table::RowRef;
+use super::tables::table::RowRef;
 use super::walk::{Built, Item, ItemLinks};
 use crate::columnar::{js as columnar_js, Arena, ColumnSpec};
-use crate::evm_hypersync_source::types::{
-    AccessList as AccessListItem, Authorization as AuthorizationItem, ParamCell, ParamSchema,
-};
+use crate::evm::format::{AccessList as AccessListItem, Authorization as AuthorizationItem};
+use crate::evm::registration::{ParamCell, ParamSchema};
 use crate::js_value::JsTape;
 use crate::storage::rows::{ColumnRead, ReadKind};
 

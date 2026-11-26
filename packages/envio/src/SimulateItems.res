@@ -554,7 +554,7 @@ let parse = (
       let args = item.args->Option.getOr(Dict.make()->(Utils.magic: dict<unknown> => unknown))
       let logs = item.logs->Option.map(logs =>
         logs->Array.map(
-          (log): SvmHyperSyncClient.Items.log => {
+          (log): SvmEventItem.log => {
             kind: log.kind->Nullable.fromOption,
             message: log.message->Nullable.fromOption,
           },

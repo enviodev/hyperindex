@@ -45,7 +45,7 @@ pub fn get_config_json(
 ) -> napi::Result<String> {
     let project_root = directory.unwrap_or_else(|| ".".to_string());
     let config = config_path
-        .or_else(|| std::env::var("ENVIO_CONFIG").ok())
+        .or_else(|| crate::env::var("ENVIO_CONFIG"))
         .unwrap_or_else(|| "config.yaml".to_string());
     let project_paths = ParsedProjectPaths::new(&project_root, &config)
         .map_err(|e| napi::Error::from_reason(format!("Failed parsing project paths: {e}")))?;

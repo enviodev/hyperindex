@@ -328,14 +328,14 @@ fn supports_color(
 
 fn stdout_supports_color() -> bool {
     supports_color(
-        std::env::var("FORCE_COLOR").ok().as_deref(),
-        std::env::var_os("NO_COLOR").is_some(),
-        std::env::var("TERM").ok().as_deref(),
+        crate::env::var("FORCE_COLOR").as_deref(),
+        crate::env::is_set("NO_COLOR"),
+        crate::env::var("TERM").as_deref(),
         io::stdout().is_terminal(),
-        std::env::var_os("CI").is_some()
+        crate::env::is_set("CI")
             && ["GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI"]
                 .iter()
-                .any(|name| std::env::var_os(name).is_some()),
+                .any(|name| crate::env::is_set(name)),
     )
 }
 

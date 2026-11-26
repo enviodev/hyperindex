@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use tokio::net::{TcpListener, TcpStream};
 
 use super::ch_type::ChType;
-use crate::mock_http;
+use crate::sources::testing::mock_http;
 use crate::storage::rows::{Cell, ReadKind};
 
 pub type StatementFn = dyn Fn(&str) -> (u16, String) + Send + Sync;

@@ -68,17 +68,21 @@ let getItems = async (
     ~chainId,
     ~addressStore=store,
   )
-  let response = await source.getItemsOrThrow(
-    ~reorgableFrom=None,
-    ~fromBlock,
-    ~toBlock=Some(toBlock),
-    ~addressSet,
-    ~knownHeight=1000,
-    ~partitionId="0",
-    ~selection,
-    ~retry=0,
-    ~logger=Logger.makeInMemory(),
-  )
+  let response = switch (
+    await source.getItems(
+      ~reorgableFrom=None,
+      ~fromBlock,
+      ~toBlock=Some(toBlock),
+      ~addressSet,
+      ~knownHeight=1000,
+      ~partitionId="0",
+      ~selection,
+      ~retry=0,
+    )
+  ).result {
+  | Ok(page) => page
+  | Error(failure) => JsError.throwWithMessage(failure->Source.failureMessage)
+  }
   let onEventRegistrations = []
   selection.onEventRegistrations->Array.forEach(registration =>
     onEventRegistrations->Array.setUnsafe(registration.index, registration)

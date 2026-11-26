@@ -30,7 +30,7 @@ type Counter {
 `,
 )
 
-let rateLimited = resetMs => MockSource.Fail(Source.RateLimited({resetMs, requestStats: []}))
+let rateLimited = resetMs => MockSource.Fail(Source.RateLimited({resetMs: resetMs}))
 
 let rateLimitedSeconds = async (indexer: IndexerRunner.t) =>
   (await indexer.metric("envio_indexing_source_rate_limited_seconds"))->Array.map((

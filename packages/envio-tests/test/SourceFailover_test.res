@@ -27,29 +27,11 @@ type Gravatar {
 `,
 )
 
-let withBackoff = MockSource.Fail(
-  Source.GetItemsError(
-    FailedGettingItems({
-      requestStats: [],
-      attemptedToBlock: 100,
-      retry: WithBackoff({message: "test", backoffMillis: 0}),
-    }),
-  ),
-)
+let withBackoff = MockSource.Fail(Source.Backoff({message: "test", backoffMillis: 0}))
 
-let impossible = MockSource.Fail(
-  Source.GetItemsError(
-    FailedGettingItems({
-      requestStats: [],
-      attemptedToBlock: 100,
-      retry: ImpossibleForTheQuery({message: "test impossible"}),
-    }),
-  ),
-)
+let impossible = MockSource.Fail(Source.WrongSourceForQuery({message: "test impossible"}))
 
-let unsupported = MockSource.Fail(
-  Source.GetItemsError(UnsupportedSelection({message: "test disable"})),
-)
+let unsupported = MockSource.Fail(Source.Unusable({message: "test disable"}))
 
 let upTo = toBlock => MockSource.Respond({items: [], latestFetchedBlockNumber: toBlock})
 
@@ -136,7 +118,7 @@ describe("Source failover", () => {
         ~indexer,
         ~source=sync,
         ~alsoWatching=[fallback],
-        ~reply=Fail(Source.SourceBehindHead({blockNumber: 1, requestStats: []})),
+        ~reply=Fail(Source.BehindHead({blockNumber: 1})),
         ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 50],
       )
       await fallback.expectItemsQueries([{retryCount: 13, reply: LeavePending}])
@@ -186,7 +168,7 @@ describe("Source failover", () => {
         ~indexer,
         ~source=sync,
         ~alsoWatching=[fallback],
-        ~reply=Fail(Source.SourceBehindHead({blockNumber: 150, requestStats: []})),
+        ~reply=Fail(Source.BehindHead({blockNumber: 150})),
         ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 50],
       )
       await fallback.expectItemsQueries([{fromBlock: 101, retryCount: 13, reply: upTo(101)}])
@@ -322,7 +304,7 @@ describe("Source failover", () => {
           {
             partitionId: "0",
             retryCount,
-            reply: Fail(Source.SourceBehindHead({blockNumber: 101, requestStats: []})),
+            reply: Fail(Source.BehindHead({blockNumber: 101})),
           },
         ])
         await indexer.advanceTime(waits->Array.getUnsafe(retryCount))
@@ -356,10 +338,11 @@ describe("Source failover", () => {
         {partitionId: "0", fromBlock: 1, reply: LeavePending},
         {partitionId: "1", fromBlock: 1, reply: LeavePending},
       ])
-      let behindHead = MockSource.Fail(Source.SourceBehindHead({blockNumber: 1, requestStats: []}))
+      let behindHead = MockSource.Fail(Source.BehindHead({blockNumber: 1}))
       let waits = [100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000]
       (sync.pendingItemsQueries->Array.getUnsafe(0)->MockSource.control).fail(
-        Source.SourceBehindHead({blockNumber: 1, requestStats: []}),
+        Source.BehindHead({blockNumber: 1}),
+        ~requestStats=[],
       )
       await indexer.advanceTime(waits->Array.getUnsafe(0))
       for retryCount in 1 to waits->Array.length - 1 {
@@ -373,7 +356,7 @@ describe("Source failover", () => {
         {
           partitionId: "1",
           fromBlock: 1,
-          reply: Fail(Source.GetItemsError(UnsupportedSelection({message: "test disable"}))),
+          reply: Fail(Source.Unusable({message: "test disable"})),
         },
       ])
       await fallback.expectItemsQueries([{partitionId: "1", fromBlock: 1, reply: LeavePending}])
@@ -401,7 +384,7 @@ describe("Source failover", () => {
       let early = await Scenario.failThroughBackoff(
         ~indexer,
         ~source=fallback,
-        ~reply=Fail(Source.SourceBehindHead({blockNumber: 1, requestStats: []})),
+        ~reply=Fail(Source.BehindHead({blockNumber: 1})),
         ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000],
       )
       await fallback.expectItemsQueries([{fromBlock: 1, retryCount: 13, reply: LeavePending}])
@@ -435,7 +418,7 @@ describe("Source failover", () => {
         ~indexer,
         ~source=sync0,
         ~alsoWatching=[sync1],
-        ~reply=Fail(Source.SourceBehindHead({blockNumber: 101, requestStats: []})),
+        ~reply=Fail(Source.BehindHead({blockNumber: 101})),
         ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000],
       )
       await sync1.expectItemsQueries([{fromBlock: 101, retryCount: 13, reply: LeavePending}])
@@ -469,9 +452,7 @@ describe("Source failover", () => {
       await indexer.advanceTime(10)
       await fallback.expectItemsQueries([{fromBlock: 101, reply: impossible}])
 
-      let behindHead = MockSource.Fail(
-        Source.SourceBehindHead({blockNumber: 101, requestStats: []}),
-      )
+      let behindHead = MockSource.Fail(Source.BehindHead({blockNumber: 101}))
       // Which held source each attempt lands on, and the backoff after it. The
       // last resort takes the one that failed longest ago.
       let attempts = [

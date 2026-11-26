@@ -1,148 +1,67 @@
-/**
-A set of stats for logging about the block range fetch
-*/
-type blockRangeFetchStats = {
-  @as("total time elapsed (s)") totalTimeElapsed: float,
-  @as("page fetch time (s)") pageFetchTime?: float,
-}
-
 // A single backend request a source method actually made (cache/dedup hits
 // aren't requests), with the time it took and how much it brought back.
 // SourceManager aggregates these per (source, method) into the
 // envio_source_request_* and envio_source_response_* metrics.
 type requestStat = RequestStat.t = {method: string, seconds: float, responseBlocks?: int}
 
-// Native clients wrap a failure of a multi-request operation in a structured
-// payload, so the source can still return timings when SourceManager retries
-// it. `cause` carries the inner message as a plain error, ready for logging.
-type nativeRequestFailure = {
-  cause: exn,
-  message: option<string>,
-  requestStats: array<requestStat>,
-}
+// Every way a source call can fail that the caller is expected to handle. A
+// source never throws for one of these; an exception escaping a source is a
+// bug and stops the indexer.
+@tag("kind")
+type failure =
+  // The backend asked to be left alone until its window resets.
+  | RateLimited({resetMs: int})
+  // The queried block hasn't reached the backend instance that served the
+  // request. Load-balanced backends drift from each other around the head, so
+  // this is expected there and resolves by retrying.
+  | BehindHead({blockNumber: int})
+  // Ask again for the same range ending at `toBlock`, with no wait.
+  // `attemptedToBlock` is where the refused attempt ended, which tells a
+  // suggestion that doesn't narrow anything apart from one that does.
+  | NarrowRange({toBlock: int, attemptedToBlock: int})
+  // Wait, then ask the same thing again. Without `backoffMillis` the caller's
+  // retry schedule decides how long.
+  | Backoff({message: string, backoffMillis?: int, cause?: string})
+  // This source cannot answer this query, though it is not broken: the caller
+  // tries another source for it.
+  | WrongSourceForQuery({message: string, cause?: string})
+  // This source can never serve the chain's selection, so the caller stops
+  // using it.
+  | Unusable({message: string, blockNumber?: int, cause?: string})
 
-// Prefix marking a napi error reason as a structured native-failure envelope.
-// Keep in sync with `request_stats.rs` `NATIVE_FAILURE_PREFIX`.
-let nativeFailurePrefix = "ENVIO_NATIVE_FAILURE:"
-
-// The envelope `request_stats.rs` writes after the prefix.
-type nativeFailurePayload = {message: string, requestStats: array<requestStat>}
-
-let nativeFailurePayloadSchema = S.schema(s => {
-  message: s.matches(S.string),
-  requestStats: s.matches(
-    S.array(
-      S.schema(s => {
-        method: s.matches(S.string),
-        seconds: s.matches(S.float),
-      }),
-    ),
-  ),
-})
-
-let unpackNativeRequestFailure = (exn: exn): nativeRequestFailure => {
-  let originalMessage = switch exn->JsExn.anyToExnInternal {
-  | JsExn(jsExn) => jsExn->JsExn.message
-  | _ => None
+let failureMessage = (failure: failure) =>
+  switch failure {
+  | RateLimited({resetMs}) => `Rate limited for ${resetMs->Int.toString}ms`
+  | BehindHead({blockNumber}) => `Hasn't reached block ${blockNumber->Int.toString} yet`
+  | NarrowRange({toBlock}) => `Asked for a range ending at block ${toBlock->Int.toString} instead`
+  | Backoff({message}) | WrongSourceForQuery({message}) | Unusable({message}) => message
   }
-  // Only a reason carrying our prefix is one of our envelopes; anything else
-  // keeps its original message and cause untouched.
-  let decoded = switch originalMessage {
-  | Some(message) if message->String.startsWith(nativeFailurePrefix) =>
-    try Some(
-      message
-      ->String.slice(~start=nativeFailurePrefix->String.length, ~end=message->String.length)
-      ->JSON.parseOrThrow
-      ->S.parseOrThrow(nativeFailurePayloadSchema),
-    ) catch {
-    | _ => None
-    }
-  | _ => None
-  }
-  switch decoded {
-  | Some({message, requestStats}) => {
-      cause: JsError.make(message)->(Utils.magic: JsError.t => exn),
-      message: Some(message),
-      requestStats,
-    }
-  | None => {cause: exn, message: originalMessage, requestStats: []}
-  }
-}
 
-/**
-Thes response returned from a block range fetch
-*/
-type blockRangeFetchResponse = {
-  knownHeight: int,
+// A call's result with the requests it made, which count towards the source's
+// metrics whether or not the call succeeded.
+type outcome<'a> = {result: result<'a, failure>, requestStats: array<requestStat>}
+
+// What a block range fetch brings back.
+type itemsPage = {
   // The response's rows, kept in Rust: what some registration matches, the
   // transactions and blocks they belong to, and the blocks seen while fetching
   // the range, whose hashes drive reorg detection. Merged into the chain's
   // buffer on apply.
   page: BufferPage.t,
+  // The highest block the query accounted for, which is not necessarily the
+  // block of its last item.
   latestFetchedBlockNumber: int,
-  stats: blockRangeFetchStats,
-  requestStats: array<requestStat>,
+  // The chain height the backend reported alongside the page, if it did.
+  knownHeight: option<int>,
 }
 
-type getHeightResponse = {height: int, requestStats: array<requestStat>}
-
-type getBlockHashesResponse = {
-  result: result<BufferPage.t, exn>,
-  requestStats: array<requestStat>,
+// A fetched range as SourceManager hands it on.
+type blockRangeFetchResponse = {
+  page: BufferPage.t,
+  latestFetchedBlockNumber: int,
+  knownHeight: int,
+  totalTimeElapsed: float,
 }
-
-exception InconsistentResponse({
-  method: string,
-  blockNumber: option<int>,
-  storedHash: option<string>,
-  receivedHash: option<string>,
-  missingBlockNumbers: array<int>,
-})
-
-// The queried block hasn't reached the backend instance that served the
-// request. Load-balanced backends drift from each other around the head, so
-// this is expected there and resolves by retrying — SourceManager owns the
-// backoff and the decision to fail over, identically for every ecosystem.
-// Carries the timings of the requests the failed operation did make, so a
-// retried request still counts towards the source's metrics.
-exception SourceBehindHead({blockNumber: int, requestStats: array<requestStat>})
-
-type getItemsRetry =
-  | WithSuggestedToBlock({toBlock: int})
-  | WithBackoff({message: string, backoffMillis: int})
-  | ImpossibleForTheQuery({message: string})
-
-type rateLimited = {resetMs: int, requestStats: array<requestStat>}
-exception RateLimited(rateLimited)
-
-// The two failures that can follow requests carry their timings, so a page
-// that ends in a retry still counts towards the source's metrics — the same
-// contract `RateLimited` and `SourceBehindHead` keep.
-type getItemsError =
-  | UnsupportedSelection({message: string})
-  | FailedGettingFieldSelection({
-      // The cause, where the source has one beyond `message`.
-      exn?: exn,
-      blockNumber: int,
-      message: string,
-      requestStats: array<requestStat>,
-    })
-  | FailedGettingItems({
-      // The cause, where the source has one beyond the retry's own message.
-      exn?: exn,
-      attemptedToBlock: int,
-      retry: getItemsRetry,
-      requestStats: array<requestStat>,
-    })
-
-exception GetItemsError(getItemsError)
-
-let getItemsErrorRequestStats = (error: getItemsError) =>
-  switch error {
-  // Raised before anything is requested.
-  | UnsupportedSelection(_) => []
-  | FailedGettingFieldSelection({requestStats}) | FailedGettingItems({requestStats}) => requestStats
-  }
 
 type sourceFor = Sync | Fallback | Realtime
 
@@ -203,10 +122,13 @@ type t = {
   poweredByHyperSync: bool,
   /* Frequency (in ms) used when polling for new events on this network. */
   pollingInterval: int,
-  getBlockHashes: (~blockNumbers: array<int>, ~logger: Logger.t) => promise<getBlockHashesResponse>,
-  getHeightOrThrow: unit => promise<getHeightResponse>,
-  getItemsOrThrow: (
+  // None for a source that cannot read block hashes, which is then never
+  // asked to find how deep a reorg went.
+  getBlockHashes: option<array<int> => promise<outcome<BufferPage.t>>>,
+  getHeight: unit => promise<outcome<int>>,
+  getItems: (
     ~fromBlock: int,
+    // Inclusive. None asks for everything the backend has from `fromBlock` on.
     ~toBlock: option<int>,
     // The partition's slice of the chain's address index. The source hands it
     // straight to its Rust client, which builds the query's address filter from
@@ -223,8 +145,7 @@ type t = {
     ~partitionId: string,
     ~selection: FetchState.selection,
     ~retry: int,
-    ~logger: Logger.t,
-  ) => promise<blockRangeFetchResponse>,
+  ) => promise<outcome<itemsPage>>,
   createHeightSubscription?: (
     // The stream's staleness and reconnect timers run on the clock of the
     // manager that subscribes, not one the source was built with.
