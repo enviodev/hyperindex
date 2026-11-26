@@ -5,7 +5,7 @@
 // Prefer `withScenario` for behavior/contract tests. It accepts the expected
 // calls inline, verifies that all of them were consumed, rejects unexpected
 // calls, and always waits for the server to close. The lower-level `start`,
-// `makeRaw`, `makeWithParams`, and `make` helpers remain for tests that need a
+// `makeWithParams`, and `make` helpers remain for tests that need a
 // fully dynamic response function.
 type server
 type req
@@ -402,9 +402,6 @@ let withScenario = async (~name="unnamed", ~calls, testFn) => {
 // expressed as a finite inline scenario.
 let start = (~handler: string => (int, string), ~port=0) =>
   startInternal(~name="legacy dynamic handler", ~calls=[], ~legacyHandler=handler, ~port)
-
-// Reply with a fixed status and body to every request.
-let makeRaw = (~status, ~body) => start(~handler=_ => (status, body))
 
 // Reply 200 with a JSON-RPC envelope whose `result` is routed by the request's
 // `method` and `params`, echoing the request's `id` back.
