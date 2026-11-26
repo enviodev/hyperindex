@@ -50,7 +50,7 @@ hypersync-client = "1.2.0"
 hypersync-net-types = "0.12.3"
 # Response encoding for the test-only mock HyperSync server, matching the
 # formats hypersync-client decodes.
-arrow = { version = "57", default-features = false, features = ["ipc"] }
+arrow = { version = "57", default-features = false, features = ["ipc", "ipc_compression"] }
 capnp = "0.23"
 hyperfuel-client = "4.0.0"
 polars-arrow = "0.42"
@@ -61,6 +61,7 @@ bs58 = "0.5.1"
 faster-hex = "0.9"
 ruint = "1"
 env_logger = "0.11"
+log = "0.4"
 arrayvec = "0.7"
 schemars = { version = "1.2", features = ["preserve_order"] }
 convert_case = "0.6.0"

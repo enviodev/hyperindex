@@ -14,14 +14,6 @@ type cfg = {
   apiToken: string,
   /** Milliseconds to wait for a response before timing out. Default: 30000. */
   httpReqTimeoutMillis?: int,
-  /** Number of retries to attempt before returning error. Default: 12. */
-  /** Milliseconds that would be used for retry backoff increasing. Default: 500. */
-  retryBackoffMs?: int,
-  /** Initial wait time for request backoff. Default: 200. */
-  retryBaseMs?: int,
-  /** Ceiling time for request backoff. Default: 5000. */
-  retryCeilingMs?: int,
-  /** Enable checksum addresses in responses. */
   /** Query serialization format to use for HTTP requests. Default: Json. */
   serializationFormat?: serializationFormat,
   /** Whether to use query caching when using CapnProto serialization format. */
@@ -181,9 +173,6 @@ let make = (
   ~chainBuffer,
   ~serializationFormat=?,
   ~enableQueryCaching=?,
-  ~retryBaseMs=?,
-  ~retryBackoffMs=?,
-  ~retryCeilingMs=?,
   ~logLevel=#info,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
@@ -194,9 +183,6 @@ let make = (
       httpReqTimeoutMillis,
       ?serializationFormat,
       ?enableQueryCaching,
-      ?retryBaseMs,
-      ?retryBackoffMs,
-      ?retryCeilingMs,
       logLevel: logLevelToString(logLevel),
     },
     `hyperindex/${envioVersion}`,

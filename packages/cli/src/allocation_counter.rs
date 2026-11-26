@@ -87,8 +87,17 @@ pub(crate) struct AllocationTotals {
     pub(crate) peak_live_bytes: u64,
 }
 
-/// Start a fresh measurement. Only one may run at a time, since the totals are
-/// shared by every counted thread.
+static MEASUREMENT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Held for the whole of a measurement: the totals are shared by every counted
+/// thread, so two measurements at once would each count the other's work.
+pub(crate) fn measure_exclusively() -> std::sync::MutexGuard<'static, ()> {
+    MEASUREMENT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Start a fresh measurement.
 pub(crate) fn reset() {
     ALLOCATIONS.store(0, Ordering::Relaxed);
     ALLOCATED_BYTES.store(0, Ordering::Relaxed);
