@@ -29,7 +29,6 @@ let make = (indexerState: IndexerState.t) => {
   let params: UserContext.params = {
     indexerState,
     loadManager: indexerState->IndexerState.loadManager,
-    persistence: indexerState->IndexerState.persistence,
     config,
     chains: chainStates->makeChains(~isRealtime),
   }

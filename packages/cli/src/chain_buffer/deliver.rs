@@ -117,6 +117,7 @@ pub(crate) enum ItemFormat {
     SvmInstruction = 2,
     Block = 3,
     Decoded = 4,
+    Transaction = 5,
 }
 
 const FORMAT_BITS: u32 = 3;
@@ -317,7 +318,7 @@ pub(crate) fn lay_out(built: Built) -> Result<BuiltItems> {
                 svm_steps += path.len();
                 svm_accounts += accounts.len();
             }
-            Item::Block { .. } | Item::Decoded { .. } => {}
+            Item::Block { .. } | Item::Decoded { .. } | Item::Transaction { .. } => {}
         }
     }
 
@@ -453,6 +454,22 @@ pub(crate) fn lay_out(built: Built) -> Result<BuiltItems> {
                 &[
                     item_column::TRANSACTION_INDEX,
                     item_column::SRC_ADDRESS,
+                    item_column::TAPE,
+                ]
+            }
+            Item::Transaction {
+                block_number,
+                transaction_index,
+                registration,
+            } => {
+                writer.num(item_column::BLOCK_NUMBER, *block_number as f64);
+                writer.num(item_column::LOG_INDEX, *transaction_index as f64);
+                writer.num(item_column::TRANSACTION_INDEX, *transaction_index as f64);
+                writer.num(item_column::REGISTRATION_INDEX, *registration as f64);
+                writer.num(item_column::DETAIL, pack_detail(ItemFormat::Transaction, 0));
+                &[
+                    item_column::SRC_ADDRESS,
+                    item_column::SKIPPED,
                     item_column::TAPE,
                 ]
             }

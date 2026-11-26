@@ -62,6 +62,7 @@ describe("EffectState rollback", () => {
           queueWaitSeconds: 0.,
           invalidationsCount: 1.,
           cacheCount: Some(3),
+          cacheCountAtStart: 0,
         },
       ],
     ))
@@ -69,7 +70,7 @@ describe("EffectState rollback", () => {
 })
 
 describe("EffectState unregistered cache count", () => {
-  let cacheOnlyMetric = (~effect, ~count): Metrics.effectMetrics => {
+  let cacheOnlyMetric = (~effect, ~count, ~atStart=count): Metrics.effectMetrics => {
     effect,
     scope: "crossChain",
     callSeconds: 0.,
@@ -80,6 +81,7 @@ describe("EffectState unregistered cache count", () => {
     queueWaitSeconds: 0.,
     invalidationsCount: 0.,
     cacheCount: Some(count),
+    cacheCountAtStart: atStart,
   }
 
   it("renders a cache-only metric until the effect's table takes over", t => {
@@ -97,7 +99,7 @@ describe("EffectState unregistered cache count", () => {
     t.expect((beforeCreate, afterCreate, afterCommit)).toEqual((
       [cacheOnlyMetric(~effect="a", ~count=7)],
       [cacheOnlyMetric(~effect="a", ~count=7)],
-      [cacheOnlyMetric(~effect="a", ~count=9)],
+      [cacheOnlyMetric(~effect="a", ~count=9, ~atStart=7)],
     ))
   })
 

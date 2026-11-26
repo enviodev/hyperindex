@@ -80,6 +80,10 @@ let fromItems = (items: array<Internal.item>, ~blocks, ~ecosystem: Ecosystem.nam
             item: data,
             blockFromStore: block->Option.isNone && skipped !== Some(true),
           }
+        // A transaction item is only ever built from the buffer's rows, which
+        // simulated transactions enter as too.
+        | Transaction(_) =>
+          JsError.throwWithMessage("A transaction item can't be stored already decoded.")
         }
       }),
     ),
@@ -144,3 +148,10 @@ external fromSvmJsRaw: (
 // which simulated instructions read from the buffer as fetched ones do.
 let fromSvmJs = (transactions, activities, blocks) =>
   Core.getAddon().page->fromSvmJsRaw(transactions, activities, blocks)
+
+@send
+external fromEvmJsRaw: (Core.pageCtor, array<dict<JSON.t>>, array<dict<JSON.t>>) => t = "fromEvmJs"
+
+// A page of simulated EVM transactions and their blocks, as a JSON-RPC node
+// spells them, which a build matches and joins as fetched ones.
+let fromEvmJs = (~transactions, ~blocks) => Core.getAddon().page->fromEvmJsRaw(transactions, blocks)

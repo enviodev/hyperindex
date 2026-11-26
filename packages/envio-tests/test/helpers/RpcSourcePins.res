@@ -68,8 +68,8 @@ let normalizeEvent = item =>
         transaction: payload.transaction,
       }
     }
-  | Internal.Block(_) =>
-    JsError.throwWithMessage("RPC source contract pin unexpectedly received an onBlock item")
+  | Internal.Block(_) | Internal.Transaction(_) =>
+    JsError.throwWithMessage("RPC source contract pin unexpectedly received a handler item")
   }
 
 // The page's reorg hashes as a stable (blockNumber, blockHash) list, ascending
@@ -107,7 +107,13 @@ let applyPage = async (
 ) =>
   await response.page->TestChainBuffer.buildAll(
     ~buffer,
-    ~context={chainId: 1->ChainId.fromInt, onEventRegistrations, onBlockRegistrations: []},
+    ~context={
+      chainId: 1->ChainId.fromInt,
+      ecosystem: Evm,
+      onEventRegistrations,
+      onBlockRegistrations: [],
+      onTransactionRegistrations: [],
+    },
   )
 
 // The buffer backs `block` and `transaction`, so the pin resolves them once

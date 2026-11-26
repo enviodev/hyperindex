@@ -134,6 +134,35 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
        FROM ${CH_DATABASE}.\`Holder\` ORDER BY id`
     ));
 
+  // https://github.com/enviodev/hyperindex/issues/1816
+  // A number bounded past 38 digits is a 256-bit Decimal, not a String, and
+  // holds the same values Postgres does up to the widest its precision allows.
+  // ClickHouse's JSON writes a Decimal as a number, which would round it, so
+  // its side is read as text; it drops a fraction's trailing zeros, which
+  // `trim_scale` drops on the Postgres side too.
+  it("WideAmount stores 256-bit Decimals that match Postgres", async () => {
+    const columnTypes = await chRows(
+      `SELECT name, type FROM system.columns
+       WHERE database = '${CH_DATABASE}' AND table = 'envio_history_WideAmount'
+         AND name IN ('widened', 'negated', 'tokens', 'both')
+       ORDER BY position`
+    );
+    expect(columnTypes).toEqual([
+      ["widened", "Decimal(76, 0)"],
+      ["negated", "Decimal(76, 0)"],
+      ["tokens", "Decimal(76, 18)"],
+      ["both", "Array(Decimal(76, 0))"],
+    ]);
+    await expectParity(
+      `SELECT "id", "widened"::text, "negated"::text, trim_scale("tokens")::text,
+         "both"::text[]
+       FROM "${PG_SCHEMA}"."WideAmount" ORDER BY "id" COLLATE "C"`,
+      `SELECT id, toString(widened), toString(negated), toString(tokens),
+         arrayMap(value -> toString(value), both)
+       FROM ${CH_DATABASE}.\`WideAmount\` ORDER BY id`
+    );
+  });
+
   it("Holder deletes leave no row in either backend", async () => {
     // The handler sets this id and deletes it again within the same event, so a
     // DELETE row always reaches the history table and the final state is absent.
@@ -166,7 +195,13 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
       ).then((rows) => rows.map(([name]) => String(name))),
     ]);
     expect({ clickhouse: chTables, postgres: pgTables }).toEqual({
-      clickhouse: ["ChainTransfer", "Holder", "Transfer", "TransferChOnly"],
+      clickhouse: [
+        "ChainTransfer",
+        "Holder",
+        "Transfer",
+        "TransferChOnly",
+        "WideAmount",
+      ],
       postgres: [
         "Account",
         "ChainAccount",
@@ -178,6 +213,7 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
         "Transfer",
         "TransferInternal",
         "TransferPgOnly",
+        "WideAmount",
       ],
     });
   });

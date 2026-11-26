@@ -114,7 +114,7 @@ let select = (state: IndexerState.t, ~writtenEntityNames, ~isRollback) => {
     ->selectSafeCheckpoints
     ->Option.map(safeCheckpoints =>
       selectFrom(
-        ~allEntities=(state->IndexerState.persistence).allEntities,
+        ~allEntities=(state->IndexerState.config).userEntities,
         ~lastPrunedAtMillis=state->IndexerState.lastPrunedAtMillis,
         ~writtenEntityNames,
         ~isRollback,
@@ -133,12 +133,12 @@ let pruneEntity = async (
   ~entityConfig: Internal.entityConfig,
   ~safeCheckpoints,
 ) => {
-  let persistence = state->IndexerState.persistence
+  let storage = state->IndexerState.storage
   let timeRef = Performance.now()
   // Recorded for failures too, so a failing prune retries on the same
   // interval instead of on every write.
   state->IndexerState.lastPrunedAtMillis->Dict.set(entityConfig.name, Date.now())
-  switch await persistence.storage.pruneStaleEntityHistory(~entityConfig, ~safeCheckpoints) {
+  switch await storage.pruneStaleEntityHistory(~entityConfig, ~safeCheckpoints) {
   | () =>
     state->IndexerState.recordHistoryPrune(
       ~timeSeconds=Performance.secondsSince(timeRef),
@@ -166,7 +166,7 @@ let pruneEntities = (state: IndexerState.t, ~entities, ~safeCheckpoints) =>
 
 let pruneCheckpoints = async (state: IndexerState.t, ~safeCheckpoints) => {
   state->IndexerState.lastPrunedAtMillis->Dict.set(checkpointsKey, Date.now())
-  switch await (state->IndexerState.persistence).storage.pruneStaleCheckpoints(~safeCheckpoints) {
+  switch await (state->IndexerState.storage).pruneStaleCheckpoints(~safeCheckpoints) {
   | () => ()
   | exception exn =>
     state

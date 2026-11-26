@@ -603,6 +603,7 @@ mod tests {
                     block_handlers: vec![],
                     transaction_masks: vec![],
                     event_block_masks: vec![],
+                    transaction_registrations: vec![],
                 },
                 &svm_store(&[]),
             )
@@ -802,6 +803,7 @@ mod tests {
                 block_handlers: vec![],
                 transaction_masks: vec![],
                 event_block_masks: vec![],
+                transaction_registrations: vec![],
             },
             &store,
         )
@@ -1327,6 +1329,7 @@ mod tests {
                 }],
                 transaction_masks: vec![],
                 event_block_masks: vec![],
+                transaction_registrations: vec![],
             },
             &store,
         )

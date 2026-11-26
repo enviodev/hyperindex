@@ -13,12 +13,14 @@ type t
 let make: (
   ~config: Config.t,
   ~logger: Logger.t,
-  ~persistence: Persistence.t,
+  ~storage: Persistence.storage,
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
   ~targetBufferSize: int=?,
+  ~inMemoryObjectsTarget: float=?,
   ~holdRealtime: bool=?,
   ~committedFrontier: Frontier.t=?,
+  ~storedEffectCaches: dict<Persistence.effectCacheRecord>=?,
   ~isDevelopmentMode: bool=?,
   ~shouldUseTui: bool=?,
   ~exitAfterFirstEventBlock: bool=?,
@@ -31,7 +33,7 @@ let make: (
 let makeFromDbState: (
   ~config: Config.t,
   ~logger: Logger.t,
-  ~persistence: Persistence.t,
+  ~storage: Persistence.storage,
   ~initialState: Persistence.initialState,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~isDevelopmentMode: bool=?,
@@ -39,6 +41,7 @@ let makeFromDbState: (
   ~exitAfterFirstEventBlock: bool=?,
   ~sourceTiming: SourceManager.timing=?,
   ~targetBufferSize: int=?,
+  ~inMemoryObjectsTarget: float=?,
   ~holdRealtime: bool=?,
   ~onError: ErrorHandling.t => unit,
   ~onExit: unit => unit=?,
@@ -80,7 +83,8 @@ let getSafeCheckpointIdByChain: t => array<(ChainId.t, option<Internal.checkpoin
 let config: t => Config.t
 let logger: t => Logger.t
 let clock: t => Clock.t
-let persistence: t => Persistence.t
+let inMemoryObjectsTarget: t => float
+let storage: t => Persistence.storage
 let entities: t => EntityTables.t
 let eachEntityTable: (
   t,
@@ -91,6 +95,7 @@ let eachEntityTable: (
   ) => unit,
 ) => unit
 let effectState: t => EffectState.t
+let storedEffectCaches: t => dict<Persistence.effectCacheRecord>
 let committedFrontier: t => Frontier.t
 let processedFrontier: t => Frontier.t
 let committedCheckpointIdFor: (t, ~scope: Internal.chainScope) => Internal.checkpointId
@@ -137,12 +142,12 @@ let recordStalledOnStorageWrite: (t, ~seconds: float) => unit
 type handlerStat
 let handlerStatFor: (t, Internal.eventConfig) => handlerStat
 let recordHandlerDuration: (handlerStat, ~duration: float) => unit
-let startPreloadHandler: handlerStat => Performance.timeRef
-let endPreloadHandler: (handlerStat, Performance.timeRef) => unit
-let startStorageLoad: (t, ~storage: string, ~operation: string) => Performance.timeRef
+let startPreloadHandler: handlerStat => Clock.timeRef
+let endPreloadHandler: (handlerStat, Clock.timeRef) => unit
+let startStorageLoad: (t, ~storage: string, ~operation: string) => Clock.timeRef
 let endStorageLoad: (
   t,
-  Performance.timeRef,
+  Clock.timeRef,
   ~storage: string,
   ~operation: string,
   ~whereSize: int,

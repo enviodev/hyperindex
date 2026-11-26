@@ -19,9 +19,9 @@ use crate::entity_filter::{Condition, Operator, ValueKind};
 use crate::storage::changes::test_support::{change_set, Change as Staged};
 use crate::storage::changes::ChangeSet;
 use crate::storage::rows::{ReadKind, ResultSet};
-use crate::storage::schema::{ClickHouseOptions, Entity, Schema};
+use crate::storage::schema::{ClickHouseOptions, Entity, Field, FieldType, Schema};
 use crate::storage::types::{
-    Addresses, Bounds, ChainConfig, Checkpoints, Frontier, Progress, ResumedChain, Sequence,
+    Addresses, Bounds, ChainConfig, Checkpoints, Frontier, Progress, Sequence,
 };
 use crate::storage::{Batch, Handoff, Initialize, Resume, WriteError};
 use crate::test_servers;
@@ -179,31 +179,19 @@ async fn initialize(live: &Live) {
 }
 
 /// Resumes `storage` to chain 1 as Postgres hands it over having committed
-/// up to `checkpoint_id`, at `progress_block`.
-async fn resume(storage: &Storage, checkpoint_id: i64, progress_block: i32) {
+/// up to `checkpoint_id`.
+async fn resume(storage: &Storage, checkpoint_id: i64) {
     storage
         .resume(&Resume {
-            committed: vec![committed(checkpoint_id, progress_block)],
+            committed: committed(checkpoint_id),
         })
         .await
         .unwrap();
 }
 
 /// Chain 1 as Postgres hands it over having committed up to `checkpoint_id`.
-fn committed(checkpoint_id: i64, progress_block: i32) -> ResumedChain {
-    ResumedChain {
-        id: 1,
-        start_block: 0,
-        end_block: None,
-        max_reorg_depth: 200,
-        first_event_block: None,
-        ready_at: None,
-        events_processed: 0.0,
-        progress_block,
-        progress_block_time: None,
-        source_block: 1000,
-        checkpoint_id,
-    }
+fn committed(checkpoint_id: i64) -> Frontier {
+    Frontier::from([(1, checkpoint_id)])
 }
 
 /// An account history row: set to `(owner, balance)`, or a delete.
@@ -346,6 +334,165 @@ fn sorted(mut rows: Vec<Vec<String>>) -> Vec<Vec<String>> {
 
 fn row(cells: &[&str]) -> Vec<String> {
     cells.iter().map(|cell| cell.to_string()).collect()
+}
+
+/// What an `Account` whose balance is `balance_type` stores: the balance
+/// column's type, the accounts with each of `balances` that a balance above
+/// zero loads, and what writing `overflowing` as a balance fails with.
+async fn balances_stored_as(
+    balance_type: FieldType,
+    balances: &[&str],
+    overflowing: &str,
+) -> (String, Vec<Vec<String>>, String) {
+    let live = Live::with(vec![entity_input(
+        "Account",
+        vec![
+            column("id", "String"),
+            column("owner", "String"),
+            Field {
+                field_type: balance_type,
+                ..column("balance", "BigInt")
+            },
+        ],
+    )]);
+    let account = live.account();
+    initialize(&live).await;
+    let ids = (0..balances.len())
+        .map(|index| index.to_string())
+        .collect::<Vec<_>>();
+    let changes = ids
+        .iter()
+        .zip(balances)
+        .map(|(id, balance)| (id.as_str(), Some(("owner", *balance)), 1))
+        .collect::<Vec<_>>();
+    write(&live, batch(&account, &changes, &[(1, 1, 10)], (1, 1))).await;
+
+    let column_type = live
+        .execute(format!(
+            "SELECT type FROM system.columns WHERE database = '{}' AND table = \
+             'envio_history_Account' AND name = 'balance'",
+            live.database
+        ))
+        .await;
+    let above_zero = sorted(
+        live.load(
+            &account,
+            Condition {
+                operator: Operator::Gt,
+                kind: ValueKind::Number,
+                ..eq("balance", "0")
+            },
+        )
+        .await,
+    );
+    let overflow = match live
+        .storage
+        .write_batch(
+            &batch(
+                &account,
+                &[("overflow", Some(("owner", overflowing)), 2)],
+                &[(2, 1, 20)],
+                (1, 2),
+            ),
+            Handoff::default(),
+        )
+        .await
+    {
+        Ok(_) => "written".to_string(),
+        Err(
+            WriteError::Failed(failure)
+            | WriteError::Unwritten(failure)
+            | WriteError::Uncertain(failure),
+        ) => format!("{:#}", failure.error),
+        Err(WriteError::Gated) => "gated".to_string(),
+    };
+    live.drop_database().await;
+    (column_type, above_zero, overflow)
+}
+
+// https://github.com/enviodev/hyperindex/issues/1816
+/// Past 38 digits a bounded number needs ClickHouse's 256-bit Decimal, whose
+/// 32 bytes hold every value its precision allows, and sorts as a number
+/// rather than as text.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_number_bounded_past_38_digits_stores_as_a_256_bit_decimal() {
+    let widest = "9".repeat(76);
+    let lowest = format!("-{widest}");
+    let widest_fraction = format!("{}.{}", "9".repeat(56), "9".repeat(20));
+    let lowest_fraction = format!("-{widest_fraction}");
+    let stored = (
+        balances_stored_as(
+            FieldType::BigInt {
+                precision: Some(76),
+            },
+            &[&widest, &lowest, "9", "10"],
+            &format!("1{}", "0".repeat(76)),
+        )
+        .await,
+        balances_stored_as(
+            FieldType::BigInt {
+                precision: Some(39),
+            },
+            &["1", &"9".repeat(39)],
+            &format!("1{}", "0".repeat(39)),
+        )
+        .await,
+        balances_stored_as(
+            FieldType::BigDecimal {
+                config: Some((76, 20)),
+            },
+            &[&widest_fraction, &lowest_fraction, "1.5"],
+            &format!("1{}", "0".repeat(56)),
+        )
+        .await,
+    );
+    assert_eq!(
+        stored,
+        (
+            (
+                "Decimal(76, 0)".to_string(),
+                vec![
+                    row(&["0", "owner", &widest]),
+                    row(&["2", "owner", "9"]),
+                    row(&["3", "owner", "10"]),
+                ],
+                format!(
+                    "Failed encoding rows for ClickHouse table `envio_history_Account`: \
+                     encoding column `balance` row 0: 1{} is out of range for a Decimal(76,0) \
+                     column",
+                    "0".repeat(76)
+                ),
+            ),
+            (
+                "Decimal(39, 0)".to_string(),
+                vec![
+                    row(&["0", "owner", "1"]),
+                    row(&["1", "owner", &"9".repeat(39)])
+                ],
+                format!(
+                    "Failed encoding rows for ClickHouse table `envio_history_Account`: \
+                     encoding column `balance` row 0: 1{} is out of range for a Decimal(39,0) \
+                     column",
+                    "0".repeat(39)
+                ),
+            ),
+            (
+                "Decimal(76, 20)".to_string(),
+                vec![
+                    row(&["0", "owner", &widest_fraction]),
+                    row(&["2", "owner", "1.50000000000000000000"]),
+                ],
+                format!(
+                    "Failed encoding rows for ClickHouse table `envio_history_Account`: \
+                     encoding column `balance` row 0: 1{}.{} is out of range for a \
+                     Decimal(76,20) column",
+                    "0".repeat(56),
+                    "0".repeat(20)
+                ),
+            ),
+        )
+    );
 }
 
 /// A TTL reads the columns of every history row, and a delete leaves all but
@@ -692,7 +839,7 @@ async fn a_commit_landing_after_the_next_resume_claims_nothing() {
     );
     let next = async {
         rows_landed.await.unwrap();
-        resume(&live.another_process(), 1, 10).await;
+        resume(&live.another_process(), 1).await;
         let resumed = live.frontier().await;
         commit.send(true).unwrap();
         resumed
@@ -804,7 +951,7 @@ async fn a_resume_trims_what_an_uncommitted_write_left_behind() {
     );
 
     let before = live.load(&account, eq("id", "a")).await;
-    resume(&live.storage, 1, 10).await;
+    resume(&live.storage, 1).await;
     let (history, checkpoints) = (
         live.count("envio_history_Account").await,
         live.count("envio_checkpoints").await,
@@ -923,7 +1070,7 @@ async fn a_resume_trims_back_to_what_postgres_committed() {
     )
     .await;
 
-    resume(&live.storage, 1, 10).await;
+    resume(&live.storage, 1).await;
     let loaded = live.load(&account, eq("id", "a")).await;
     let (history, frontier) = (
         live.count("envio_history_Account").await,
@@ -978,7 +1125,7 @@ async fn a_resume_publishes_a_batch_postgres_committed_and_clickhouse_never_reco
         .await;
 
     let resumed = live.another_process();
-    resume(&resumed, 2, 20).await;
+    resume(&resumed, 2).await;
     let loaded = rows(
         &resumed
             .load_where(&account, vec![eq("id", "a")])
@@ -1018,7 +1165,7 @@ async fn a_resume_refuses_a_database_missing_a_batch_postgres_committed() {
     let resumed = live
         .storage
         .resume(&Resume {
-            committed: vec![committed(2, 20)],
+            committed: committed(2),
         })
         .await
         .map_err(|error| format!("{error:#}"));
@@ -1237,7 +1384,7 @@ async fn the_indexer_runs_within_the_grants_envio_cloud_gives_it() {
         let first_run = as_indexer();
         first_run
             .resume(&Resume {
-                committed: vec![committed(0, 0)],
+                committed: committed(0),
             })
             .await?;
         write_or_fail(
@@ -1272,7 +1419,7 @@ async fn the_indexer_runs_within_the_grants_envio_cloud_gives_it() {
         let restarted = as_indexer();
         restarted
             .resume(&Resume {
-                committed: vec![committed(1, 10)],
+                committed: committed(1),
             })
             .await?;
         restarted

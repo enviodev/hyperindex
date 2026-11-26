@@ -1,13 +1,14 @@
 type indexingAddress = Internal.indexingContract
 
 // What a partition fetches, one list per table a source can query: event
-// registrations select logs, block registrations select blocks. Either may be
-// empty, not both.
+// registrations select logs, block registrations select blocks, transaction
+// registrations select transactions. Not all of them empty.
 type selection = {
   onEventRegistrations: array<Internal.onEventRegistration>,
   // Only the registrations that select block fields: a block handler reading
   // just the number is generated locally and never reaches a source.
   onBlockRegistrations: array<Internal.onBlockRegistration>,
+  onTransactionRegistrations: array<Internal.onTransactionRegistration>,
   // Whether the partition's queries are built from its own address list
   // (server-side address filtering). This is the *partition* property; not to
   // be confused with the per-registration `Internal.onEventRegistration.dependsOnAddresses`.
@@ -52,11 +53,13 @@ let deriveSelectionStartBlock = (startBlocks: array<option<int>>) => {
 let makeSelection = (
   ~onEventRegistrations: array<Internal.onEventRegistration>,
   ~onBlockRegistrations: array<Internal.onBlockRegistration>=[],
+  ~onTransactionRegistrations: array<Internal.onTransactionRegistration>=[],
   ~dependsOnAddresses,
   ~clientFilteredContracts=?,
 ) => {
   onEventRegistrations,
   onBlockRegistrations,
+  onTransactionRegistrations,
   dependsOnAddresses,
   ?clientFilteredContracts,
   startBlock: ?deriveSelectionStartBlock(
@@ -67,12 +70,20 @@ let makeSelection = (
   ),
 }
 
+// Whether the partition reads blocks or transactions at a pace of its own,
+// apart from the log partitions: it never merges with them nor takes part in
+// client-side filtering.
+let isOwnLane = (selection: selection) =>
+  selection.onBlockRegistrations->Utils.Array.notEmpty ||
+    selection.onTransactionRegistrations->Utils.Array.notEmpty
+
 // A query for blocks alone reads no further than the height the chain knows:
 // the source picks the blocks to read within its range and answers for the
 // gaps between them, which can't run past the head.
 let sourceToBlock = (selection: selection, ~toBlock, ~knownHeight) =>
-  switch selection.onEventRegistrations {
-  | [] => Some(toBlock->Option.mapOr(knownHeight, toBlock => Pervasives.min(toBlock, knownHeight)))
+  switch (selection.onEventRegistrations, selection.onTransactionRegistrations) {
+  | ([], []) =>
+    Some(toBlock->Option.mapOr(knownHeight, toBlock => Pervasives.min(toBlock, knownHeight)))
   | _ => toBlock
   }
 
@@ -194,6 +205,7 @@ let narrowSelectionToRange = (selection: selection, ~toBlock) =>
       makeSelection(
         ~onEventRegistrations=inRange,
         ~onBlockRegistrations=selection.onBlockRegistrations,
+        ~onTransactionRegistrations=selection.onTransactionRegistrations,
         ~dependsOnAddresses=selection.dependsOnAddresses,
         ~clientFilteredContracts=?selection.clientFilteredContracts,
       )
@@ -1098,9 +1110,9 @@ let collapseClientFilteredContracts = (
 
     partitions->Array.forEach(p =>
       switch p {
-      // The block partition reads no logs, so no client filtering touches it.
-      | {selection: {onBlockRegistrations}} if onBlockRegistrations->Utils.Array.notEmpty =>
-        kept->Array.push(p)->ignore
+      // The block and transaction partitions read no logs, so no client
+      // filtering touches them.
+      | {selection} if selection->isOwnLane => kept->Array.push(p)->ignore
       | {selection: {dependsOnAddresses: false}, mergeBlock: None}
         if standingRef.contents->Option.isNone =>
         standingRef := Some(p)
@@ -2417,6 +2429,7 @@ let make = (
   ~knownHeight,
   ~progressBlockNumber=startBlock - 1,
   ~onBlockRegistrations=[],
+  ~onTransactionRegistrations=[],
   ~blockLag=0,
   ~blockThrottle=0,
   ~firstEventBlock=None,
@@ -2471,6 +2484,18 @@ let make = (
         ~dependsOnAddresses=false,
         ~onEventRegistrations=[],
         ~onBlockRegistrations=fetchedOnBlockRegistrations,
+      ),
+    )
+  }
+
+  // Apart from the others for the same reason: RPC reads every block of a
+  // transaction page in full.
+  if onTransactionRegistrations->Utils.Array.notEmpty {
+    pushAddressFreePartition(
+      makeSelection(
+        ~dependsOnAddresses=false,
+        ~onEventRegistrations=[],
+        ~onTransactionRegistrations,
       ),
     )
   }
@@ -2565,7 +2590,7 @@ let make = (
       `onEventRegistrations=${onEventRegistrations->Array.length->Int.toString}, ` ++
       `normalRegistrations=${normalRegistrations
         ->Array.length
-        ->Int.toString}. ` ++ `Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.`,
+        ->Int.toString}. ` ++ `Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock or onTransaction handlers.`,
     )
   }
 

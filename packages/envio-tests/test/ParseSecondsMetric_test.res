@@ -45,6 +45,7 @@ describe("envio_fetching_block_range_parse_seconds", () => {
           },
         ])
         await indexer.getBatchWritePromise()
+        // Real time: building the events is CPU work, which no clock can stand in for.
         t.expect(
           (await indexer.metric("envio_fetching_block_range_parse_seconds"))->Array.map(
             ({labels, value}: IndexerRunner.metric) => (labels, value->Float.parseFloat > 0.),
