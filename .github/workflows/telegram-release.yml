@@ -54,6 +54,12 @@ jobs:
             echo "announce=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - uses: actions/checkout@v6
+        if: steps.classify.outputs.announce == 'true'
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
       - name: Post release to Telegram
         if: steps.classify.outputs.announce == 'true'
         env:
@@ -61,129 +67,14 @@ jobs:
           BOT_TOKEN: ${{ secrets.TELEGRAM_RELEASE_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_RELEASE_CHAT_ID }}
           TOPIC_ID: ${{ secrets.TELEGRAM_RELEASE_TOPIC_ID }}
-          TITLE: ${{ github.event.release.name || github.event.release.tag_name }}
-          BODY: ${{ github.event.release.body }}
-          URL: ${{ github.event.release.html_url }}
           INPUT_TAG: ${{ inputs.tag }}
-          DRY_RUN: ${{ inputs.dry_run }}
-        run: |
-          # A manual run pulls the notes for the requested tag. jq keeps the
-          # body out of the command line, so notes cannot run as shell.
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            gh release view "$INPUT_TAG" --repo "$GITHUB_REPOSITORY" \
-              --json name,tagName,body,url > "$RUNNER_TEMP/release.json"
-            TITLE="$(jq -r '.name // .tagName' "$RUNNER_TEMP/release.json")"
-            BODY="$(jq -r '.body' "$RUNNER_TEMP/release.json")"
-            URL="$(jq -r '.url' "$RUNNER_TEMP/release.json")"
-          fi
-
-          # Render the GitHub release notes into Telegram HTML. Telegram caps
-          # messages at 4096 chars. We size the notes budget against the actual
-          # header and link, truncate the raw notes to that (never mid-tag), then
-          # HTML-escape and add only well-formed tags, so escaping cannot produce
-          # a stray < >, and any code block left open by truncation is auto-closed.
-          esc() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
-
-          title="$(printf '%s' "$TITLE" | esc)"
-          url="$(printf '%s' "$URL" | esc)"
-          header="🚢 <b>HyperIndex ${title} released</b>"
-          link="<a href=\"${url}\">View on GitHub</a>"
-
-          # Body budget = 4096 minus the fixed parts, separators, and a margin,
-          # then capped at a conservative ceiling that leaves headroom for the
-          # tags and escaping added later (so normal releases stay HTML). The
-          # dynamic term only bites when the title or URL is unusually long.
-          overhead=$(( ${#header} + ${#link} + 8 ))
-          max_body=$(( 4096 - overhead - 64 ))
-          (( max_body > 3000 )) && max_body=3000
-          (( max_body < 0 )) && max_body=0
-          body="$BODY"
-          # Cut at the last whole line: a URL cut short, say /pull/18 of /pull/1875,
-          # would otherwise still match the PR link rewrite and point elsewhere.
-          if [[ ${#body} -gt $max_body ]]; then
-            body="${body:0:$max_body}"
-            body="${body%$'\n'*}"$'\n'"… read the full notes on GitHub"
-          fi
-
-          # fenced ``` blocks -> <pre>; "## heading" -> <b>heading</b> (outside code);
-          # [text](url) -> <a href="url">text</a> and a bare PR or issue URL ->
-          # <a href="URL">#N</a>, except inside `code`, where Telegram forbids
-          # nested tags. Odd split parts sit outside backticks. One scan matches
-          # both forms so a URL inside a markdown link is not rewritten again.
-          # shellcheck disable=SC2016  # $0 below is awk's field var, not a shell expansion
-          notes="$(printf '%s\n' "$body" | esc | awk '
-            function link_refs(text,   out, token, start, len, split_at) {
-              out = ""
-              while (match(text, /\[[^]]*\]\(https?:\/\/[^) "]+\)|https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(pull|issues)\/[0-9]+/)) {
-                start = RSTART; len = RLENGTH
-                token = substr(text, start, len)
-                out = out substr(text, 1, start - 1)
-                if (substr(token, 1, 1) == "[") {
-                  split_at = index(token, "](")
-                  out = out "<a href=\"" substr(token, split_at + 2, len - split_at - 2) "\">" substr(token, 2, split_at - 2) "</a>"
-                } else {
-                  out = out "<a href=\"" token "\">#" substr(token, match(token, /[0-9]+$/)) "</a>"
-                }
-                text = substr(text, start + len)
-              }
-              return out text
-            }
-            BEGIN { inpre = 0 }
-            /^```/ { if (inpre) { print "</pre>"; inpre = 0 } else { print "<pre>"; inpre = 1 } next }
-            inpre == 1 { print; next }
-            {
-              n = split($0, parts, "`"); line = ""
-              for (i = 1; i <= n; i++) line = line (i > 1 ? "`" : "") (i % 2 == 1 ? link_refs(parts[i]) : parts[i])
-              $0 = line
-            }
-            /^[[:space:]]*#{1,6}[[:space:]]+/ {
-              sub(/^[[:space:]]*#+[[:space:]]+/, ""); print "<b>" $0 "</b>"; next
-            }
-            { print }
-            END { if (inpre) print "</pre>" }
-          ' | sed -E 's/`([^`]+)`/<code>\1<\/code>/g; s/\*\*//g')"
-
-          message="$(printf '%s\n\n%s\n\n%s' "$header" "$notes" "$link")"
-          parse_mode="HTML"
-
-          # Safety net: if escaping still pushed the HTML past the hard limit,
-          # fall back to plain text, which a hard cut cannot break.
-          # Telegram measures against 4096 UTF-16 units, where a non-BMP char
-          # (emoji) costs 2 but Bash's ${#var} and slices count 1, so every
-          # measurement and cut here runs on the UTF-16 encoding. "ignore" drops
-          # the dangling half when a cut lands inside a surrogate pair.
-          utf16_len() { python3 -c 'import sys; print(len(sys.stdin.read().encode("utf-16-le")) // 2)'; }
-          utf16_cut() { python3 -c 'import sys; sys.stdout.write(sys.stdin.read().encode("utf-16-le")[: int(sys.argv[1]) * 2].decode("utf-16-le", "ignore"))' "$1"; }
-
-          if (( $(printf '%s' "$message" | utf16_len) > 4096 )); then
-            # Budget the notes against the header and link rather than cutting
-            # the assembled message, which would drop the link off the end and
-            # leave no way back to the release.
-            plain_header="$(printf '🚢 HyperIndex %s released' "$TITLE")"
-            plain_budget=$(( 4096
-              - $(printf '%s' "$plain_header" | utf16_len)
-              - $(printf '%s' "$URL" | utf16_len)
-              - 4 ))
-            (( plain_budget < 0 )) && plain_budget=0
-            plain_notes="$(printf '%s' "$BODY" | utf16_cut "$plain_budget")"
-            message="$(printf '%s\n\n%s\n\n%s' "$plain_header" "$plain_notes" "$URL")"
-            parse_mode=""
-          fi
-
           # Gate on the event, not just the input. dry_run defaults to true, and
           # a release must never inherit that default and go quiet.
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN" == "true" ]]; then
-            echo "Dry run. Nothing sent. parse_mode=${parse_mode:-none (plain text)}"
-            echo "--- message below ---"
-            printf '%s\n' "$message"
-            exit 0
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$INPUT_TAG" > "$RUNNER_TEMP/release.json"
+          else
+            jq .release "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/release.json"
           fi
-
-          args=(--data-urlencode "chat_id=${CHAT_ID}"
-                --data-urlencode "text=${message}"
-                -d "disable_web_page_preview=false")
-          [[ -n "$parse_mode" ]] && args+=(-d "parse_mode=${parse_mode}")
-          [[ -n "${TOPIC_ID}" ]] && args+=(-d "message_thread_id=${TOPIC_ID}")
-
-          curl -fsS --connect-timeout 10 --max-time 30 \
-            "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" "${args[@]}"
+          node .github/scripts/release-announce.mjs telegram "$RUNNER_TEMP/release.json"

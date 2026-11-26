@@ -3,18 +3,6 @@ name: Announce release to Discord
 on:
   release:
     types: [published]
-  # Render a past release on demand, so the message can be checked without
-  # waiting for a real one. Defaults to printing the message in the job log
-  # rather than sending it. Release events ignore both inputs and always send.
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Existing release tag to render, for example v3.0.0'
-        required: true
-      dry_run:
-        description: 'Print the message in the log instead of sending it'
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -22,7 +10,7 @@ permissions:
 jobs:
   announce:
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.event.release.draft == false
+    if: github.event.release.draft == false
     steps:
       # Announce major and minor releases only. A release qualifies when the
       # tag is an exact "X.Y.0" (strip a leading "v"): patch is 0, and there is
@@ -32,16 +20,9 @@ jobs:
       - name: Check if release is major or minor
         id: classify
         env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          TAG: ${{ github.event.release.tag_name }}
           IS_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
-          # A manual run has no release payload, so read the flag off the tag to
-          # keep the gate identical to a real release.
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            IS_PRERELEASE="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --json isPrerelease -q .isPrerelease)"
-          fi
           version="${TAG#v}"
           if [[ "$IS_PRERELEASE" == "true" ]]; then
             echo "$TAG is a prerelease; skipping"
@@ -63,16 +44,7 @@ jobs:
       - name: Post release to Discord
         if: steps.classify.outputs.announce == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
-          INPUT_TAG: ${{ inputs.tag }}
-          # Gate on the event, not just the input. dry_run defaults to true, and
-          # a release must never inherit that default and go quiet.
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$INPUT_TAG" > "$RUNNER_TEMP/release.json"
-          else
-            jq .release "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/release.json"
-          fi
-          node .github/scripts/discord-release.mjs "$RUNNER_TEMP/release.json"
+          jq .release "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/release.json"
+          node .github/scripts/release-announce.mjs discord "$RUNNER_TEMP/release.json"
