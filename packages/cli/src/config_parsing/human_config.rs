@@ -812,9 +812,8 @@ pub mod evm {
         pub backoff_millis: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "How long in ms the chain waits for a new block before it starts polling \
-                           its fallback RPCs. Replaces the default of 60s while backfilling and 20s \
-                           in realtime. When several of a chain's RPCs set it, the shortest wins"
+            description = "If a fallback RPC is provided, the amount of time in ms to wait before \
+                           kicking off the next provider"
         )]
         pub fallback_stall_timeout: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
