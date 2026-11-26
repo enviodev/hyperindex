@@ -1,8 +1,5 @@
-// Posts a GitHub release to a Discord webhook as an embed.
-//
-// Usage: node discord-release.mjs <release.json>
-// The JSON holds {name, tag_name, body, html_url}. Env: DISCORD_WEBHOOK_URL,
-// and DRY_RUN=true to print the payload instead of sending it.
+// Usage: DISCORD_WEBHOOK_URL=... node discord-release.mjs <release.json>
+// release.json is a GitHub release object. DRY_RUN=true prints instead of sending.
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -12,11 +9,13 @@ const githubIssueOrPullUrl =
   /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/(\d+)(?![\w/])/g;
 const githubCompareUrl =
   /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/compare\/([\w.-]+?)\.\.\.([\w.-]+)/g;
+// GitHub logins: 1-39 alphanumerics, single inner hyphens. A trailing ".word"
+// means a domain such as @example.com, but a sentence-ending period is fine.
 const githubMention =
-  /(?<![/@\w`])@((?!-)(?!.*?--)[a-zA-Z0-9](?:-?[a-zA-Z0-9]){0,37})(?![.\w/-])/g;
+  /(?<![/@\w])@([a-zA-Z0-9](?:-?[a-zA-Z0-9]){0,38})(?![\w/-]|\.\w)/g;
 
-// Fenced blocks and inline code spans: Discord shows them verbatim, so a
-// mention or URL inside one must stay as written.
+// Fenced blocks and inline code spans: Discord shows them verbatim, so nothing
+// inside one is rewritten. An unclosed fence runs to the end of the notes.
 const codeSpan = /(```[\s\S]*?(?:```|$)|`[^`\n]*`)/;
 const markdownLink = /(\[[^\]\n]*\]\([^)\n]*\))/;
 
@@ -32,7 +31,7 @@ const linkifyProse = (prose) =>
     .replace(githubIssueOrPullUrl, (url, number) => `[#${number}](${url})`)
     .replace(githubCompareUrl, (url, from, to) => `[${from}...${to}](${url})`);
 
-const reduceHeading = (line) => {
+const headingToBold = (line) => {
   const h3 = line.match(/^\s*###\s+(.+?)\s*#*\s*$/);
   if (h3) return `**__${h3[1]}__**`;
   const h2 = line.match(/^\s*##\s+(.+?)\s*#*\s*$/);
@@ -40,20 +39,19 @@ const reduceHeading = (line) => {
   return line;
 };
 
-export const formatReleaseNotes = (body) => {
-  const cleaned = (body ?? "")
-    .replace(/\r/g, "")
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/\n\s*\n/g, "\n\n");
-  return mapOutside(cleaned, codeSpan, (text) =>
-    mapOutside(text, markdownLink, linkifyProse)
-      .split("\n")
-      .map(reduceHeading)
-      .join("\n"),
-  ).trim();
-};
+const formatProse = (prose) =>
+  mapOutside(
+    prose.replace(/<!--[\s\S]*?-->/g, "").replace(/\n\s*\n/g, "\n\n"),
+    markdownLink,
+    linkifyProse,
+  )
+    .split("\n")
+    .map(headingToBold)
+    .join("\n");
 
-// Cuts at the last whitespace before the limit and points to the full notes.
+export const formatReleaseNotes = (body) =>
+  mapOutside((body ?? "").replace(/\r/g, ""), codeSpan, formatProse).trim();
+
 const truncateDescription = (description, url) => {
   if (description.length <= maxDescriptionLength) return description;
   const more = `\n([…](${url}))`;
@@ -106,6 +104,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (process.env.DRY_RUN === "true") {
     console.log("Dry run. Nothing sent.\n--- description below ---");
     console.log(payload.embeds[0].description);
+  } else if (!process.env.DISCORD_WEBHOOK_URL) {
+    throw new Error("DISCORD_WEBHOOK_URL is not set");
   } else {
     await sendWebhook(process.env.DISCORD_WEBHOOK_URL, payload);
   }

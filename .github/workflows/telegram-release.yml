@@ -98,21 +98,32 @@ jobs:
           (( max_body > 3000 )) && max_body=3000
           (( max_body < 0 )) && max_body=0
           body="$BODY"
+          # Cut at the last whole line: a URL cut short, say /pull/18 of /pull/1875,
+          # would otherwise still match the PR link rewrite and point elsewhere.
           if [[ ${#body} -gt $max_body ]]; then
-            body="${body:0:$max_body}"$'\n'"… read the full notes on GitHub"
+            body="${body:0:$max_body}"
+            body="${body%$'\n'*}"$'\n'"… read the full notes on GitHub"
           fi
 
           # fenced ``` blocks -> <pre>; "## heading" -> <b>heading</b> (outside code);
-          # a PR or issue URL -> <a href="URL">#N</a>, except inside `code`, where
-          # Telegram forbids nested tags. Odd split parts sit outside backticks.
+          # [text](url) -> <a href="url">text</a> and a bare PR or issue URL ->
+          # <a href="URL">#N</a>, except inside `code`, where Telegram forbids
+          # nested tags. Odd split parts sit outside backticks. One scan matches
+          # both forms so a URL inside a markdown link is not rewritten again.
           # shellcheck disable=SC2016  # $0 below is awk's field var, not a shell expansion
           notes="$(printf '%s\n' "$body" | esc | awk '
-            function link_refs(text,   out, url, start, len) {
+            function link_refs(text,   out, token, start, len, split_at) {
               out = ""
-              while (match(text, /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(pull|issues)\/[0-9]+/)) {
+              while (match(text, /\[[^]]*\]\(https?:\/\/[^) "]+\)|https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(pull|issues)\/[0-9]+/)) {
                 start = RSTART; len = RLENGTH
-                url = substr(text, start, len)
-                out = out substr(text, 1, start - 1) "<a href=\"" url "\">#" substr(url, match(url, /[0-9]+$/)) "</a>"
+                token = substr(text, start, len)
+                out = out substr(text, 1, start - 1)
+                if (substr(token, 1, 1) == "[") {
+                  split_at = index(token, "](")
+                  out = out "<a href=\"" substr(token, split_at + 2, len - split_at - 2) "\">" substr(token, 2, split_at - 2) "</a>"
+                } else {
+                  out = out "<a href=\"" token "\">#" substr(token, match(token, /[0-9]+$/)) "</a>"
+                }
                 text = substr(text, start + len)
               }
               return out text

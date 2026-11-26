@@ -58,6 +58,7 @@ jobs:
         if: steps.classify.outputs.announce == 'true'
         with:
           sparse-checkout: .github/scripts
+          persist-credentials: false
 
       - name: Post release to Discord
         if: steps.classify.outputs.announce == 'true'
