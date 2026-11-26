@@ -1097,7 +1097,10 @@ let fromPublic = (publicConfigJson: JSON.t, ~env=IndexerEnv.read()) => {
             headers: rpcConfig["headers"],
           }
         })
-      EvmSourceConfig({hypersync: publicChainConfig["hypersync"]->Option.map(url => hyperSync(url, ~env)), rpcs})
+      EvmSourceConfig({
+        hypersync: publicChainConfig["hypersync"]->Option.map(url => hyperSync(url, ~env)),
+        rpcs,
+      })
     | Ecosystem.Fuel =>
       switch publicChainConfig["hypersync"] {
       | Some(url) => FuelSourceConfig({hypersync: hyperSync(url, ~env)})

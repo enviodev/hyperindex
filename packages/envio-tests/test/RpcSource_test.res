@@ -31,7 +31,12 @@ let makeSource = (
     ~shouldChecksum=!lowercaseAddresses,
   ),
 ) =>
-  TestSources.rpc(~url, ~syncConfig, ~maxAddressesPerRequest=IndexerEnv.read().maxPartitionSize, ~chainBuffer)
+  TestSources.rpc(
+    ~url,
+    ~syncConfig,
+    ~maxAddressesPerRequest=IndexerEnv.read().maxPartitionSize,
+    ~chainBuffer,
+  )
 
 describe("RpcSource - name", () => {
   it("Returns the name of the source including sanitized rpc url", t => {

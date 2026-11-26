@@ -64,7 +64,9 @@ describe("Supervisor.plan on the default budget", () => {
   // Splitting a run costs connections the operator didn't ask to spend, so the
   // budget they didn't set is the one a single process has always used.
   it("Keeps a run in one process until the budget is raised", t => {
-    t.expect(Supervisor.plan(~chainIds=chains(4), ~maxConnections=IndexerEnv.read().db.maxConnections)).toBe(None)
+    t.expect(
+      Supervisor.plan(~chainIds=chains(4), ~maxConnections=IndexerEnv.read().db.maxConnections),
+    ).toBe(None)
   })
 })
 
@@ -286,10 +288,7 @@ describe("Worker.detect", () => {
   // decision existed reads as one that doesn't.
   it("Takes a config without the hold as one that doesn't wait", t => {
     t.expect(
-      Worker.detect(
-        ~internalWorker=Some(`{"chainIds":[1],"isDev":false}`),
-        ~hasChannel=true,
-      ),
+      Worker.detect(~internalWorker=Some(`{"chainIds":[1],"isDev":false}`), ~hasChannel=true),
     ).toStrictEqual(
       Some({Worker.chainIds: [1->ChainId.fromInt], holdRealtime: false, isDev: false}),
     )

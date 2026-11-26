@@ -321,7 +321,9 @@ let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
 let rec awaitCapacityLoop = async (state: IndexerState.t) => {
   // After a failed write nothing will free capacity, so bail instead of waiting
   // on a commit that won't come (the error already went to onError).
-  if !(state->IndexerState.hasFailedWrite) && state->getChangesCount >= state->keepLatestChangesLimit {
+  if (
+    !(state->IndexerState.hasFailedWrite) && state->getChangesCount >= state->keepLatestChangesLimit
+  ) {
     // Drop committed writes first, sparing db-loaded entries (explicitly
     // requested, so likelier to be read again).
     state->dropCommitted(~keepLoadedFromDb=true)

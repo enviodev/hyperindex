@@ -825,7 +825,9 @@ let clientFromEnv = (
       ~isolated=config.isolated,
       ~port?,
     ),
-    ~clickhouse=?config.storage.clickhouse ? Some(ClickHouse.optionsOrThrow(config.env.clickHouse)) : None,
+    ~clickhouse=?config.storage.clickhouse
+      ? Some(ClickHouse.optionsOrThrow(config.env.clickHouse))
+      : None,
   )
 
 let makeStorageFromEnv = (

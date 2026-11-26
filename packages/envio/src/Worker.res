@@ -30,8 +30,6 @@ let configSchema = S.object((s): config => {
   isDev: s.field("isDev", S.bool),
 })
 
-// Read as this module loads, which is before anything that could catch a bare
-// schema error and say where it came from.
 let detect = (~internalWorker: option<string>, ~hasChannel) =>
   switch (hasChannel, internalWorker) {
   | (true, Some(json)) =>
@@ -45,12 +43,18 @@ let detect = (~internalWorker: option<string>, ~hasChannel) =>
   | _ => None
   }
 
-let config = detect(
-  ~internalWorker=IndexerEnv.read().internalWorker,
-  ~hasChannel=NodeJs.Process.channel->Nullable.toOption->Option.isSome,
+%%private(
+  let detected = Lazy.make(() =>
+    detect(
+      ~internalWorker=IndexerEnv.read().internalWorker,
+      ~hasChannel=NodeJs.Process.channel->Nullable.toOption->Option.isSome,
+    )
+  )
 )
 
-let isEnabled = config->Option.isSome
+let config = () => detected->Lazy.get
+
+let isEnabled = () => config()->Option.isSome
 
 @tag("kind")
 type parentMessage =
@@ -95,7 +99,7 @@ let exitAfterReporting = (~metrics: Metrics.t) =>
 // and listens for the one decision the supervisor makes on the run's behalf.
 // Does nothing in a process nobody forked.
 let bindRun = (~getMetrics: unit => Metrics.t, ~onReleaseRealtime: unit => unit) =>
-  if isEnabled {
+  if isEnabled() {
     Metrics.startRuntimeCollectors()
     let _intervalId = setInterval(
       () => send(Snapshot({metrics: getMetrics(), runtime: Metrics.sampleRuntime()})),

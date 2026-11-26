@@ -165,7 +165,9 @@ let fork = (
   // The worker's slice of the budgets. Read when the worker's own Env module
   // loads, which is why they ride in the spawn environment rather than a message.
   env->Dict.set("ENVIO_PG_MAX_CONNECTIONS", worker.maxConnections->Int.toString)
-  memoryBudgets(~workerCount, ~env=indexerEnv)->Array.forEach(((name, share)) => env->Dict.set(name, share))
+  memoryBudgets(~workerCount, ~env=indexerEnv)->Array.forEach(((name, share)) =>
+    env->Dict.set(name, share)
+  )
   env->Dict.set("LOG_FILE", workerLogFilePath(~workerIndex, ~path=indexerEnv.logger.file))
   if pipeOutput && stdoutIsTty->Nullable.toOption->Option.getOr(false) {
     env->Dict.set("FORCE_COLOR", "1")
