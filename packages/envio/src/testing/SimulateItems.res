@@ -1,5 +1,5 @@
 // EVM simulate block schema — all fields present with defaults for non-nullable ones.
-// Nullable fields (from Internal.evmNullableBlockFields) use S.null → option<T>.
+// Fields a block may lack use S.null → option<T>.
 let evmSimulateBlockSchema = S.schema(s =>
   {
     // Non-nullable fields with defaults

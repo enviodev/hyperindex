@@ -403,28 +403,6 @@ String.replaceAll("the cat and the dog", "the", "this") == "this cat and this do
   external replaceAll: (string, string, string) => string = "replaceAll"
 }
 
-module Url = {
-  /**
-  Extracts the hostname from a URL string.
-  Returns None if the URL doesn't have a valid http:// or https:// protocol.
-  */
-  let getHostFromUrl = (url: string) => {
-    // Regular expression requiring protocol and capturing hostname
-    // - (https?:\/\/) : Required http:// or https:// (capturing group)
-    // - ([^\/?]+) : Capture hostname (one or more characters that aren't / or ?)
-    // - .* : Match rest of the string
-    let regex = /https?:\/\/([^\/?]+).*/
-    switch RegExp.exec(regex, url) {
-    | Some(result) =>
-      switch RegExp.Result.matches(result)->Array.get(0) {
-      | Some(Some(host)) => Some(host)
-      | Some(None) | None => None
-      }
-    | None => None
-    }
-  }
-}
-
 /**
 Useful when an unsafe unwrap is needed on Result type
 and Error holds an exn. This is better than Result.getExn

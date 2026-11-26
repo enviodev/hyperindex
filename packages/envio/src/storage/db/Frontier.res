@@ -37,20 +37,6 @@ let entries = (frontier: t): array<(ChainId.t, Internal.checkpointId)> =>
 let chainIds = (frontier: t): array<ChainId.t> =>
   frontier->Dict.keysToArray->Array.map(ChainId.normalizeOrThrow)
 
-// The two parallel arrays an `unnest($1, $2) AS ...(chain_id, checkpoint_id)`
-// relation reads positionally.
-type unnestParams = (array<ChainId.t>, array<string>)
-
-let unnestParams = (frontier: t): unnestParams => {
-  let chainIds = []
-  let checkpointIds = []
-  frontier->Utils.Dict.forEachWithKey((checkpointId, key) => {
-    chainIds->Array.push(key->ChainId.normalizeOrThrow)
-    checkpointIds->Array.push(checkpointId->BigInt.toString)
-  })
-  (chainIds, checkpointIds)
-}
-
 %%private(
   let fold = (frontier: t, pick) =>
     frontier
