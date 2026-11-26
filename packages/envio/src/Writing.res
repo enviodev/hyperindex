@@ -4,10 +4,6 @@
 // there's pending work, and processing waits on it through awaitCapacity/flush.
 // State mutations go through IndexerState's domain operations.
 
-// Max uncommitted entity/effect changes plus unwritten batch items before
-// processing must wait for the cycle to free capacity.
-let keepLatestChangesLimit = Env.inMemoryObjectsTarget
-
 let getChangesCount = (state: IndexerState.t) => {
   let total = ref(0.)
   state->IndexerState.eachEntityTable((~entityConfig as _, ~scope as _, ~table) => {
@@ -26,6 +22,11 @@ let getChangesCount = (state: IndexerState.t) => {
   total.contents
 }
 
+// Uncommitted entity/effect changes plus unwritten batch items at which
+// processing must wait for the cycle to free capacity.
+let isAtChangesLimit = (state: IndexerState.t) =>
+  state->getChangesCount >= state->IndexerState.inMemoryObjectsTarget
+
 let waitForCommit = (state: IndexerState.t): promise<unit> =>
   Promise.make((resolve, _) => {
     state->IndexerState.addCommitWaiter(resolve)
@@ -33,7 +34,8 @@ let waitForCommit = (state: IndexerState.t): promise<unit> =>
 
 // Captures the cache:true outputs to persist. The dict is left intact — entries
 // stay warm and are reclaimed later by dropCommittedEffects once committed.
-let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updatedEffectCache> => {
+let snapshotEffects = (state: IndexerState.t): array<Persistence.updatedEffectCache> => {
+  let cache = state->IndexerState.storedEffectCaches
   let acc = []
   state
   ->IndexerState.effectState
@@ -106,7 +108,7 @@ let landingUnknownMsg = "The connection to the database was lost while a batch w
 // its checkpoint or none does. Anything else means another writer, and the
 // batch is neither written again nor taken as saved.
 let hasBatchLanded = async (state: IndexerState.t, ~moved) => {
-  let stored = await (state->IndexerState.persistence).storage.readFrontier()
+  let stored = await (state->IndexerState.storage).readFrontier()
   let landed =
     moved->Array.filter(((chainId, checkpointId)) =>
       stored->Frontier.find(chainId)->Option.mapOr(false, storedId => storedId == checkpointId)
@@ -119,14 +121,8 @@ let hasBatchLanded = async (state: IndexerState.t, ~moved) => {
 }
 
 let runOneWrite = async (state: IndexerState.t) => {
-  let persistence = state->IndexerState.persistence
+  let storage = state->IndexerState.storage
   let config = state->IndexerState.config
-  let cache = switch persistence.storageStatus {
-  | Unknown
-  | Initializing(_) =>
-    JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
-  | Ready({cache}) => cache
-  }
 
   // Snapshot before the await: the batch write reads this later, in-transaction.
   let chainMetaData = state->IndexerState.takeChainMetaSnapshot
@@ -137,7 +133,7 @@ let runOneWrite = async (state: IndexerState.t) => {
     switch chainMetaData {
     | Some(chainsData) =>
       let _ = await state->writeUntilCommitted(~operation="chain metadata write", () =>
-        persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
+        storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
       )
     | None => ()
     }
@@ -172,7 +168,7 @@ let runOneWrite = async (state: IndexerState.t) => {
         )
       }
     })
-    let updatedEffectsCache = snapshotEffects(state, ~cache)
+    let updatedEffectsCache = snapshotEffects(state)
     let registeredAddresses = batch.registeredAddresses
 
     let writtenEntityNames = Utils.Set.make()
@@ -201,7 +197,7 @@ let runOneWrite = async (state: IndexerState.t) => {
         if mayHaveLanded.contents && (await state->hasBatchLanded(~moved)) {
           ()
         } else {
-          switch await persistence.storage.writeBatch(
+          switch await storage.writeBatch(
             ~batch,
             ~rollback,
             ~config,
@@ -320,28 +316,25 @@ let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
   )
 }
 
-// Blocks until the store holds fewer than keepLatestChangesLimit changes,
+// Blocks until the store holds fewer changes than the in-memory objects target,
 // freeing committed changes first and awaiting commits as a last resort.
 let rec awaitCapacityLoop = async (state: IndexerState.t) => {
   // After a failed write nothing will free capacity, so bail instead of waiting
   // on a commit that won't come (the error already went to onError).
-  if !(state->IndexerState.hasFailedWrite) && state->getChangesCount >= keepLatestChangesLimit {
+  if !(state->IndexerState.hasFailedWrite) && state->isAtChangesLimit {
     // Drop committed writes first, sparing db-loaded entries (explicitly
     // requested, so likelier to be read again).
     state->dropCommitted(~keepLoadedFromDb=true)
 
     // Still over: drop the db-loaded entries too.
-    if state->getChangesCount >= keepLatestChangesLimit {
+    if state->isAtChangesLimit {
       state->dropCommitted(~keepLoadedFromDb=false)
     }
 
     // Still over: what's left is uncommitted. Only wait if a queued batch can
     // free it; otherwise (e.g. a large rollback diff with no batch) waiting
     // would deadlock, so let processing proceed.
-    if (
-      state->getChangesCount >= keepLatestChangesLimit &&
-        state->IndexerState.processedBatches->Utils.Array.notEmpty
-    ) {
+    if state->isAtChangesLimit && state->IndexerState.processedBatches->Utils.Array.notEmpty {
       state->schedule
       await state->waitForCommit
       await state->awaitCapacityLoop
@@ -353,10 +346,11 @@ let rec awaitCapacityLoop = async (state: IndexerState.t) => {
 // batch the microtask hop of awaiting an already-resolved promise, which reads
 // as storage backpressure that isn't there.
 let awaitCapacity = async (state: IndexerState.t) =>
-  if state->getChangesCount >= keepLatestChangesLimit {
-    let timeRef = Performance.now()
+  if state->isAtChangesLimit {
+    let clock = state->IndexerState.clock
+    let timeRef = clock->Clock.readTimeRef
     await state->awaitCapacityLoop
-    state->IndexerState.recordStalledOnStorageWrite(~seconds=timeRef->Performance.secondsSince)
+    state->IndexerState.recordStalledOnStorageWrite(~seconds=clock->Clock.secondsSince(timeRef))
   }
 
 // Awaits until everything processed is persisted. On a failed write we stop

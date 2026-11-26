@@ -32,7 +32,7 @@ declare module "envio" {
               /** The block in which this event was recorded. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
               readonly block: EvmBlock<{ block: ["number", "timestamp", "hash"] }>;
               /** The transaction that triggered this event. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
-              readonly transaction: EvmTransaction<{ transaction: [] }>;
+              readonly transaction: EvmTransaction<{ block: ["number", "timestamp", "hash"], transaction: [] }>;
               /** The index of this event's log within the block. */
               readonly logIndex: number;
               /** The address of the contract that emitted this event. */
@@ -50,7 +50,7 @@ declare module "envio" {
               /** The block in which this event was recorded. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
               readonly block: EvmBlock<{ block: ["number", "timestamp", "hash"] }>;
               /** The transaction that triggered this event. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
-              readonly transaction: EvmTransaction<{ transaction: [] }>;
+              readonly transaction: EvmTransaction<{ block: ["number", "timestamp", "hash"], transaction: [] }>;
               /** The index of this event's log within the block. */
               readonly logIndex: number;
               /** The address of the contract that emitted this event. */

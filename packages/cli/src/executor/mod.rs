@@ -30,7 +30,7 @@ use schemars::schema_for;
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Command {
     /// `reset: true` wipes the schema before the indexer's first init call;
-    /// the runtime always runs `Persistence.init` either way (DB compat and
+    /// the runtime always runs `Persistence.prepare` either way (DB compat and
     /// migration decisions live in ReScript now).
     Start {
         reset: bool,

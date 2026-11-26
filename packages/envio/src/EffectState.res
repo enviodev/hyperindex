@@ -27,7 +27,8 @@ type effectStats = {
   mutable callSecondsTotal: float,
   mutable callCount: float,
   mutable activeCallsCount: int,
-  mutable prevCallStartTimerRef: Performance.timeRef,
+  mutable prevCallStartTimerRef: Clock.timeRef,
+  clock: Clock.t,
   mutable queueCount: int,
   mutable queueWaitSeconds: float,
   mutable invalidationsCount: float,
@@ -36,6 +37,9 @@ type effectStats = {
   // zero-valued gauge sample.
   mutable cacheCount: int,
   mutable hasCache: bool,
+  // The rows the storage held when this process started. Every worker of a
+  // split run starts from the same rows of a cross-chain cache.
+  mutable cacheCountAtStart: int,
 }
 
 // A handler output, stamped with the checkpoint that produced it on the chain
@@ -99,31 +103,33 @@ let setUnregisteredCacheCount = (self: t, ~effectName, ~scope, ~count) => {
 // --- Metric mutations. The stats records are opaque outside this module, so
 // every counter change goes through these. ---
 
-// Track a call starting at timerRef: bump the active count and extend the
-// wall-clock callSeconds, which counts overlapping calls once.
-let startCall = (stats: effectStats, ~timerRef) => {
+// Bump the active count and extend the wall-clock callSeconds, which counts
+// overlapping calls once. Returns the call's start, for `endCall`.
+let startCall = (stats: effectStats) => {
+  let timerRef = stats.clock->Clock.readTimeRef
   let hadActiveCalls = stats.activeCallsCount > 0
   stats.activeCallsCount = stats.activeCallsCount + 1
   if hadActiveCalls {
-    let elapsed = Performance.secondsBetween(~from=stats.prevCallStartTimerRef, ~to=timerRef)
+    let elapsed = Clock.secondsBetween(~from=stats.prevCallStartTimerRef, ~to=timerRef)
     if elapsed > 0. {
       stats.callSeconds = stats.callSeconds +. elapsed
     }
   }
   stats.prevCallStartTimerRef = timerRef
+  timerRef
 }
 
 // Finish a call started at startTimerRef: close the wall-clock interval and
 // record the call's own cumulative duration.
 let endCall = (stats: effectStats, ~startTimerRef) => {
   stats.activeCallsCount = stats.activeCallsCount - 1
-  let newTimer = Performance.now()
+  let endedAt = stats.clock->Clock.readTimeRef
   stats.callSeconds =
-    stats.callSeconds +. Performance.secondsBetween(~from=stats.prevCallStartTimerRef, ~to=newTimer)
-  stats.prevCallStartTimerRef = newTimer
+    stats.callSeconds +. Clock.secondsBetween(~from=stats.prevCallStartTimerRef, ~to=endedAt)
+  stats.prevCallStartTimerRef = endedAt
 
   stats.callCount = stats.callCount +. 1.
-  stats.callSecondsTotal = stats.callSecondsTotal +. startTimerRef->Performance.secondsSince
+  stats.callSecondsTotal = stats.callSecondsTotal +. stats.clock->Clock.secondsSince(startTimerRef)
 }
 
 let queueEnqueued = (stats: effectStats, ~count) => stats.queueCount = stats.queueCount + count
@@ -156,6 +162,7 @@ let statsToMetrics = (stats: effectStats): Metrics.effectMetrics => {
   queueWaitSeconds: stats.queueWaitSeconds,
   invalidationsCount: stats.invalidationsCount,
   cacheCount: stats.hasCache ? Some(stats.cacheCount) : None,
+  cacheCountAtStart: stats.cacheCountAtStart,
 }
 
 // Full per-effect metrics for every live table, plus a cache-only entry for
@@ -177,6 +184,7 @@ let toMetrics = (self: t): array<Metrics.effectMetrics> => {
       queueWaitSeconds: 0.,
       invalidationsCount: 0.,
       cacheCount: Some(count),
+      cacheCountAtStart: count,
     })
     ->ignore
   })
@@ -201,15 +209,18 @@ let getTable = (self: t, ~effect: Internal.effect, ~scope: Internal.chainScope) 
       callCount: 0.,
       activeCallsCount: 0,
       prevCallStartTimerRef: %raw(`null`),
+      clock: self.clock,
       queueCount: 0,
       queueWaitSeconds: 0.,
       invalidationsCount: 0.,
       cacheCount: 0,
       hasCache: false,
+      cacheCountAtStart: 0,
     }
     switch self.unregisteredCacheCounts->Utils.Dict.dangerouslyGetNonOption(tableName) {
     | Some({count}) =>
       stats.cacheCount = count
+      stats.cacheCountAtStart = count
       stats.hasCache = true
       self.unregisteredCacheCounts->Utils.Dict.deleteInPlace(tableName)
     | None => ()

@@ -5,7 +5,6 @@
 type params = {
   indexerState: IndexerState.t,
   loadManager: LoadManager.t,
-  persistence: Persistence.t,
   config: Config.t,
   // Refreshed by HandlerRuntime when a batch changes it.
   mutable chains: Internal.chains,
@@ -90,7 +89,6 @@ let rec callEffect = (
   effectContext->RunScope.attachEffectRun({caller: run, effectName: effect.name})
   LoadLayer.loadEffect(
     ~loadManager=params.loadManager,
-    ~persistence=params.persistence,
     ~effect,
     ~effectArgs={
       input,
@@ -141,7 +139,6 @@ let makeEntityContext = (params: params, ~entityConfig: Internal.entityConfig) =
     let run = RunScope.currentHandlerRunOrThrow(~prop)
     LoadLayer.loadById(
       ~loadManager=params.loadManager,
-      ~persistence=params.persistence,
       ~entityConfig,
       ~scope=run->scopeOf,
       ~indexerState=params.indexerState,
@@ -197,7 +194,6 @@ let makeEntityContext = (params: params, ~entityConfig: Internal.entityConfig) =
         let run = RunScope.currentHandlerRunOrThrow(~prop)
         LoadLayer.loadByFilter(
           ~loadManager=params.loadManager,
-          ~persistence=params.persistence,
           ~entityConfig,
           ~scope=run->scopeOf,
           ~indexerState=params.indexerState,

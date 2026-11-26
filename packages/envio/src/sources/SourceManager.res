@@ -10,13 +10,21 @@ type requestStatAgg = {
   mutable emptyResponseCount: int,
 }
 
+// Whether a source takes queries. A failing source is given another try once
+// the recovery timeout passes. A source that stopped following its chain isn't:
+// a timeout would hand it queries back every time it ran out, for as long as
+// the indexer runs. It is held until its own height moves back near the head.
+type health =
+  | Working
+  | Recovering({failedAt: float})
+  // `failedAt` is when it last failed a query it was asked as the last resort.
+  | Held({release: HeightFeed.subscription, failedAt: option<float>})
+
 type sourceState = {
   source: Source.t,
   feed: HeightFeed.t,
   mutable disabled: bool,
-  // Timestamp (ms) when this source last failed during executeQuery.
-  // Used to decide when to attempt recovery to this source.
-  mutable lastFailedAt: option<float>,
+  mutable health: health,
   requestStats: dict<requestStatAgg>,
 }
 
@@ -65,7 +73,7 @@ type requestStatSample = {
 type t = {
   sourcesState: array<sourceState>,
   logger: Logger.t,
-  mutable statusStart: Performance.timeRef,
+  mutable statusStart: Clock.timeRef,
   mutable status: sourceManagerStatus,
   // Cumulative time spent in each status, rendered into the
   // envio_indexing_idle/source_waiting/source_querying_seconds counters.
@@ -77,6 +85,10 @@ type t = {
   stalledPollingInterval: int,
   reducedPollingInterval: int,
   mutable activeSource: Source.t,
+  // The source the last items query went to. Unlike `activeSource`, a wait
+  // answered by another source leaves it alone, so "Switching data-source" is
+  // said when queries actually move.
+  mutable queriedSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
   // Dedupes the "waiting for new blocks" trace so it fires once per contiguous
   // wait period instead of on every epoch that re-enters the wait before any
@@ -180,21 +192,21 @@ let getHeightStreamSamples = (sourceManager: t): array<heightStreamSample> => {
 let idleSeconds = (sourceManager: t) =>
   sourceManager.idleSeconds +.
   switch sourceManager.status {
-  | Idle => sourceManager.statusStart->Performance.secondsSince
+  | Idle => sourceManager.clock->Clock.secondsSince(sourceManager.statusStart)
   | _ => 0.
   }
 
 let waitingForNewBlockSeconds = (sourceManager: t) =>
   sourceManager.waitingForNewBlockSeconds +.
   switch sourceManager.status {
-  | WaitingForNewBlock => sourceManager.statusStart->Performance.secondsSince
+  | WaitingForNewBlock => sourceManager.clock->Clock.secondsSince(sourceManager.statusStart)
   | _ => 0.
   }
 
 let queryingSeconds = (sourceManager: t) =>
   sourceManager.queryingSeconds +.
   switch sourceManager.status {
-  | Querying => sourceManager.statusStart->Performance.secondsSince
+  | Querying => sourceManager.clock->Clock.secondsSince(sourceManager.statusStart)
   | _ => 0.
   }
 
@@ -387,12 +399,13 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
           ~clock,
         ),
         disabled: false,
-        lastFailedAt: None,
+        health: Working,
         requestStats,
       }
     }),
     logger,
     activeSource: initialActiveSource,
+    queriedSource: initialActiveSource,
     waitingForNewBlockStateId: None,
     waitingLogged: false,
     fetchingPartitionsCount: 0,
@@ -402,7 +415,7 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
     reducedPollingInterval,
     recoveryTimeout,
     clock,
-    statusStart: Performance.now(),
+    statusStart: clock->Clock.readTimeRef,
     status: Idle,
     idleSeconds: 0.,
     waitingForNewBlockSeconds: 0.,
@@ -417,14 +430,14 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
 }
 
 let trackNewStatus = (sourceManager: t, ~newStatus) => {
-  let elapsed = sourceManager.statusStart->Performance.secondsSince
+  let elapsed = sourceManager.clock->Clock.secondsSince(sourceManager.statusStart)
   switch sourceManager.status {
   | Idle => sourceManager.idleSeconds = sourceManager.idleSeconds +. elapsed
   | WaitingForNewBlock =>
     sourceManager.waitingForNewBlockSeconds = sourceManager.waitingForNewBlockSeconds +. elapsed
   | Querying => sourceManager.queryingSeconds = sourceManager.queryingSeconds +. elapsed
   }
-  sourceManager.statusStart = Performance.now()
+  sourceManager.statusStart = sourceManager.clock->Clock.readTimeRef
   sourceManager.status = newStatus
 }
 
@@ -483,9 +496,90 @@ let dispatch = async (
   }
 }
 
+// Stops the held source's height poll.
+let releaseHold = (sourceState: sourceState) =>
+  switch sourceState.health {
+  | Held({release}) => release.unsubscribe()
+  | Working | Recovering(_) => ()
+  }
+
+// Answering clears a recovery but not a hold: a held source can still answer a
+// range below where it stopped, or one sent before it was held, and neither
+// says it is back near the head. Only its height releases it.
+let markAnswered = (sourceState: sourceState) =>
+  switch sourceState.health {
+  | Recovering(_) => sourceState.health = Working
+  | Working | Held(_) => ()
+  }
+
+// A held source stays held: failing a query it was only asked as the last
+// resort says nothing new about where it is. The time still counts, so the last
+// resort moves on to another source.
+let markFailed = (sourceState: sourceState, ~now) =>
+  switch sourceState.health {
+  | Held({release}) => sourceState.health = Held({release, failedAt: Some(now)})
+  | Working | Recovering(_) => sourceState.health = Recovering({failedAt: now})
+  }
+
+let isWorking = (sourceManager: t, sourceState: sourceState, ~now) =>
+  switch sourceState.health {
+  | Working => true
+  | Recovering({failedAt}) => now -. failedAt >= sourceManager.recoveryTimeout
+  | Held(_) => false
+  }
+
+// The head as far as this chain's sources have said.
+let highestKnownHeight = (sourceManager: t) =>
+  sourceManager.sourcesState->Array.reduce(0, (highest, {feed}) =>
+    Pervasives.max(highest, feed->HeightFeed.knownHeight)
+  )
+
+// Released once its own height moves and lands within the distance the chain
+// counts as near the head. Moving at all shows a source that stopped is
+// following its chain again, but one resyncing from far behind would only fail
+// the queries at the head it is handed. Polls at the reduced interval: nothing
+// waits on the source while it is held, and a source that stopped following its
+// chain can stay stopped for weeks. Polls behind its height stream too, through
+// every drop and reconnect: a source that stopped following its chain is exactly
+// the one whose stream can keep its keep-alives flowing while its heights stop,
+// and while the fallback answers every wait, nothing else would ever ask it
+// again.
+let holdUntilCaughtUp = (sourceManager: t, sourceState: sourceState) => {
+  let rec hold = (~failedAt) => {
+    let subscription = sourceState.feed->HeightFeed.onHeightAbove(
+      ~knownHeight=sourceState.feed->HeightFeed.knownHeight,
+      ~interval=() => sourceManager.reducedPollingInterval,
+      ~pollsBehindStream=true,
+      ~onHeight=height =>
+        sourceState.health = if (
+          sourceManager->highestKnownHeight - height <= FetchState.headClientFilteringDistance
+        ) {
+          Working
+        } else {
+          // Still held, and still the failure it had: losing it would rank the
+          // source first in the last resort as if it had never failed.
+          hold(
+            ~failedAt=switch sourceState.health {
+            | Held({failedAt}) => failedAt
+            | Working | Recovering(_) => None
+            },
+          )
+        },
+    )
+    Held({release: subscription, failedAt})
+  }
+  // A query can fail on a source after another one benched it, and nothing
+  // would ever stop the poll of a hold taken then.
+  switch sourceState.health {
+  | Working | Recovering(_) if !sourceState.disabled => sourceState.health = hold(~failedAt=None)
+  | Working | Recovering(_) | Held(_) => ()
+  }
+}
+
 let disableSource = (sourceManager: t, sourceState: sourceState) => {
   if !sourceState.disabled {
     sourceState.disabled = true
+    sourceState->releaseHold
     sourceState.feed->HeightFeed.stop
     if sourceState.source.sourceFor === Realtime {
       // Only clear hasRealtime if no other non-disabled Realtime sources remain
@@ -501,20 +595,24 @@ let disableSource = (sourceManager: t, sourceState: sourceState) => {
   }
 }
 
-let compareByOldestFailure = (a: sourceState, b: sourceState) =>
-  switch (a.lastFailedAt, b.lastFailedAt) {
-  | (None, Some(_)) => Ordering.less
-  | (Some(_), None) => Ordering.greater
-  | (Some(a), Some(b)) => a < b ? Ordering.less : a > b ? Ordering.greater : Ordering.equal
-  | (None, None) => Ordering.equal
+// The source that failed longest ago first, one that never failed before any.
+let lastFailedAt = (sourceState: sourceState) =>
+  switch sourceState.health {
+  | Working | Held({failedAt: None}) => Float.Constants.negativeInfinity
+  | Recovering({failedAt}) | Held({failedAt: Some(failedAt)}) => failedAt
   }
 
-// Priority: working primaries > working secondaries > all primaries.
+let compareByOldestFailure = (a: sourceState, b: sourceState) =>
+  Float.compare(a->lastFailedAt, b->lastFailedAt)
+
+// Priority: working primaries > working secondaries > all primaries > all
+// secondaries.
 let getNextSources = (sourceManager: t, ~isRealtime, ~excludedSources=?) => {
   let now = sourceManager.clock.now()
   let workingPrimarySources = []
   let allPrimarySources = []
   let workingSecondarySources = []
+  let allSecondarySources = []
   for i in 0 to sourceManager.sourcesState->Array.length - 1 {
     let sourceState = sourceManager.sourcesState->Array.getUnsafe(i)
     if !sourceState.disabled {
@@ -523,10 +621,7 @@ let getNextSources = (sourceManager: t, ~isRealtime, ~excludedSources=?) => {
       | None => false
       }
       if !isExcluded {
-        let isWorking = switch sourceState.lastFailedAt {
-        | Some(failedAt) => now -. failedAt >= sourceManager.recoveryTimeout
-        | None => true
-        }
+        let isWorking = sourceManager->isWorking(sourceState, ~now)
         switch getSourceRole(
           ~sourceFor=sourceState.source.sourceFor,
           ~isRealtime,
@@ -537,8 +632,12 @@ let getNextSources = (sourceManager: t, ~isRealtime, ~excludedSources=?) => {
           if isWorking {
             workingPrimarySources->Array.push(sourceState)
           }
-        | Some(Secondary) if isWorking => workingSecondarySources->Array.push(sourceState)
-        | _ => ()
+        | Some(Secondary) =>
+          allSecondarySources->Array.push(sourceState)
+          if isWorking {
+            workingSecondarySources->Array.push(sourceState)
+          }
+        | None => ()
         }
       }
     }
@@ -548,24 +647,27 @@ let getNextSources = (sourceManager: t, ~isRealtime, ~excludedSources=?) => {
   } else if workingSecondarySources->Array.length > 0 {
     workingSecondarySources
   } else {
-    // All primaries in recovery - sort by oldest lastFailedAt (closest to recovery first)
-    allPrimarySources->Array.sort(compareByOldestFailure)
-    allPrimarySources
+    // Nothing is working: the last resort, the source that failed longest ago
+    // first. A failing or held secondary is still better than no source at all
+    // once every primary is benched.
+    let lastResort =
+      allPrimarySources->Utils.Array.isEmpty ? allSecondarySources : allPrimarySources
+    lastResort->Array.sort(compareByOldestFailure)
+    lastResort
   }
 }
 
-// Single source selection from getNextSources.
-// Prefers activeSource if it's in the candidates. Fast path: check first item.
+// Single source selection from getNextSources. Stays on the active source while
+// it is working. In the last resort nothing is, and staying would retry the
+// same source for as long as it keeps failing while another one might answer.
 let getNextSource = (sourceManager, ~isRealtime, ~excludedSources=?) => {
   let sources = sourceManager->getNextSources(~isRealtime, ~excludedSources?)
-  switch sources->Array.get(0) {
-  | None => None
-  | Some(first) if first.source === sourceManager.activeSource => Some(first)
-  | _ =>
-    switch sources->Array.find(s => s.source === sourceManager.activeSource) {
-    | Some(_) as result => result
-    | None => sources->Array.get(0)
-    }
+  let now = sourceManager.clock.now()
+  switch sources->Array.find(s =>
+    s.source === sourceManager.activeSource && sourceManager->isWorking(s, ~now)
+  ) {
+  | Some(_) as active => active
+  | None => sources->Array.get(0)
   }
 }
 
@@ -586,7 +688,7 @@ let sleepBackoff = (sourceManager: t, millis) =>
   sourceManager.clock->Clock.delay(~label="retry backoff", millis)
 
 // Back off before retrying the same request, failing the source over first when
-// another one can actually take over. Marking `lastFailedAt` only demotes this
+// another one can actually take over. Marking it failed only demotes this
 // source in the selection order - with no working alternative the next attempt
 // lands right back here, so `minBackoffMillis` is what keeps a retry loop that
 // never changes source from spinning at full speed.
@@ -606,13 +708,9 @@ let backoffBeforeRetry = async (
     retry >= failoverAfterRetries && (retry - failoverAfterRetries)->mod(2) === 0
   ) {
     let now = sourceManager.clock.now()
-    sourceState.lastFailedAt = Some(now)
+    sourceState->markFailed(~now)
     switch sourceManager->getNextSource(~isRealtime, ~excludedSources?) {
-    | Some(next) =>
-      switch next.lastFailedAt {
-      | None => true
-      | Some(failedAt) => now -. failedAt >= sourceManager.recoveryTimeout
-      }
+    | Some(next) => sourceManager->isWorking(next, ~now)
     | None => false
     }
   } else {
@@ -680,6 +778,9 @@ let retryBehindHead = async (
     )
   }
   logger->Logger.logAt(level, msg, ~params={"retry": retry, "backOffMilliseconds": backoffMillis})
+  if retry >= behindHeadFailoverRetries {
+    sourceManager->holdUntilCaughtUp(sourceState)
+  }
   await sourceManager->backoffBeforeRetry(
     sourceState,
     ~retry,
@@ -847,12 +948,28 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
     }
 
     let settled = ref(false)
-    let settle = (source: Source.t, height) =>
+    let settle = (answered: sourceState, height) =>
       if !settled.contents {
         settled := true
         // Before anything else: the sources still watching have no reason to
         // keep polling for a height this wait already has.
         cleanup()
+
+        // A source recruited because the wait stalled answered it, so the
+        // sources the wait was built on heard nothing for a whole window while
+        // the chain moved on. One that ends more than a block behind has stopped
+        // following its chain: a single block is too little to tell that from a
+        // block it hasn't polled yet, and a source with no height has told us
+        // nothing either way.
+        if stalled.contents && !(mainSources->Array.includes(answered)) {
+          mainSources->Array.forEach(sourceState => {
+            let ownHeight = sourceState.feed->HeightFeed.knownHeight
+            if ownHeight > 0 && height - ownHeight > 1 {
+              sourceManager->holdUntilCaughtUp(sourceState)
+            }
+          })
+        }
+        let source = answered.source
         sourceManager.activeSource = source
         // Show a higher level log if we displayed a warning/error after newBlockStallTimeout
         let level = stalled.contents ? #info : #trace
@@ -893,7 +1010,7 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
             } else {
               sourceState.source.pollingInterval
             },
-          ~onHeight=height => settle(sourceState.source, height),
+          ~onHeight=height => settle(sourceState, height),
         )
         if settled.contents {
           // This registration is what answered the wait, and the cleanup that ran
@@ -948,7 +1065,7 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
                 if !settled.contents {
                   stalled := true
 
-                  // Build fallback: non-disabled sources not in mainSources with a valid role, even with recent lastFailedAt
+                  // Build fallback: non-disabled sources not in mainSources with a valid role, even ones failing or held
                   let fallbackSources = []
                   sourcesState->Array.forEach(sourceState => {
                     if (
@@ -1037,13 +1154,13 @@ let executeQuery = async (
       ~excludedSources=?excludedSourcesRef.contents,
     ) {
     | Some(s) =>
-      if s.source !== sourceManager.activeSource {
+      if s.source !== sourceManager.queriedSource {
         let logger = sourceManager.logger
         logger->Logger.info(
           "Switching data-source",
           ~params={
             "source": s.source.name,
-            "previousSource": sourceManager.activeSource.name,
+            "previousSource": sourceManager.queriedSource.name,
             "fromBlock": query.fromBlock,
           },
         )
@@ -1054,6 +1171,7 @@ let executeQuery = async (
       %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError())
     }
     sourceManager.activeSource = sourceState.source
+    sourceManager.queriedSource = sourceState.source
     let source = sourceState.source
     let toBlock = toBlockRef.contents
     let retry = retryRef.contents
@@ -1082,7 +1200,7 @@ let executeQuery = async (
       )
       sourceState->recordRequestStats(response.requestStats)
       validateResponsePage(~method="getItems", ~page=response.page)
-      sourceState.lastFailedAt = None
+      sourceState->markAnswered
 
       // The response carries a fresh height for exactly this source, so during a
       // long backfill (when nothing is waiting on the feed) it keeps the
@@ -1180,7 +1298,7 @@ let executeQuery = async (
         // fresh schedule rather than continuing this one.
         retryRef := 0
       | FailedGettingItems({?exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
-        // Don't set lastFailedAt - the source isn't broken, the query just can't work on it
+        // Not marked failed - the source isn't broken, the query just can't work on it
         let excludedSources = switch excludedSourcesRef.contents {
         | Some(s) => s
         | None =>
@@ -1257,7 +1375,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
           ~page=data,
           ~requiredBlockNumbers=blockNumbers,
         )
-        sourceState.lastFailedAt = None
+        sourceState->markAnswered
         responseRef := Some(data)
       | Error(exn) => throw(exn)
       }

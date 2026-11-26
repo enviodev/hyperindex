@@ -34,6 +34,8 @@ type startBlock =
   | Block(int)
   | @as("latest") Latest
 
+type simulatedTransaction = {simulateIndex: int, blockNumber: int, transactionIndex: int}
+
 type sourceConfig =
   | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
   | FuelSourceConfig({hypersync: string})
@@ -43,11 +45,19 @@ type sourceConfig =
   // like every other source, so it can apply the same gates.
   | SimulateSourceConfig({
       items: array<Internal.item>,
+      // The index in the `simulate` array each of `items` came from: an event
+      // fans out to one item per registration, and a transaction or a block
+      // given on its own makes none.
+      itemSimulateIndexes: array<int>,
       // The block a block handler selecting fields reads at a number, if the
       // simulated chain has one there.
       getBlock: int => option<Internal.eventBlock>,
       endBlock: int,
       page?: BufferPage.t,
+      // Where each simulated transaction sits, by its index in the `simulate`
+      // array: it enters as a raw row in `page`, so only the item a build
+      // makes of it shows a handler ran.
+      transactions: array<simulatedTransaction>,
     })
   // For tests: pass custom sources directly
   | CustomSources(array<Source.t>)

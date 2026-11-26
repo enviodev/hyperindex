@@ -1,41 +1,23 @@
 let config = TestConfig.default
 
-// The store requires a persistence even when the cycle never runs; reuse one.
+// The store requires a storage even when the cycle never runs; reuse one.
 // Lazy so importing the helper doesn't open a pg client for tests that never use
-// it. Its schema is never created — a query through this persistence means a
-// test is wired wrong, and pointing it at a real schema would hide that.
-let defaultPersistenceRef = ref(None)
-let defaultPersistence = (~config=config) =>
-  switch defaultPersistenceRef.contents {
-  | Some((memoizedConfig, persistence)) if memoizedConfig === config => persistence
+// it. Its schema is never created — a query through this storage means a test
+// is wired wrong, and pointing it at a real schema would hide that.
+let defaultStorageRef = ref(None)
+let defaultStorage = (~config=config) =>
+  switch defaultStorageRef.contents {
+  | Some((memoizedConfig, storage)) if memoizedConfig === config => storage
   | _ =>
-    let persistence = Storage.makePersistenceFromConfig(
+    let storage = Storage.makeStorageFromEnv(
       ~logger=Logger.makeInMemory(),
       ~config,
-      ~storage=Storage.makeStorageFromEnv(
-        ~logger=Logger.makeInMemory(),
-        ~config,
-        ~pgSchema=TestPgSchema.make(),
-        ~isHasuraEnabled=false,
-      ),
+      ~pgSchema=TestPgSchema.make(),
+      ~isHasuraEnabled=false,
     )
-    defaultPersistenceRef := Some((config, persistence))
-    persistence
+    defaultStorageRef := Some((config, storage))
+    storage
   }
-
-// A persistence over `storage` that reports itself already initialized, so the
-// state writes through it instead of stalling on the init handshake.
-let readyPersistence = (~config=config, ~storage) => {
-  ...Storage.makePersistenceFromConfig(~logger=Logger.makeInMemory(), ~config, ~storage),
-  storageStatus: Persistence.Ready({
-    cleanRun: false,
-    contractMapping: config.contractMapping,
-    cache: Dict.make(),
-    chains: [],
-    reorgCheckpoints: [],
-    checkpointFrontier: Frontier.empty(),
-  }),
-}
 
 let setEntity = (
   indexerState,
@@ -55,13 +37,13 @@ let setEntity = (
   )
 }
 
-let make = (~config=config, ~persistence=?, ~entities=[]) => {
+let make = (~config=config, ~storage=?, ~entities=[]) => {
   let indexerState = IndexerState.make(
     ~logger=Logger.makeInMemory(),
     ~config,
-    ~persistence=switch persistence {
-    | Some(persistence) => persistence
-    | None => defaultPersistence(~config)
+    ~storage=switch storage {
+    | Some(storage) => storage
+    | None => defaultStorage(~config)
     },
     // A trivial chain state map for store-only tests that never run the loop.
     ~chainStates=Dict.make(),

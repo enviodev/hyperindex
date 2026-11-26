@@ -10,6 +10,7 @@ use crate::chain_buffer::{
     self,
     evm::LogView,
     matching::EvmMatcher,
+    matching_transactions::{TransactionMatcher, TransactionView},
     page::{Page, PageData},
     ChainBuffer, Ecosystem, EvmRegistrations, Shared,
 };
@@ -20,6 +21,7 @@ mod config;
 pub(crate) mod query;
 pub(crate) mod selection;
 pub(crate) mod topic_filter;
+mod transaction_selection;
 pub(crate) mod types;
 
 use config::ClientConfig;
@@ -157,6 +159,13 @@ impl EvmHyperSyncClient {
             params.client_filtered_contracts.unwrap_or_default(),
         );
         let selects_logs = !params.on_event_registration_indexes.is_empty();
+        let transaction_registrations = if params.on_transaction_registration_indexes.is_empty() {
+            Vec::new()
+        } else {
+            self.chain.transaction_matcher.registrations()
+        };
+        let selects_transactions = !transaction_registrations.is_empty();
+        let built_transactions = transaction_selection::build(&transaction_registrations);
         let built = self
             .evm
             .selection
@@ -173,7 +182,7 @@ impl EvmHyperSyncClient {
                 &params.on_block_registration_indexes,
                 params.from_block,
                 params.to_block,
-                !selects_logs,
+                !selects_logs && !selects_transactions,
                 params.reorgable_from,
                 |block, mask| buffer.has_block_fields(block, mask),
             )
@@ -192,7 +201,10 @@ impl EvmHyperSyncClient {
             ));
         }
 
-        let requested_transaction_fields = built.transaction_fields;
+        let mut requested_transaction_fields = built.transaction_fields;
+        for &field in &built_transactions.transaction_fields {
+            push_unique(&mut requested_transaction_fields, field);
+        }
         let mut block_fields = built.block_fields;
         // Force-add the always-required block fields, then validate the full
         // set. Validating the forced fields (not just the selection's) is what
@@ -200,6 +212,7 @@ impl EvmHyperSyncClient {
         // — the presence check, not the request, is the guarantee.
         for field in BlockField::in_store_mask(block_selection.mask())
             .into_iter()
+            .chain(built_transactions.block_fields.iter().copied())
             .chain(REQUIRED_BLOCK_FIELDS.iter().copied())
         {
             if !block_fields.contains(&field) {
@@ -211,8 +224,9 @@ impl EvmHyperSyncClient {
         let mut transaction_fields = requested_transaction_fields.clone();
         // Transactions are accumulated into the store keyed by
         // (blockNumber, transactionIndex), so those keys must come back on each
-        // transaction row whenever any transaction field is requested.
-        if !transaction_fields.is_empty() {
+        // transaction row whenever any transaction field is requested, or a
+        // transaction handler runs on rows of none.
+        if !transaction_fields.is_empty() || selects_transactions {
             for field in [
                 TransactionField::BlockNumber,
                 TransactionField::TransactionIndex,
@@ -233,9 +247,10 @@ impl EvmHyperSyncClient {
                     .map(log_selection_from_built)
                     .collect()
             }),
+            transactions: selects_transactions.then(|| built_transactions.selections()),
             field_selection: query::FieldSelection {
                 block: Some(validated_block_fields.clone()),
-                transaction: selects_logs.then_some(transaction_fields),
+                transaction: (selects_logs || selects_transactions).then_some(transaction_fields),
                 // Everything get_items reads off the log: decode inputs, the
                 // flattened item fields, and the transaction-store keys.
                 log: selects_logs.then(|| {
@@ -268,12 +283,14 @@ impl EvmHyperSyncClient {
         let handler_blocks =
             block_selection.blocks_run_on(block_query.from_block..(next_block as u64));
         let matcher = &self.evm.matcher;
+        let transaction_matcher = selects_transactions.then_some(&self.chain.transaction_matcher);
         let mut page = tokio::task::block_in_place(|| {
             process_response(
                 response.data.blocks,
                 response.data.transactions,
                 response.data.logs,
                 matcher,
+                transaction_matcher,
                 &validated_block_fields,
                 &requested_transaction_fields,
                 &handler_blocks,
@@ -325,6 +342,9 @@ pub struct ItemsQuery {
     /// constructed with. Empty selects no more blocks than the logs come from,
     /// unless the range reaches `reorgable_from`.
     pub on_block_registration_indexes: Vec<i64>,
+    /// The transaction handlers selecting transactions. Empty selects none
+    /// beyond the logs' own.
+    pub on_transaction_registration_indexes: Vec<i64>,
     /// Contract names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
@@ -394,9 +414,9 @@ fn add_rollback_guard_blocks(page: &mut PageData, guard: &RollbackGuard) -> Resu
     Ok(())
 }
 
-fn push_unique(missing: &mut Vec<String>, name: String) {
-    if !missing.contains(&name) {
-        missing.push(name);
+pub(super) fn push_unique<T: PartialEq>(values: &mut Vec<T>, value: T) {
+    if !values.contains(&value) {
+        values.push(value);
     }
 }
 
@@ -408,17 +428,19 @@ fn sorted_set<T: Ord>(mut keys: Vec<T>) -> Vec<T> {
 }
 
 /// Builds the page: the logs some registration matches now, the
-/// transactions they belong to, and the blocks of the range, each validated
-/// for the fields the query asked for. A block a kept log or a block handler
-/// reads keeps every field fetched; any other keeps its number, hash and time
-/// for reorg detection and progress. Returns `ConvertError::MissingFields`
-/// when the source omitted a requested non-nullable field or a joined row.
+/// transactions they belong to or a transaction handler runs on, and the
+/// blocks of the range, each validated for the fields the query asked for. A
+/// block a kept row or a block handler reads keeps every field fetched; any
+/// other keeps its number, hash and time for reorg detection and progress.
+/// Returns `ConvertError::MissingFields` when the source omitted a requested
+/// non-nullable field or a joined row.
 #[allow(clippy::too_many_arguments)]
 fn process_response(
     blocks: Vec<Vec<simple_types::Block>>,
     transactions: Vec<Vec<simple_types::Transaction>>,
     logs: Vec<Vec<simple_types::Log>>,
     matcher: &EvmMatcher,
+    transaction_matcher: Option<&TransactionMatcher>,
     validated_block_fields: &[BlockField],
     requested_transaction_fields: &[TransactionField],
     handler_blocks: &[u64],
@@ -463,20 +485,36 @@ fn process_response(
     page.add_registering_blocks(registering_blocks);
 
     let referenced_transactions = sorted_set(referenced_transactions);
-    if !requested_transaction_fields.is_empty() {
+    let mut handled_transactions: Vec<(u64, u32)> = Vec::new();
+    if !requested_transaction_fields.is_empty() || transaction_matcher.is_some() {
         let fetched = evm_rpc_source::fields::tx_mask(requested_transaction_fields);
         let mut kept = Vec::new();
         let mut rows = page.transactions.builder();
         for tx in transactions.iter().flatten() {
             // A row without its key backs no log; if a kept log wanted it, the
-            // coverage check below reports the transaction missing.
+            // coverage check below reports the transaction missing. A
+            // transaction selection returned it as one the handlers may run on,
+            // and nothing later would notice it dropped.
             let (Some(block_number), Some(transaction_index)) =
                 (tx.block_number, tx.transaction_index)
             else {
+                if transaction_matcher.is_some() {
+                    let name = if tx.block_number.is_none() {
+                        "blockNumber"
+                    } else {
+                        "transactionIndex"
+                    };
+                    push_unique(&mut missing, format!("transaction.{name}"));
+                }
                 continue;
             };
             let key = (u64::from(block_number), u64::from(transaction_index) as u32);
-            if referenced_transactions.binary_search(&key).is_err() {
+            let handled = transaction_matcher.is_some_and(|transaction_matcher| {
+                transaction_matcher.matches_any(&TransactionView::of_transaction(tx, fetched))
+            });
+            if handled {
+                handled_transactions.push(key);
+            } else if referenced_transactions.binary_search(&key).is_err() {
                 continue;
             }
             for &field in requested_transaction_fields {
@@ -502,6 +540,7 @@ fn process_response(
     let referenced_blocks = sorted_set(
         referenced_transactions
             .iter()
+            .chain(&handled_transactions)
             .map(|(block_number, _)| *block_number)
             .chain(handler_blocks.iter().copied())
             .collect(),
@@ -777,6 +816,7 @@ mod tests {
             vec![],
             vec![vec![full_log(1)]],
             &zero_event_matcher(),
+            None,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[],
             &[],
@@ -803,6 +843,7 @@ mod tests {
             vec![],
             vec![vec![full_log(1)]],
             &empty_matcher(),
+            None,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[],
             &[],
@@ -834,6 +875,7 @@ mod tests {
             vec![],
             vec![vec![full_log(1)]],
             &empty_matcher(),
+            None,
             REQUIRED_BLOCK_FIELDS,
             &[],
             &[],
@@ -865,6 +907,7 @@ mod tests {
             vec![],
             vec![vec![full_log(1)]],
             &zero_event_matcher(),
+            None,
             &[
                 BlockField::Number,
                 BlockField::Hash,
@@ -898,6 +941,7 @@ mod tests {
             vec![vec![tx]],
             vec![vec![full_log(1)]],
             &zero_event_matcher(),
+            None,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::Hash],
             &[],
@@ -928,6 +972,7 @@ mod tests {
             vec![],
             vec![vec![full_log(1)]],
             &zero_event_matcher(),
+            None,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::Hash],
             &[],
@@ -966,6 +1011,7 @@ mod tests {
             vec![vec![tx]],
             vec![vec![full_log(7)]],
             &zero_event_matcher(),
+            None,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::BlockNumber],
             &[],
@@ -999,6 +1045,7 @@ mod tests {
             vec![vec![tx(1), tx(2)]],
             vec![vec![full_log(1), unmatched_log(2)]],
             &zero_event_matcher(),
+            None,
             REQUIRED_BLOCK_FIELDS,
             &[TransactionField::Hash],
             &[],
@@ -1043,6 +1090,7 @@ mod tests {
             vec![],
             vec![vec![unmatched_log(1)]],
             &zero_event_matcher(),
+            None,
             REQUIRED_BLOCK_FIELDS,
             &[TransactionField::Hash],
             &[],
@@ -1069,6 +1117,7 @@ mod tests {
             vec![],
             vec![vec![full_log(1), unmatched_log(2)]],
             &zero_event_matcher(),
+            None,
             &[
                 BlockField::Number,
                 BlockField::Hash,
@@ -1113,6 +1162,7 @@ mod tests {
             ]],
             vec![vec![full_log(1)]],
             &zero_event_matcher(),
+            None,
             REQUIRED_BLOCK_FIELDS,
             &[TransactionField::Hash],
             &[],
@@ -1187,6 +1237,7 @@ mod tests {
                 block_handlers: vec![handler],
                 transaction_masks: vec![],
                 event_block_masks: vec![],
+                transaction_registrations: vec![],
             },
             &store,
         )
@@ -1224,6 +1275,7 @@ mod tests {
                         to_block: Some(*to_block),
                         on_event_registration_indexes: vec![],
                         on_block_registration_indexes: vec![0],
+                        on_transaction_registration_indexes: vec![],
                         client_filtered_contracts: None,
                         reorgable_from: None,
                     },

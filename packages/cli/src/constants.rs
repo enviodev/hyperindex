@@ -20,7 +20,7 @@ pub mod project_paths {
 pub mod links {
     pub const DOC_CONFIGURATION_FILE: &str = "https://docs.envio.dev/docs/configuration-file";
     pub const DOC_CONFIGURATION_SCHEMA_HYPERSYNC_CONFIG: &str =
-        "https://docs.envio.dev/docs/HyperIndex/config-schema-reference#hypersyncconfig";
+        "https://docs.envio.dev/docs/HyperIndex/config-schema-reference#def-hypersyncconfig";
 }
 
 pub mod reserved_keywords {
@@ -132,6 +132,12 @@ pub mod reserved_keywords {
         "EvmOnEventWhereArgs",
         "EvmOnEventWhereChain",
         "EvmOnEventWhereFilter",
+        "EvmOnTransactionContext",
+        "EvmOnTransactionHandler",
+        "EvmOnTransactionOptions",
+        "EvmOnTransactionWhere",
+        "EvmOnTransactionWhereArgs",
+        "EvmOnTransactionWhereFilter",
         "EvmTransaction",
         "EvmTransactionFieldName",
         "FieldNotSelected",

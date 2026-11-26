@@ -28,6 +28,33 @@ let emptyRegistrations = (ecosystem: Ecosystem.name) =>
   | Fuel => Fuel({registrations: []})
   }
 
+// `OnTransactionRegistrationInput` in `chain_buffer/matching_transactions.rs`.
+type onTransactionRegistrationInput = {
+  index: int,
+  from?: array<string>,
+  to?: array<string>,
+  status?: int,
+  transactionFieldMask: float,
+  blockFieldMask: float,
+}
+
+let toTransactionRegistrationInputs = (
+  onTransactionRegistrations: array<Internal.onTransactionRegistration>,
+) =>
+  onTransactionRegistrations->Array.map(({
+    index,
+    filter,
+    transactionFieldMask,
+    blockFieldMask,
+  }): onTransactionRegistrationInput => {
+    index,
+    from: ?filter.from,
+    to: ?filter.to,
+    status: ?filter.status,
+    transactionFieldMask,
+    blockFieldMask,
+  })
+
 type config = {
   registrations: registrations,
   shouldChecksum: bool,
@@ -36,6 +63,7 @@ type config = {
   // By event registration index.
   transactionMasks: array<float>,
   eventBlockMasks: array<float>,
+  transactionRegistrations: array<onTransactionRegistrationInput>,
 }
 
 @send external make: (Core.chainBufferCtor, config, AddressStore.t) => t = "make"
@@ -189,6 +217,7 @@ let makeForChain = (
   ~ecosystem: Ecosystem.name,
   ~onEventRegistrations: array<Internal.onEventRegistration>,
   ~onBlockRegistrations: array<Internal.onBlockRegistration>,
+  ~onTransactionRegistrations: array<Internal.onTransactionRegistration>=[],
   ~shouldChecksum,
   ~addressStore,
 ) =>
@@ -225,6 +254,7 @@ let makeForChain = (
       eventBlockMasks: onEventRegistrations->Array.map(registration =>
         registration.fieldSelection.blockMask
       ),
+      transactionRegistrations: onTransactionRegistrations->toTransactionRegistrationInputs,
     },
     addressStore,
   )

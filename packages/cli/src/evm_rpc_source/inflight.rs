@@ -41,23 +41,28 @@ impl<K, V> Default for Inflight<K, V> {
 }
 
 impl<K: Eq + Hash + Clone, V: Clone> Inflight<K, V> {
-    /// Resolve `key`, running `make` only if no request for it is already in
+    /// Resolve `key`, running `make` only if no request for it, or for
+    /// `wider` (a key whose answer also answers this one), is already in
     /// flight. Every caller that arrives while one is gets that request's
     /// outcome.
-    pub(crate) async fn get<F, Fut>(&self, key: K, make: F) -> V
+    pub(crate) async fn get<F, Fut>(&self, key: K, wider: Option<K>, make: F) -> V
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = V> + Send + 'static,
         V: Send + 'static,
     {
-        let shared = {
+        let (key, shared) = {
             let mut pending = self.pending.lock().unwrap();
+            let key = match wider {
+                Some(wider) if pending.contains_key(&wider) => wider,
+                _ => key,
+            };
             let entry = pending.entry(key.clone()).or_insert_with(|| Entry {
                 fetch: make().boxed().shared(),
                 waiters: 0,
             });
             entry.waiters += 1;
-            entry.fetch.clone()
+            (key, entry.fetch.clone())
         };
 
         // A drop guard rather than cleanup after the await: cancellation is
@@ -151,9 +156,9 @@ mod tests {
         let inflight = TestInflight::default();
         let calls = Arc::new(AtomicUsize::new(0));
         let (a, b, c) = tokio::join!(
-            inflight.get(1, counting(&calls, 7)),
-            inflight.get(1, counting(&calls, 7)),
-            inflight.get(1, counting(&calls, 7)),
+            inflight.get(1, None, counting(&calls, 7)),
+            inflight.get(1, None, counting(&calls, 7)),
+            inflight.get(1, None, counting(&calls, 7)),
         );
         assert_eq!(
             (
@@ -171,8 +176,8 @@ mod tests {
         let inflight = TestInflight::default();
         let calls = Arc::new(AtomicUsize::new(0));
         let (a, b) = tokio::join!(
-            inflight.get(1, counting(&calls, 10)),
-            inflight.get(2, counting(&calls, 20)),
+            inflight.get(1, None, counting(&calls, 10)),
+            inflight.get(2, None, counting(&calls, 20)),
         );
         assert_eq!(
             (a.unwrap(), b.unwrap(), calls.load(Ordering::SeqCst)),
@@ -186,8 +191,8 @@ mod tests {
         // what is worth keeping lives in the stores instead.
         let inflight = TestInflight::default();
         let calls = Arc::new(AtomicUsize::new(0));
-        let first = inflight.get(1, counting(&calls, 7)).await;
-        let second = inflight.get(1, counting(&calls, 7)).await;
+        let first = inflight.get(1, None, counting(&calls, 7)).await;
+        let second = inflight.get(1, None, counting(&calls, 7)).await;
         assert_eq!(
             (
                 first.unwrap(),
@@ -203,10 +208,10 @@ mod tests {
         let inflight = TestInflight::default();
         let calls = Arc::new(AtomicUsize::new(0));
         let (a, b) = tokio::join!(
-            inflight.get(1, failing(&calls)),
-            inflight.get(1, failing(&calls)),
+            inflight.get(1, None, failing(&calls)),
+            inflight.get(1, None, failing(&calls)),
         );
-        let retried = inflight.get(1, counting(&calls, 7)).await;
+        let retried = inflight.get(1, None, counting(&calls, 7)).await;
         assert_eq!(
             (
                 a.unwrap_err().as_str(),
@@ -229,11 +234,11 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let cancelled = tokio::time::timeout(
             Duration::from_millis(1),
-            inflight.get(1, counting(&calls, 7)),
+            inflight.get(1, None, counting(&calls, 7)),
         )
         .await;
 
-        let fresh = inflight.get(1, counting(&calls, 99)).await;
+        let fresh = inflight.get(1, None, counting(&calls, 99)).await;
         assert_eq!(
             (
                 cancelled.is_err(),
@@ -255,12 +260,12 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let cancelled = tokio::time::timeout(
             Duration::from_millis(1),
-            inflight.get(1, counting(&calls, 7)),
+            inflight.get(1, None, counting(&calls, 7)),
         );
-        let staying = inflight.get(1, counting(&calls, 7));
+        let staying = inflight.get(1, None, counting(&calls, 7));
         let joining = async {
             tokio::time::sleep(Duration::from_millis(5)).await;
-            inflight.get(1, counting(&calls, 7)).await
+            inflight.get(1, None, counting(&calls, 7)).await
         };
         let (cancelled, staying, joining) = tokio::join!(cancelled, staying, joining);
         assert_eq!(
@@ -275,16 +280,40 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn a_narrower_request_joins_a_wider_one_in_flight_but_never_the_reverse() {
+        // A block read in full answers a read of its header, not the other
+        // way round.
+        let inflight = TestInflight::default();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let wide = inflight.get(2, None, counting(&calls, 7));
+        let narrow = async {
+            tokio::task::yield_now().await;
+            inflight.get(1, Some(2), counting(&calls, 8)).await
+        };
+        let (wide, narrow) = tokio::join!(wide, narrow);
+        let alone = inflight.get(1, Some(2), counting(&calls, 8)).await;
+        assert_eq!(
+            (
+                wide.unwrap(),
+                narrow.unwrap(),
+                alone.unwrap(),
+                calls.load(Ordering::SeqCst)
+            ),
+            (7, 7, 8, 2)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn clear_stops_later_requests_joining_an_in_flight_fetch() {
         // After a reorg an in-flight response may describe an orphaned fork, so
         // a request made afterwards must start its own fetch.
         let inflight = TestInflight::default();
         let calls = Arc::new(AtomicUsize::new(0));
-        let joined = inflight.get(1, counting(&calls, 7));
+        let joined = inflight.get(1, None, counting(&calls, 7));
         let cleared = async {
             tokio::task::yield_now().await;
             inflight.clear();
-            inflight.get(1, counting(&calls, 7)).await
+            inflight.get(1, None, counting(&calls, 7)).await
         };
         let (a, b) = tokio::join!(joined, cleared);
         assert_eq!(
