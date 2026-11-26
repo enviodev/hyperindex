@@ -49,6 +49,8 @@ mod svm_hypersync_source;
 mod template_dirs;
 #[cfg(test)]
 mod test_servers;
+#[cfg(test)]
+mod test_tls;
 mod text_position;
 mod ts_loader;
 mod tui;

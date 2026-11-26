@@ -105,14 +105,24 @@ impl HttpClient {
 }
 
 fn build_http_client(user_agent: &str) -> Result<reqwest::Client> {
+    http_client_builder(user_agent)
+        .build()
+        .context("build http client")
+}
+
+fn http_client_builder(user_agent: &str) -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .user_agent(user_agent)
         // Without it a dead address holds the connection in SYN_SENT until the
         // request timeout. Hyper splits it across the resolved addresses and
         // moves on to the next.
         .connect_timeout(CONNECT_TIMEOUT)
-        .build()
-        .context("build http client")
+        // Over HTTP/2 every query in flight shares one connection, and its
+        // throughput caps the source: on the open indexer benchmark it halved
+        // Solana's events/s against HTTP/1.1, whose pool gives each query a
+        // connection of its own, and bought EVM nothing. A larger flow control
+        // window did not recover it.
+        .http1_only()
 }
 
 /// What a query's response status means.
@@ -569,6 +579,52 @@ mod tests {
         };
         let body: Result<String> = body.await;
         assert_eq!(body.unwrap(), r#"{"height":7}"#);
+    }
+
+    /// Offered both, as HyperSync's servers are, the client picks HTTP/1.1: a
+    /// connection per query in flight rather than every query multiplexed
+    /// onto one.
+    #[tokio::test]
+    async fn a_server_offering_http2_is_spoken_to_over_http1() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (ca_pem, mut config) = crate::test_tls::localhost_server_config();
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let negotiated = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stream = acceptor.accept(socket).await.unwrap();
+            let protocol = stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec);
+            if protocol.as_deref() == Some(b"http/1.1") {
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    request.push(stream.read_u8().await.unwrap());
+                }
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+            protocol
+        });
+
+        let client = http_client_builder("test")
+            .add_root_certificate(reqwest::Certificate::from_pem(ca_pem.as_bytes()).unwrap())
+            .build()
+            .unwrap();
+        let version = client
+            .get(format!("https://localhost:{port}/height"))
+            .send()
+            .await
+            .map(|response| response.version())
+            .ok();
+
+        assert_eq!(
+            (negotiated.await.unwrap(), version),
+            (Some(b"http/1.1".to_vec()), Some(reqwest::Version::HTTP_11))
+        );
     }
 
     // https://github.com/enviodev/hyperindex/issues/1691
