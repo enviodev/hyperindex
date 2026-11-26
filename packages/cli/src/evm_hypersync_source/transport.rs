@@ -10,11 +10,10 @@ use capnp::serialize::OwnedSegments;
 use hypersync_client::RateLimitInfo;
 use hypersync_net_types::hypersync_net_types_capnp::{cached_query_response, query_response};
 use hypersync_net_types::{ArchiveHeight, Query, RollbackGuard};
-use reqwest::{Method, StatusCode};
+use reqwest::Method;
 
 use crate::hypersync_http::{
-    file_span, rate_limit_info, read_files_in_message, read_packed_message, reply_of, HttpClient,
-    Reply,
+    file_span, read_files_in_message, read_packed_message, reply_of, HttpClient, Reply,
 };
 
 #[derive(Clone, Copy)]
@@ -47,6 +46,7 @@ enum Attempt {
     Response(Response),
     RateLimited(RateLimitInfo),
     PayloadTooLarge,
+    NotCached,
 }
 
 impl Transport {
@@ -88,6 +88,7 @@ impl Transport {
             match attempt {
                 Attempt::Response(response) => return Ok(QueryOutcome::Response(response)),
                 Attempt::RateLimited(info) => return Ok(QueryOutcome::RateLimited(info)),
+                Attempt::NotCached => bail!("a full query can't be answered as not cached"),
                 Attempt::PayloadTooLarge => {
                     let block_range = match query.to_block {
                         Some(to_block) => {
@@ -116,14 +117,7 @@ impl Transport {
             .send()
             .await
             .context("execute http req")?;
-        match reply_of(response).await? {
-            Reply::Success(response) => {
-                let message = read_packed_message(response, reader_options()).await?;
-                Ok(Attempt::Response(decode_query_response(message, false)?))
-            }
-            Reply::RateLimited(info) => Ok(Attempt::RateLimited(info)),
-            Reply::PayloadTooLarge => Ok(Attempt::PayloadTooLarge),
-        }
+        attempt_of(reply_of(response).await?, Root::Plain).await
     }
 
     async fn query_capnp(&self, query: &Query, should_cache: bool) -> Result<Attempt> {
@@ -137,23 +131,14 @@ impl Transport {
                 .send()
                 .await
                 .context("execute http req")?;
-            let status = response.status();
-            match status {
-                StatusCode::PAYLOAD_TOO_LARGE => return Ok(Attempt::PayloadTooLarge),
-                StatusCode::TOO_MANY_REQUESTS => {
-                    return Ok(Attempt::RateLimited(rate_limit_info(&response)))
-                }
-                status if status.is_success() => {
-                    let message = read_packed_message(response, reader_options()).await?;
-                    if let Some(response) = decode_cached_query_response(message)? {
-                        return Ok(Attempt::Response(response));
-                    }
-                }
-                status => {
-                    let text = response.text().await.context("read text to see error")?;
-                    log::warn!(
-                        "Failed cache query, will retry full query. {status}, err body: {text}"
-                    );
+            match reply_of(response).await {
+                Ok(reply) => match attempt_of(reply, Root::Cached).await? {
+                    // The server doesn't hold the query under its id yet.
+                    Attempt::NotCached => {}
+                    attempt => return Ok(attempt),
+                },
+                Err(error) => {
+                    log::warn!("Failed cache query, will retry full query. {error:#}")
                 }
             }
         }
@@ -167,15 +152,30 @@ impl Transport {
             .send()
             .await
             .context("execute http req")?;
-        match reply_of(response).await? {
-            Reply::Success(response) => {
-                let message = read_packed_message(response, reader_options()).await?;
-                Ok(Attempt::Response(decode_query_response(message, false)?))
-            }
-            Reply::RateLimited(info) => Ok(Attempt::RateLimited(info)),
-            Reply::PayloadTooLarge => Ok(Attempt::PayloadTooLarge),
-        }
+        attempt_of(reply_of(response).await?, Root::Plain).await
     }
+}
+
+/// Which message a response body carries: a query response, or the answer
+/// to a query sent by its cached id.
+#[derive(Clone, Copy)]
+enum Root {
+    Plain,
+    Cached,
+}
+
+async fn attempt_of(reply: Reply, root: Root) -> Result<Attempt> {
+    Ok(match reply {
+        Reply::Success(response) => {
+            let message = read_packed_message(response, reader_options()).await?;
+            match decode_query_response(message, root)? {
+                Some(response) => Attempt::Response(response),
+                None => Attempt::NotCached,
+            }
+        }
+        Reply::RateLimited(info) => Attempt::RateLimited(info),
+        Reply::PayloadTooLarge => Attempt::PayloadTooLarge,
+    })
 }
 
 fn write_request(
@@ -200,30 +200,18 @@ fn reader_options() -> capnp::message::ReaderOptions {
     options
 }
 
-fn decode_cached_query_response(
-    message: capnp::message::Reader<OwnedSegments>,
-) -> Result<Option<Response>> {
-    let root = message
-        .get_root::<cached_query_response::Reader>()
-        .context("get cached_query_response root")?;
-    match root.get_either().which().context("get either")? {
-        cached_query_response::either::Which::QueryResponse(_) => {
-            decode_query_response(message, true).map(Some)
-        }
-        cached_query_response::either::Which::NotCached(()) => {
-            log::trace!("query was not cached, retrying with full query");
-            Ok(None)
-        }
-    }
-}
-
+/// The response `message` carries; `None` when it answers a cached id the
+/// server doesn't hold.
 fn decode_query_response(
     message: capnp::message::Reader<OwnedSegments>,
-    cached: bool,
-) -> Result<Response> {
+    root: Root,
+) -> Result<Option<Response>> {
     let (archive_height, next_block, rollback_guard, [blocks, transactions, logs]) = {
-        let response = if cached {
-            match message
+        let response = match root {
+            Root::Plain => message
+                .get_root::<query_response::Reader>()
+                .context("get root")?,
+            Root::Cached => match message
                 .get_root::<cached_query_response::Reader>()
                 .context("get cached_query_response root")?
                 .get_either()
@@ -233,14 +221,8 @@ fn decode_query_response(
                 cached_query_response::either::Which::QueryResponse(response) => {
                     response.context("get query response")?
                 }
-                cached_query_response::either::Which::NotCached(()) => {
-                    bail!("expected a cached query response")
-                }
-            }
-        } else {
-            message
-                .get_root::<query_response::Reader>()
-                .context("get root")?
+                cached_query_response::either::Which::NotCached(()) => return Ok(None),
+            },
         };
         let archive_height = match response.get_archive_height() {
             -1 => None,
@@ -267,14 +249,14 @@ fn decode_query_response(
         message.into_segments(),
         [(blocks, "block"), (transactions, "tx"), (logs, "log")],
     )?;
-    Ok(Response {
+    Ok(Some(Response {
         archive_height,
         next_block,
         rollback_guard,
         blocks,
         transactions,
         logs,
-    })
+    }))
 }
 
 fn read_rollback_guard(response: &query_response::Reader) -> Result<Option<RollbackGuard>> {

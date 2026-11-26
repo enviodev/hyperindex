@@ -537,6 +537,21 @@ fn a_dropped_log_costs_no_allocations() {
     );
 }
 
+// https://github.com/enviodev/hyperindex/issues/1865
+#[test]
+fn pages_in_flight_start_no_threads() {
+    const SCENARIO: Scenario = Scenario {
+        name: "1% kept",
+        logs: 2_000,
+        blocks: 100,
+        kept_one_in: 100,
+        client_filtered: true,
+    };
+    let (indexer, _) = make_indexer(&SCENARIO);
+    let measurement = measure(&Arc::new(indexer), &SCENARIO, Stage::GetItems, 16);
+    assert_eq!(measurement.threads_started, 0);
+}
+
 #[test]
 #[ignore = "benchmark: run on its own, in release, with --nocapture"]
 fn decode_benchmark() {

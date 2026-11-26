@@ -5,7 +5,6 @@
 //! Nothing here retries or sleeps: a failure goes straight back to the caller,
 //! which owns backoff.
 
-use std::io::{BufRead, Read};
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -23,9 +22,6 @@ use reqwest::{Method, StatusCode, Url};
 const MAX_CONNECTION_AGE: Duration = Duration::from_secs(60);
 
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// How many downloaded chunks may wait for the unpacker.
-const CHUNKS_IN_FLIGHT: usize = 4;
 
 pub(crate) struct HttpClient {
     url: Url,
@@ -141,67 +137,15 @@ pub(crate) fn rate_limit_info(response: &reqwest::Response) -> RateLimitInfo {
     }
 }
 
-/// A blocking reader over a body's chunks as they arrive, each dropped once
-/// read.
-struct ChunkReader {
-    current: bytes::Bytes,
-    chunks: tokio::sync::mpsc::Receiver<bytes::Bytes>,
-}
-
-impl Read for ChunkReader {
-    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-        let available = self.fill_buf()?;
-        let length = available.len().min(out.len());
-        out[..length].copy_from_slice(&available[..length]);
-        self.consume(length);
-        Ok(length)
-    }
-}
-
-impl BufRead for ChunkReader {
-    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
-        while self.current.is_empty() {
-            match self.chunks.blocking_recv() {
-                Some(chunk) => self.current = chunk,
-                None => break,
-            }
-        }
-        Ok(&self.current)
-    }
-
-    fn consume(&mut self, length: usize) {
-        bytes::Buf::advance(&mut self.current, length);
-    }
-}
-
-/// Unpacks a packed Cap'n Proto body while it downloads, so the packed body
-/// is never held whole: only the unpacked message, in one allocation.
+/// A packed Cap'n Proto body, downloaded whole and unpacked in place: no
+/// thread waits on the network for it. The unpacked message is one
+/// allocation the tables are then read from.
 pub(crate) async fn read_packed_message(
-    mut response: reqwest::Response,
+    response: reqwest::Response,
     options: capnp::message::ReaderOptions,
 ) -> Result<capnp::message::Reader<OwnedSegments>> {
-    let (sender, chunks) = tokio::sync::mpsc::channel(CHUNKS_IN_FLIGHT);
-    let unpack = tokio::task::spawn_blocking(move || {
-        let reader = ChunkReader {
-            current: bytes::Bytes::new(),
-            chunks,
-        };
-        capnp::serialize_packed::read_message(reader, options)
-    });
-    let download = async {
-        while let Some(chunk) = response.chunk().await.context("read response body bytes")? {
-            // The unpacker stopped early: its own error says why.
-            if sender.send(chunk).await.is_err() {
-                break;
-            }
-        }
-        anyhow::Ok(())
-    }
-    .await;
-    drop(sender);
-    let message = unpack.await.context("unpack response")?;
-    download?;
-    message.context("create message reader")
+    let body = read_body(response).await?;
+    capnp::serialize_packed::read_message(body.as_slice(), options).context("create message reader")
 }
 
 /// The whole body in one buffer, sized up front when the server says how
@@ -532,6 +476,28 @@ mod tests {
             read_ipc_file(&Buffer::from_vec(ipc_file(&batch))).unwrap(),
             vec![batch]
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_url_ending_in_a_slash_reaches_the_same_path() {
+        let server = crate::mock_hypersync_server::MockHyperSyncServer::new(Some(7), None).unwrap();
+        let client = HttpClient::new(
+            &format!("{}/", server.url()),
+            None,
+            "test".to_string(),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let body = async {
+            client
+                .get(&["height"])
+                .await?
+                .text()
+                .await
+                .map_err(Into::into)
+        };
+        let body: Result<String> = body.await;
+        assert_eq!(body.unwrap(), r#"{"height":7}"#);
     }
 
     // https://github.com/enviodev/hyperindex/issues/1691

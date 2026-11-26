@@ -66,6 +66,7 @@ let make = ({chainId, endpointUrl, apiToken, chainBuffer, logger}: options): t =
         ),
       )
     | exn =>
+      HyperSync.reraiseIfRecoverable(exn)
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({

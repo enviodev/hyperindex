@@ -614,8 +614,8 @@ mod tests {
         SvmHyperSyncClient::from_config(
             SvmClientConfig {
                 url,
+                api_token: std::env::var("ENVIO_API_TOKEN").ok(),
                 http_req_timeout_millis: Some(60_000),
-                ..Default::default()
             },
             "test".into(),
             &ChainBuffer::make(
@@ -662,30 +662,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_query_token_metadata() {
-        let client = SvmHyperSyncClient::from_config(
-            SvmClientConfig {
-                url: "https://solana.hypersync.xyz".into(),
-                api_token: std::env::var("ENVIO_API_TOKEN").ok(),
-                ..Default::default()
-            },
-            "hyperindex-test".into(),
-            &ChainBuffer::make(
-                crate::chain_buffer::ChainBufferConfig {
-                    registrations: crate::chain_buffer::RegistrationsInput::Svm {
-                        programs: vec![],
-                    },
-                    should_checksum: false,
-                    contract_register_indexes: vec![],
-                    block_handlers: vec![],
-                    transaction_masks: vec![],
-                    event_block_masks: vec![],
-                    transaction_registrations: vec![],
-                },
-                &svm_store(&[]),
-            )
-            .expect("build buffer"),
-        )
-        .expect("build client");
+        let client = client_at("https://solana.hypersync.xyz".to_string());
 
         let height = client.get_height().await.expect("get_height");
         eprintln!("current slot: {}", height);
