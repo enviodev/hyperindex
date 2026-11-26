@@ -1,0 +1,252 @@
+open Vitest
+
+let testApiToken =
+  Env.envioApiToken->Option.getOrThrow(
+    ~message="ENVIO_API_TOKEN env var must be set to run SourceBlockHashes integration tests",
+  )
+
+// Uniswap V2 Factory's PairCreated event (topic0 = keccak("PairCreated(address,address,address,uint256)"))
+// 2 indexed args (token0, token1) ⇒ topicCount = 3.
+let pairCreatedTopic0 = "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9"
+
+// Lowercase address so routing lookups match regardless of whether the
+// source returns checksummed or lowercase addresses.
+let uniswapV2FactoryAddress = "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f"->Address.unsafeFromString
+
+// Build the event config by hand so topic0 stays the bare sighash. The shared
+// `EventRegistration` helper defaults topic0 to a placeholder that isn't a real
+// sighash, which is fine against mocked sources but breaks real HyperSync queries.
+// Block number and hash are needed so HyperSync returns block data for each item;
+// otherwise blockHashes harvested from items would crash on undefined `block`.
+let pairCreatedSelectedBlockFields = Utils.Set.fromArray(
+  ([Number, Hash]: array<Internal.evmBlockField>),
+)
+
+// Match the on-chain ABI so the hypersync-client decoder doesn't raise
+// UndefinedValue for valid logs. Non-wildcard event configs treat decode
+// failures as fatal.
+let pairCreatedAbi: array<Internal.paramMeta> = [
+  {name: "token0", abiType: "address", indexed: true},
+  {name: "token1", abiType: "address", indexed: true},
+  {name: "pair", abiType: "address", indexed: false},
+  {name: "allPairs", abiType: "uint256", indexed: false},
+]
+
+let pairCreatedEventConfig: Internal.evmEventConfig = {
+  contractName: "UniswapV2Factory",
+  name: "PairCreated",
+  paramsRawEventSchema: S.literal(%raw(`null`))
+  ->S.shape(_ => ())
+  ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+  simulateParamsSchema: S.unknown
+  ->S.shape(_ => ())
+  ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+  fieldSelection: Internal.makeFieldSelection(
+    ~blockFields=pairCreatedSelectedBlockFields->(
+      Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
+    ),
+    ~transactionFields=Utils.Set.make(),
+    ~blockMaskFn=Evm.eventBlockFieldMask,
+    ~transactionMaskFn=Evm.eventTransactionFieldMask,
+  ),
+  sighash: Some(pairCreatedTopic0),
+  topicCount: 3,
+  paramsMetadata: pairCreatedAbi,
+}
+
+let pairCreatedRegistration: Internal.evmOnEventRegistration = {
+  index: 0,
+  eventConfig: (pairCreatedEventConfig :> Internal.eventConfig),
+  isWildcard: false,
+  filterByAddresses: false,
+  dependsOnAddresses: true,
+  startBlock: None,
+  contractRegister: None,
+  fieldSelection: pairCreatedEventConfig.fieldSelection,
+  resolvedWhere: {
+    topicFilters: [
+      {
+        topic0: Values([pairCreatedTopic0->EvmTypes.Hex.fromStringUnsafe]),
+        topic1: Any,
+        topic2: Any,
+        topic3: Any,
+      },
+    ],
+    startBlock: None,
+  },
+}
+
+// The chain's address index, holding the one factory address these queries
+// fetch for.
+let addressStore = TestAddresses.makeStore(
+  ~onEventRegistrations=[(pairCreatedRegistration :> Internal.onEventRegistration)],
+  ~addresses=[
+    {address: uniswapV2FactoryAddress, contractName: "UniswapV2Factory", registrationBlock: -1},
+  ],
+)
+let factorySet = addressStore->AddressStore.makeSet(~contractName="UniswapV2Factory")
+
+let makeSelection = (): FetchState.selection => {
+  onEventRegistrations: [(pairCreatedRegistration :> Internal.onEventRegistration)],
+  onBlockRegistrations: [],
+  onTransactionRegistrations: [],
+  dependsOnAddresses: true,
+}
+
+let makeHyperSyncSource = () =>
+  TestSources.hyperSync(
+    ~url="https://eth.hypersync.xyz",
+    ~apiToken=Some(testApiToken),
+    ~chainBuffer=TestChainBuffer.forChain(
+      ~onEventRegistrations=[pairCreatedRegistration],
+      ~addressStore,
+    ),
+  )
+
+let makeRpcSource = () =>
+  TestSources.rpc(
+    ~url=`https://eth.rpc.hypersync.xyz/${testApiToken}`,
+    ~maxAddressesPerRequest=Env.maxAddrInPartition,
+    ~chainBuffer=TestChainBuffer.forChain(
+      ~onEventRegistrations=[pairCreatedRegistration],
+      ~addressStore,
+    ),
+  )
+
+let invoke = async (source: Source.t, ~fromBlock, ~toBlock) =>
+  switch (
+    await source.getItems(
+      ~reorgableFrom=None,
+      ~fromBlock,
+      ~toBlock=Some(toBlock),
+      ~addressSet=factorySet,
+      ~knownHeight=toBlock + 1000,
+      ~partitionId="0",
+      ~selection=makeSelection(),
+      ~retry=0,
+    )
+  ).result {
+  | Ok(itemsPage) => itemsPage
+  | Error(Backoff({message, cause})) =>
+    JsError.throwWithMessage(`getItems failed: ${message} (${cause})`)
+  | Error(failure) => JsError.throwWithMessage(`getItems failed: ${failure->Source.failureMessage}`)
+  }
+
+// The response's rows and hashed blocks, read back from a buffer its page
+// merged into.
+type responseBlocks = {
+  rows: int,
+  blockNumbers: array<int>,
+  hashOf: int => Null.t<string>,
+}
+
+let readResponse = (response: Source.itemsPage) => {
+  let buffer = TestChainBuffer.decodedBuffer(~onEventRegistrations=[])
+  let {rowsKept} = buffer->ChainBuffer.mergePage(response.page, ~reorgThreshold=0, ~reportOnly=true)
+  {
+    rows: rowsKept,
+    blockNumbers: (
+      buffer->ChainBuffer.getBlockHashes(~fromBlock=0, ~belowBlock=2147483647)
+    ).blockNumbers,
+    hashOf: blockNumber => buffer->TestChainBuffer.blockHashAt(blockNumber),
+  }
+}
+
+describe("Source.blockHashes integration - empty range", () => {
+  // Uniswap V2 Factory was deployed at block 10000835. Anything well below that
+  // is guaranteed to have zero matching PairCreated logs.
+  let fromBlock = 100
+  let toBlock = 110
+
+  Async.itWithOptions(
+    "HyperSync: empty parsedQueueItems and empty block page for confirmed empty range",
+    {retry: 3},
+    async t => {
+      let source = makeHyperSyncSource()
+      let response = (await source->invoke(~fromBlock, ~toBlock))->readResponse
+
+      t.expect({
+        "parsedQueueItems": response.rows,
+        "blockNumbers": response.blockNumbers,
+      }).toEqual({
+        "parsedQueueItems": 0,
+        // No items, no rollbackGuard at historical depth → nothing to harvest.
+        "blockNumbers": [],
+      })
+    },
+  )
+
+  Async.itWithOptions(
+    "RpcSource: empty parsedQueueItems and empty block page for confirmed empty range",
+    {retry: 3},
+    async t => {
+      let source = makeRpcSource()
+      let response = (await source->invoke(~fromBlock, ~toBlock))->readResponse
+
+      t.expect({
+        "parsedQueueItems": response.rows,
+        "blockNumbers": response.blockNumbers,
+      }).toEqual({
+        "parsedQueueItems": 0,
+        // https://github.com/enviodev/hyperindex/issues/1782
+        // Far below the checked head blocks, no block is read for the range's
+        // boundaries.
+        "blockNumbers": [],
+      })
+    },
+  )
+})
+
+describe("Source.blockHashes integration - single-log range", () => {
+  // Ethereum mainnet block 17915919 contains exactly one PairCreated event from
+  // the Uniswap V2 Factory. Confirmed by hand against eth.rpc.hypersync.xyz.
+  let fromBlock = 17915919
+  let toBlock = 17915919
+  let expectedBlockHash = "0xfae821f07390dab171f9487d9c25e7289c5d363fcc24f03b98de295aa621dca5"
+  let expectedParentHash = "0x12a7ac0591fa50c8ee7e77cd38cac302286bdc57392a63ebb01b2859478f5752"
+
+  Async.itWithOptions(
+    "HyperSync: returns exactly one parsed item and a block-page entry for the matching block",
+    {retry: 3},
+    async t => {
+      let source = makeHyperSyncSource()
+      let response = await source->invoke(~fromBlock, ~toBlock)
+      let read = response->readResponse
+
+      t.expect({
+        "parsedQueueItems": read.rows,
+        "blockNumbers": read.blockNumbers,
+        "blockHash": read.hashOf(fromBlock),
+        "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
+      }).toEqual({
+        "parsedQueueItems": 1,
+        "blockNumbers": [fromBlock],
+        "blockHash": Null.Value(expectedBlockHash),
+        "latestFetchedBlockNumber": toBlock,
+      })
+    },
+  )
+
+  Async.itWithOptions(
+    "RpcSource: returns exactly one parsed item; the block page carries toBlock + parent + the log's block",
+    {retry: 3},
+    async t => {
+      let source = makeRpcSource()
+      let response = await source->invoke(~fromBlock, ~toBlock)
+      let read = response->readResponse
+
+      t.expect(read.rows).toBe(1)
+      t.expect(response.latestFetchedBlockNumber).toBe(toBlock)
+
+      // toBlock entry comes from eth_getBlockByNumber; the log's block hash also
+      // ends up in the page (and equals toBlock here since the range is one block).
+      t.expect({
+        "toBlockHash": read.hashOf(toBlock),
+        "parentHash": read.hashOf(toBlock - 1),
+      }).toEqual({
+        "toBlockHash": Null.Value(expectedBlockHash),
+        "parentHash": Null.Value(expectedParentHash),
+      })
+    },
+  )
+})

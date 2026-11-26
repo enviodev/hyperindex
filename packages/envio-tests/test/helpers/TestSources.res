@@ -14,6 +14,7 @@ let hyperSync = (
   ~url,
   ~chainBuffer,
   ~ecosystem=Ecosystem.Evm,
+  ~apiToken=Some(MockHyperSyncServer.apiToken),
   ~logger=Logger.makeInMemory(),
 ): Source.t =>
   make(
@@ -22,7 +23,7 @@ let hyperSync = (
       ecosystem,
       hyperSync: {
         url,
-        apiToken: Some(MockHyperSyncServer.apiToken),
+        apiToken,
         httpReqTimeoutMillis: 10_000,
         serializationFormat: Json,
         enableQueryCaching: false,
