@@ -43,16 +43,18 @@ let detect = (~internalWorker: option<string>, ~hasChannel) =>
   | _ => None
   }
 
-%%private(
-  let detected = Lazy.make(() =>
+// None in any process `identify` hasn't run in, such as a test's.
+%%private(let detected: ref<option<config>> = ref(None))
+
+// Called where the process starts, with the environment it read there.
+let identify = (env: IndexerEnv.t) =>
+  detected :=
     detect(
-      ~internalWorker=IndexerEnv.read().internalWorker,
+      ~internalWorker=env.internalWorker,
       ~hasChannel=NodeJs.Process.channel->Nullable.toOption->Option.isSome,
     )
-  )
-)
 
-let config = () => detected->Lazy.get
+let config = () => detected.contents
 
 let isEnabled = () => config()->Option.isSome
 

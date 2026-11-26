@@ -2697,14 +2697,7 @@ impl FieldSelection {
         let transaction_fields = TransactionField::iter()
             .map(|field| SelectedField {
                 name: field.to_string(),
-                data_type: match field {
-                    // The ReScript response types these name have no
-                    // TypeScript counterpart.
-                    TransactionField::AccessList | TransactionField::AuthorizationList => {
-                        TypeIdent::option(TypeIdent::array(TypeIdent::Unknown))
-                    }
-                    _ => Self::evm_transaction_field_type(&field),
-                },
+                data_type: Self::evm_transaction_field_type(&field),
             })
             .collect();
 
@@ -2778,14 +2771,7 @@ impl FieldSelection {
             Tx::L1GasUsed => Res::option(Res::BigInt),
             Tx::L1FeeScalar => Res::option(Res::Float),
             Tx::GasUsedForL1 => Res::option(Res::BigInt),
-            Tx::AccessList => Res::option(Res::Array(Box::new(Res::TypeApplication {
-                name: "HyperSyncClient.ResponseTypes.accessList".to_string(),
-                type_params: vec![],
-            }))),
-            Tx::AuthorizationList => Res::option(Res::Array(Box::new(Res::TypeApplication {
-                name: "HyperSyncClient.ResponseTypes.authorizationList".to_string(),
-                type_params: vec![],
-            }))),
+            Tx::AccessList | Tx::AuthorizationList => Res::option(Res::array(Res::Unknown)),
         }
     }
 

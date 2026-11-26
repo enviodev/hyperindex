@@ -42,7 +42,7 @@ let applyEnv = (env: dict<JSON.t>) =>
     }
   })
 
-let runWith = async (args, ~logger) => {
+let runWith = async (args, ~env, ~logger) => {
   // Crash on unhandled promise rejections with a readable error.
   // ReScript exceptions compile to plain objects, not Error instances, so Node.js prints "#<Object>".
   NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
@@ -50,6 +50,7 @@ let runWith = async (args, ~logger) => {
     NodeJs.process->NodeJs.exitWithCode(Failure)
   })
   try {
+    Worker.identify(env)
     if Worker.isEnabled() {
       Worker.bindToSupervisor(~logger)
       // Its working directory, its environment and the chains it drives all came
@@ -100,9 +101,10 @@ let run = args =>
     Console.error(error->JsExn.message->Option.getOr("Invalid environment"))
     NodeJs.process->NodeJs.exitWithCode(Failure)
     Promise.resolve()
-  | {logger: {strategy, file, ?level, fileLevel}} =>
+  | {logger: {strategy, file, ?level, fileLevel}} as env =>
     runWith(
       args,
+      ~env,
       ~logger=Logger.make({
         strategy,
         logFile: file,
