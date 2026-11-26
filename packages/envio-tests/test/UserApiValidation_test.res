@@ -84,7 +84,7 @@ chains:
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(chain.sourceConfig).toEqual(
       Config.EvmSourceConfig({
-        hypersync: Some(Config.hyperSync("https://1.hypersync.xyz")),
+        hypersync: Some(Config.hyperSync("https://1.hypersync.xyz", ~env=config.env)),
         rpcs: [],
       }),
     )
@@ -108,7 +108,7 @@ chains:
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(chain.sourceConfig).toEqual(
       Config.EvmSourceConfig({
-        hypersync: Some(Config.hyperSync("https://1.hypersync.xyz")),
+        hypersync: Some(Config.hyperSync("https://1.hypersync.xyz", ~env=config.env)),
         rpcs: [
           {
             url: "https://rpc.example.test",

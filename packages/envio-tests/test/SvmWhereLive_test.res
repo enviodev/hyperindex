@@ -11,7 +11,7 @@
 // The source reads the token from the environment itself; required here so a
 // missing one fails loudly instead of silently querying unauthenticated.
 let _apiToken =
-  Env.envioApiToken->Option.getOrThrow(
+  IndexerEnv.read().envioApiToken->Option.getOrThrow(
     ~message="ENVIO_API_TOKEN env var must be set to run the live SVM where test",
   )
 

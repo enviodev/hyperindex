@@ -18,7 +18,7 @@ let makeSource = (
       ~evmRegistrations=eventRegistrations->Option.getOr([]),
       ~addressStore=addressStore->Option.getOr(TestAddresses.makeStore()),
     ),
-    ~maxAddressesPerRequest=Env.maxAddrInPartition,
+    ~maxAddressesPerRequest=IndexerEnv.read().maxPartitionSize,
   )
 
 let heightCall = (~reply, ~headers=?) =>

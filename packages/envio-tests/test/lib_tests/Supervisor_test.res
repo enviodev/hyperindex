@@ -64,7 +64,7 @@ describe("Supervisor.plan on the default budget", () => {
   // Splitting a run costs connections the operator didn't ask to spend, so the
   // budget they didn't set is the one a single process has always used.
   it("Keeps a run in one process until the budget is raised", t => {
-    t.expect(Supervisor.plan(~chainIds=chains(4), ~maxConnections=Env.Db.maxConnections)).toBe(None)
+    t.expect(Supervisor.plan(~chainIds=chains(4), ~maxConnections=IndexerEnv.read().db.maxConnections)).toBe(None)
   })
 })
 
@@ -259,15 +259,13 @@ describe("Supervisor worker plumbing", () => {
 
 describe("Worker.detect", () => {
   it("Counts as a worker only when forked with the variable and a channel", t => {
-    let forked = Dict.fromArray([
-      (Worker.envVar, `{"chainIds":[137],"holdRealtime":true,"isDev":true}`),
-    ])
+    let forked = Some(`{"chainIds":[137],"holdRealtime":true,"isDev":true}`)
     t.expect([
-      Worker.detect(~env=forked, ~hasChannel=true),
+      Worker.detect(~internalWorker=forked, ~hasChannel=true),
       // A copy of the variable left in a shell, or a process manager forking
       // with a channel.
-      Worker.detect(~env=forked, ~hasChannel=false),
-      Worker.detect(~env=Dict.make(), ~hasChannel=true),
+      Worker.detect(~internalWorker=forked, ~hasChannel=false),
+      Worker.detect(~internalWorker=None, ~hasChannel=true),
     ]).toStrictEqual([
       Some({Worker.chainIds: [137->ChainId.fromInt], holdRealtime: true, isDev: true}),
       None,
@@ -279,7 +277,7 @@ describe("Worker.detect", () => {
   // schema error came from.
   it("Names the variable when its value isn't a worker config", t => {
     t->Vitest.toThrowErrorEqual(
-      () => Worker.detect(~env=Dict.fromArray([(Worker.envVar, "137")]), ~hasChannel=true),
+      () => Worker.detect(~internalWorker=Some("137"), ~hasChannel=true),
       `Invalid ENVIO_INTERNAL_WORKER: Failed parsing at root. Reason: Expected { chainIds: array<number>; holdRealtime: boolean | undefined; isDev: boolean; }, received 137. It is set by an indexer supervisor for the processes it forks, and isn't meant to be set by hand.`,
     )
   })
@@ -289,7 +287,7 @@ describe("Worker.detect", () => {
   it("Takes a config without the hold as one that doesn't wait", t => {
     t.expect(
       Worker.detect(
-        ~env=Dict.fromArray([(Worker.envVar, `{"chainIds":[1],"isDev":false}`)]),
+        ~internalWorker=Some(`{"chainIds":[1],"isDev":false}`),
         ~hasChannel=true,
       ),
     ).toStrictEqual(

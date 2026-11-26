@@ -84,6 +84,7 @@ let startServer = (
   ~onSyncCache: unit => promise<unit>,
   ~collectRuntime: unit => string,
   ~isDevelopmentMode: bool,
+  ~env: IndexerEnv.t,
 ) => {
   open Express
 
@@ -91,7 +92,7 @@ let startServer = (
 
   let consoleCorsMiddleware = (req, res, next) => {
     switch req.headers->Dict.get("origin") {
-    | Some(origin) if origin === Env.prodEnvioAppUrl || origin === Env.envioAppUrl =>
+    | Some(origin) if origin === IndexerEnv.prodEnvioAppUrl || origin === env.envioAppUrl =>
       res->setHeader("Access-Control-Allow-Origin", origin)
     | _ => ()
     }
@@ -163,13 +164,13 @@ let startServer = (
     let _ = res->endWithData(collectRuntime())
   })
 
-  let server = app->listen(Env.serverPort)
+  let server = app->listen(env.serverPort)
   server->Express.onError(err => {
     let code = (err->(Utils.magic: JsExn.t => {..}))["code"]
     if code === "EADDRINUSE" {
       logger->Logger.error(
-        `Port ${Env.serverPort->Int.toString} is already in use. To fix this either:` ++
-        `\n  1. Kill the process using the port: lsof -ti :${Env.serverPort->Int.toString} | xargs kill -9` ++ `\n  2. Use a different port by setting the ENVIO_INDEXER_PORT environment variable: ENVIO_INDEXER_PORT=9899 envio start`,
+        `Port ${env.serverPort->Int.toString} is already in use. To fix this either:` ++
+        `\n  1. Kill the process using the port: lsof -ti :${env.serverPort->Int.toString} | xargs kill -9` ++ `\n  2. Use a different port by setting the ENVIO_INDEXER_PORT environment variable: ENVIO_INDEXER_PORT=9899 envio start`,
       )
     } else {
       logger->Logger.errorWithExn("Failed to start indexer server", err)

@@ -683,14 +683,15 @@ let getRegistrations = (~config, ~logger) =>
 // One per process: a file strategy opens its file once, not per test indexer.
 // Silent everywhere unless LOG_LEVEL asks otherwise: a test's output is its
 // assertions.
-let logger = Lazy.make(() =>
+let logger = Lazy.make(() => {
+  let {strategy, file, ?level, fileLevel} = IndexerEnv.read().logger
   Logger.make({
-    strategy: Env.Logger.strategy,
-    logFile: Env.Logger.file,
-    level: Env.Logger.level->Option.getOr(#silent),
-    fileLevel: Env.Logger.level->Option.mapOr(#silent, _ => Env.Logger.fileLevel),
+    strategy,
+    logFile: file,
+    level: level->Option.getOr(#silent),
+    fileLevel: level->Option.mapOr(#silent, _ => fileLevel),
   })
-)
+})
 
 let createTestIndexer = (): t<'processConfig> => {
   let config = Config.load()

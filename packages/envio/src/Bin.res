@@ -1,12 +1,10 @@
 @val external processChdir: string => unit = "process.chdir"
 let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
 
-let logger = Logger.make({
-  strategy: Env.Logger.strategy,
-  logFile: Env.Logger.file,
-  level: Env.Logger.level->Option.getOr(#info),
-  fileLevel: Env.Logger.fileLevel,
-})
+let logger = {
+  let {strategy, file, ?level, fileLevel} = IndexerEnv.read().logger
+  Logger.make({strategy, logFile: file, level: level->Option.getOr(#info), fileLevel})
+}
 
 // Crash on unhandled promise rejections with a readable error.
 // ReScript exceptions compile to plain objects, not Error instances, so Node.js prints "#<Object>".

@@ -6,7 +6,7 @@
 // index-based access point at the wrong account, silently.
 
 let _apiToken =
-  Env.envioApiToken->Option.getOrThrow(
+  IndexerEnv.read().envioApiToken->Option.getOrThrow(
     ~message="ENVIO_API_TOKEN env var must be set to run the live SVM account keys test",
   )
 

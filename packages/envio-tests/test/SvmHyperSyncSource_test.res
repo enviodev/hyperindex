@@ -79,7 +79,7 @@ let addressStore = TestAddresses.storeOf(
 let makeSource = (
   ~onEventRegistrations=[makeReg()],
   ~url="https://solana.hypersync.xyz",
-  ~apiToken=Env.envioApiToken,
+  ~apiToken=IndexerEnv.read().envioApiToken,
 ) =>
   TestSources.hyperSync(
     ~url,

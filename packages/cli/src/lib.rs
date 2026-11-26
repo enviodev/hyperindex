@@ -20,6 +20,7 @@ pub mod executor;
 mod fuel;
 mod hbs_templating;
 mod hex;
+mod indexer_env;
 mod js_value;
 #[cfg(test)]
 mod layers;

@@ -1,9 +1,8 @@
 // Every indexer under test gets its own ClickHouse database, the same way it
 // gets its own Postgres schema, so files can run in parallel against one server.
 //
-// The runtime reads `ENVIO_CLICKHOUSE_*` at call time (see `Env.ClickHouse`),
-// so pointing a run at its own database is a matter of setting them before the
-// storage is built.
+// The runtime reads `ENVIO_CLICKHOUSE_*` when its config is built, so pointing
+// a run at its own database is a matter of setting them before that.
 
 let host = () =>
   switch %raw(`process.env.ENVIO_CLICKHOUSE_HOST`)->Nullable.toOption {

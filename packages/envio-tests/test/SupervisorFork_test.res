@@ -33,6 +33,7 @@ let forkFixture = (
     ~workerCount,
     ~holdRealtime,
     ~isDev,
+    ~indexerEnv=IndexerEnv.read(),
     ~entryPath=fixturePath,
     ~pipeOutput,
     ~onOutput?,
@@ -72,9 +73,9 @@ describe("Supervisor.fork", () => {
       maxConnections: "3",
       // The run's memory budgets are the whole indexer's, so a worker gets a
       // share rather than the whole of each.
-      bufferSize: (CrossChainState.calculateTargetBufferSize() / 4)->Int.toString,
-      objectsTarget: (Env.inMemoryObjectsTarget->Float.toInt / 4)->Int.toString,
-      logFile: Supervisor.workerLogFilePath(~workerIndex=1),
+      bufferSize: (IndexerEnv.read().indexingMaxBufferSize / 4)->Int.toString,
+      objectsTarget: (IndexerEnv.read().inMemoryObjectsTarget / 4)->Int.toString,
+      logFile: Supervisor.workerLogFilePath(~workerIndex=1, ~path=IndexerEnv.read().logger.file),
       // Proof the channel clones rather than stringifies: a JSON round trip
       // would have turned this into a string.
       startTime: Date.fromTime(1700000000000.),

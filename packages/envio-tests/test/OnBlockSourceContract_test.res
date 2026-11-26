@@ -194,7 +194,7 @@ let makeRpcSource = (~url) => {
       backoffMillis: 1,
       queryTimeoutMillis: 1_000,
     },
-    ~maxAddressesPerRequest=Env.maxAddrInPartition,
+    ~maxAddressesPerRequest=IndexerEnv.read().maxPartitionSize,
     ~chainBuffer=TestChainBuffer.forChain(
       ~onEventRegistrations=[],
       ~onBlockRegistrations=onBlockRegistrations(),

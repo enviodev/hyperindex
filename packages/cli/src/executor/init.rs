@@ -42,7 +42,15 @@ pub async fn run_init_args(
     // routing it through `anyhow::bail!` would pass it through the JS host's
     // `Logger.error`, which wraps the message in a log line's envelope and
     // buries the steps the agent needs to read.
-    let is_non_interactive = is_agentic_init_mode(&AgenticEnv::from_process());
+    let is_non_interactive = !crate::indexer_env::shows_progress_display(
+        crate::env::var("ENVIO_TUI")
+            .as_deref()
+            .and_then(crate::indexer_env::parse_bool),
+        &crate::env::var,
+        &crate::indexer_env::Terminal {
+            stdout_is_tty: std::io::stdout().is_terminal(),
+        },
+    );
     if init_args.init_commands.is_none() && is_non_interactive {
         let prompt = agentic_init_prompt(init_args.api_token.is_some());
         let mut stderr = std::io::stderr().lock();
@@ -362,40 +370,6 @@ fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> S
 /// instead of opening interactive selects. Pulled into a struct so tests can
 /// drive the logic without touching the real process env / TTY.
 ///
-/// Mirrors the predicate `Envio.isNonInteractive` in
-/// `packages/envio/src/Envio.res` so a project picks up the same TUI/agent
-/// classification at init time as it will at runtime.
-struct AgenticEnv {
-    envio_tui: Option<String>,
-    stdout_is_tty: bool,
-    claudecode: bool,
-    ci: bool,
-    term: Option<String>,
-}
-
-impl AgenticEnv {
-    fn from_process() -> Self {
-        Self {
-            envio_tui: crate::env::var("ENVIO_TUI"),
-            stdout_is_tty: std::io::stdout().is_terminal(),
-            claudecode: crate::env::is_set("CLAUDECODE"),
-            ci: crate::env::is_set("CI"),
-            term: crate::env::var("TERM"),
-        }
-    }
-}
-
-fn is_agentic_init_mode(env: &AgenticEnv) -> bool {
-    // ENVIO_TUI mirrors the runtime override in `Main.res`: an explicit value
-    // wins in either direction.
-    match env.envio_tui.as_deref() {
-        Some("true") | Some("1") => return false,
-        Some("false") | Some("0") => return true,
-        _ => {}
-    }
-    !env.stdout_is_tty || env.claudecode || env.ci || env.term.as_deref() == Some("dumb")
-}
-
 /// `--help` preamble for `envio init`, shown before clap's generated usage.
 /// Agents reflexively probe `--help` before running a command; leading with the
 /// zero-arg quick start keeps them on the supported path instead of the
@@ -539,84 +513,6 @@ mod tests {
     #[test]
     fn next_steps_in_current_dir_alias() {
         insta::assert_snapshot!(next_steps_message(Path::new("./"), PackageManager::Npm));
-    }
-
-    fn env(
-        envio_tui: Option<&str>,
-        stdout_is_tty: bool,
-        claudecode: bool,
-        ci: bool,
-        term: Option<&str>,
-    ) -> AgenticEnv {
-        AgenticEnv {
-            envio_tui: envio_tui.map(str::to_string),
-            stdout_is_tty,
-            claudecode,
-            ci,
-            term: term.map(str::to_string),
-        }
-    }
-
-    #[test]
-    fn agentic_mode_detection_matrix() {
-        let cases = vec![
-            (
-                "plain interactive tty",
-                env(None, true, false, false, Some("xterm-256color")),
-                false,
-            ),
-            (
-                "piped stdout",
-                env(None, false, false, false, Some("xterm-256color")),
-                true,
-            ),
-            (
-                "claudecode set",
-                env(None, true, true, false, Some("xterm-256color")),
-                true,
-            ),
-            (
-                "ci set",
-                env(None, true, false, true, Some("xterm-256color")),
-                true,
-            ),
-            (
-                "term=dumb",
-                env(None, true, false, false, Some("dumb")),
-                true,
-            ),
-            (
-                "envio_tui=false overrides tty",
-                env(Some("false"), true, false, false, Some("xterm-256color")),
-                true,
-            ),
-            (
-                "envio_tui=true overrides agent",
-                env(Some("true"), false, true, false, Some("dumb")),
-                false,
-            ),
-            (
-                "envio_tui=1 forces interactive",
-                env(Some("1"), false, true, true, Some("dumb")),
-                false,
-            ),
-            (
-                "envio_tui=0 forces agentic",
-                env(Some("0"), true, false, false, Some("xterm-256color")),
-                true,
-            ),
-        ];
-
-        let report: String = cases
-            .into_iter()
-            .map(|(label, env, expected)| {
-                let got = is_agentic_init_mode(&env);
-                assert_eq!(got, expected, "case {label}");
-                format!("{label}: {got}")
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        insta::assert_snapshot!(report);
     }
 
     #[test]

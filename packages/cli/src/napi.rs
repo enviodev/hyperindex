@@ -93,6 +93,22 @@ pub fn from_user_api(
     })
 }
 
+/// Every environment variable the indexer runtime uses, read and validated
+/// once, as JSON in the shape of `IndexerEnv.t`.
+#[napi_derive::napi]
+pub fn read_indexer_env() -> napi::Result<String> {
+    use std::io::IsTerminal;
+    let env = crate::indexer_env::IndexerEnv::read(
+        &crate::env::var,
+        crate::indexer_env::Terminal {
+            stdout_is_tty: std::io::stdout().is_terminal(),
+        },
+    )
+    .map_err(napi::Error::from_reason)?;
+    serde_json::to_string(&env)
+        .map_err(|e| napi::Error::from_reason(format!("Failed serializing the environment: {e}")))
+}
+
 #[napi_derive::napi]
 pub fn load_ts(path: String) -> napi::Result<String> {
     crate::ts_loader::load(std::path::Path::new(&path)).map_err(napi::Error::from_reason)

@@ -118,7 +118,7 @@ let changes = [
 let client = Storage.makeClient(
   ~logger=Logger.makeInMemory(),
   ~config,
-  ~postgres=Storage.postgresOptions(~maxConnections=1),
+  ~postgres=Storage.postgresOptions(~db=config.env.db, ~maxConnections=1),
 )
 
 let writers =

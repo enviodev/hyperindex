@@ -6,7 +6,8 @@
 
 // Max uncommitted entity/effect changes plus unwritten batch items before
 // processing must wait for the cycle to free capacity.
-let keepLatestChangesLimit = Env.inMemoryObjectsTarget
+let keepLatestChangesLimit = (state: IndexerState.t) =>
+  (state->IndexerState.config).env.inMemoryObjectsTarget->Int.toFloat
 
 let getChangesCount = (state: IndexerState.t) => {
   let total = ref(0.)
@@ -320,13 +321,13 @@ let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
 let rec awaitCapacityLoop = async (state: IndexerState.t) => {
   // After a failed write nothing will free capacity, so bail instead of waiting
   // on a commit that won't come (the error already went to onError).
-  if !(state->IndexerState.hasFailedWrite) && state->getChangesCount >= keepLatestChangesLimit {
+  if !(state->IndexerState.hasFailedWrite) && state->getChangesCount >= state->keepLatestChangesLimit {
     // Drop committed writes first, sparing db-loaded entries (explicitly
     // requested, so likelier to be read again).
     state->dropCommitted(~keepLoadedFromDb=true)
 
     // Still over: drop the db-loaded entries too.
-    if state->getChangesCount >= keepLatestChangesLimit {
+    if state->getChangesCount >= state->keepLatestChangesLimit {
       state->dropCommitted(~keepLoadedFromDb=false)
     }
 
@@ -334,7 +335,7 @@ let rec awaitCapacityLoop = async (state: IndexerState.t) => {
     // free it; otherwise (e.g. a large rollback diff with no batch) waiting
     // would deadlock, so let processing proceed.
     if (
-      state->getChangesCount >= keepLatestChangesLimit &&
+      state->getChangesCount >= state->keepLatestChangesLimit &&
         state->IndexerState.processedBatches->Utils.Array.notEmpty
     ) {
       state->schedule
@@ -348,7 +349,7 @@ let rec awaitCapacityLoop = async (state: IndexerState.t) => {
 // batch the microtask hop of awaiting an already-resolved promise, which reads
 // as storage backpressure that isn't there.
 let awaitCapacity = async (state: IndexerState.t) =>
-  if state->getChangesCount >= keepLatestChangesLimit {
+  if state->getChangesCount >= state->keepLatestChangesLimit {
     let timeRef = Performance.now()
     await state->awaitCapacityLoop
     state->IndexerState.recordStalledOnStorageWrite(~seconds=timeRef->Performance.secondsSince)

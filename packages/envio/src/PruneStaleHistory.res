@@ -119,7 +119,7 @@ let select = (state: IndexerState.t, ~writtenEntityNames, ~isRollback) => {
         ~writtenEntityNames,
         ~isRollback,
         ~nowMillis=Date.now(),
-        ~intervalMillis=Env.ThrottleWrites.pruneStaleDataIntervalMillis->Int.toFloat,
+        ~intervalMillis=config.env.throttle.pruneStaleDataIntervalMillis->Int.toFloat,
         ~safeCheckpoints,
       )
     )

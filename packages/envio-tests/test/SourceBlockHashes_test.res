@@ -1,7 +1,7 @@
 open Vitest
 
 let testApiToken =
-  Env.envioApiToken->Option.getOrThrow(
+  IndexerEnv.read().envioApiToken->Option.getOrThrow(
     ~message="ENVIO_API_TOKEN env var must be set to run SourceBlockHashes integration tests",
   )
 
@@ -106,7 +106,7 @@ let makeHyperSyncSource = () =>
 let makeRpcSource = () =>
   TestSources.rpc(
     ~url=`https://eth.rpc.hypersync.xyz/${testApiToken}`,
-    ~maxAddressesPerRequest=Env.maxAddrInPartition,
+    ~maxAddressesPerRequest=IndexerEnv.read().maxPartitionSize,
     ~chainBuffer=TestChainBuffer.forChain(
       ~onEventRegistrations=[pairCreatedRegistration],
       ~addressStore,

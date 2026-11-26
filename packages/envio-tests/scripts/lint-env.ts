@@ -1,7 +1,5 @@
-// The environment is read once, where the indexer starts, into its config.
-// Logic below that reads the config, so a value can't change between two
-// modules reading it, and a test sets it by passing config rather than by
-// mutating the process.
+// The environment is read once, by Rust, into the indexer's config. Logic
+// reads the config, so a value can't change between two modules reading it.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -10,34 +8,18 @@ import { fileURLToPath } from "node:url";
 const srcRoot = fileURLToPath(new URL("../../envio/src", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
-// Where reading the environment belongs: the module that reads it, and the
-// entry points that turn it into config.
-const entryPoints = new Set([
-  "Env.res",
-  "EnvSafe.res",
-  "Config.res",
-  "Bin.res",
-  "Worker.res",
-  "TestIndexer.res",
-  // Finds the native addon before anything else runs.
+// Rust reads the environment (`indexer_env.rs`) and hands it over as
+// `IndexerEnv.t` on the config. The only modules that touch `process.env` are
+// the ones that move it between processes, never ones that read a value.
+const allowed = new Set([
+  // Finds and loads the native addon, before there is any Rust to ask.
   "Core.res",
-]);
-
-// Modules that still read the environment themselves. Each moves its reads
-// into config; the list only shrinks, so a file that stops reading the
-// environment has to leave it.
-const notYetMigrated = new Set([
-  "CrossChainState.res",
-  "Envio.res",
-  "IndexerState.res",
-  "PruneStaleHistory.res",
-  "Server.res",
-  "Storage.res",
+  // Loads .env into the process, where Rust and user handlers read it.
+  "IndexerEnv.res",
+  // Puts the variables the CLI resolved into the process its workers inherit.
+  "Bin.res",
+  // Hands the process environment to the workers it forks.
   "Supervisor.res",
-  "Writing.res",
-  "bindings/ClickHouse.res",
-  "tui/InitApi.res",
-  "tui/Tui.res",
 ]);
 
 const reads = /\bEnv\.|\bEnvSafe\.|process\.env|Process\.process\.env|dotenv/;
@@ -57,24 +39,13 @@ for (const path of files(srcRoot)) {
   const readLines = lines.flatMap((line, index) =>
     reads.test(line.replace(/(?<!:)\/\/.*$/, "")) ? [index + 1] : [],
   );
-  if (entryPoints.has(file)) continue;
-  if (notYetMigrated.has(file)) {
-    if (readLines.length === 0) {
-      violations.push({
-        file,
-        line: 1,
-        title: "No longer reads the environment",
-        fix: `Remove "${file}" from notYetMigrated in packages/envio-tests/scripts/lint-env.ts.`,
-      });
-    }
-    continue;
-  }
+  if (allowed.has(file)) continue;
   for (const line of readLines) {
     violations.push({
       file,
       line,
-      title: "Reads the environment outside the indexer's entry",
-      fix: "Read it in Env.res, put it on the config where the indexer starts (Config.fromPublic), and read it from there.",
+      title: "Reads the environment in ReScript",
+      fix: "Read it in packages/cli/src/indexer_env.rs, add it to IndexerEnv.t, and read it from config.env.",
     });
   }
 }
@@ -84,6 +55,6 @@ for (const { file, line, title, fix } of violations) {
   console.log(`::error file=${path},line=${line},title=${title}::${fix}`);
 }
 if (violations.length > 0) {
-  console.error(`${violations.length} environment read(s) outside the indexer's entry.`);
+  console.error(`${violations.length} environment read(s) in ReScript.`);
   process.exit(1);
 }

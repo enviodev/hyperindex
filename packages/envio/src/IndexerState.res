@@ -164,7 +164,7 @@ let make = (
   ~storage: Persistence.storage,
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
-  ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
+  ~targetBufferSize=config.env.indexingMaxBufferSize,
   ~holdRealtime=false,
   ~committedFrontier=Frontier.empty(),
   ~storedEffectCaches=Dict.make(),
@@ -177,7 +177,7 @@ let make = (
   ~clock=Clock.real,
 ) => {
   let chainMetaThrottler = {
-    let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
+    let intervalMillis = config.env.throttle.chainMetadataIntervalMillis
     Throttler.make(
       ~clock,
       ~intervalMillis,
@@ -268,7 +268,7 @@ let makeFromDbState = (
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
   ~sourceTiming=?,
-  ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
+  ~targetBufferSize=config.env.indexingMaxBufferSize,
   // A process driving part of a split run waits for its supervisor before
   // entering the reorg threshold or switching to realtime.
   ~holdRealtime=false,

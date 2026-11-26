@@ -1,31 +1,3 @@
-// As `SslSetting::parse` in packages/cli/src/postgres/client.rs spells them.
-@unboxed
-type sslMode =
-  | Bool(bool)
-  | @as("require") Require
-  | @as("allow") Allow
-  | @as("prefer") Prefer
-  | @as("verify-full") VerifyFull
-
-let sslModeSchema: S.schema<sslMode> = S.enum([
-  Bool(true),
-  Bool(false),
-  Require,
-  Allow,
-  Prefer,
-  VerifyFull,
-])
-
-let sslModeToString = mode =>
-  switch mode {
-  | Bool(true) => "true"
-  | Bool(false) => "false"
-  | Require => "require"
-  | Allow => "allow"
-  | Prefer => "prefer"
-  | VerifyFull => "verify-full"
-  }
-
 @val @scope("JSON") external stringify: unknown => string = "stringify"
 @val @scope("Array") external isArray: unknown => bool = "isArray"
 %%private(let isDate: unknown => bool = %raw(`(value) => value instanceof Date`))

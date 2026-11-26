@@ -32,8 +32,8 @@ let configSchema = S.object((s): config => {
 
 // Read as this module loads, which is before anything that could catch a bare
 // schema error and say where it came from.
-let detect = (~env: dict<string>, ~hasChannel) =>
-  switch (hasChannel, env->Dict.get(envVar)) {
+let detect = (~internalWorker: option<string>, ~hasChannel) =>
+  switch (hasChannel, internalWorker) {
   | (true, Some(json)) =>
     switch json->S.parseJsonStringOrThrow(configSchema) {
     | config => Some(config)
@@ -46,7 +46,7 @@ let detect = (~env: dict<string>, ~hasChannel) =>
   }
 
 let config = detect(
-  ~env=NodeJs.Process.process.env,
+  ~internalWorker=IndexerEnv.read().internalWorker,
   ~hasChannel=NodeJs.Process.channel->Nullable.toOption->Option.isSome,
 )
 

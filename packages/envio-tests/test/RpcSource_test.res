@@ -2,7 +2,7 @@ open Vitest
 open Internal
 
 let testApiToken =
-  Env.envioApiToken->Option.getOrThrow(
+  IndexerEnv.read().envioApiToken->Option.getOrThrow(
     ~message="ENVIO_API_TOKEN env var must be set to run RpcSource tests",
   )
 
@@ -31,7 +31,7 @@ let makeSource = (
     ~shouldChecksum=!lowercaseAddresses,
   ),
 ) =>
-  TestSources.rpc(~url, ~syncConfig, ~maxAddressesPerRequest=Env.maxAddrInPartition, ~chainBuffer)
+  TestSources.rpc(~url, ~syncConfig, ~maxAddressesPerRequest=IndexerEnv.read().maxPartitionSize, ~chainBuffer)
 
 describe("RpcSource - name", () => {
   it("Returns the name of the source including sanitized rpc url", t => {
@@ -1014,7 +1014,7 @@ describe("RpcSource - height subscription", () => {
       ~url,
       ~syncConfig={pollingInterval: pollingInterval},
       ~ws?,
-      ~maxAddressesPerRequest=Env.maxAddrInPartition,
+      ~maxAddressesPerRequest=IndexerEnv.read().maxPartitionSize,
       ~chainBuffer=TestChainBuffer.forChain(
         ~onEventRegistrations=[],
         ~addressStore=TestAddresses.makeStore(),

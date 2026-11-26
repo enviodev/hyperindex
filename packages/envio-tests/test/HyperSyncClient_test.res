@@ -1,7 +1,7 @@
 open Vitest
 
 let testApiToken =
-  Env.envioApiToken->Option.getOrThrow(
+  IndexerEnv.read().envioApiToken->Option.getOrThrow(
     ~message="ENVIO_API_TOKEN env var must be set to run HyperSyncClient tests",
   )
 

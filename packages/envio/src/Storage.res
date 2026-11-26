@@ -7,19 +7,20 @@ let storeName = (store: StorageClient.store) =>
 let postgresName = Postgres->storeName
 
 let postgresOptions = (
-  ~pgSchema=Env.Db.publicSchema,
+  ~db: IndexerEnv.db,
+  ~pgSchema=db.schema,
   ~isHasuraEnabled=false,
-  ~maxConnections=Env.Db.maxConnections,
+  ~maxConnections=db.maxConnections,
   ~isolated=false,
-  ~port=Env.Db.port,
+  ~port=db.port,
 ): StorageClient.postgresOptions => {
   {
-    host: Env.Db.host,
+    host: db.host,
     port,
-    user: Env.Db.user,
-    password: Env.Db.password,
-    database: Env.Db.database,
-    ssl: Env.Db.ssl->Sql.sslModeToString,
+    user: db.user,
+    password: db.password,
+    database: db.database,
+    ssl: db.sslMode,
     maxConnections,
     // What pg_stat_activity, and a pooler's or provider's list of who is
     // connected, shows the indexer's connections as.
@@ -808,7 +809,7 @@ let make = (
 let clientFromEnv = (
   ~config: Config.t,
   ~logger,
-  ~pgSchema=Env.Db.publicSchema,
+  ~pgSchema=config.env.db.schema,
   ~isHasuraEnabled,
   ~maxConnections=?,
   ~port=?,
@@ -817,20 +818,21 @@ let clientFromEnv = (
     ~logger,
     ~config,
     ~postgres=postgresOptions(
+      ~db=config.env.db,
       ~pgSchema,
       ~isHasuraEnabled,
       ~maxConnections?,
       ~isolated=config.isolated,
       ~port?,
     ),
-    ~clickhouse=?config.storage.clickhouse ? Some(ClickHouse.optionsFromEnvOrThrow()) : None,
+    ~clickhouse=?config.storage.clickhouse ? Some(ClickHouse.optionsOrThrow(config.env.clickHouse)) : None,
   )
 
 let makeStorageFromEnv = (
   ~config: Config.t,
   ~logger,
-  ~pgSchema=Env.Db.publicSchema,
-  ~isHasuraEnabled=Env.Hasura.enabled,
+  ~pgSchema=config.env.db.schema,
+  ~isHasuraEnabled=config.env.hasura.enabled,
   ~maxConnections=?,
   ~cacheDir=?,
 ) => {
@@ -843,13 +845,13 @@ let makeStorageFromEnv = (
           () =>
             Hasura.trackDatabase(
               ~logger,
-              ~endpoint=Env.Hasura.graphqlEndpoint,
-              ~auth={role: Env.Hasura.role, secret: Env.Hasura.secret},
+              ~endpoint=config.env.hasura.graphqlEndpoint,
+              ~auth={role: config.env.hasura.role, secret: config.env.hasura.secret},
               ~pgSchema,
               ~userEntities=config->Config.getPgUserEntities,
-              ~responseLimit=Env.Hasura.responseLimit,
+              ~responseLimit=config.env.hasura.responseLimit,
               ~schema=Schema.make(config.userEntities->Array.map(e => e.table)),
-              ~aggregateEntities=Env.Hasura.aggregateEntities,
+              ~aggregateEntities=config.env.hasura.aggregateEntities,
             )->Promise.catch(err => {
               logger->Logger.errorWithExn(`Error tracking tables`, err)->Promise.resolve
             }),

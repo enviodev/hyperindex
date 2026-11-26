@@ -48,7 +48,8 @@ clock, which tests move by hand.
 
 ## Configuration
 
-The environment is read where the indexer starts: `Env.res` reads it, and
-`Config.fromPublic` puts what sources need on each chain's source config
-(`Config.hyperSync`, an RPC's `syncConfig`). Rust reads the environment only
-through `cli/src/env.rs`, at its own entry points.
+ReScript never reads the environment. Rust reads and validates every variable
+the runtime uses in `cli/src/indexer_env.rs` (through `cli/src/env.rs`, the
+one module that touches it), and `Config.fromPublic` takes the result as
+`config.env` (`IndexerEnv.t`). Sources get theirs on each chain's source config
+(`Config.hyperSync`, an RPC's `syncConfig`).

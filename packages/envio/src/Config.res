@@ -24,19 +24,19 @@ type hyperSync = {
   // that never fetch don't need one.
   apiToken: option<string>,
   httpReqTimeoutMillis: int,
-  serializationFormat: Env.hyperSyncSerializationFormat,
+  serializationFormat: IndexerEnv.serializationFormat,
   enableQueryCaching: bool,
   // The client's own logging: RUST_LOG when set, else ENVIO_HYPERSYNC_LOG_LEVEL.
   logFilter: string,
 }
 
-let hyperSync = url => {
+let hyperSync = (url, ~env: IndexerEnv.t) => {
   url,
-  apiToken: Env.envioApiToken,
-  httpReqTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
-  serializationFormat: Env.hypersyncClientSerializationFormat,
-  enableQueryCaching: Env.hypersyncClientEnableQueryCaching,
-  logFilter: Env.rustLog->Option.getOr((Env.hypersyncLogLevel :> string)),
+  apiToken: env.envioApiToken,
+  httpReqTimeoutMillis: env.hyperSync.clientTimeoutMillis,
+  serializationFormat: env.hyperSync.serializationFormat,
+  enableQueryCaching: env.hyperSync.enableQueryCaching,
+  logFilter: env.hyperSync.logFilter,
 }
 
 // Sources are instantiated lazily in ChainState from this config.
@@ -176,6 +176,9 @@ type t = {
   // reach, so its checkpoints have to be comparable across chains.
   checkpointSequence: CheckpointSequence.t,
   envioInfo: JSON.t,
+  // Read by Rust where the config is built; nothing below reads the
+  // environment itself.
+  env: IndexerEnv.t,
 }
 
 type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("realtime") Realtime
@@ -749,8 +752,8 @@ let toEnvioInfo = (publicConfigJson: JSON.t): JSON.t => {
   envioInfo
 }
 
-let fromPublic = (publicConfigJson: JSON.t) => {
-  let maxAddrInPartition = Env.maxAddrInPartition
+let fromPublic = (publicConfigJson: JSON.t, ~env=IndexerEnv.read()) => {
+  let maxAddrInPartition = env.maxPartitionSize
   // Parse public config
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
   | S.Raised(exn) =>
@@ -1054,19 +1057,19 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             sourceFor: parseRpcSourceFor(rpcConfig["for"]),
             syncConfig: {
               initialBlockInterval: ?overridden(
-                Env.Configurable.SyncConfig.initialBlockInterval,
+                env.rpcSync.initialBlockInterval,
                 rpcConfig["initialBlockInterval"],
               ),
               backoffMultiplicative: ?overridden(
-                Env.Configurable.SyncConfig.backoffMultiplicative,
+                env.rpcSync.backoffMultiplicative,
                 rpcConfig["backoffMultiplicative"],
               ),
               accelerationAdditive: ?overridden(
-                Env.Configurable.SyncConfig.accelerationAdditive,
+                env.rpcSync.accelerationAdditive,
                 rpcConfig["accelerationAdditive"],
               ),
               intervalCeiling: ?overridden(
-                Env.Configurable.SyncConfig.intervalCeiling,
+                env.rpcSync.intervalCeiling,
                 rpcConfig["intervalCeiling"],
               ),
               backoffMillis: ?rpcConfig["backoffMillis"],
@@ -1078,16 +1081,16 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             headers: rpcConfig["headers"],
           }
         })
-      EvmSourceConfig({hypersync: publicChainConfig["hypersync"]->Option.map(hyperSync), rpcs})
+      EvmSourceConfig({hypersync: publicChainConfig["hypersync"]->Option.map(url => hyperSync(url, ~env)), rpcs})
     | Ecosystem.Fuel =>
       switch publicChainConfig["hypersync"] {
-      | Some(url) => FuelSourceConfig({hypersync: hyperSync(url)})
+      | Some(url) => FuelSourceConfig({hypersync: hyperSync(url, ~env)})
       | None =>
         JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
       }
     | Ecosystem.Svm =>
       switch publicChainConfig["hypersync"] {
-      | Some(url) => SvmSourceConfig({hypersync: hyperSync(url)})
+      | Some(url) => SvmSourceConfig({hypersync: hyperSync(url, ~env)})
       | None =>
         JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
       }
@@ -1197,7 +1200,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
     ecosystem,
     maxAddrInPartition,
-    clientFilterAddressThreshold: Env.clientFilterAddressThreshold,
+    clientFilterAddressThreshold: env.clientFilterAddressThreshold,
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     reorgThresholdReadyTolerance: 100,
     lowercaseAddresses,
@@ -1209,6 +1212,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     allEnums,
     checkpointSequence: CheckpointSequence.fromEntities(userEntities),
     envioInfo: publicConfigJson->toEnvioInfo,
+    env,
   }
 
   switch publicConfig["isolatedChains"] {

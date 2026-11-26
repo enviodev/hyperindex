@@ -467,7 +467,7 @@ exception FatalError(exn)
     ~patchConfig: option<(Config.t, HandlerRegister.registrationsByChainId) => Config.t>=?,
   ) => {
     // A worker reports to its supervisor, which draws for the whole run.
-    let shouldUseTui = Tui.shouldUse(~suppressed=isTest || Worker.isEnabled)
+    let shouldUseTui = Tui.shouldUse(~suppressed=isTest || Worker.isEnabled, ~config)
     // isDevelopmentMode controls whether the indexer stays alive after all
     // chains finish (keepProcessAlive) and whether the console API is exposed.
     // Set by `envio dev` via the public config's `isDev` field; `envio start`
@@ -541,6 +541,7 @@ exception FatalError(exn)
         ~isDevelopmentMode,
         ~envioVersion,
         ~getMetrics,
+        ~env=config.env,
       )
     }
 

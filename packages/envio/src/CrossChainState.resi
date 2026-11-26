@@ -3,8 +3,6 @@
 
 type t
 
-let calculateTargetBufferSize: unit => int
-
 let make: (
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,

@@ -8,7 +8,7 @@ let proxyPort = 18563
 
 let outageRef = ref(None)
 Async.beforeAll(async () => {
-  outageRef := Some(await PostgresOutage.start(~port=proxyPort, ~upstreamPort=Env.Db.port))
+  outageRef := Some(await PostgresOutage.start(~port=proxyPort, ~upstreamPort=IndexerEnv.read().db.port))
 })
 Async.afterAll(async () =>
   switch outageRef.contents {

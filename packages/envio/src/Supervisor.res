@@ -50,7 +50,7 @@ let plan = (~chainIds: array<ChainId.t>, ~maxConnections: int): option<array<wor
 // can't be split: workers each advance their own checkpoint sequence, which only
 // holds while no entity has rows another chain can reach. A run that is already
 // one chain's process doesn't split again — whoever started it owns the layout.
-let planForRun = (~config: Config.t, ~maxConnections=Env.Db.maxConnections) =>
+let planForRun = (~config: Config.t, ~maxConnections=config.env.db.maxConnections) =>
   if config.isolated || !(config->Config.isPerChain) {
     None
   } else {
@@ -75,7 +75,7 @@ let label = (worker: worker) => `[chain ${worker->name}]`
 
 // Workers append to files of their own: several processes appending to one file
 // can tear a long write apart.
-let workerLogFilePath = (~workerIndex, ~path=Env.Logger.file) => {
+let workerLogFilePath = (~workerIndex, ~path) => {
   let suffix = `.worker-${workerIndex->Int.toString}`
   // A dot in a directory name isn't an extension, and a path with no dot at
   // all has none either: `./logs/envio` takes the suffix at the end.
@@ -115,10 +115,10 @@ let readLines = (~onLine) => {
 // Each worker's share of the run's memory budgets. Both are the whole indexer's
 // rather than one process's, so workers that each took the whole of one would
 // hold as many times the memory as the run happened to have workers.
-let memoryBudgets = (~workerCount) =>
+let memoryBudgets = (~workerCount, ~env: IndexerEnv.t) =>
   [
-    ("ENVIO_INDEXING_MAX_BUFFER_SIZE", CrossChainState.calculateTargetBufferSize()),
-    ("ENVIO_IN_MEMORY_OBJECTS_TARGET", Env.inMemoryObjectsTarget->Float.toInt),
+    ("ENVIO_INDEXING_MAX_BUFFER_SIZE", env.indexingMaxBufferSize),
+    ("ENVIO_IN_MEMORY_OBJECTS_TARGET", env.inMemoryObjectsTarget),
   ]->Array.map(((name, budget)) => (
     name,
     // A budget smaller than the run has workers still leaves each one something
@@ -142,6 +142,7 @@ let fork = (
   // Which command the run was started by, which a worker's own parse of the
   // project's files can't tell it.
   ~isDev,
+  ~indexerEnv: IndexerEnv.t,
   // The entry this process was itself started from, so a worker is the same
   // program as its supervisor however the package was installed.
   ~entryPath=NodeJs.Process.argv->Array.getUnsafe(1),
@@ -164,8 +165,8 @@ let fork = (
   // The worker's slice of the budgets. Read when the worker's own Env module
   // loads, which is why they ride in the spawn environment rather than a message.
   env->Dict.set("ENVIO_PG_MAX_CONNECTIONS", worker.maxConnections->Int.toString)
-  memoryBudgets(~workerCount)->Array.forEach(((name, share)) => env->Dict.set(name, share))
-  env->Dict.set("LOG_FILE", workerLogFilePath(~workerIndex))
+  memoryBudgets(~workerCount, ~env=indexerEnv)->Array.forEach(((name, share)) => env->Dict.set(name, share))
+  env->Dict.set("LOG_FILE", workerLogFilePath(~workerIndex, ~path=indexerEnv.logger.file))
   if pipeOutput && stdoutIsTty->Nullable.toOption->Option.getOr(false) {
     env->Dict.set("FORCE_COLOR", "1")
   }
@@ -493,13 +494,13 @@ let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) =>
     ~params={
       "chains": config.chainMap->ChainMap.values->Array.length,
       "processes": workers->Array.length,
-      "maxConnections": Env.Db.maxConnections,
+      "maxConnections": config.env.db.maxConnections,
     },
   )
 
   // Decided before the first fork: it is what makes a worker's output the
   // supervisor's to print.
-  let shouldUseTui = Tui.shouldUse()
+  let shouldUseTui = Tui.shouldUse(~config)
   // A run that resumed with every chain already caught up owes nobody a wait:
   // its workers start realtime and there is no barrier to open.
   let holdRealtime =
@@ -512,6 +513,7 @@ let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) =>
         ~workerCount=workers->Array.length,
         ~holdRealtime,
         ~isDev=config.isDev,
+        ~indexerEnv=config.env,
         ~pipeOutput=shouldUseTui,
         ~onSnapshot=() => group->releaseIfAtHead,
       )
@@ -527,7 +529,7 @@ let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) =>
       // The run's pool, which its workers hold a share of each. Reporting the
       // shares added back up would say the same thing less directly, and say
       // nothing at all before every worker has reported.
-      ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
+      ~targetBufferSize=config.env.indexingMaxBufferSize,
     )
 
   Server.startServer(
@@ -550,6 +552,7 @@ let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) =>
       ),
     ~isDevelopmentMode=config.isDev,
     ~onSyncCache=() => syncCache(~dump=() => dumpCache(~config, ~logger)),
+    ~env=config.env,
   )
 
   if shouldUseTui {

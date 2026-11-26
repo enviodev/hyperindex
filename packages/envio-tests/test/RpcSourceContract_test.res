@@ -77,7 +77,7 @@ let makeSource = (
   let source = TestSources.rpc(
     ~url,
     ~syncConfig,
-    ~maxAddressesPerRequest=Env.maxAddrInPartition,
+    ~maxAddressesPerRequest=IndexerEnv.read().maxPartitionSize,
     ~chainBuffer=TestChainBuffer.forChain(
       ~onEventRegistrations=[registration],
       ~addressStore,
@@ -589,7 +589,7 @@ describe("RPC source public contract", () => {
         let addressStore = makeAddressStore(~registration)
         let source = TestSources.rpc(
           ~url=mock.url,
-          ~maxAddressesPerRequest=Env.maxAddrInPartition,
+          ~maxAddressesPerRequest=IndexerEnv.read().maxPartitionSize,
           ~chainBuffer=TestChainBuffer.forChain(
             ~onEventRegistrations=[registration],
             ~addressStore,
@@ -830,7 +830,7 @@ describe("RPC source public contract", () => {
         let source = TestSources.rpc(
           ~url=mock.url,
           ~syncConfig,
-          ~maxAddressesPerRequest=Env.maxAddrInPartition,
+          ~maxAddressesPerRequest=IndexerEnv.read().maxPartitionSize,
           ~chainBuffer=TestChainBuffer.forChain(
             ~onEventRegistrations=[eventA, eventB],
             ~addressStore,
@@ -933,7 +933,7 @@ describe("RPC source public contract", () => {
           let source = TestSources.rpc(
             ~url=mock.url,
             ~syncConfig,
-            ~maxAddressesPerRequest=Env.maxAddrInPartition,
+            ~maxAddressesPerRequest=IndexerEnv.read().maxPartitionSize,
             ~chainBuffer=TestChainBuffer.forChain(
               ~onEventRegistrations=[clientFiltered, wildcard],
               ~addressStore,
