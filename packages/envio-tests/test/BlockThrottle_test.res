@@ -109,8 +109,7 @@ describe("E2E blockThrottle tests", () => {
 
       let stalledSeconds = () => indexer->chainMetric("envio_processing_stalled_on_fetch_seconds")
       let stalledAtWait = await stalledSeconds()
-      // Real time: the stall counter reads the process clock, not the source clock.
-      await Utils.delay(20)
+      await indexer.advanceTime(1000)
       t.expect(await stalledSeconds()).toEqual(stalledAtWait)
     },
   )

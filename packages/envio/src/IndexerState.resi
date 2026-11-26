@@ -17,6 +17,7 @@ let make: (
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
   ~targetBufferSize: int=?,
+  ~inMemoryObjectsTarget: float=?,
   ~holdRealtime: bool=?,
   ~committedFrontier: Frontier.t=?,
   ~storedEffectCaches: dict<Persistence.effectCacheRecord>=?,
@@ -40,6 +41,7 @@ let makeFromDbState: (
   ~exitAfterFirstEventBlock: bool=?,
   ~sourceTiming: SourceManager.timing=?,
   ~targetBufferSize: int=?,
+  ~inMemoryObjectsTarget: float=?,
   ~holdRealtime: bool=?,
   ~onError: ErrorHandling.t => unit,
   ~onExit: unit => unit=?,
@@ -81,6 +83,7 @@ let getSafeCheckpointIdByChain: t => array<(ChainId.t, option<Internal.checkpoin
 let config: t => Config.t
 let logger: t => Logger.t
 let clock: t => Clock.t
+let inMemoryObjectsTarget: t => float
 let storage: t => Persistence.storage
 let entities: t => EntityTables.t
 let eachEntityTable: (
@@ -139,12 +142,12 @@ let recordStalledOnStorageWrite: (t, ~seconds: float) => unit
 type handlerStat
 let handlerStatFor: (t, Internal.eventConfig) => handlerStat
 let recordHandlerDuration: (handlerStat, ~duration: float) => unit
-let startPreloadHandler: handlerStat => Performance.timeRef
-let endPreloadHandler: (handlerStat, Performance.timeRef) => unit
-let startStorageLoad: (t, ~storage: string, ~operation: string) => Performance.timeRef
+let startPreloadHandler: handlerStat => Clock.timeRef
+let endPreloadHandler: (handlerStat, Clock.timeRef) => unit
+let startStorageLoad: (t, ~storage: string, ~operation: string) => Clock.timeRef
 let endStorageLoad: (
   t,
-  Performance.timeRef,
+  Clock.timeRef,
   ~storage: string,
   ~operation: string,
   ~whereSize: int,
