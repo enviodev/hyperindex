@@ -14,18 +14,18 @@ mod served_page_tests;
 mod types;
 
 use crate::address_store::{AddressSet, StoreInner};
-use crate::chain_buffer::fuel::{push_block, push_receipt, ReceiptInput, ReceiptView};
-use crate::chain_buffer::matching_fuel::FuelMatcher;
+use crate::chain_buffer::fuel::{push_block, push_receipt, ReceiptInput};
+use crate::chain_buffer::matching_fuel::{FuelMatcher, ReceiptMatchFields};
 use crate::chain_buffer::page::{Page, PageData};
 use crate::chain_buffer::{ChainBuffer, Ecosystem, FuelRegistrations};
 use crate::hypersync_http::{
-    file_span, read_files_in_message, read_packed_message, reply_of, HttpClient, Reply,
+    classify_reply, locate_file, read_files_in_message, read_packed_message, HttpClient, Reply,
 };
 use crate::request_stats::rate_limited_err;
 use config::ClientConfig;
 use hyperfuel_net_types as net_types;
 use selection::{BuiltSelection, RegistrationKind};
-use types::{BlockColumns, ConvertError, ReceiptColumns, ReceiptRow};
+use types::{push_unique, required, BlockColumns, ConvertError, ReceiptColumns, ReceiptRow};
 
 const HTTP_REQ_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -55,7 +55,7 @@ impl FuelHyperSyncClient {
             .await
             .context("execute http req")
             .map_err(fail)?;
-        match reply_of(response).await.map_err(fail)? {
+        match classify_reply(response).await.map_err(fail)? {
             Reply::Success(response) => {
                 let message = read_packed_message(response, reader_options())
                     .await
@@ -99,8 +99,8 @@ fn decode_response(
         (
             archive_height,
             i64::try_from(response.get_next_block()).context("convert next_block")?,
-            file_span(data.get_blocks().context("get block data")?),
-            file_span(data.get_receipts().context("get receipt data")?),
+            locate_file(data.get_blocks().context("get block data")?),
+            locate_file(data.get_receipts().context("get receipt data")?),
         )
     };
     let [blocks, receipts] = read_files_in_message(
@@ -254,37 +254,6 @@ fn build_query(
     })
 }
 
-fn push_unique(missing: &mut Vec<String>, name: &str) {
-    if !missing.iter().any(|m| m == name) {
-        missing.push(name.to_string());
-    }
-}
-
-fn required<T>(value: Option<T>, name: &str, missing: &mut Vec<String>) -> Option<T> {
-    if value.is_none() {
-        push_unique(missing, name);
-    }
-    value
-}
-
-fn receipt_view<'a>(receipt: &ReceiptRow<'a>, root_contract_id: &'a [u8]) -> ReceiptView<'a> {
-    ReceiptView {
-        block_height: receipt.block_height,
-        receipt_index: receipt.receipt_index,
-        receipt_type: receipt.receipt_type,
-        root_contract_id,
-        tx_id: receipt.tx_id,
-        rb: receipt.rb,
-        data: receipt.data,
-        val: receipt.val,
-        sub_id: receipt.sub_id,
-        amount: receipt.amount,
-        asset_id: receipt.asset_id,
-        to: receipt.to,
-        to_address: receipt.to_address,
-    }
-}
-
 /// Names every column a registration of `kind` reads that the receipt lacks.
 fn check_required(kind: &RegistrationKind, receipt: &ReceiptRow, missing: &mut Vec<String>) {
     match kind {
@@ -322,7 +291,7 @@ struct ReceiptHex {
     to_address: String,
 }
 
-fn hex_of<'a>(out: &'a mut String, bytes: Option<&[u8]>) -> Option<&'a str> {
+fn write_optional_hex<'a>(out: &'a mut String, bytes: Option<&[u8]>) -> Option<&'a str> {
     bytes.map(|bytes| {
         crate::hex::write_hex(out, bytes);
         out.as_str()
@@ -372,10 +341,15 @@ fn build_page(
                     root_contract_id.len()
                 )));
             }
-            let view = receipt_view(&receipt, root_contract_id);
+            let fields = ReceiptMatchFields {
+                receipt_type: receipt.receipt_type,
+                rb: receipt.rb,
+                root_contract_id,
+                block_height: receipt.block_height,
+            };
             let mut kept = false;
             let mut registers = false;
-            matcher.for_each_match(&view, store, |registration| {
+            matcher.for_each_match_of_fields(&fields, store, |registration| {
                 kept = true;
                 registers |= matcher.contract_registers.has(registration.index());
                 check_required(&registration.registration.kind, &receipt, &mut missing);
@@ -403,11 +377,11 @@ fn build_page(
                     rb: receipt.rb,
                     data: receipt.data,
                     val: receipt.val,
-                    sub_id: hex_of(&mut hex.sub_id, receipt.sub_id),
+                    sub_id: write_optional_hex(&mut hex.sub_id, receipt.sub_id),
                     amount: receipt.amount,
-                    asset_id: hex_of(&mut hex.asset_id, receipt.asset_id),
-                    to: hex_of(&mut hex.to, receipt.to),
-                    to_address: hex_of(&mut hex.to_address, receipt.to_address),
+                    asset_id: write_optional_hex(&mut hex.asset_id, receipt.asset_id),
+                    to: write_optional_hex(&mut hex.to, receipt.to),
+                    to_address: write_optional_hex(&mut hex.to_address, receipt.to_address),
                 },
             )?;
         }
@@ -455,6 +429,7 @@ mod tests {
     use super::*;
     use crate::address_store::test_support::fuel_store;
     use crate::address_store::AddressStore;
+    use crate::chain_buffer::fuel::ReceiptView;
     use crate::chain_buffer::matching::ContractRegisters;
     use crate::js_value::test_value::JsValue;
     use selection::FuelOnEventRegistrationInput;

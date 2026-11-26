@@ -7,7 +7,7 @@
 use anyhow::{Context, Result};
 use arrow::array::{Array, BinaryArray, RecordBatch, UInt64Array};
 
-pub(crate) fn column<'a, T: Array + 'static>(
+pub(crate) fn typed_column<'a, T: Array + 'static>(
     batch: &'a RecordBatch,
     name: &str,
 ) -> Result<Option<&'a T>> {

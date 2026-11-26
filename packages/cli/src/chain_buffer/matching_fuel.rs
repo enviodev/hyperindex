@@ -67,6 +67,16 @@ impl FuelMatcher {
         &self,
         receipt: &ReceiptView,
         store: &StoreInner,
+        f: impl FnMut(&FuelRegistration),
+    ) {
+        self.for_each_match_of_fields(&ReceiptMatchFields::of_view(receipt), store, f)
+    }
+
+    /// `for_each_match` over just the fields matching reads.
+    pub(crate) fn for_each_match_of_fields(
+        &self,
+        receipt: &ReceiptMatchFields,
+        store: &StoreInner,
         mut f: impl FnMut(&FuelRegistration),
     ) {
         for registration in &self.registrations {
@@ -79,6 +89,25 @@ impl FuelMatcher {
             ) {
                 f(registration);
             }
+        }
+    }
+}
+
+/// What a registration matches a receipt on.
+pub(crate) struct ReceiptMatchFields<'a> {
+    pub(crate) receipt_type: u8,
+    pub(crate) rb: Option<u64>,
+    pub(crate) root_contract_id: &'a [u8],
+    pub(crate) block_height: u64,
+}
+
+impl<'a> ReceiptMatchFields<'a> {
+    fn of_view(receipt: &ReceiptView<'a>) -> Self {
+        ReceiptMatchFields {
+            receipt_type: receipt.receipt_type,
+            rb: receipt.rb,
+            root_contract_id: receipt.root_contract_id,
+            block_height: receipt.block_height,
         }
     }
 }

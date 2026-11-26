@@ -18,7 +18,7 @@ use hypersync_solana_net_types::query::SolanaQuery;
 use hypersync_solana_net_types::RollbackGuard;
 use reqwest::Method;
 
-use crate::hypersync_http::{read_body, read_ipc_file, reply_of, HttpClient, Reply};
+use crate::hypersync_http::{classify_reply, read_body, read_ipc_file, HttpClient, Reply};
 
 pub(super) struct SvmResponse {
     pub(super) next_slot: u64,
@@ -61,7 +61,7 @@ pub(super) async fn query(http: &HttpClient, query: &SolanaQuery) -> Result<Quer
         .send()
         .await
         .context("execute http req")?;
-    match reply_of(response).await? {
+    match classify_reply(response).await? {
         Reply::Success(response) => {
             let body = read_body(response).await?;
             Ok(QueryOutcome::Response(

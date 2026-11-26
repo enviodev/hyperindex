@@ -25,10 +25,17 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["raw_value"] }
 serde_yaml = "0.9.19"
 regex = "1.12"
-# rustls with the OS certificate store, as hypersync-client chose: custom CAs
-# (corporate proxies, containers) verify, and HyperSync negotiates HTTP/2 over
-# ALPN, which native-tls doesn't offer without an extra feature.
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "http2"] }
+# rustls trusting the OS store and the bundled webpki roots, like the Postgres
+# client: custom CAs (corporate proxies) verify, and so do public ones in an
+# image without ca-certificates. reqwest's defaults otherwise, minus native-tls.
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "charset",
+  "http2",
+  "macos-system-configuration",
+  "rustls-tls-native-roots",
+  "rustls-tls-webpki-roots",
+] }
 strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
 tokio = { version = "1.49", features = [
@@ -51,8 +58,9 @@ thiserror = "1.0.50"
 fuel-abi-types = "0.7.0"
 hypersync-client = "1.2.0"
 hypersync-net-types = "0.12.3"
-# Response encoding for the test-only mock HyperSync server, matching the
-# formats hypersync-client decodes.
+# The HyperSync servers' response formats: Arrow IPC (ZSTD compressed) inside
+# Cap'n Proto. arrow must stay the version hypersync-client builds on, whose row
+# readers take our record batches.
 arrow = { version = "57", default-features = false, features = ["ipc", "ipc_compression"] }
 capnp = "0.23"
 hyperfuel-format = "4"

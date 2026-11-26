@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use arrow::array::{BinaryArray, Int64Array, RecordBatch, UInt64Array, UInt8Array};
 
-use crate::arrow_columns::{bytes_at, column, primitive_at, u64_at};
+use crate::arrow_columns::{bytes_at, primitive_at, typed_column, u64_at};
 
 /// `MissingFields` is the shape the JS side recognizes (via the JSON payload
 /// protocol shared with hypersync_source) and converts to
@@ -32,10 +32,16 @@ fn i64_value(value: Option<u64>, name: &str) -> Result<Option<u64>> {
         .transpose()
 }
 
-/// `value`, or `None` with `name` noted missing.
-fn required<T>(value: Option<T>, name: &str, missing: &mut Vec<String>) -> Option<T> {
-    if value.is_none() {
+pub(super) fn push_unique(missing: &mut Vec<String>, name: &str) {
+    if !missing.iter().any(|m| m == name) {
         missing.push(name.to_string());
+    }
+}
+
+/// `value`, or `None` with `name` noted missing.
+pub(super) fn required<T>(value: Option<T>, name: &str, missing: &mut Vec<String>) -> Option<T> {
+    if value.is_none() {
+        push_unique(missing, name);
     }
     value
 }
@@ -55,9 +61,9 @@ pub(crate) struct BlockRow<'a> {
 impl<'a> BlockColumns<'a> {
     pub(crate) fn of(batch: &'a RecordBatch) -> Result<Self> {
         Ok(BlockColumns {
-            id: column(batch, "id")?,
-            height: column(batch, "height")?,
-            time: column(batch, "time")?,
+            id: typed_column(batch, "id")?,
+            height: typed_column(batch, "height")?,
+            time: typed_column(batch, "time")?,
         })
     }
 
@@ -113,19 +119,19 @@ pub(crate) struct ReceiptRow<'a> {
 impl<'a> ReceiptColumns<'a> {
     pub(crate) fn of(batch: &'a RecordBatch) -> Result<Self> {
         Ok(ReceiptColumns {
-            receipt_index: column(batch, "receipt_index")?,
-            root_contract_id: column(batch, "root_contract_id")?,
-            tx_id: column(batch, "tx_id")?,
-            block_height: column(batch, "block_height")?,
-            receipt_type: column(batch, "receipt_type")?,
-            data: column(batch, "data")?,
-            rb: column(batch, "rb")?,
-            val: column(batch, "val")?,
-            sub_id: column(batch, "sub_id")?,
-            amount: column(batch, "amount")?,
-            asset_id: column(batch, "asset_id")?,
-            to: column(batch, "to")?,
-            to_address: column(batch, "to_address")?,
+            receipt_index: typed_column(batch, "receipt_index")?,
+            root_contract_id: typed_column(batch, "root_contract_id")?,
+            tx_id: typed_column(batch, "tx_id")?,
+            block_height: typed_column(batch, "block_height")?,
+            receipt_type: typed_column(batch, "receipt_type")?,
+            data: typed_column(batch, "data")?,
+            rb: typed_column(batch, "rb")?,
+            val: typed_column(batch, "val")?,
+            sub_id: typed_column(batch, "sub_id")?,
+            amount: typed_column(batch, "amount")?,
+            asset_id: typed_column(batch, "asset_id")?,
+            to: typed_column(batch, "to")?,
+            to_address: typed_column(batch, "to_address")?,
         })
     }
 

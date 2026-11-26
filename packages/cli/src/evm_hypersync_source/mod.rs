@@ -19,16 +19,16 @@ use crate::evm_rpc_source;
 use crate::request_stats::{rate_limited_err, RequestStat};
 
 mod config;
-#[cfg(test)]
-mod decode_benchmark;
 pub(crate) mod query;
 pub(crate) mod selection;
+#[cfg(test)]
+mod served_page_tests;
 pub(crate) mod topic_filter;
 mod transaction_selection;
 mod transport;
 pub(crate) mod types;
 
-use crate::arrow_columns::{bytes_at, column, fixed_bytes_at, u64_at};
+use crate::arrow_columns::{bytes_at, fixed_bytes_at, typed_column, u64_at};
 use config::ClientConfig;
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::BuiltLogSelection;
@@ -532,8 +532,8 @@ fn process_response(
         let mut kept = Vec::new();
         let mut rows = page.transactions.builder();
         for batch in transactions {
-            let block_numbers = column::<UInt64Array>(batch, "block_number")?;
-            let transaction_indexes = column::<UInt64Array>(batch, "transaction_index")?;
+            let block_numbers = typed_column::<UInt64Array>(batch, "block_number")?;
+            let transaction_indexes = typed_column::<UInt64Array>(batch, "transaction_index")?;
             for row in 0..batch.num_rows() {
                 // A row without its key backs no log; if a kept log wanted it,
                 // the coverage check below reports the transaction missing. A
@@ -679,16 +679,16 @@ struct LogColumns<'a> {
 impl<'a> LogColumns<'a> {
     fn of(batch: &'a RecordBatch) -> Result<Self> {
         Ok(LogColumns {
-            block_number: column(batch, "block_number")?,
-            log_index: column(batch, "log_index")?,
-            transaction_index: column(batch, "transaction_index")?,
-            address: column(batch, "address")?,
-            data: column(batch, "data")?,
+            block_number: typed_column(batch, "block_number")?,
+            log_index: typed_column(batch, "log_index")?,
+            transaction_index: typed_column(batch, "transaction_index")?,
+            address: typed_column(batch, "address")?,
+            data: typed_column(batch, "data")?,
             topics: [
-                column(batch, "topic0")?,
-                column(batch, "topic1")?,
-                column(batch, "topic2")?,
-                column(batch, "topic3")?,
+                typed_column(batch, "topic0")?,
+                typed_column(batch, "topic1")?,
+                typed_column(batch, "topic2")?,
+                typed_column(batch, "topic3")?,
             ],
         })
     }
@@ -703,9 +703,9 @@ struct ObservedBlockColumns<'a> {
 impl<'a> ObservedBlockColumns<'a> {
     fn of(batch: &'a RecordBatch) -> Result<Self> {
         Ok(ObservedBlockColumns {
-            number: column(batch, "number")?,
-            hash: column(batch, "hash")?,
-            timestamp: column(batch, "timestamp")?,
+            number: typed_column(batch, "number")?,
+            hash: typed_column(batch, "hash")?,
+            timestamp: typed_column(batch, "timestamp")?,
         })
     }
 }

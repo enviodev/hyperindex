@@ -18,7 +18,7 @@ pub struct ClientConfig {
     pub serialization_format: Option<SerializationFormat>,
     pub enable_query_caching: Option<bool>,
     /// Log level for the underlying Rust logger (e.g. "info", "debug", "trace",
-    /// or a directive like "hypersync_client=debug"). RUST_LOG env var takes
+    /// or a directive like "envio=debug"). RUST_LOG env var takes
     /// precedence. Only the first client's value takes effect.
     pub log_level: Option<String>,
 }

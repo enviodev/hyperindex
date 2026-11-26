@@ -33,10 +33,9 @@ pub(crate) fn decode_optionally_prefixed(s: &str, name: &str) -> Result<Vec<u8>>
 /// Encode bytes as a `0x`-prefixed lowercase hex string. The SVM wire's `dN`
 /// filters take this form.
 pub(crate) fn to_hex(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(2 + bytes.len() * 2);
-    s.push_str("0x");
-    s.push_str(&faster_hex::hex_string(bytes));
-    s
+    let mut hex = String::new();
+    write_hex(&mut hex, bytes);
+    hex
 }
 
 /// `to_hex` into `out`, replacing what it held, so one buffer serves many

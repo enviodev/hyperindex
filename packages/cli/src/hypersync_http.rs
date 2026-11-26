@@ -28,7 +28,21 @@ pub(crate) struct HttpClient {
     api_token: Option<String>,
     user_agent: String,
     timeout: Duration,
-    http: Mutex<(reqwest::Client, Instant)>,
+    connections: Mutex<AgedClient>,
+}
+
+struct AgedClient {
+    client: reqwest::Client,
+    built_at: Instant,
+}
+
+impl AgedClient {
+    fn build(user_agent: &str) -> Result<Self> {
+        Ok(AgedClient {
+            client: build_http_client(user_agent)?,
+            built_at: Instant::now(),
+        })
+    }
 }
 
 impl HttpClient {
@@ -39,33 +53,34 @@ impl HttpClient {
         timeout: Duration,
     ) -> Result<Self> {
         let url = Url::parse(url).context("url is malformed")?;
-        let http = build_http_client(&user_agent)?;
+        anyhow::ensure!(!url.cannot_be_a_base(), "url {url} can't take a path");
         Ok(HttpClient {
             url,
             api_token,
+            connections: Mutex::new(AgedClient::build(&user_agent)?),
             user_agent,
             timeout,
-            http: Mutex::new((http, Instant::now())),
         })
     }
 
-    fn http_client(&self) -> Result<reqwest::Client> {
-        let mut http = self.http.lock().unwrap();
+    fn current_client(&self) -> Result<reqwest::Client> {
+        let mut connections = self.connections.lock().unwrap();
         // Real time on purpose: this ages TCP connections to the real server,
         // it isn't a timer the indexer waits on.
-        if http.1.elapsed() > MAX_CONNECTION_AGE {
-            *http = (build_http_client(&self.user_agent)?, Instant::now());
+        if connections.built_at.elapsed() > MAX_CONNECTION_AGE {
+            *connections = AgedClient::build(&self.user_agent)?;
         }
-        Ok(http.0.clone())
+        Ok(connections.client.clone())
     }
 
     pub(crate) fn request(&self, method: Method, path: &[&str]) -> Result<reqwest::RequestBuilder> {
         let mut url = self.url.clone();
         url.path_segments_mut()
-            .map_err(|()| anyhow!("url can't take a path"))?
+            .expect("checked to take a path in `new`")
+            .pop_if_empty()
             .extend(path);
         let request = self
-            .http_client()?
+            .current_client()?
             .request(method, url)
             .timeout(self.timeout);
         Ok(match &self.api_token {
@@ -109,13 +124,13 @@ pub(crate) enum Reply {
 
 /// The reply to a query; any other failed status is an error carrying the
 /// server's message.
-pub(crate) async fn reply_of(response: reqwest::Response) -> Result<Reply> {
+pub(crate) async fn classify_reply(response: reqwest::Response) -> Result<Reply> {
     let status = response.status();
     if status == StatusCode::PAYLOAD_TOO_LARGE {
         return Ok(Reply::PayloadTooLarge);
     }
     if status == StatusCode::TOO_MANY_REQUESTS {
-        return Ok(Reply::RateLimited(rate_limit_info(&response)));
+        return Ok(Reply::RateLimited(parse_rate_limit_headers(&response)));
     }
     if !status.is_success() {
         let text = response.text().await.context("read text to see error")?;
@@ -124,7 +139,7 @@ pub(crate) async fn reply_of(response: reqwest::Response) -> Result<Reply> {
     Ok(Reply::Success(response))
 }
 
-pub(crate) fn rate_limit_info(response: &reqwest::Response) -> RateLimitInfo {
+fn parse_rate_limit_headers(response: &reqwest::Response) -> RateLimitInfo {
     let header = |name: &str| response.headers().get(name)?.to_str().ok();
     let number = |name: &str| header(name)?.trim().parse().ok();
     RateLimitInfo {
@@ -151,7 +166,15 @@ pub(crate) async fn read_packed_message(
 /// The whole body in one buffer, sized up front when the server says how
 /// long it is.
 pub(crate) async fn read_body(mut response: reqwest::Response) -> Result<Buffer> {
-    let mut body = Vec::with_capacity(response.content_length().unwrap_or(0) as usize);
+    // The announced length is the server's word: past this, the body grows as
+    // it arrives rather than reserving whatever was announced.
+    const MAX_PREALLOCATION: u64 = 64 << 20;
+    let mut body = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or(0)
+            .min(MAX_PREALLOCATION) as usize,
+    );
     while let Some(chunk) = response.chunk().await.context("read response body bytes")? {
         body.extend_from_slice(&chunk);
     }
@@ -164,7 +187,7 @@ pub(crate) struct FileSpan {
     length: usize,
 }
 
-pub(crate) fn file_span(bytes: &[u8]) -> FileSpan {
+pub(crate) fn locate_file(bytes: &[u8]) -> FileSpan {
     FileSpan {
         start: NonNull::from(bytes).cast(),
         length: bytes.len(),
@@ -180,12 +203,19 @@ pub(crate) fn read_files_in_message<const N: usize>(
     // The spans point into the one allocation the segments own, which stays
     // where it is when the reader gives the segments up.
     let segments = Arc::new(segments);
+    let whole: &[u8] = &segments;
+    // SAFETY: `whole` is the segments' own allocation, which the buffer keeps
+    // alive through its `Arc` and which nothing writes to again.
+    let message = unsafe {
+        Buffer::from_custom_allocation(NonNull::from(whole).cast(), whole.len(), segments.clone())
+    };
     let mut tables = Vec::with_capacity(N);
     for (span, table) in spans {
-        // SAFETY: the span lies inside the segments' allocation, which the
-        // buffer keeps alive through its `Arc`.
-        let file =
-            unsafe { Buffer::from_custom_allocation(span.start, span.length, segments.clone()) };
+        let offset = (span.start.as_ptr() as usize)
+            .checked_sub(message.as_ptr() as usize)
+            .filter(|offset| offset + span.length <= message.len())
+            .with_context(|| format!("{table} data lies outside the message"))?;
+        let file = message.slice_with_length(offset, span.length);
         tables.push(read_ipc_file(&file).with_context(|| format!("parse {table} data"))?);
     }
     Ok(tables
@@ -199,7 +229,7 @@ pub(crate) fn read_files_in_message<const N: usize>(
 /// trusted: other corrupted lengths, such as a compressed buffer's
 /// uncompressed-length prefix, can still make arrow allocate without bound,
 /// as they could with its `FileReader`.
-fn block_bytes(file: &Buffer, block: &arrow::ipc::Block) -> Result<Buffer> {
+fn slice_ipc_block(file: &Buffer, block: &arrow::ipc::Block) -> Result<Buffer> {
     let offset = usize::try_from(block.offset()).context("IPC block offset")?;
     let metadata_length =
         usize::try_from(block.metaDataLength()).context("IPC block metadata length")?;
@@ -246,7 +276,7 @@ pub(crate) fn read_ipc_file(file: &Buffer) -> Result<Vec<RecordBatch>> {
     let mut decoder = arrow::ipc::reader::FileDecoder::new(schema, footer.version());
     for block in footer.dictionaries().iter().flatten() {
         decoder
-            .read_dictionary(block, &block_bytes(file, block)?)
+            .read_dictionary(block, &slice_ipc_block(file, block)?)
             .context("read IPC dictionary")?;
     }
     // A footer without the list would read as an empty table: a corrupted
@@ -257,7 +287,7 @@ pub(crate) fn read_ipc_file(file: &Buffer) -> Result<Vec<RecordBatch>> {
     let mut batches = Vec::new();
     for block in blocks.iter() {
         if let Some(batch) = decoder
-            .read_record_batch(block, &block_bytes(file, block)?)
+            .read_record_batch(block, &slice_ipc_block(file, block)?)
             .context("read IPC record batch")?
         {
             batches.push(batch);
@@ -476,6 +506,47 @@ mod tests {
             read_ipc_file(&Buffer::from_vec(ipc_file(&batch))).unwrap(),
             vec![batch]
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_body_shorter_than_its_announced_length_is_an_error() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request).await;
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1099511627776\r\n\r\nshort")
+                .await
+                .unwrap();
+        });
+        let client = HttpClient::new(
+            &format!("http://{address}"),
+            None,
+            "test".to_string(),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let response = client.get(&["height"]).await.unwrap();
+        let body = read_body(response).await.map(|body| body.len());
+        assert!(body.is_err(), "{body:?}");
+    }
+
+    #[test]
+    fn a_base_path_ending_in_a_slash_takes_the_path_once() {
+        let urls: Vec<String> = ["http://host/sub", "http://host/sub/"]
+            .into_iter()
+            .map(|base| {
+                let client =
+                    HttpClient::new(base, None, "test".to_string(), Duration::from_secs(5))
+                        .unwrap();
+                let request = client.request(Method::GET, &["height"]).unwrap();
+                request.build().unwrap().url().to_string()
+            })
+            .collect();
+        assert_eq!(urls, ["http://host/sub/height", "http://host/sub/height"]);
     }
 
     #[tokio::test(flavor = "multi_thread")]

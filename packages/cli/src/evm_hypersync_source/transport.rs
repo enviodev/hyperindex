@@ -13,7 +13,7 @@ use hypersync_net_types::{ArchiveHeight, Query, RollbackGuard};
 use reqwest::Method;
 
 use crate::hypersync_http::{
-    file_span, read_files_in_message, read_packed_message, reply_of, HttpClient, Reply,
+    classify_reply, locate_file, read_files_in_message, read_packed_message, HttpClient, Reply,
 };
 
 #[derive(Clone, Copy)]
@@ -117,7 +117,7 @@ impl Transport {
             .send()
             .await
             .context("execute http req")?;
-        attempt_of(reply_of(response).await?, Root::Plain).await
+        attempt_of(classify_reply(response).await?, Root::Plain).await
     }
 
     async fn query_capnp(&self, query: &Query, should_cache: bool) -> Result<Attempt> {
@@ -131,7 +131,7 @@ impl Transport {
                 .send()
                 .await
                 .context("execute http req")?;
-            match reply_of(response).await {
+            match classify_reply(response).await {
                 Ok(reply) => match attempt_of(reply, Root::Cached).await? {
                     // The server doesn't hold the query under its id yet.
                     Attempt::NotCached => {}
@@ -152,7 +152,7 @@ impl Transport {
             .send()
             .await
             .context("execute http req")?;
-        attempt_of(reply_of(response).await?, Root::Plain).await
+        attempt_of(classify_reply(response).await?, Root::Plain).await
     }
 }
 
@@ -234,9 +234,9 @@ fn decode_query_response(
         };
         let data = response.get_data().context("read data")?;
         let files = [
-            file_span(data.get_blocks().context("get block data")?),
-            file_span(data.get_transactions().context("get transaction data")?),
-            file_span(data.get_logs().context("get log data")?),
+            locate_file(data.get_blocks().context("get block data")?),
+            locate_file(data.get_transactions().context("get transaction data")?),
+            locate_file(data.get_logs().context("get log data")?),
         ];
         (
             archive_height,
