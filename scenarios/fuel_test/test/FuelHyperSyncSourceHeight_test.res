@@ -34,9 +34,7 @@ let withServer = async (handler, body) => {
   }
 }
 
-describe("FuelHyperSyncSource - getHeightOrThrow", () => {
-  let chainId = 0->ChainId.fromInt
-
+describe("Fuel HyperSync source - getHeight", () => {
   // The native client validates that the token is a UUID before sending requests.
   let apiToken = "11111111-1111-1111-1111-111111111111"
 
@@ -50,6 +48,28 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
     ~addressStore=AddressStore.make(~ecosystem=Ecosystem.Fuel, ~contracts=[]),
   )
 
+  let makeSource = (~url, ~apiToken): Source.t =>
+    NativeSource.makeChainSources(
+      {
+        chainId: 0,
+        ecosystem: Fuel,
+        hyperSync: {
+          url,
+          apiToken,
+          httpReqTimeoutMillis: 10_000,
+          serializationFormat: Json,
+          enableQueryCaching: false,
+          logFilter: "error",
+        },
+        rpcs: [],
+        maxAddressesPerRequest: 5_000,
+        userAgent: NativeSource.userAgent,
+      },
+      ~chainId=0->ChainId.fromInt,
+      ~chainBuffer,
+      ~logger=Logger.makeInMemory(),
+    )->Array.getUnsafe(0)
+
   Async.it("Requests height via the client with auth and user agent headers", async t => {
     let capturedHeaders = ref(None)
     await withServer(
@@ -58,23 +78,16 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
         res->writeHead(200)
         res->endWith(`{"height": 123}`)
       },
-      async endpointUrl => {
-        let source = FuelHyperSyncSource.make({
-          chainId,
-          endpointUrl,
-          apiToken: Some(apiToken),
-          chainBuffer,
-          logger: Logger.makeInMemory(),
-        })
-        let {height} = await source.getHeightOrThrow()
+      async url => {
+        let {result} = await makeSource(~url, ~apiToken=Some(apiToken)).getHeight()
 
         let headers = capturedHeaders.contents->Option.getOrThrow
         t.expect((
-          height,
+          result,
           headers->Dict.get("authorization"),
           headers->Dict.get("user-agent"),
         )).toEqual((
-          123,
+          Ok(123),
           Some(`Bearer ${apiToken}`),
           Some(`hyperindex/${Utils.EnvioPackage.value.version}`),
         ))
@@ -84,14 +97,7 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
 
   it("Throws with the token instructions when no token is configured", t => {
     t->toThrowErrorEqual(
-      () =>
-        FuelHyperSyncSource.make({
-          chainId,
-          endpointUrl: "http://127.0.0.1:1",
-          apiToken: None,
-          chainBuffer,
-          logger: Logger.makeInMemory(),
-        })->ignore,
+      () => makeSource(~url="http://127.0.0.1:1", ~apiToken=None)->ignore,
       `An Envio API token is required for using HyperSync as a data-source.
 Set the ENVIO_API_TOKEN environment variable in your .env file.
 Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`,
@@ -99,33 +105,25 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`,
   })
 
   // A rejected token used to park the request on a promise that never settled,
-  // which left the indexer silent and idle. It has to reach the caller instead:
+  // which left the indexer silent and idle. It has to come back as a failure:
   // a token can be replaced without restarting, and the retry ramp is what gives
-  // an operator the chance to. The loud line about it is said once per source.
-  Async.it("Throws on 401 so the caller keeps retrying", async t => {
+  // an operator the chance to.
+  Async.it("Answers a 401 with a backoff so the caller keeps retrying", async t => {
     await withServer(
       (_req, res) => {
         res->writeHead(401)
         res->endWith("Unauthorized")
       },
-      async endpointUrl => {
-        let source = FuelHyperSyncSource.make({
-          chainId,
-          endpointUrl,
-          apiToken: Some(apiToken),
-          chainBuffer,
-          logger: Logger.makeInMemory(),
-        })
-        // Generous, so a slow debug build of the native client can't pass this by
-        // failing to answer inside the window.
-        let result = await Promise.race([
-          source.getHeightOrThrow()
-          ->Promise.thenResolve(_ => "resolved")
-          ->Promise.catch(_ => Promise.resolve("threw")),
-          Time.resolvePromiseAfterDelay(~delayMilliseconds=5000)->Promise.thenResolve(() => "hung"),
-        ])
+      async url => {
+        let {result} = await makeSource(~url, ~apiToken=Some(apiToken)).getHeight()
 
-        t.expect(result).toEqual("threw")
+        t.expect(
+          switch result {
+          | Error(Backoff({backoffMillis: ?None})) => "backoff"
+          | Ok(_) => "resolved"
+          | Error(_) => "other failure"
+          },
+        ).toEqual("backoff")
       },
     )
   })
