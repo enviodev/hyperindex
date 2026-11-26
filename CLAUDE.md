@@ -47,7 +47,7 @@ printf '{"name":"envio-linux-x64","version":"0.0.1-dev","main":"envio.node"}\n' 
 
 ## Storage
 
-- No in-place migrations: on schema or config changes the user is expected to resync from scratch. The one exception is a chain added to config.yaml, which `envio start --chain <id>` adds to an existing schema when it names only that chain (`ResumePlan`). `packages/envio-tests/test/Migration_test.res` states what a restart does with each kind of config change. Don't design or propose other migration paths for existing deployments.
+- No in-place migrations: on schema or config changes the user is expected to resync from scratch. The one exception is a chain added to config.yaml, which `envio start --chain <id>` adds to an existing schema when it names only that chain (`ResumePlan`). `packages/envio-tests/test/storage/Migration_test.res` states what a restart does with each kind of config change. Don't design or propose other migration paths for existing deployments.
 
 ## Testing and Development
 
@@ -57,12 +57,14 @@ Reproduce from the outside in — real `config.yaml`, real `schema.graphql`, rea
 
 Pick the highest rung that reproduces:
 
-1. **User API** — `packages/envio-tests`, via `InternalTestIndexer.fromUserApi(~configYaml, ~schema, ~handlers, ~test)`. User YAML, schema and handler source, type-checked and executed, with `createTestIndexer()` in the test. No codegen, no database. See `TokenIndexer_test.res`. Default — start here.
+1. **User API** — `packages/envio-tests`, via `InternalTestIndexer.fromUserApi(~configYaml, ~schema, ~handlers, ~test)`. User YAML, schema and handler source, type-checked and executed, with `createTestIndexer()` in the test. No codegen, no database. See `test/testIndexer/TokenIndexer_test.res`. Default — start here.
    `cd packages/envio-tests && pnpm rescript && pnpm vitest run -t "name"`
-2. **Mock indexer** — `scenarios/test_codegen`, via `test/helpers/MockIndexer.res`. Real indexer loop over the generated config with `Source` and `Storage` mocked, Postgres included. Use when the bug is in the loop itself: fetching, reorgs, batching, writes. The config can still come from `fromUserApi` — see `YamlConfigIndexer_test.res`.
-   `cd scenarios/test_codegen && pnpm exec envio codegen && pnpm rescript && pnpm vitest run test/X_test.res`
+2. **Scenario** — `packages/envio-tests`, via `Scenario.make(~configYaml, ~schema, ~handlers)` and `Scenario.it(~sources=[...])`. The real indexer loop over the user's config, with Postgres, its sources replaced by `MockSource`s the test answers on virtual time. Use when the bug is in the loop itself: fetching, reorgs, batching, writes. See `test/sources/NewBlockWait_test.res`. For the real Rust clients, serve the chain from local HyperSync and RPC servers with `ServedEvmChain` — see `test/sources/SourceFailureMatrix_test.res`.
+   `cd packages/envio-tests && pnpm rescript && pnpm vitest run test/<area>/X_test.res`
 3. **End to end** — `scenarios/e2e_test`. For what the rungs above can't mock: ClickHouse, Hasura, and the CLI itself. CI runs it against real services, so anything beyond the local smoke test lands here.
    `cd scenarios/e2e_test && pnpm exec envio codegen && pnpm test`
+
+Tests live in `packages/envio-tests/test/<area>/`, by what they exercise: `sources/`, `fetching/` (partitions, chain buffer, start blocks), `handlers/`, `reorgs/`, `storage/` (and `storage/clickhouse/`), `run/` (process, supervisor, resume, logs, metrics), `testIndexer/`, `config/`, `svm/`, `fuel/`, `e2e/`, and `live/` for tests against real endpoints that need `ENVIO_API_TOKEN`. `helpers/` and `fixtures/` support them; `bench/` holds benchmarks (`pnpm bench`), which `pnpm test` doesn't run.
 
 Logs never reach the test output. A run's logger is passed in explicitly (there is no global one) and captures every line in memory: assert on them with `indexer.infoAndAboveLogs()` (as `{msg, params}`) or `indexer.allLogsAsJson()` (every line, trace included). Domain modules such as `FetchState` don't log: they report typed notices through `~onNotice`, and the chain that owns them logs. A failing run's message ends with `Logs: <path>`, a `.test-logs/*.jsonl` file holding all of them. Read it only when the failure needs it.
 

@@ -10,6 +10,7 @@ let templateDir = pathJoin([
   pathDirname(fileURLToPath(importMetaUrl)),
   "..",
   "..",
+  "..",
   "cli",
   "templates",
   "static",

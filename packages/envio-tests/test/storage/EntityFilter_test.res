@@ -160,7 +160,11 @@ describe("EntityFilter.getParams", () => {
       dict{"a": dict{"_eq": v(1)}}->params,
       dict{"a": dict{"_gt": v(1)}}->params,
       dict{"a": dict{"_in": [v(1), v(2)]->(Utils.magic: array<unknown> => unknown)}}->params,
-      dict{"a": dict{"_gt": v(1)}, "b": dict{"_lt": v(2)}, "c": dict{"_in": [v(3), v(4)]->(Utils.magic: array<unknown> => unknown)}}->params,
+      dict{
+        "a": dict{"_gt": v(1)},
+        "b": dict{"_lt": v(2)},
+        "c": dict{"_in": [v(3), v(4)]->(Utils.magic: array<unknown> => unknown)},
+      }->params,
     )).toEqual((
       [v(1)],
       [v(1)],
@@ -179,31 +183,18 @@ describe("EntityFilter.merge", () => {
       ->EntityFilter.merge
       ->Array.map(EntityFilter.entries)
     t.expect((
-      [
-        dict{"a": dict{"_eq": v(1)}},
-        dict{"a": dict{"_eq": v(2)}},
-      ]->merge,
+      [dict{"a": dict{"_eq": v(1)}}, dict{"a": dict{"_eq": v(2)}}]->merge,
       [
         dict{"a": dict{"_in": [v(1), v(2)]->(Utils.magic: array<unknown> => unknown)}},
         dict{"a": dict{"_in": [v(3)]->(Utils.magic: array<unknown> => unknown)}},
       ]->merge,
-      [
-        dict{"a": dict{"_gt": v(1)}},
-        dict{"a": dict{"_gt": v(2)}},
-      ]->merge,
+      [dict{"a": dict{"_gt": v(1)}}, dict{"a": dict{"_gt": v(2)}}]->merge,
       [dict{"a": dict{"_eq": v(1)}}]->merge,
       []->merge,
     )).toEqual((
-      [
-        dict{"a": dict{"_in": [v(1), v(2)]->(Utils.magic: array<unknown> => unknown)}},
-      ],
-      [
-        dict{"a": dict{"_in": [v(1), v(2), v(3)]->(Utils.magic: array<unknown> => unknown)}},
-      ],
-      [
-        dict{"a": dict{"_gt": v(1)}},
-        dict{"a": dict{"_gt": v(2)}},
-      ],
+      [dict{"a": dict{"_in": [v(1), v(2)]->(Utils.magic: array<unknown> => unknown)}}],
+      [dict{"a": dict{"_in": [v(1), v(2), v(3)]->(Utils.magic: array<unknown> => unknown)}}],
+      [dict{"a": dict{"_gt": v(1)}}, dict{"a": dict{"_gt": v(2)}}],
       [dict{"a": dict{"_eq": v(1)}}],
       [],
     ))
@@ -213,10 +204,7 @@ describe("EntityFilter.merge", () => {
     let v = i => i->(Utils.magic: int => unknown)
     t->toThrowErrorEqual(
       () =>
-        [
-          dict{"a": dict{"_eq": v(1)}},
-          dict{"a": dict{"_eq": v(2)}, "b": dict{"_eq": v(3)}},
-        ]
+        [dict{"a": dict{"_eq": v(1)}}, dict{"a": dict{"_eq": v(2)}, "b": dict{"_eq": v(3)}}]
         ->Array.map(filter => filter->parse(~table=abcTable))
         ->EntityFilter.merge,
       "Unexpected composite filter in a merged batch. Filters batched into a single query must use the same operator and field.",
@@ -535,5 +523,4 @@ describe("EntityFilter.toString", () => {
       "num_gtn1:1;b_lts1:z;",
     ])
   })
-
 })

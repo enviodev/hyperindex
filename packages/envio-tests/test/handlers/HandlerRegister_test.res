@@ -48,7 +48,7 @@ chains:
 
 // The full chain set (1 + 137). Handlers register against this; a
 // `finishRegistration` for either `config` (chain 1) or `config137` (chain 137)
-// narrows to that chain (mirrors MockIndexer registering once, narrowing per run).
+// narrows to that chain (as a scenario registers once and narrows per run).
 let configMultichain = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: handler-register-multichain
@@ -220,7 +220,7 @@ describe("HandlerRegister multiple registrations", () => {
   it("narrows one registration to each requested chain", t => {
     // Register once against the full set (chains 1 + 137), then finish for each
     // chain separately without re-registering — both must materialize the
-    // handler (the MockIndexer register-once, narrow-per-run case).
+    // handler (the register-once, narrow-per-run case).
     let h1 = makeHandler()
     HandlerRegister.resetOnEventRegistrations()
     HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config=configMultichain)
