@@ -16,22 +16,33 @@ let launch = (state: IndexerState.t, work: unit => promise<unit>) =>
 // one `let rec` block and threaded into the operations as the only way back in.
 let start = (state: IndexerState.t) => {
   let runtime = HandlerRuntime.make(state)
+
+  // No tick while a reorg is resolved: the plan would hand out requests that
+  // fetchChain then drops, and a chain the rollback leaves alone would keep
+  // them in flight for good. The rollback schedules a fetch once it is ready.
   let rec scheduleFetch = () =>
-    launch(state, () =>
-      state
-      ->IndexerState.crossChainState
-      ->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~work) =>
-        ChainFetching.fetchChain(
-          state,
-          chainId,
-          ~work,
-          ~stateId=state->IndexerState.epoch,
-          ~scheduleFetch,
-          ~scheduleProcessing,
-          ~scheduleRollback,
-          ~scheduleContractRegister,
-        )
-      )
+    launch(state, async () =>
+      if !(state->IndexerState.isResolvingReorg) {
+        try {
+          await state
+          ->IndexerState.crossChainState
+          ->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~work) =>
+            ChainFetching.fetchChain(
+              state,
+              chainId,
+              ~work,
+              ~stateId=state->IndexerState.epoch,
+              ~scheduleFetch,
+              ~scheduleProcessing,
+              ~scheduleRollback,
+              ~scheduleContractRegister,
+            )
+          )
+        } catch {
+        | exn =>
+          IndexerState.errorExit(state, exn->ErrorHandling.make(~logger=state->IndexerState.logger))
+        }
+      }
     )
   and scheduleProcessing = () =>
     launch(state, () =>

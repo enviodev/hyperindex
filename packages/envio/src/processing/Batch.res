@@ -201,10 +201,6 @@ let addReorgCheckpoints = (
   }
 }
 
-// Within a chain, ids ascend with block order, and rollback preserves that by
-// deleting the chain's ids above its target before any higher one is allocated.
-// Every rollback deletes by `id > target`, which is only the stale suffix while
-// ids and blocks agree on order within each chain.
 %%private(
   let pathsEqual = (a: array<int>, b: array<int>) =>
     a->Array.length === b->Array.length &&
@@ -256,6 +252,10 @@ let sortForBatch = (
   )
 }
 
+// Within a chain, ids ascend with block order, and rollback preserves that by
+// deleting the chain's ids above its target before any higher one is allocated.
+// Every rollback deletes by `id > target`, which is only the stale suffix while
+// ids and blocks agree on order within each chain.
 let make = async (
   ~sequence: CheckpointSequence.t,
   ~frontier: Frontier.t,

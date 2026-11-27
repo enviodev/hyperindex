@@ -166,7 +166,7 @@ let make = (
   ~logger: Logger.t,
   ~storage: Persistence.storage,
   ~chainStates: dict<ChainState.t>,
-  ~indexingPlan=IndexingPlan.make(Core.getAddon().indexingPlan),
+  ~indexingPlan: IndexingPlan.t,
   ~isRealtime: bool,
   ~targetBufferSize=config.env.indexingMaxBufferSize,
   ~inMemoryObjectsTarget=config.env.inMemoryObjectsTarget->Int.toFloat,

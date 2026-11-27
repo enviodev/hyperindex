@@ -116,6 +116,8 @@ external getRequestStreamCount: (t, ~chainId: ChainId.t) => int = "getRequestStr
 @send
 external hasContractRegisterBacklog: (t, ~chainId: ChainId.t) => bool = "hasContractRegisterBacklog"
 
+@send external isFetchingAtHead: (t, ~chainId: ChainId.t) => bool = "isFetchingAtHead"
+
 @send
 external takeContractRegisterBlocksToRun: (t, ~chainId: ChainId.t) => array<int> =
   "takeContractRegisterBlocksToRun"
@@ -146,6 +148,7 @@ module Request = {
   let toBlock = (request: t) => request->toBlockRaw->Null.toOption
   @get external itemsEstimate: t => int = "itemsEstimate"
   @get external addresses: t => array<Address.t> = "addresses"
+  @get external addressCount: t => int = "addressCount"
   @send external selectionRaw: (t, Null.t<int>) => selection = "selection"
   let selection = (request: t, ~toBlock) => request->selectionRaw(toBlock->Null.fromOption)
   @send

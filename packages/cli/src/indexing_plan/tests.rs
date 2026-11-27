@@ -375,3 +375,28 @@ fn a_contract_going_address_free_at_the_head_ends_its_group_and_owes_a_catch_up(
         (1, true, vec![(false, 1001, None), (true, 989, Some(1001))])
     );
 }
+
+/// A factory registering an address every block at the head leaves one
+/// catch-up per registration; once a catch-up is done and below the reorg
+/// window, its slot is reused, so the needs stay as many as the window holds.
+#[test]
+fn finished_catch_ups_below_the_reorg_window_are_reclaimed() {
+    let mut plan = chain(&[PAIR1], |config| {
+        config.max_reorg_depth = 10;
+        config.should_rollback_on_reorg = true;
+    });
+    for (slot, generation, ..) in start(&mut plan, 1000) {
+        complete(&mut plan, slot, generation, 1000);
+    }
+    for height in 1001..1201 {
+        plan.set_known_height(height);
+        let address = format!("0x2{:039x}", height);
+        register(&mut plan, &address, height - 1);
+        for _ in 0..3 {
+            for (slot, generation, ..) in start(&mut plan, height) {
+                complete(&mut plan, slot, generation, height);
+            }
+        }
+    }
+    assert!(plan.needs.len() < 30, "needs: {}", plan.needs.len());
+}

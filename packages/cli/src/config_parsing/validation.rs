@@ -149,7 +149,8 @@ pub fn validate_contract_end_blocks<T>(
             continue;
         };
         let starts_at = match (contract.start_block, start_block) {
-            (Some(start), _) | (None, StartBlock::Number(start)) => start,
+            (Some(start), StartBlock::Number(chain_start)) => start.max(chain_start),
+            (Some(start), StartBlock::Tag(_)) | (None, StartBlock::Number(start)) => start,
             (None, StartBlock::Tag(_)) => continue,
         };
         if end_block < starts_at {
@@ -582,7 +583,7 @@ mod tests {
                 check(100, contract(None, 100)),
                 check(100, contract(Some(10), 50)),
             ],
-            [false, false, true, true]
+            [false, false, true, false]
         );
     }
 

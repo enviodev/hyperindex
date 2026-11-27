@@ -260,6 +260,9 @@ pub(crate) struct EvmRpcClient {
     evm: Arc<EvmRegistrations>,
     sync_config: SyncConfig,
     max_addresses_per_request: usize,
+    /// Set once the provider refused the contracts' addresses in one request
+    /// as too large: it would refuse every head block the same way.
+    grouping_refused: AtomicBool,
     logger: BoundLogger,
     intervals: IntervalState,
     /// Coalesces block, transaction and receipt reads that overlap in time,
@@ -389,6 +392,7 @@ impl EvmRpcClient {
             evm: evm.clone(),
             sync_config,
             max_addresses_per_request,
+            grouping_refused: AtomicBool::new(false),
             logger: logger.bind(bound_fields_json),
             intervals: IntervalState::new(),
             fetches: Fetches::default(),
@@ -523,12 +527,11 @@ impl EvmRpcClient {
             &params.client_filtered,
         )?;
 
-        let (selections, selection_parts) = if params.group_by_address {
-            logs::group_by_address(built.log_selections)
-        } else {
-            let parts = built.log_selections.iter().map(|_| Vec::new()).collect();
-            (built.log_selections, parts)
-        };
+        let (selections, selection_parts) = logs::pack_by_address(
+            built.log_selections,
+            params.group_by_address && !self.grouping_refused.load(Ordering::Relaxed),
+            self.max_addresses_per_request,
+        );
         let query = PageQuery {
             interval_key: params.interval_key,
             from_block,
@@ -872,6 +875,7 @@ impl EvmRpcClient {
             blocks,
             selection,
             parts,
+            &self.grouping_refused,
             |origin| {
                 self.evm
                     .selection

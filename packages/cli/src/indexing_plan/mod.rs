@@ -206,6 +206,11 @@ impl FetchRequest {
         self.address_set.addresses()
     }
 
+    #[napi(getter)]
+    pub fn address_count(&self) -> u32 {
+        self.address_set.address_count() as u32
+    }
+
     #[napi(js_name = "selection")]
     pub fn selection_view(&self, to_block: Option<i64>) -> FetchRequestSelection {
         let selection = self.selection(to_block);
@@ -297,9 +302,9 @@ impl FetchRequest {
                     .filter(|(_, start_block)| start_block.is_none_or(|start| start <= to_block))
                     .map(|&(index, _)| i64::from(index))
                     .collect();
-                // Narrowed to nothing, a selection has no log filter, which a
-                // source reads as every log: asked whole, matching drops what
-                // hasn't started.
+                // Narrowed to nothing, the request would select no logs and a
+                // source would read it as blocks alone: asked whole, matching
+                // drops what hasn't started.
                 if in_range.is_empty() {
                     all
                 } else {
@@ -375,6 +380,7 @@ fn request_handle(chain: &ChainPlan, slot: u32, generation: u32) -> FetchRequest
     let mut event_registrations: Vec<u32> = Vec::new();
     let mut ids: Vec<Id> = Vec::new();
     let mut address_free_contracts: Vec<String> = Vec::new();
+    let mut address_free_indexes: Vec<u32> = Vec::new();
     let mut block_registrations = Vec::new();
     let mut transaction_registrations = Vec::new();
     for &need in &request.needs {
@@ -395,6 +401,7 @@ fn request_handle(chain: &ChainPlan, slot: u32, generation: u32) -> FetchRequest
                             let name = &store.contract_names()[reg.contract as usize];
                             if reg.depends_on_addresses && !address_free_contracts.contains(name) {
                                 address_free_contracts.push(name.clone());
+                                address_free_indexes.push(reg.contract);
                             }
                         }
                     }
@@ -419,9 +426,7 @@ fn request_handle(chain: &ChainPlan, slot: u32, generation: u32) -> FetchRequest
     ids.dedup();
     // Read address-free already, a contract's addresses would only ask the
     // source again for logs it returns.
-    ids.retain(|&id| {
-        !address_free_contracts.contains(&store.contract_names()[store.contract_of(id) as usize])
-    });
+    ids.retain(|&id| !address_free_indexes.contains(&store.contract_of(id)));
     store.sort_in_set_order(&mut ids);
     address_free_contracts.sort_unstable();
     drop(store);
@@ -674,6 +679,12 @@ impl IndexingPlan {
     #[napi]
     pub fn get_request_stream_count(&self, chain_id: i64) -> napi::Result<u32> {
         Ok(self.chain(chain_id)?.streams().len() as u32)
+    }
+
+    /// The fetch frontier reached the lagged, throttled head or the end block.
+    #[napi]
+    pub fn is_fetching_at_head(&self, chain_id: i64) -> napi::Result<bool> {
+        Ok(self.chain(chain_id)?.is_fetching_at_head())
     }
 
     #[napi]

@@ -47,6 +47,7 @@ let make = (~config=config, ~storage=?, ~entities=[]) => {
     },
     // A trivial chain state map for store-only tests that never run the loop.
     ~chainStates=Dict.make(),
+    ~indexingPlan=IndexingPlan.make(Core.getAddon().indexingPlan),
     ~isRealtime=false,
     // The cycle never runs here, so a write only means a test is wired wrong.
     ~onError=errHandler => errHandler->ErrorHandling.toExn->throw,

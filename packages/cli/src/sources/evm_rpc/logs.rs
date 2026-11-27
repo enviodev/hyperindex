@@ -3,6 +3,9 @@
 //! step: everything here stays in the provider's own terms, `blockHash`
 //! included.
 
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use serde_json::{json, Value};
 
 use super::classify::is_result_cap_message;
@@ -135,48 +138,96 @@ async fn request(
         .await
 }
 
-/// The by-address selections that constrain topic0 alone, as one selection
-/// asking for all of their addresses and topic0s. A log of one contract's
+/// The selections as requests: one asking for more than `cap` addresses is
+/// split into requests of at most `cap`. With `group`, the by-address ones
+/// that constrain topic0 alone are merged, up to `cap` addresses a request,
+/// each asking for all their addresses and topic0s. A log of one contract's
 /// address with another contract's topic0 comes back too; matching drops it.
-/// Aligned with what it returns, the selections each one was made of: none
-/// for one read as built.
-pub(super) fn group_by_address(
+/// Aligned with what it returns, the selections each request was made of:
+/// none for one read as built.
+pub(super) fn pack_by_address(
     selections: Vec<BuiltLogSelection>,
+    group: bool,
+    cap: usize,
 ) -> (Vec<BuiltLogSelection>, Vec<Vec<BuiltLogSelection>>) {
+    let cap = cap.max(1);
     let groupable = |selection: &BuiltLogSelection| {
-        matches!(selection.emitters, Emitters::Listed(_))
+        group
+            && matches!(selection.emitters, Emitters::Listed(_))
             && selection
                 .topics
                 .first()
                 .is_some_and(|topic0| !topic0.is_empty())
             && selection.topics.iter().skip(1).all(Vec::is_empty)
     };
-    let (grouped, mut kept): (Vec<_>, Vec<_>) = selections.into_iter().partition(groupable);
+    let mut kept = Vec::new();
+    let mut grouped = Vec::new();
+    for selection in selections {
+        let chunks: Vec<BuiltLogSelection> = match &selection.emitters {
+            Emitters::Listed(addresses) if addresses.len() > cap => addresses
+                .chunks(cap)
+                .map(|chunk| BuiltLogSelection {
+                    emitters: Emitters::Listed(chunk.to_vec()),
+                    topics: selection.topics.clone(),
+                })
+                .collect(),
+            _ => vec![selection],
+        };
+        for chunk in chunks {
+            if groupable(&chunk) {
+                grouped.push(chunk);
+            } else {
+                kept.push(chunk);
+            }
+        }
+    }
     let mut parts: Vec<Vec<BuiltLogSelection>> = kept.iter().map(|_| Vec::new()).collect();
-    if grouped.len() < 2 {
-        parts.extend(grouped.iter().map(|_| Vec::new()));
-        kept.extend(grouped);
-        return (kept, parts);
-    }
-    let mut addresses: Vec<String> = Vec::new();
-    let mut topic0s: Vec<String> = Vec::new();
-    for selection in &grouped {
-        for address in selection.addresses() {
-            if !addresses.contains(address) {
-                addresses.push(address.clone());
-            }
+    let mut batch: Vec<BuiltLogSelection> = Vec::new();
+    let mut batch_addresses: HashSet<String> = HashSet::new();
+    let mut flush = |batch: &mut Vec<BuiltLogSelection>| match batch.len() {
+        0 => {}
+        1 => {
+            kept.push(batch.pop().expect("one selection"));
+            parts.push(Vec::new());
         }
-        for topic0 in &selection.topics[0] {
-            if !topic0s.contains(topic0) {
-                topic0s.push(topic0.clone());
+        _ => {
+            let mut addresses: Vec<String> = Vec::new();
+            let mut topic0s: Vec<String> = Vec::new();
+            let mut seen_addresses = HashSet::new();
+            let mut seen_topic0s = HashSet::new();
+            for selection in batch.iter() {
+                for address in selection.addresses() {
+                    if seen_addresses.insert(address.as_str()) {
+                        addresses.push(address.clone());
+                    }
+                }
+                for topic0 in &selection.topics[0] {
+                    if seen_topic0s.insert(topic0.as_str()) {
+                        topic0s.push(topic0.clone());
+                    }
+                }
             }
+            kept.push(BuiltLogSelection {
+                emitters: Emitters::Listed(addresses),
+                topics: vec![topic0s],
+            });
+            parts.push(std::mem::take(batch));
         }
+    };
+    for selection in grouped {
+        let added = selection
+            .addresses()
+            .iter()
+            .filter(|&address| !batch_addresses.contains(address))
+            .count();
+        if !batch.is_empty() && batch_addresses.len() + added > cap {
+            batch_addresses.clear();
+            flush(&mut batch);
+        }
+        batch_addresses.extend(selection.addresses().iter().cloned());
+        batch.push(selection);
     }
-    kept.push(BuiltLogSelection {
-        emitters: Emitters::Listed(addresses),
-        topics: vec![topic0s],
-    });
-    parts.push(grouped);
+    flush(&mut batch);
     (kept, parts)
 }
 
@@ -185,13 +236,15 @@ pub(super) fn group_by_address(
 /// When one block of an address-free selection holding client-filtered
 /// registrations is too large, it is read again the way `by_address` rebuilds
 /// it. A wider range goes back to the caller, whose retry shrinks it first.
-/// Nothing is remembered: the next page asks the same way again.
+/// A refused grouping is remembered in `grouping_refused`; an address-free
+/// fallback is not: the next page asks the same way again.
 pub(super) async fn request_selection_logs(
     client: &JsonRpcClient,
     logger: &BoundLogger,
     blocks: LogBlocks<'_>,
     selection: &BuiltLogSelection,
     parts: &[BuiltLogSelection],
+    grouping_refused: &AtomicBool,
     by_address: impl FnOnce(&AddressFreeOrigin) -> anyhow::Result<SelectionByAddress>,
 ) -> Result<Vec<RawLog>, RpcError> {
     let error = match request(client, blocks, selection).await {
@@ -200,6 +253,7 @@ pub(super) async fn request_selection_logs(
     };
     let (from_block, to_block) = blocks.bounds();
     if parts.len() > 1 && is_answer_too_large(&error) {
+        grouping_refused.store(true, Ordering::Relaxed);
         let logs = request_all(client, blocks, parts).await?;
         logger.log(
             Level::TRACE,
@@ -263,15 +317,41 @@ mod tests {
     #[test]
     fn groups_by_address_selections_on_topic0_alone_and_keeps_the_rest() {
         let token = listed(&["0x01"], &[&["0xaa"], &[], &[], &[]]);
-        let pool = listed(&["0x02"], &[&["0xbb"], &[], &[], &[]]);
+        let pool = listed(&["0x02", "0x01"], &[&["0xbb"], &[], &[], &[]]);
         let filtered = listed(&["0x03"], &[&["0xcc"], &["0xdd"], &[], &[]]);
-        let (selections, parts) =
-            group_by_address(vec![token.clone(), filtered.clone(), pool.clone()]);
+        let (selections, parts) = pack_by_address(
+            vec![token.clone(), filtered.clone(), pool.clone()],
+            true,
+            10,
+        );
         assert_eq!(
             (selections, parts),
             (
                 vec![filtered, listed(&["0x01", "0x02"], &[&["0xaa", "0xbb"]]),],
                 vec![vec![], vec![token, pool]],
+            )
+        );
+    }
+
+    #[test]
+    fn asks_for_at_most_the_address_cap_in_one_request() {
+        let token = listed(&["0x01", "0x02", "0x03"], &[&["0xaa"], &[], &[], &[]]);
+        let pool = listed(&["0x04"], &[&["0xbb"], &[], &[], &[]]);
+        let filtered = listed(&["0x05", "0x06", "0x07"], &[&["0xcc"], &["0xdd"], &[], &[]]);
+        let (selections, parts) =
+            pack_by_address(vec![token.clone(), filtered.clone(), pool.clone()], true, 2);
+        let token_head = listed(&["0x01", "0x02"], &[&["0xaa"], &[], &[], &[]]);
+        let token_tail = listed(&["0x03"], &[&["0xaa"], &[], &[], &[]]);
+        assert_eq!(
+            (selections, parts),
+            (
+                vec![
+                    listed(&["0x05", "0x06"], &[&["0xcc"], &["0xdd"], &[], &[]]),
+                    listed(&["0x07"], &[&["0xcc"], &["0xdd"], &[], &[]]),
+                    token_head,
+                    listed(&["0x03", "0x04"], &[&["0xaa", "0xbb"]]),
+                ],
+                vec![vec![], vec![], vec![], vec![token_tail, pool]],
             )
         );
     }

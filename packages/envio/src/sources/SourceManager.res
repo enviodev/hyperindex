@@ -1173,7 +1173,7 @@ let executeQuery = async (
       "source": source.name,
       "fromBlock": fromBlock,
       "toBlock": toBlock,
-      "addresses": request->IndexingPlan.Request.addresses->Array.length,
+      "addresses": request->IndexingPlan.Request.addressCount,
       "retry": retry,
     })
 

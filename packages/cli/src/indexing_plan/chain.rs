@@ -95,11 +95,16 @@ pub(crate) struct Needs {
     pub to_block: Vec<Option<i64>>,
     pub coverage: Vec<Coverage>,
     pub learned: Vec<Learned>,
-    /// For a list need, the need its addresses are part of from the block after
-    /// its end.
+    /// For a list need, a need its addresses are part of from the block after
+    /// its end: when they took several new groups, the last of them. A rollback
+    /// keeps the list's end at or above that need's floor.
     pub joins: Vec<Option<u32>>,
     pub live: Vec<bool>,
     pub ever_requested: Vec<bool>,
+    /// Slots of catch-ups done for good, for the next needs to reuse. A
+    /// reused slot keeps the RPC interval its last need learned, which is
+    /// only a starting guess.
+    reclaimed: Vec<u32>,
 }
 
 impl Needs {
@@ -262,6 +267,8 @@ pub(crate) struct ChainPlan {
     /// block. The retired entry stays in its needs, which go on fetching the
     /// address from its block.
     replaced: Vec<(Id, Id)>,
+    /// Catch-ups that finished, until they can be reclaimed.
+    finished_catch_ups: Vec<u32>,
     pub head_mode: bool,
     pub head_learned: Learned,
     /// The source that answered last, whose capacity sizes the next chunks.
@@ -285,17 +292,11 @@ fn store_live_count(store: &Arc<RwLock<StoreInner>>, contract: u32) -> u32 {
 /// item at, or None when one of them is unrestricted.
 fn selection_floor(start_blocks: impl IntoIterator<Item = Option<i64>>) -> Option<i64> {
     let mut earliest: Option<i64> = None;
-    let mut any = false;
     for start_block in start_blocks {
-        any = true;
         let start_block = start_block?;
         earliest = Some(earliest.map_or(start_block, |e| e.min(start_block)));
     }
-    if any {
-        earliest.map(|e| e - 1)
-    } else {
-        None
-    }
+    earliest.map(|e| e - 1)
 }
 
 impl ChainPlan {
@@ -318,6 +319,7 @@ impl ChainPlan {
             address_free_need: vec![None; contract_count],
             pending_joins: Vec::new(),
             replaced: Vec::new(),
+            finished_catch_ups: Vec::new(),
             head_mode: false,
             head_learned: Learned::default(),
             last_source: 0,
@@ -339,12 +341,23 @@ impl ChainPlan {
         to_block: Option<i64>,
     ) -> u32 {
         let needs = &mut self.needs;
+        let coverage = Coverage::new(covered_through.max(floor));
+        if let Some(need) = needs.reclaimed.pop() {
+            let n = need as usize;
+            needs.what[n] = what;
+            needs.floor[n] = floor;
+            needs.to_block[n] = to_block;
+            needs.coverage[n] = coverage;
+            needs.learned[n] = Learned::default();
+            needs.joins[n] = None;
+            needs.live[n] = true;
+            needs.ever_requested[n] = false;
+            return need;
+        }
         needs.what.push(what);
         needs.floor.push(floor);
         needs.to_block.push(to_block);
-        needs
-            .coverage
-            .push(Coverage::new(covered_through.max(floor)));
+        needs.coverage.push(coverage);
         needs.learned.push(Learned::default());
         needs.joins.push(None);
         needs.live.push(true);
@@ -367,6 +380,19 @@ impl ChainPlan {
                 .iter()
                 .map(|&index| self.config.events[index as usize].start_block),
         )
+    }
+
+    /// The last block any of the registrations' contracts is indexed at, if
+    /// every one of them has an end block.
+    fn end_block_of(&self, registrations: &[u32]) -> Option<i64> {
+        registrations
+            .iter()
+            .map(|&index| {
+                self.config.contract_end_blocks
+                    [self.config.events[index as usize].contract as usize]
+            })
+            .reduce(|a, b| a.zip(b).map(|(a, b)| a.max(b)))
+            .flatten()
     }
 
     fn has_address_events(&self, contract: u32) -> bool {
@@ -442,6 +468,7 @@ impl ChainPlan {
                 .unwrap_or(i64::MIN);
             let covered =
                 address_free_floor.map_or(progress.max(floor), |f| f.min(progress.max(floor)));
+            let end_block = self.end_block_of(&address_free_registrations);
             let need = self.add_need(
                 What::Logs {
                     registrations: address_free_registrations.clone(),
@@ -449,7 +476,7 @@ impl ChainPlan {
                 },
                 floor.min(covered),
                 covered,
-                None,
+                end_block,
             );
             for reg in &self.config.events {
                 if reg.depends_on_addresses && self.address_free[reg.contract as usize] {
@@ -548,10 +575,9 @@ impl ChainPlan {
                 segments.push((current_block, current_ids, None));
                 (current_block, current_ids) = (next_block, next_ids);
             } else if current_block + TOO_FAR_BLOCK_RANGE < next_block {
-                let ends_at = (current_block < next_block).then_some(next_block);
                 let mut merged = next_ids;
                 merged.extend_from_slice(&current_ids);
-                segments.push((current_block, current_ids, ends_at));
+                segments.push((current_block, current_ids, Some(next_block)));
                 (current_block, current_ids) = (next_block, merged);
             } else {
                 current_ids.extend(next_ids);
@@ -748,7 +774,39 @@ impl ChainPlan {
             return Vec::new();
         }
         self.known_height = known_height;
+        self.reclaim_finished_catch_ups();
         self.enter_head_mode_when_near()
+    }
+
+    /// A finished catch-up below the reorg window is done for good: no
+    /// rollback can reach back into its range to reopen it.
+    fn reclaim_finished_catch_ups(&mut self) {
+        let final_below = if self.config.should_rollback_on_reorg {
+            self.known_height - self.config.max_reorg_depth
+        } else {
+            i64::MAX
+        };
+        let mut waiting = Vec::new();
+        for need in std::mem::take(&mut self.finished_catch_ups) {
+            let n = need as usize;
+            if !self.needs.live[n] || !self.needs.is_list(need) || !self.needs.is_finished(need) {
+                continue;
+            }
+            if self.needs.to_block[n].is_none_or(|to| to >= final_below)
+                || self.requests_of(need).next().is_some()
+            {
+                waiting.push(need);
+                continue;
+            }
+            self.needs.live[n] = false;
+            self.needs.what[n] = What::Logs {
+                registrations: Vec::new(),
+                addresses: Addresses::List(Vec::new()),
+            };
+            self.needs.coverage[n] = Coverage::new(self.needs.floor[n]);
+            self.needs.reclaimed.push(need);
+        }
+        self.finished_catch_ups = waiting;
     }
 
     /// Rule 3. Judged only when the chain learns a newer head: an RPC response
@@ -880,33 +938,30 @@ impl ChainPlan {
         }
         // With no group to end, a contract switched at the head joins the head
         // stream where it has been asked through; its addresses owe what lies
-        // below as catch-ups.
-        if lowest == i64::MAX && self.head_mode {
-            if let Some(through) = self.head_requested_through() {
-                lowest = through;
-            }
-        }
+        // below as catch-ups. While an open-ended head request is out, nobody
+        // knows how far that is: the need starts where the forward needs are
+        // covered and rides the open-ended requests. Addresses it already
+        // holds owe nothing; ones registering now wait to join (rule 4).
+        let mut rides_open_requests = false;
         if lowest == i64::MAX {
-            let store = self.store.read().unwrap();
-            for &contract in contracts {
-                if let Some(&id) = store.live_ids_of_contract(contract, 0).first() {
-                    lowest = lowest.min(store.effective_start_block_of(id) - 1);
+            lowest = match self.head_requested_through() {
+                Some(through) => through,
+                None => {
+                    rides_open_requests = true;
+                    self.unfinished_needs()
+                        .filter(|&need| !self.needs.is_list(need))
+                        .map(|need| self.needs.coverage[need as usize].covered_through)
+                        .min()
+                        .unwrap_or(self.known_height)
                 }
-            }
+            };
         }
-        if lowest == i64::MAX || registrations.is_empty() {
+        if registrations.is_empty() {
             return;
         }
         registrations.sort_unstable();
         let floor = self.events_floor(&registrations).unwrap_or(i64::MIN);
-        let end_block = contracts
-            .iter()
-            .map(|&c| self.config.contract_end_blocks[c as usize])
-            .reduce(|a, b| match (a, b) {
-                (Some(a), Some(b)) => Some(a.max(b)),
-                _ => None,
-            })
-            .flatten();
+        let end_block = self.end_block_of(&registrations);
         let need = self.add_need(
             What::Logs {
                 registrations,
@@ -918,6 +973,14 @@ impl ChainPlan {
         );
         for &contract in contracts {
             self.address_free_need[contract as usize] = Some(need);
+        }
+        if rides_open_requests {
+            let needs = &self.needs;
+            for request in self.requests.slots.iter_mut().flatten() {
+                if request.to_block.is_none() && request.needs.iter().any(|&n| !needs.is_list(n)) {
+                    request.needs.push(need);
+                }
+            }
         }
     }
 
@@ -996,7 +1059,9 @@ impl ChainPlan {
             }
         }
         if !switching.is_empty() {
-            // At the head a switched contract joins the head stream instead.
+            // At the head the batch's addresses owe catch-ups instead, in
+            // streams of their own: read address-free from their start, they
+            // would wait behind the head stream's requests.
             let from_block = (!self.head_mode)
                 .then(|| {
                     let store = self.store.read().unwrap();
@@ -1281,10 +1346,14 @@ impl ChainPlan {
             let to = self.needs.to_block[n]
                 .map_or(latest_fetched_block, |to| to.min(latest_fetched_block));
             self.needs.coverage[n].add(request.from_block, to);
+            if self.needs.is_list(need) && self.needs.is_finished(need) {
+                self.finished_catch_ups.push(need);
+            }
         }
         self.last_source = source;
         let notices = self.set_known_height(reported_known_height);
         self.resolve_pending_joins();
+        self.reclaim_finished_catch_ups();
         (
             Some(Completion {
                 mismatch: merged.mismatch,

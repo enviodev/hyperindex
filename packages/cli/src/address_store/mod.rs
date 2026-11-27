@@ -556,11 +556,6 @@ impl AddressStore {
         Self::with_ecosystem(Ecosystem::Fuel, contracts)
     }
 
-    #[napi]
-    pub fn next_id(&self) -> i64 {
-        self.read().entries.len() as i64
-    }
-
     /// Registers a batch of dynamic registrations, resolving each address
     /// against both the store and the batch's own earlier entries, so the same
     /// address registered twice for one contract inside a single batch resolves
@@ -968,6 +963,10 @@ impl AddressSet {
     /// already started at `block_number`, the gate the mock and simulate
     /// sources apply to a request: ownership answered by the set, the temporal
     /// half by the store (a set's addresses don't all start at the same block).
+    pub fn address_count(&self) -> usize {
+        self.ids.len()
+    }
+
     pub fn contains_at(&self, address: String, contract_name: String, block_number: i64) -> bool {
         let store = self.store.read().unwrap();
         let (Some(key), Some(contract_idx)) = (

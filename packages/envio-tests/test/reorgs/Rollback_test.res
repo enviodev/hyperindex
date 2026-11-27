@@ -1256,34 +1256,39 @@ describe("E2E rollback tests", () => {
         ~message="Shouldn't store dynamic contracts at this point",
       ).toEqual([])
 
-      // Creates a new partition for DCs and queries it in parallel with the
-      // original partition without blocking.
+      // The head request out when the addresses registered goes first: their
+      // catch-up waits for it, then reads them from 102 up to where it reached.
       await sourceMock.expectItemsQueries([
-        {
-          // New partition for DCs
-          fromBlock: 102,
-          toBlock: Unbounded,
-          retryCount: 0,
-          reply: Respond({
-            items: [
-              {
-                blockNumber: 102,
-                logIndex: 1,
-                handler,
-              },
-            ],
-            latestFetchedBlockNumber: 102,
-          }),
-        },
-        {
-          // Continue fetching original partition
-          // without blocking
-          fromBlock: 105,
-          toBlock: Unbounded,
-          retryCount: 0,
-          reply: LeavePending,
-        },
+        {fromBlock: 105, reply: Respond({items: [], latestFetchedBlockNumber: 105})},
       ])
+      await sourceMock.expectItemsQueries(
+        [
+          {
+            MockSource.fromBlock: 102,
+            toBlock: Bounded(105),
+            retryCount: 0,
+            reply: Respond({
+              items: [
+                {
+                  blockNumber: 102,
+                  logIndex: 1,
+                  handler,
+                },
+              ],
+              latestFetchedBlockNumber: 102,
+            }),
+          },
+        ]->Array.concat(
+          // The head stream's chunks above 105.
+          Array.fromInitializer(
+            ~length=12,
+            (_): MockSource.expectedItemsQuery => {
+              where: query => query.fromBlock > 105,
+              reply: LeavePending,
+            },
+          ),
+        ),
+      )
       await indexer.getBatchWritePromise()
       t.expect(
         calls,
@@ -1304,15 +1309,9 @@ describe("E2E rollback tests", () => {
       await sourceMock.expectItemsQueries([
         {
           fromBlock: 103,
-          toBlock: Unbounded,
+          toBlock: Bounded(105),
           retryCount: 0,
           reply: Respond({items: [], latestFetchedBlockNumber: 103}),
-        },
-        {
-          fromBlock: 105,
-          toBlock: Unbounded,
-          retryCount: 0,
-          reply: LeavePending,
         },
       ])
       await indexer.getBatchWritePromise()
@@ -1333,8 +1332,6 @@ describe("E2E rollback tests", () => {
             },
           }),
         },
-        // The DC partition's chunks above, voided by the rollback.
-        {reply: LeavePending},
       ])
 
       await sourceMock.expectBlockHashLookup({
@@ -1345,15 +1342,6 @@ describe("E2E rollback tests", () => {
           {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
         ],
       })
-
-      await sourceMock.expectItemsQueries([
-        {
-          fromBlock: 105,
-          toBlock: Unbounded,
-          retryCount: 0,
-          reply: Respond({items: []}),
-        },
-      ])
 
       await indexer.getRollbackReadyPromise()
 

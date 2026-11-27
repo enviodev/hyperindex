@@ -189,8 +189,10 @@ impl SelectionBuilder {
         client_filtered: &crate::address_store::client_filtered_contracts::ClientFilteredContracts,
     ) -> Result<BuiltSelection> {
         // Buckets: address-free selections pool together; address-bound ones
-        // group per contract so one contract's query can't fetch a sibling's
-        // logs (matching never re-applies the sibling's filter). Wildcard
+        // group per contract, so a contract's addresses pair only with its own
+        // topic filters. Matching re-checks every row against each
+        // registration's filters and the address store, which is what lets the
+        // RPC client merge topic0-only contracts into one request. Wildcard
         // events that filter an indexed param by registered addresses fold
         // the addresses into topics, so their query stays address-unbound.
         let mut no_address: Vec<(MaterializedTopics, (AddressFreeRole, i64))> = Vec::new();

@@ -37,7 +37,6 @@ let chainBuffer: t => ChainBuffer.t
 let itemContext: t => StoredItems.context
 // Where builds read from: the last block a batch has taken.
 let processingBlockNumber: t => int
-let indexingPlan: t => IndexingPlan.t
 let addressStore: t => AddressStore.t
 let shouldChecksum: t => bool
 let entities: t => EntityTables.t
@@ -67,7 +66,6 @@ let setRollbackTargetBlock: (t, ~blockNumber: int) => unit
 
 // Fetch-frontier reads.
 let knownHeight: t => int
-let endBlock: t => option<int>
 let readyThroughBlock: t => int
 let contractAddresses: (t, ~contractName: string) => array<Address.t>
 let drainAddressesForWrite: (
@@ -76,7 +74,6 @@ let drainAddressesForWrite: (
   ~checkpointBlockNumbers: array<int>,
 ) => array<AddressStore.drainedAddress>
 let hasAddressesToWrite: t => bool
-let bufferReadyCount: t => int
 let hasReadyItem: t => bool
 let progressPercentage: t => float
 

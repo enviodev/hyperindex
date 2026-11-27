@@ -4,7 +4,7 @@ open Vitest
 // HyperSync that is one query whose body stays the same from block to block,
 // so the server's query cache keeps answering it. Over RPC the contracts
 // fetched by address share one eth_getLogs, and a provider refusing that call
-// as too large gets one call per contract for the same block instead.
+// as too large gets one call per contract for that block and from then on.
 let hyperSyncPort = 18801
 let rpcPort = 18802
 
@@ -268,7 +268,7 @@ describe("A chain at the head against real sources", () => {
   )
 
   Async.it(
-    "asks RPC for each new block in one eth_getLogs for both contracts, one per contract when refused",
+    "asks RPC for each new block in one eth_getLogs for both contracts, one per contract once refused",
     async t => {
       await rpcScenario->Scenario.run(
         ~yamlSources=true,
@@ -288,7 +288,8 @@ describe("A chain at the head against real sources", () => {
             `302 ${token} ok`,
             `302 ${both} refused`,
             `302 ${pool} ok`,
-            `303 ${both} ok`,
+            `303 ${token} ok`,
+            `303 ${pool} ok`,
           ])
         },
       )
