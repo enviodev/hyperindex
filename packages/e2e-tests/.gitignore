@@ -1,0 +1,3 @@
+# What `envio codegen` writes into a fixture project when a test runs it.
+fixtures/*/.envio/
+fixtures/*/envio-env.d.ts

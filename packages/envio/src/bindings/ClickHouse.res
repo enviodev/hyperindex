@@ -1,6 +1,6 @@
 // Every connection setting has to be there: an unset one would otherwise reach
 // the server as an empty value and fail there, for a reason naming neither.
-let optionsFromEnvOrThrow = (): StorageClient.clickHouseOptions => {
+let optionsOrThrow = (env: IndexerEnv.clickHouse): StorageClient.clickHouseOptions => {
   let missing = []
   let required = (value, name) =>
     switch value {
@@ -9,10 +9,10 @@ let optionsFromEnvOrThrow = (): StorageClient.clickHouseOptions => {
       missing->Array.push(name)
       ""
     }
-  let url = Env.ClickHouse.host()->required("ENVIO_CLICKHOUSE_HOST")
-  let username = Env.ClickHouse.username()->required("ENVIO_CLICKHOUSE_USERNAME")
-  let password = Env.ClickHouse.password()->required("ENVIO_CLICKHOUSE_PASSWORD")
-  let database = Env.ClickHouse.database()->required("ENVIO_CLICKHOUSE_DATABASE")
+  let url = env.host->required("ENVIO_CLICKHOUSE_HOST")
+  let username = env.username->required("ENVIO_CLICKHOUSE_USERNAME")
+  let password = env.password->required("ENVIO_CLICKHOUSE_PASSWORD")
+  let database = env.database->required("ENVIO_CLICKHOUSE_DATABASE")
   if missing->Utils.Array.notEmpty {
     JsError.throwWithMessage(
       `ClickHouse storage is enabled but required env vars are not set: ${missing->Array.joinUnsafe(
@@ -25,7 +25,7 @@ let optionsFromEnvOrThrow = (): StorageClient.clickHouseOptions => {
     username,
     password,
     database,
-    replicated: Env.ClickHouse.replicated(),
-    databaseEngine: ?Env.ClickHouse.databaseEngine(),
+    replicated: env.replicated,
+    databaseEngine: ?env.databaseEngine,
   }
 }

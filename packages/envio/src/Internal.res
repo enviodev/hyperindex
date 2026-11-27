@@ -177,26 +177,6 @@ type svmBlockField =
   | @as("parentSlot") ParentSlot
   | @as("parentHash") ParentHash
 
-// Static sets of field names whose source schemas must be wrapped with S.nullable.
-let evmNullableBlockFields = Utils.Set.fromArray(
-  (
-    [
-      Nonce,
-      Difficulty,
-      TotalDifficulty,
-      Uncles,
-      BaseFeePerGas,
-      BlobGasUsed,
-      ExcessBlobGas,
-      ParentBeaconBlockRoot,
-      WithdrawalsRoot,
-      L1BlockNumber,
-      SendCount,
-      SendRoot,
-      MixHash,
-    ]: array<evmBlockField>
-  ),
-)
 type evmBlockInput = {
   number?: int,
   timestamp?: int,

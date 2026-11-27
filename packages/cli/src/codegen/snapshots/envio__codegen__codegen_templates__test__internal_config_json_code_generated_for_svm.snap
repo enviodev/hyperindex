@@ -1,0 +1,101 @@
+---
+source: packages/cli/src/codegen/codegen_templates.rs
+expression: json
+---
+{
+  "version": "0.0.1-dev",
+  "name": "Solana indexer",
+  "storage": {
+    "postgres": true
+  },
+  "svm": {
+    "chains": [
+      {
+        "name": "7565164",
+        "id": 7565164,
+        "startBlock": 200000000,
+        "hypersync": "https://solana.hypersync.xyz",
+        "contracts": {
+          "TokenMetadata": {
+            "addresses": [
+              "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+            ]
+          }
+        }
+      }
+    ],
+    "programs": {
+      "TokenMetadata": {
+        "abi": null,
+        "events": [
+          {
+            "name": "CreateMetadataAccountV3",
+            "sighash": "0x21",
+            "kind": "svmInstruction",
+            "svm": {
+              "discriminator": "0x21",
+              "accounts": [
+                {
+                  "name": "metadata"
+                },
+                {
+                  "name": "mint"
+                },
+                {
+                  "name": "mint_authority"
+                },
+                {
+                  "name": "payer"
+                },
+                {
+                  "name": "update_authority"
+                },
+                {
+                  "name": "system_program"
+                },
+                {
+                  "name": "rent"
+                }
+              ]
+            }
+          },
+          {
+            "name": "UpdateMetadataAccountV2",
+            "sighash": "0x0f",
+            "kind": "svmInstruction",
+            "svm": {
+              "discriminator": "0x0f",
+              "accounts": [
+                {
+                  "name": "metadata"
+                },
+                {
+                  "name": "update_authority"
+                }
+              ]
+            }
+          }
+        ],
+        "svmAbi": {
+          "source": "inline"
+        }
+      }
+    }
+  },
+  "enums": {},
+  "entities": [
+    {
+      "name": "EmptyEntity",
+      "properties": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "emptyField",
+          "type": "string"
+        }
+      ]
+    }
+  ]
+}

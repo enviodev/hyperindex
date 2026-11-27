@@ -1,0 +1,31 @@
+---
+source: packages/cli/src/codegen/init_templates.rs
+expression: "template(true, \"1.2.3\",\nvec![(\"viem\".to_string(), \"2.54.0\".to_string()),\n(\"foo\".to_string(), \"1.0.0\".to_string())]).render_package_json()"
+---
+{
+  "name": "my-project",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "clean": "rescript clean",
+    "build": "rescript",
+    "watch": "rescript watch",
+    "codegen": "envio codegen",
+    "dev": "rescript && envio dev",
+    "start": "rescript && envio start",
+    "test": "rescript && vitest run --test-timeout=20000"
+  },
+  "devDependencies": {
+    "rescript": "12.3.1",
+    "@rescript/runtime": "12.3.1",
+    "vitest": "4.1.12"
+  },
+  "dependencies": {
+    "envio": "1.2.3",
+    "viem": "2.54.0",
+    "foo": "1.0.0"
+  },
+  "engines": {
+    "node": ">=22.15.0"
+  }
+}

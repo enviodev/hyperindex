@@ -17,23 +17,12 @@ type pinnedEvent = {
 }
 
 type pinnedPage = {
-  knownHeight: int,
+  knownHeight: option<int>,
   latestFetchedBlockNumber: int,
   events: array<pinnedEvent>,
   blockHashes: array<ReorgDetection.blockData>,
   requestCounts: dict<int>,
 }
-
-type pinnedRetry =
-  | SuggestedToBlock(int)
-  | Backoff({message: string, backoffMillis: int})
-  | Impossible(string)
-
-type pinnedError =
-  | UnsupportedSelection(string)
-  | FailedGettingItems({attemptedToBlock: int, providerMessage: option<string>, retry: pinnedRetry})
-  | FailedGettingFieldSelection({blockNumber: int, message: string, causeMessage: option<string>})
-  | BehindHead({blockNumber: int})
 
 let countRequests = (stats: array<Source.requestStat>) => {
   let counts = Dict.make()
@@ -101,11 +90,11 @@ let makeBuffer = (
 // Resolve a page's items the way the indexer does: the page merges into the
 // chain's buffer, and a build matches, decodes and joins its rows.
 let applyPage = async (
-  response: Source.blockRangeFetchResponse,
+  page: BufferPage.t,
   ~buffer: ChainBuffer.t,
   ~onEventRegistrations: array<Internal.onEventRegistration>,
 ) =>
-  await response.page->TestChainBuffer.buildAll(
+  await page->TestChainBuffer.buildAll(
     ~buffer,
     ~context={
       chainId: 1->ChainId.fromInt,
@@ -119,60 +108,36 @@ let applyPage = async (
 // The buffer backs `block` and `transaction`, so the pin resolves them once
 // the page has been merged into it.
 let normalizePage = async (
-  response: Source.blockRangeFetchResponse,
+  {page, latestFetchedBlockNumber, knownHeight}: Source.itemsPage,
+  ~requestStats,
   ~buffer: ChainBuffer.t,
   ~onEventRegistrations,
 ): pinnedPage => {
-  let items = await response->applyPage(~buffer, ~onEventRegistrations)
+  let items = await page->applyPage(~buffer, ~onEventRegistrations)
   {
-    knownHeight: response.knownHeight,
-    latestFetchedBlockNumber: response.latestFetchedBlockNumber,
+    knownHeight,
+    latestFetchedBlockNumber,
     events: items->Array.map(normalizeEvent),
     // Read from the buffer: merging moves the page's rows into it, so the
     // page is empty by now.
     blockHashes: buffer->storedBlockHashes,
-    requestCounts: response.requestStats->countRequests,
+    requestCounts: requestStats->countRequests,
   }
 }
 
-let jsExnMessage = exn =>
-  switch exn {
-  | JsExn(e) => e->JsExn.message
-  | _ => None
-  }
-
-let providerMessage = exn => exn->Option.flatMap(jsExnMessage)
-
-let normalizeRetry = retry =>
-  switch retry {
-  | Source.WithSuggestedToBlock({toBlock}) => SuggestedToBlock(toBlock)
-  | WithBackoff({message, backoffMillis}) => Backoff({message, backoffMillis})
-  | ImpossibleForTheQuery({message}) => Impossible(message)
-  }
-
-let normalizeError = error =>
-  switch error {
-  | Source.UnsupportedSelection({message}) => UnsupportedSelection(message)
-  | FailedGettingItems({?exn, attemptedToBlock, retry}) =>
-    FailedGettingItems({
-      attemptedToBlock,
-      providerMessage: exn->providerMessage,
-      retry: retry->normalizeRetry,
-    })
-  | FailedGettingFieldSelection({?exn, blockNumber, message}) =>
-    FailedGettingFieldSelection({
-      blockNumber,
-      message,
-      causeMessage: exn->providerMessage,
-    })
-  }
-
 // Each pin drives a single fetch, so the chain's buffer starts empty and the
 // page's own rows are all there is to build from.
-let capture = async (getPage, ~onEventRegistrations, ~addressStore, ~shouldChecksum=false) => {
+let capture = async (
+  getPage: unit => promise<Source.outcome<Source.itemsPage>>,
+  ~onEventRegistrations,
+  ~addressStore,
+  ~shouldChecksum=false,
+): result<pinnedPage, Source.failure> => {
   let buffer = makeBuffer(~onEventRegistrations, ~addressStore, ~shouldChecksum)
-  try Ok(await (await getPage())->normalizePage(~buffer, ~onEventRegistrations)) catch {
-  | Source.GetItemsError(error) => Error(error->normalizeError)
-  | Source.SourceBehindHead({blockNumber}) => Error(BehindHead({blockNumber: blockNumber}))
+  let {result, requestStats} = await getPage()
+  switch result {
+  | Ok(itemsPage) =>
+    Ok(await itemsPage->normalizePage(~requestStats, ~buffer, ~onEventRegistrations))
+  | Error(failure) => Error(failure)
   }
 }

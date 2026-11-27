@@ -467,7 +467,7 @@ exception FatalError(exn)
     ~patchConfig: option<(Config.t, HandlerRegister.registrationsByChainId) => Config.t>=?,
   ) => {
     // A worker reports to its supervisor, which draws for the whole run.
-    let shouldUseTui = Tui.shouldUse(~suppressed=isTest || Worker.isEnabled)
+    let shouldUseTui = Tui.shouldUse(~suppressed=isTest || Worker.isEnabled(), ~config)
     // isDevelopmentMode controls whether the indexer stays alive after all
     // chains finish (keepProcessAlive) and whether the console API is exposed.
     // Set by `envio dev` via the public config's `isDev` field; `envio start`
@@ -479,7 +479,7 @@ exception FatalError(exn)
     // A worker's supervisor has checked the handlers already, and the test
     // indexer leaves type checking to the user's test setup.
     let typeCheck =
-      isTest || Worker.isEnabled
+      isTest || Worker.isEnabled()
         ? Promise.resolve()
         : HandlerLoader.typeCheck(~config, ~logger, ~autoLoadFiles)
     let (initialState, ()) = await Promise.all2((
@@ -532,7 +532,7 @@ exception FatalError(exn)
 
     // A worker reports through its supervisor, which owns the one server and the
     // one display the run has.
-    if !isTest && !Worker.isEnabled {
+    if !isTest && !Worker.isEnabled() {
       Metrics.startRuntimeCollectors()
       Server.startServer(
         ~logger,
@@ -541,6 +541,7 @@ exception FatalError(exn)
         ~isDevelopmentMode,
         ~envioVersion,
         ~getMetrics,
+        ~env=config.env,
       )
     }
 
@@ -553,7 +554,7 @@ exception FatalError(exn)
       ~isDevelopmentMode,
       ~shouldUseTui,
       ~exitAfterFirstEventBlock,
-      ~holdRealtime=Worker.config->Option.mapOr(false, worker => worker.holdRealtime),
+      ~holdRealtime=Worker.config()->Option.mapOr(false, worker => worker.holdRealtime),
       ~onError,
     )
     if shouldUseTui {
@@ -584,7 +585,7 @@ let start = async (
   // config: a public config carries every contract's ABI, which is far more
   // than a spawn environment should. What the command decided rides along
   // instead, and re-applying it is what makes the two configs the same one.
-  Worker.config->Option.forEach(({chainIds, isDev}) =>
+  Worker.config()->Option.forEach(({chainIds, isDev}) =>
     Config.prime(Config.getPublicConfigJson()->Config.withCommandFields(~chainIds, ~isDev))
   )
   // Handler files log through `console` as they load and run; routed, their

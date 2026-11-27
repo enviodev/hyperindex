@@ -12,5 +12,5 @@ shared across chains.
 `pnpm test` runs `envio codegen` output through the ReScript and TypeScript
 compilers. Nothing here asserts behaviour — that lives in
 `packages/envio-tests`, and the text codegen emits for this surface is
-snapshotted in `packages/cli/src/hbs_templating/codegen_templates.rs`
+snapshotted in `packages/cli/src/codegen/codegen_templates.rs`
 (`indexer_code_for_hostile_config`).

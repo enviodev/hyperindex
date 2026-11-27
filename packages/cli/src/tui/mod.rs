@@ -282,7 +282,7 @@ pub struct Tui {
 impl Tui {
     #[napi(factory)]
     pub fn start(mut info: TuiInfo) -> napi::Result<Self> {
-        if let Ok(home) = std::env::var("HOME") {
+        if let Some(home) = crate::env::var("HOME") {
             info.project_dir = format::home_relative(&info.project_dir, &home);
         }
         let to_napi =
@@ -292,7 +292,7 @@ impl Tui {
         let mut session = Session::new(
             tty.clone(),
             Palette {
-                level: ColorLevel::detect(|name| std::env::var(name).ok()),
+                level: ColorLevel::detect(crate::env::var),
             },
         );
         if let Some(cursor) = cursor_position() {

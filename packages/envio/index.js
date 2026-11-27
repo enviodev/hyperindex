@@ -3,7 +3,7 @@
 // on the JS side, so we need to do it here
 
 import * as Sury from "rescript-schema";
-import { $$BigInt as UtilsBigInt } from "./src/Utils.res.mjs";
+import { $$BigInt as UtilsBigInt } from "./src/utils/Utils.res.mjs";
 const bigintSchema = UtilsBigInt.schema;
 import { schema as bigDecimalSchema } from "./src/bindings/BigDecimal.res.mjs";
 
