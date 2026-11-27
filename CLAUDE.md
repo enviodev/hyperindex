@@ -64,7 +64,7 @@ Pick the highest rung that reproduces:
 3. **End to end** — `scenarios/e2e_test`. For what the rungs above can't mock: ClickHouse, Hasura, and the CLI itself. CI runs it against real services, so anything beyond the local smoke test lands here.
    `cd scenarios/e2e_test && pnpm exec envio codegen && pnpm test`
 
-Tests live in `packages/envio-tests/test/<area>/`, by what they exercise: `sources/`, `fetching/` (partitions, chain buffer, start blocks), `handlers/`, `reorgs/`, `storage/` (and `storage/clickhouse/`), `run/` (process, supervisor, resume, logs, metrics), `testIndexer/`, `config/`, `svm/`, `fuel/`, `e2e/`, and `live/` for tests against real endpoints that need `ENVIO_API_TOKEN`. `helpers/` and `fixtures/` support them; `bench/` holds benchmarks (`pnpm bench`), which `pnpm test` doesn't run.
+Tests live in `packages/envio-tests/test/<area>/`, by what they exercise: `sources/`, `fetching/` (partitions, chain buffer, start blocks), `handlers/`, `reorgs/`, `storage/` (and `storage/clickhouse/`), `run/` (process, supervisor, resume, logs, metrics), `testIndexer/`, `config/`, `svm/`, `fuel/`, `e2e/`, and `live/` for tests against real endpoints that need `ENVIO_API_TOKEN`. `helpers/` and `fixtures/` support them.
 
 Logs never reach the test output. A run's logger is passed in explicitly (there is no global one) and captures every line in memory: assert on them with `indexer.infoAndAboveLogs()` (as `{msg, params}`) or `indexer.allLogsAsJson()` (every line, trace included). Domain modules such as `FetchState` don't log: they report typed notices through `~onNotice`, and the chain that owns them logs. A failing run's message ends with `Logs: <path>`, a `.test-logs/*.jsonl` file holding all of them. Read it only when the failure needs it.
 

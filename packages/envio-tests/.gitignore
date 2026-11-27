@@ -13,4 +13,3 @@ logs/
 
 # A failed run's logs, which its failure message links to
 .test-logs/
-.bench-results.txt
