@@ -1603,12 +1603,15 @@ type handlerContext = {{
                  {block_constructor_type},\n\x20     transaction?: \
                  {transaction_constructor_type},\n\x20   }})\n\nlet makeSimulateItem = (\n\x20 \
                  constructor: simulateItemConstructor<'event, 'paramsConstructor, 'where>,\n): \
-                 {simulate_item_type} => {{\n\x20 event: \
-                 (constructor->Utils.magic)[\"event\"][\"_0\"],\n\x20 contract: \
-                 (constructor->Utils.magic)[\"event\"][\"contract\"],\n\x20 params: \
-                 (constructor->Utils.magic)[\"params\"],\n\x20 block: \
-                 (constructor->Utils.magic)[\"block\"],\n\x20 transaction: \
-                 (constructor->Utils.magic)[\"transaction\"],\n}}"
+                 {simulate_item_type} => {{\n\x20 let fields = constructor->(\n\x20   Utils.magic: \
+                 simulateItemConstructor<'event, 'paramsConstructor, 'where> => {{\n\x20     \
+                 \"event\": {{\"_0\": string, \"contract\": string}},\n\x20     \"params\": \
+                 JSON.t,\n\x20     \"block\": {block_constructor_type},\n\x20     \
+                 \"transaction\": {transaction_constructor_type},\n\x20   }}\n\x20 )\n\x20 {{\n\x20   \
+                 event: fields[\"event\"][\"_0\"],\n\x20   contract: \
+                 fields[\"event\"][\"contract\"],\n\x20   params: fields[\"params\"],\n\x20   \
+                 block: fields[\"block\"],\n\x20   transaction: fields[\"transaction\"],\n\x20 \
+                 }}\n}}"
             )
         };
 

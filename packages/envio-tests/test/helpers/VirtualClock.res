@@ -32,7 +32,7 @@ type t = {
 }
 
 let seedFromEnv = () =>
-  switch %raw(`process.env.ENVIO_TEST_SEED`)->Nullable.toOption {
+  switch NodeJs.Process.process.env->Dict.get("ENVIO_TEST_SEED") {
   | None | Some("") => (Math.random() *. 2147483647.)->Float.toInt
   | Some(seed) =>
     switch seed->Int.fromString {

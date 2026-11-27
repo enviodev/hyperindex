@@ -1136,7 +1136,7 @@ describe("E2E tests", () => {
                   } catch {
                   | exn =>
                     t.expect(
-                      (exn->Utils.prettifyExn->Utils.magic)["message"],
+                      (exn->Utils.prettifyExn->(Utils.magic: exn => {..}))["message"],
                       ~message="p1 should throw with correct error message",
                     ).toEqual("Effect intentionally failed")
                   }

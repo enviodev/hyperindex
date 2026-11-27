@@ -377,13 +377,14 @@ let getGlobalIndexer = (): 'indexer => {
         let (chains, _) = buildChainsObject(~config=Config.load())
         chains->(Utils.magic: {..} => unknown)
       }
-    | "onEvent" => onEventFn->Utils.magic
-    | "onInstruction" => onInstructionFn->Utils.magic
-    | "contractRegister" => contractRegisterFn->Utils.magic
-    | "onBlock" | "onSlot" => onBlockFn->Utils.magic
+    | "onEvent" => onEventFn->(Utils.magic: (('a, 'b) => unit) => unknown)
+    | "onInstruction" => onInstructionFn->(Utils.magic: (('a, 'b) => unit) => unknown)
+    | "contractRegister" => contractRegisterFn->(Utils.magic: (('a, 'b) => unit) => unknown)
+    | "onBlock" | "onSlot" => onBlockFn->(Utils.magic: (('a, 'b) => unit) => unknown)
     // Reached on Fuel and SVM too, where registering says why it can't.
-    | "onTransaction" => onTransactionFn->Utils.magic
-    | "~internalAndWillBeRemovedSoon_onRollbackCommit" => onRollbackCommitFn->Utils.magic
+    | "onTransaction" => onTransactionFn->(Utils.magic: (('a, 'b) => unit) => unknown)
+    | "~internalAndWillBeRemovedSoon_onRollbackCommit" =>
+      onRollbackCommitFn->(Utils.magic: ('a => unit) => unknown)
     | _ =>
       JsError.throwWithMessage(
         `Field \`${prop}\` does not exist on \`indexer\`. Available fields: ${getKeys()->Array.join(
@@ -401,7 +402,9 @@ let getGlobalIndexer = (): 'indexer => {
       if typeof(prop) === #string {
         get(~prop=prop->(Utils.magic: unknown => string))
       } else {
-        target->(Utils.magic: {..} => dict<unknown>)->Dict.getUnsafe(prop->Utils.magic)
+        target
+        ->(Utils.magic: {..} => dict<unknown>)
+        ->Dict.getUnsafe(prop->(Utils.magic: unknown => string))
       },
     ownKeys: (~target as _) => getKeys(),
     getOwnPropertyDescriptor: (~target as _, ~prop) =>

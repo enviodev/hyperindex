@@ -6,19 +6,19 @@
 // storage is built.
 
 let host = () =>
-  switch %raw(`process.env.ENVIO_CLICKHOUSE_HOST`)->Nullable.toOption {
+  switch NodeJs.Process.process.env->Dict.get("ENVIO_CLICKHOUSE_HOST") {
   | Some("") | None => "http://localhost:8123"
   | Some(host) => host
   }
 
 let username = () =>
-  switch %raw(`process.env.ENVIO_CLICKHOUSE_USERNAME`)->Nullable.toOption {
+  switch NodeJs.Process.process.env->Dict.get("ENVIO_CLICKHOUSE_USERNAME") {
   | Some("") | None => "default"
   | Some(username) => username
   }
 
 let password = () =>
-  switch %raw(`process.env.ENVIO_CLICKHOUSE_PASSWORD`)->Nullable.toOption {
+  switch NodeJs.Process.process.env->Dict.get("ENVIO_CLICKHOUSE_PASSWORD") {
   | None => "testing"
   | Some(password) => password
   }
@@ -87,7 +87,7 @@ let savedEnv = () => {
 
 // The database the current run is pointed at, set by `use`.
 let currentDatabase = () =>
-  switch %raw(`process.env.ENVIO_CLICKHOUSE_DATABASE`)->Nullable.toOption {
+  switch NodeJs.Process.process.env->Dict.get("ENVIO_CLICKHOUSE_DATABASE") {
   | Some("") | None =>
     JsError.throwWithMessage("No ClickHouse database is configured for this run.")
   | Some(database) => database

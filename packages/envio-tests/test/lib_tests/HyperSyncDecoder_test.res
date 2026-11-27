@@ -116,7 +116,8 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
     let paramsAll = pick(0)
     let paramsNone = pick(1)
 
-    let expected = {"from": fromAddr, "to": toAddr, "value": value}->Utils.magic
+    let expected =
+      {"from": fromAddr, "to": toAddr, "value": value}->(Utils.magic: {..} => Internal.eventParams)
     t.expect(paramsAll).toEqual(expected)
     t.expect(paramsNone).toEqual(expected)
   })
@@ -140,7 +141,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
         "from": "0x0000000000000000000000000000000000000abc",
         "to": "0x0000000000000000000000000000000000000def",
         "value": 100n,
-      }->Utils.magic,
+      }->(Utils.magic: {..} => Internal.eventParams),
     )
   })
 
@@ -285,7 +286,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
             "initialExpectedSupply": 1000n,
             "registry": "0x0000000000000000000000000000000000000006",
           },
-        }->Utils.magic,
+        }->(Utils.magic: {..} => Internal.eventParams),
       )
 
       let json = result->S.reverseConvertToJsonOrThrow(schema)
@@ -386,7 +387,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
           "recipient": "0x0000000000000000000000000000000000000abc",
           "3": true,
         },
-      }->Utils.magic,
+      }->(Utils.magic: {..} => Internal.eventParams),
     )
   })
 
@@ -410,6 +411,8 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
       ~log=([toEventSelector("event StructEvent((address,uint256) indexed)"), topicHash], "0x"),
     )
 
-    t.expect(result).toEqual({"indexedStruct": topicHash}->Utils.magic)
+    t.expect(result).toEqual(
+      {"indexedStruct": topicHash}->(Utils.magic: {..} => Internal.eventParams),
+    )
   })
 })

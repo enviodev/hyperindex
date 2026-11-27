@@ -178,6 +178,16 @@ If HyperIndex is useful to you, a ⭐ on this repo goes a long way.
 
 ---
 
+## Contributing
+
+By submitting a pull request or making any contribution to this project, you automatically agree to and accept all terms of the [Contributor License Agreement](https://github.com/enviodev/hyperindex/blob/main/licenses/CLA.md). This includes all future contributions you may make to the project.
+
+**Toolchain**: Node.js 24, pnpm 11, Rust as pinned in [`rust-toolchain.toml`](https://github.com/enviodev/hyperindex/blob/main/rust-toolchain.toml), and Docker.
+
+[`CLAUDE.md`](https://github.com/enviodev/hyperindex/blob/main/CLAUDE.md) is the contributor guide, for people and agents: where things are, the commands, and what a change needs.
+
+---
+
 <div align="center">
 
 Built by [Envio](https://envio.dev) · [Docs](https://docs.envio.dev)
