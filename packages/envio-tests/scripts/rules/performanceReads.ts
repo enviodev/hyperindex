@@ -6,11 +6,11 @@
 // the reason given; a new one needs a reason as good.
 
 import type { file, violation } from "./shared.ts";
-import { isRescript, runtimeRoot, withoutLineComment } from "./shared.ts";
+import { blankComments, isRescript, runtimeRoot } from "./shared.ts";
 
 const performanceRead = /\bPerformance\.(?:now|secondsSince)\b/;
 const realWork = "it times real I/O or CPU work, which virtual time would report as instant";
-const performanceAllowed: Record<string, string> = {
+export const performanceAllowed: Record<string, string> = {
   "Clock.res": "it is the real clock",
   "Batch.res": realWork,
   "Storage.res": realWork,
@@ -32,8 +32,8 @@ export const findPerformanceReads = (files: file[]): violation[] =>
       return !module.startsWith("bindings/") && !(module in performanceAllowed);
     })
     .flatMap(({ path, text }) =>
-      text.split("\n").flatMap((line, index) => {
-        const match = withoutLineComment(line).match(performanceRead);
+      blankComments(text).split("\n").flatMap((code, index) => {
+        const match = code.match(performanceRead);
         return match
           ? [
               {

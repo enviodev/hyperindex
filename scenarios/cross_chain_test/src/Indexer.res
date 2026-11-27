@@ -486,17 +486,17 @@ let makeSimulateItem = (
     constructor->(
       Utils.magic: simulateItemConstructor<'event, 'paramsConstructor, 'where> => {
         "event": {"_0": string, "contract": string},
-        "params": JSON.t,
-        "block": Internal.evmBlockInput,
-        "transaction": Internal.evmTransactionInput,
+        "params": option<JSON.t>,
+        "block": option<Internal.evmBlockInput>,
+        "transaction": option<Internal.evmTransactionInput>,
       }
     )
   {
     event: fields["event"]["_0"],
     contract: fields["event"]["contract"],
-    params: fields["params"],
-    block: fields["block"],
-    transaction: fields["transaction"],
+    params: ?fields["params"],
+    block: ?fields["block"],
+    transaction: ?fields["transaction"],
   }
 }
 

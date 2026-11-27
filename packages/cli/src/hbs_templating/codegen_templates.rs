@@ -1576,18 +1576,21 @@ type handlerContext = {{
 
             let (
                 params_optional,
+                params_field_type,
                 simulate_item_type,
                 block_constructor_type,
                 transaction_constructor_type,
             ) = match cfg.get_ecosystem() {
                 Ecosystem::Fuel => (
                     "",
+                    "JSON.t",
                     "Envio.fuelSimulateItem",
                     "Envio.fuelBlockInput",
                     "Envio.fuelTransactionInput",
                 ),
                 _ => (
                     "?",
+                    "option<JSON.t>",
                     "Envio.evmSimulateItem",
                     "Internal.evmBlockInput",
                     "Internal.evmTransactionInput",
@@ -1606,12 +1609,13 @@ type handlerContext = {{
                  {simulate_item_type} => {{\n\x20 let fields = constructor->(\n\x20   Utils.magic: \
                  simulateItemConstructor<'event, 'paramsConstructor, 'where> => {{\n\x20     \
                  \"event\": {{\"_0\": string, \"contract\": string}},\n\x20     \"params\": \
-                 JSON.t,\n\x20     \"block\": {block_constructor_type},\n\x20     \
-                 \"transaction\": {transaction_constructor_type},\n\x20   }}\n\x20 )\n\x20 {{\n\x20   \
-                 event: fields[\"event\"][\"_0\"],\n\x20   contract: \
-                 fields[\"event\"][\"contract\"],\n\x20   params: fields[\"params\"],\n\x20   \
-                 block: fields[\"block\"],\n\x20   transaction: fields[\"transaction\"],\n\x20 \
-                 }}\n}}"
+                 {params_field_type},\n\x20     \"block\": \
+                 option<{block_constructor_type}>,\n\x20     \"transaction\": \
+                 option<{transaction_constructor_type}>,\n\x20   }}\n\x20 )\n\x20 {{\n\x20   event: \
+                 fields[\"event\"][\"_0\"],\n\x20   contract: \
+                 fields[\"event\"][\"contract\"],\n\x20   params: \
+                 {params_optional}fields[\"params\"],\n\x20   block: ?fields[\"block\"],\n\x20   \
+                 transaction: ?fields[\"transaction\"],\n\x20 }}\n}}"
             )
         };
 

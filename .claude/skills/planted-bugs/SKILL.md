@@ -26,7 +26,7 @@ The first `pnpm vitest run` there builds the addon from scratch into `<worktree>
 
 1. List the behaviours, one line each, with the test that claims it.
 2. Plant one bug: the smallest edit that breaks that behaviour and nothing else. Flip a comparison, drop a branch, return early, move a bound by one.
-3. Run what should catch it: `pnpm rescript && pnpm vitest run test/Name_test.res.mjs`. A Rust plant needs no extra step; the run rebuilds the addon.
+3. Run what should catch it: `pnpm rescript && pnpm vitest run test/<Name>_test.res.mjs`. A Rust plant needs no extra step; the run rebuilds the addon.
 4. Write down what failed, then undo the plant: `git checkout -- .`
 5. Next bug. One at a time, so a failure has one cause.
 

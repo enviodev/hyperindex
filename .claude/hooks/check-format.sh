@@ -26,9 +26,9 @@ problems=""
 
 res=$(printf '%s\n' "$changed" | grep -E '\.resi?$' || true)
 if [ -n "$res" ]; then
-  out=$(printf '%s\n' "$res" | xargs pnpx rescript@12.2.0 format --check 2>&1 | grep '^\[format check\]' || true)
+  out=$(printf '%s\n' "$res" | xargs pnpx rescript@12.3.1 format --check 2>&1 | grep '^\[format check\]' || true)
   if [ -n "$out" ]; then
-    problems="$problems"$'\n'"Unformatted ReScript (fix: pnpx rescript@12.2.0 format <files>):"$'\n'"$out"
+    problems="$problems"$'\n'"Unformatted ReScript (fix: pnpx rescript@12.3.1 format <files>):"$'\n'"$out"
   fi
 fi
 
@@ -41,8 +41,11 @@ fi
 # The lint reads the whole working tree in about a second, so it runs on every
 # push rather than only when a file it covers changed.
 if ! out=$(cd packages/envio-tests && pnpm --silent lint 2>&1); then
-  failures=$(printf '%s\n' "$out" | grep -E '^([^ ]+:[0-9]+: |not ok )' || printf '%s\n' "$out" | tail -n 20)
-  problems="$problems"$'\n'"Lint failed (rerun: cd packages/envio-tests && pnpm lint). Each line ends with its fix:"$'\n'"$failures"
+  if violations=$(printf '%s\n' "$out" | grep -E '^([^ ]+:[0-9]+: |not ok )'); then
+    problems="$problems"$'\n'"Lint failed on the working tree, uncommitted and untracked files included (rerun: cd packages/envio-tests && pnpm lint). Each line ends with its fix:"$'\n'"$violations"
+  else
+    problems="$problems"$'\n'"The lint could not run (cd packages/envio-tests && pnpm lint), so nothing was checked:"$'\n'"$(printf '%s\n' "$out" | tail -n 20)"
+  fi
 fi
 
 if [ -n "$problems" ]; then

@@ -1,14 +1,13 @@
 import type { file, violation } from "./shared.ts";
-import { isRealTimeAt, isTestHelper, testRescriptFiles, withoutLineComment } from "./shared.ts";
+import { blankComments, isRealTimeAt, isTestHelper, testRescriptFiles } from "./shared.ts";
 
 export const findUnsetDurations = (files: file[]): violation[] =>
   testRescriptFiles(files)
     .filter(({ path }) => !isTestHelper(path))
     .flatMap(({ path, text }) => {
       const lines = text.split("\n");
-      return lines.flatMap((line, index) => {
+      return blankComments(text).split("\n").flatMap((code, index) => {
         const found: violation[] = [];
-        const code = withoutLineComment(line);
         // A real wait as a handler's whole body is there to take time, and the time
         // a handler takes is measured on the run's clock: on virtual time it adds
         // nothing, on real time it adds whatever the scheduler gives, which can

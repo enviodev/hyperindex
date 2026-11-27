@@ -20,15 +20,87 @@ export const isTestHelper = (path: string) => path.startsWith(`${testRoot}helper
 export const rescriptFilesOutsideTemplates = (files: file[]) =>
   files.filter((file) => isRescript(file) && !file.path.startsWith("packages/cli/templates/"));
 
-// `//` after a colon is a URL in a string, not a comment.
-export const withoutLineComment = (line: string) => line.replace(/(?<!:)\/\/.*$/, "");
+// Every rule asks for the same files, so each is scanned once.
+const blankedCommentsOnly = new Map<string, string>();
+const blankedWithStrings = new Map<string, string>();
 
-// Comments are blanked rather than cut, so an offset in the result is the same
-// offset in the file.
-export const blankComments = (text: string) =>
-  text
-    .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "))
-    .replace(/(?<!:)\/\/.*$/gm, (comment) => " ".repeat(comment.length));
+// ReScript source with its comments blanked, and its string contents too when
+// asked. Blanked, not cut, so a line or an offset in the result is the same
+// one in the file. It reads strings to know that a `//` or a `/*` inside one
+// opens no comment, and comments nest. Code inside a template's `${...}` stays
+// code.
+export const blankComments = (text: string, { andStrings = false } = {}) => {
+  const blanked = andStrings ? blankedWithStrings : blankedCommentsOnly;
+  const known = blanked.get(text);
+  if (known !== undefined) return known;
+  const result = text.split("");
+  const blank = (from: number, to: number) => {
+    for (let at = from; at < to; at++) if (result[at] !== "\n") result[at] = " ";
+  };
+  let at = 0;
+  const skipString = () => {
+    const start = at++;
+    while (at < text.length && text[at] !== '"') at += text[at] === "\\" ? 2 : 1;
+    if (andStrings) blank(start + 1, at);
+    at++;
+  };
+  const skipTemplate = () => {
+    let literalStart = ++at;
+    while (at < text.length && text[at] !== "`") {
+      if (text[at] === "\\") {
+        at += 2;
+      } else if (text[at] === "$" && text[at + 1] === "{") {
+        if (andStrings) blank(literalStart, at);
+        at += 2;
+        skipCode(true);
+        literalStart = at;
+      } else {
+        at++;
+      }
+    }
+    if (andStrings) blank(literalStart, at);
+    at++;
+  };
+  const skipCode = (untilClosingBrace: boolean) => {
+    let braces = 0;
+    while (at < text.length) {
+      const char = text[at];
+      const next = text[at + 1];
+      if (char === "/" && next === "/") {
+        const end = text.indexOf("\n", at);
+        blank(at, end === -1 ? text.length : end);
+        at = end === -1 ? text.length : end;
+      } else if (char === "/" && next === "*") {
+        const start = at;
+        let depth = 0;
+        do {
+          if (text.startsWith("/*", at)) depth++;
+          else if (text.startsWith("*/", at)) depth--;
+          at += text.startsWith("/*", at) || text.startsWith("*/", at) ? 2 : 1;
+        } while (depth > 0 && at < text.length);
+        blank(start, at);
+      } else if (char === '"') {
+        skipString();
+      } else if (char === "`") {
+        skipTemplate();
+      } else if (char === "'" && /^'(?:\\.|[^\\'])'/.test(text.slice(at, at + 4))) {
+        // A char literal, so `'"'` opens no string.
+        at += text[at + 1] === "\\" ? 4 : 3;
+      } else if (untilClosingBrace && char === "}" && braces === 0) {
+        at++;
+        return;
+      } else {
+        if (char === "{") braces++;
+        if (char === "}") braces--;
+        at++;
+      }
+    }
+  };
+  skipCode(false);
+  const joined = result.join("");
+  blanked.set(text, joined);
+  return joined;
+};
 
 export const lineAtOffset = (text: string, offset: number) => text.slice(0, offset).split("\n").length;
 

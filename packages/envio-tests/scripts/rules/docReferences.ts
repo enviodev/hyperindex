@@ -8,13 +8,18 @@ const isContributorDoc = (path: string) => path === "CLAUDE.md" || /^\.claude\/s
 const sourceExtension =
   /[\w-]\.(?:res|resi|rs|ts|mjs|js|json|jsonl|yaml|yml|toml|md|sh|graphql|hbs|snap)$/;
 
-// A span is taken for a repo path when it is one word of path characters that
-// has a directory or a source extension. A command, a placeholder
-// (`<project>/.envio/`), a glob, a URL, an endpoint (`/metrics`) or a scoped
-// package name is not one.
-const pathNamedBy = (span: string): string | null => {
-  const candidate = span.replace(/:\d+(?::\d+)?$/, "").replace(/^\.\//, "");
-  if (!/^[\w.-][\w.\-/]*$/.test(candidate)) return null;
+// A word is taken for a repo path when it is made of path characters and has a
+// directory or a source extension. A placeholder (`<project>/.envio/`), a
+// glob, a URL, an endpoint (`/metrics`), a scoped package name or a path out
+// of the repo (`../elsewhere`) is not one.
+const pathNamedBy = (word: string): string | null => {
+  const candidate = word
+    .replace(/^\(|[,;)]+$/g, "")
+    .replace(/:\d+(?::\d+)?$/, "")
+    .replace(/^\.\//, "")
+    // A compiled module is named for its source, which is the tracked file.
+    .replace(/(?<=\.res)\.m?js$/, "");
+  if (!/^[\w.-][\w.\-/]*$/.test(candidate) || candidate.startsWith("..")) return null;
   return candidate.includes("/") || sourceExtension.test(candidate) ? candidate.replace(/\/$/, "") : null;
 };
 
@@ -40,23 +45,27 @@ export const findMissingDocPaths = (files: file[]): violation[] => {
           inFence = !inFence;
           return [];
         }
-        if (inFence) return [];
-        return [...line.matchAll(/`([^`]+)`/g)].flatMap(([, span]) => {
-          const named = pathNamedBy(span);
-          return named === null || exists(named)
-            ? []
-            : [
-                {
-                  file: path,
-                  line: index + 1,
-                  title: `\`${span}\` is not a path in the repo`,
-                  fix:
-                    "Name where it lives now, or drop the sentence if it is gone. A path the build " +
-                    "generates takes a placeholder, as in `<project>/.envio/types.d.ts`, and a span that " +
-                    "is no path at all loses its backticks.",
-                },
-              ];
-        });
+        // Most of the paths a skill names sit in its commands: every word of a
+        // fenced line, and every word of a code span outside one.
+        const code = inFence ? [line] : [...line.matchAll(/`([^`]+)`/g)].map(([, span]) => span);
+        return code
+          .flatMap((span) => span.trim().split(/\s+/))
+          .flatMap((word) => {
+            const named = pathNamedBy(word);
+            return named === null || exists(named)
+              ? []
+              : [
+                  {
+                    file: path,
+                    line: index + 1,
+                    title: `\`${word}\` is not a path in the repo`,
+                    fix:
+                      "Name where it lives now, or drop the sentence if it is gone. A path the build " +
+                      "generates takes a placeholder, as in `<project>/.envio/types.d.ts`, and a word that " +
+                      "is no path at all loses its backticks.",
+                  },
+                ];
+          });
       });
     });
 };

@@ -1162,16 +1162,16 @@ let makeSimulateItem = (
       Utils.magic: simulateItemConstructor<'event, 'paramsConstructor, 'where> => {
         "event": {"_0": string, "contract": string},
         "params": JSON.t,
-        "block": Envio.fuelBlockInput,
-        "transaction": Envio.fuelTransactionInput,
+        "block": option<Envio.fuelBlockInput>,
+        "transaction": option<Envio.fuelTransactionInput>,
       }
     )
   {
     event: fields["event"]["_0"],
     contract: fields["event"]["contract"],
     params: fields["params"],
-    block: fields["block"],
-    transaction: fields["transaction"],
+    block: ?fields["block"],
+    transaction: ?fields["transaction"],
   }
 }
 

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { findMissingDocPaths } from "./rules/docReferences.ts";
 import { findFakedTimers } from "./rules/fakeTimers.ts";
 import { findUnnamedHeightWaits } from "./rules/heightCalls.ts";
+import { findListedPathsThatMoved } from "./rules/listedPaths.ts";
 import { findUnannotatedMagic } from "./rules/magicAnnotation.ts";
 import { findLogicInMigratedDirectories } from "./rules/migratedToRust.ts";
 import { findGuessedWaits } from "./rules/mockSteps.ts";
@@ -64,10 +65,16 @@ const groups: { heading: string; rules: ((files: file[]) => violation[])[] }[] =
     rules: [findUnannotatedMagic, findRawFieldPaths, findLoggingInTests, (files) => findLogicInMigratedDirectories(files)],
   },
   {
-    heading: "The contributor docs name what isn't in the repo:",
-    rules: [findMissingDocPaths],
+    heading: "These name a path that isn't in the repo:",
+    rules: [findMissingDocPaths, findListedPathsThatMoved],
   },
 ];
+
+// GitHub splits an annotation's properties on `,` and `:` and reads `%` as an
+// escape, so a title such as `Utils.delay(a, b) on virtual time` would end at
+// its comma.
+const escapeAnnotationProperty = (value: string) =>
+  value.replace(/%/g, "%25").replace(/:/g, "%3A").replace(/,/g, "%2C");
 
 const report = (list: violation[], heading: string) => {
   // An annotation puts the rule on the line that broke it, in the PR diff. The log
@@ -75,7 +82,7 @@ const report = (list: violation[], heading: string) => {
   // after scrolling past the service-container dumps that follow a failed job.
   if (process.env.GITHUB_ACTIONS) {
     for (const { file, line, title, fix } of list) {
-      console.log(`::error file=${file},line=${line},title=${title}::${fix}`);
+      console.log(`::error file=${file},line=${line},title=${escapeAnnotationProperty(title)}::${fix}`);
     }
   }
   console.error(

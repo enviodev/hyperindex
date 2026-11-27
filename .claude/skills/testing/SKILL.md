@@ -19,25 +19,28 @@ Reproduce from outside in: real `config.yaml`, `schema.graphql` and handler sour
 ## Commands
 
 ```bash
-cd packages/envio-tests
+# from packages/envio-tests
 pnpm rescript && pnpm vitest run -t "test name"
 pnpm rescript && pnpm vitest run test/HandlerLogs_test.res.mjs
 ENVIO_TEST_STORAGE=clickhouse pnpm vitest run -t "test name"   # or `both`; Postgres is the default
 pnpm lint
-cd scenarios/e2e_test && pnpm exec envio codegen && pnpm test
-cd scenarios/test_codegen && pnpm exec envio codegen && pnpm test   # type-checks the generated code
-pnpm exec rescript format src/Indexer.res                           # codegen rewrites this tracked file unformatted
-pnpm test:cli                                                       # from the repo root
 ```
 
-- A Rust change needs no manual build: the `vitest` setup in `packages/envio-tests` and the `envio` bin each run `cargo build --lib` first.
-- `pnpm lint` takes about a second and CI runs it ahead of every test. A CI failure that ends in `Test failed` and names no test is this lint.
+```bash
+# from the repo root
+(cd scenarios/e2e_test && pnpm exec envio codegen && pnpm test)
+(cd scenarios/test_codegen && pnpm exec envio codegen && pnpm test && pnpm exec rescript format src/Indexer.res)
+pnpm test:cli
+```
+
+- `scenarios/test_codegen` type-checks the generated code. Its codegen rewrites the tracked `src/Indexer.res` unformatted, which is why the command formats it after.
+- A Rust change needs no manual build: the `vitest` setup in `packages/envio-tests` and the `envio` bin each run `cargo build --lib` first, unless a prebuilt `envio-<platform>` package is installed, as it is in CI.
+- `pnpm lint` takes about a second. The push check runs it, and CI runs it as the step "Lint test inputs" ahead of the tests.
 
 ## Virtual time
 
-Scenarios run the indexer's timers on a clock only the test moves. Nothing the indexer schedules fires until the test advances it.
+Scenarios run the indexer's timers on a clock only the test moves: nothing the indexer schedules fires until `await indexer.advanceTime(ms)`.
 
-- Advance: `await indexer.advanceTime(ms)`.
 - Answer a chain's first height: `await Scenario.resolveInitialHeight(~source=source(1), ~head=300)`.
 - Name each height call at the step that causes it: `await mock.expectNewHeightCalls(n)`, or `expectNewHeightCallsAtLeast(n)` where jitter decides the count. Once a test names one, an unnamed call fails the run.
 - Wait for queries by naming them: `await mock.expectItemsQueries([...])`. Never `Utils.delay(0)` or a poll.
@@ -48,10 +51,7 @@ Scenarios run the indexer's timers on a clock only the test moves. Nothing the i
 
 ## Logs
 
-Logs never reach the test output. Each run captures its own.
-
-- `indexer.infoAndAboveLogs()`: info and above, as `{msg, params}`. `indexer.allLogsAsJson()`: every line, trace included.
-- A failing run's message ends with `Logs: <path>`, a `.test-logs/*.jsonl` file. Read it only when the failure needs it.
+Logs never reach the test output; each run captures its own. `indexer.infoAndAboveLogs()` gives info and above as `{msg, params}`, `indexer.allLogsAsJson()` every line, trace included. A failing run's message ends with `Logs: <path>`, a `.test-logs/*.jsonl` file: read it only when the failure needs it.
 
 ## ReScript in tests
 

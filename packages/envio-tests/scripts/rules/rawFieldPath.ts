@@ -3,7 +3,7 @@ import { blankComments, lineAtOffset, rescriptFilesOutsideTemplates } from "./sh
 
 // Only a bare dotted path: a function or an expression inside %raw is
 // JavaScript that has no binding to replace it.
-const fieldPath = "[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)+";
+const fieldPath = "[\\w$]+(?:\\.[A-Za-z_$][\\w$]*)+";
 const rawFieldPath = new RegExp(`%raw\\(\\s*(?:\`\\s*(${fieldPath})\\s*\`|"\\s*(${fieldPath})\\s*")\\s*\\)`, "g");
 
 const checkedByTheCompiler = "the compiler checks a binding's name and type, and reads nothing inside %raw.";

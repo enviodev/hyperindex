@@ -4,7 +4,7 @@
 // A zero delay is a turn of the event loop, not time.
 
 import type { file, violation } from "./shared.ts";
-import { isRealTimeAt, isTestHelper, testRescriptFiles, withoutLineComment } from "./shared.ts";
+import { blankComments, isRealTimeAt, isTestHelper, testRescriptFiles } from "./shared.ts";
 
 const realDelay = /\bUtils\.delay\((?!0\))([^)]*)\)/;
 const realClock = /\bDate\.now\(/;
@@ -15,7 +15,7 @@ const scenarioStart = /\bScenario\.(?:it|run)\(/;
 // Scenarios run on virtual time unless `~virtualTime=false` takes them off it,
 // on `Scenario.make` for every test of that scenario or on one test. Scenarios
 // a file makes through a function of its own count the same way.
-const realTimeScenariosOf = (lines: string[]) => {
+const realTimeScenariosOf = (lines: string[], code: string[]) => {
   const realTimeScenarios = new Set<string>();
   lines.forEach((line, index) => {
     const bound = line.match(/^let (\w+) =/);
@@ -24,7 +24,7 @@ const realTimeScenariosOf = (lines: string[]) => {
     // closing paren, or whatever top-level code follows a one-line call.
     const next = lines.findIndex((later, at) => at > index && /^\S/.test(later));
     const end = next === -1 ? lines.length : /^\)/.test(lines[next]) ? next + 1 : next;
-    const region = lines.slice(index, end).map(withoutLineComment);
+    const region = code.slice(index, end);
     if (
       region.some((line) => /\bScenario\.make\(/.test(line)) &&
       region.some((line) => /~virtualTime=false\b/.test(line))
@@ -39,10 +39,11 @@ export const findRealTimeOnVirtualTime = (files: file[]): violation[] =>
   testRescriptFiles(files).flatMap(({ path, text }) => {
     const found: violation[] = [];
     const lines = text.split("\n");
+    const codeLines = blankComments(text).split("\n");
     const isHelper = isTestHelper(path);
-    const realTimeScenarios = realTimeScenariosOf(lines);
+    const realTimeScenarios = realTimeScenariosOf(lines, codeLines);
     lines.forEach((line, index) => {
-      const code = withoutLineComment(line);
+      const code = codeLines[index];
       // Helpers declare the default, and a test of a real-time scenario turns
       // virtual time back on with it.
       if (/~virtualTime=true\b/.test(code) && realTimeScenarios.size === 0 && !isHelper) {
@@ -74,7 +75,7 @@ export const findRealTimeOnVirtualTime = (files: file[]): violation[] =>
     starts.forEach((start, position) => {
       const end = starts[position + 1] ?? lines.length;
       const block = lines.slice(start, end);
-      const code = block.map(withoutLineComment);
+      const code = codeLines.slice(start, end);
       const receiver = block[0].match(/(\w+)\s*->\s*Scenario\.(?:it|run)\(|Scenario\.(?:it|run)\(\s*(\w+)/);
       // `makeScenario(~name=...)->Scenario.it(` spreads the receiver over the
       // lines before the one that names `Scenario.it`.

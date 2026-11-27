@@ -13,14 +13,14 @@ The contributor guide, for people and agents. A rule that a tool checks is not w
 - Rust CLI: `packages/cli`, entry `src/lib.rs`, commands `src/commands.rs`.
 - Config pipeline: `human_config.rs` → `system_config.rs` → internal JSON → `hbs_templating/codegen_templates.rs` → `Config.res`.
 - Runtime: `packages/envio`. Its tests: `packages/envio-tests`.
-- Scenario projects: `scenarios/` (`test_codegen`, `e2e_test`, `fuel_test`, `svm_test`).
+- Scenario projects: `scenarios/`.
 - Edit `packages/cli/templates/` or `packages/envio/`, never the output under `<project>/.envio/`.
 - Read `.res` modules; ignore compiled `.js`.
 
 ## Commands
 
 - `pnpm`, not `npm` or `npx`. A fresh checkout needs `pnpm install` once.
-- A Rust change needs no manual build: the tests and the `envio` bin run `cargo build --lib` themselves before they load the addon.
+- A Rust change needs no manual build: the tests and the `envio` bin run `cargo build --lib` themselves before they load the addon, unless a prebuilt `envio-<platform>` package is installed, as it is in CI.
 - One test: `cd packages/envio-tests && pnpm rescript && pnpm vitest run -t "name"`. CI runs the full suite; locally run only what the change touches.
 
 ## A change
