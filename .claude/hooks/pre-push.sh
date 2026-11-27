@@ -18,17 +18,20 @@ cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 # change, and a push that touched no Rust would pay for clippy.
 git fetch -q origin +refs/heads/main:refs/remotes/origin/main 2>/dev/null || true
 base=$(git merge-base HEAD origin/main 2>/dev/null || true)
-changed=$(
+
+# Files the branch, the working tree or an untracked file adds or changes,
+# narrowed to the given pathspecs.
+changed_files() {
   {
-    git diff --name-only HEAD
-    [ -n "$base" ] && git diff --name-only "$base"...HEAD
-    git ls-files -o --exclude-standard
+    git diff --name-only HEAD -- "$@"
+    [ -n "$base" ] && git diff --name-only "$base"...HEAD -- "$@"
+    git ls-files -o --exclude-standard -- "$@"
   } | sort -u | while read -r f; do [ -f "$f" ] && echo "$f"; done
-)
+}
 
 problems=""
 
-res=$(printf '%s\n' "$changed" | grep -E '\.resi?$' || true)
+res=$(changed_files '*.res' '*.resi')
 if [ -n "$res" ]; then
   out=$(printf '%s\n' "$res" | xargs pnpx rescript@12.2.0 format --check 2>&1 | grep '^\[format check\]' || true)
   if [ -n "$out" ]; then
@@ -36,21 +39,24 @@ if [ -n "$res" ]; then
   fi
 fi
 
-if printf '%s\n' "$changed" | grep -q '^packages/cli/'; then
+# Everything that can change what rustfmt or clippy report. The templates,
+# snapshots and docs under packages/cli reach the build as bytes at most.
+rust_inputs=('packages/cli/*.rs' packages/cli/Cargo.toml packages/cli/clippy.toml Cargo.toml Cargo.lock rust-toolchain.toml)
+if [ -n "$(changed_files "${rust_inputs[@]}")" ]; then
   if ! out=$(cd packages/cli && cargo fmt --check -- --color never 2>&1); then
     problems="$problems"$'\n'"Unformatted Rust (fix: cd packages/cli && cargo fmt):"$'\n'"$out"
   fi
 
   # Clippy is the one slow check here, from 15 s warm to minutes cold, so it is
-  # skipped while packages/cli is byte for byte what the last clean run saw. The
+  # skipped while its inputs are byte for byte what the last clean run saw. The
   # stamp is taken before the run: an edit landing mid-run forces another one.
   clippy_stamp_file=target/.clippy-clean
   clippy_stamp=$(
     {
-      git ls-files -s packages/cli
-      git diff HEAD -- packages/cli
-      git ls-files -o --exclude-standard packages/cli
-      git ls-files -o --exclude-standard -z packages/cli | xargs -0 git hash-object --
+      git ls-files -s -- "${rust_inputs[@]}"
+      git diff HEAD -- "${rust_inputs[@]}"
+      git ls-files -o --exclude-standard -- "${rust_inputs[@]}"
+      git ls-files -o --exclude-standard -z -- "${rust_inputs[@]}" | xargs -0 git hash-object --
     } | git hash-object --stdin
   )
   if [ "$clippy_stamp" != "$(cat "$clippy_stamp_file" 2>/dev/null)" ]; then
@@ -66,7 +72,7 @@ if printf '%s\n' "$changed" | grep -q '^packages/cli/'; then
   fi
 fi
 
-if printf '%s\n' "$changed" | grep -qE '^packages/(envio-tests/test|envio/src)/'; then
+if [ -n "$(changed_files packages/envio-tests/test packages/envio/src)" ]; then
   if ! out=$(node packages/envio-tests/scripts/lint-inputs.ts 2>&1); then
     problems="$problems"$'\n'"Lint failed (fix, then push again):"$'\n'"$out"
   fi
