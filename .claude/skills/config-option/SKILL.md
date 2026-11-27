@@ -37,6 +37,7 @@ make update-generated-docs            # both of the above
 
 ```bash
 cd scenarios/test_codegen && pnpm exec envio codegen && pnpm test   # generated code still type-checks
+pnpm exec rescript format src/Indexer.res                           # codegen rewrites this tracked file unformatted
 ```
 
 - Commit the regenerated files with the change: `cargo test` compares each with what the code prints, so a stale one fails CI.

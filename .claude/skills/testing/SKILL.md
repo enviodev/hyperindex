@@ -26,6 +26,7 @@ ENVIO_TEST_STORAGE=clickhouse pnpm vitest run -t "test name"   # or `both`; Post
 pnpm lint
 cd scenarios/e2e_test && pnpm exec envio codegen && pnpm test
 cd scenarios/test_codegen && pnpm exec envio codegen && pnpm test   # type-checks the generated code
+pnpm exec rescript format src/Indexer.res                           # codegen rewrites this tracked file unformatted
 pnpm test:cli                                                       # from the repo root
 ```
 
@@ -49,8 +50,7 @@ Scenarios run the indexer's timers on a clock only the test moves. Nothing the i
 
 Logs never reach the test output. Each run captures its own.
 
-- `indexer.infoAndAboveLogs()`: info and above, as `{msg, params}`.
-- `indexer.allLogsAsJson()`: every line, trace included.
+- `indexer.infoAndAboveLogs()`: info and above, as `{msg, params}`. `indexer.allLogsAsJson()`: every line, trace included.
 - A failing run's message ends with `Logs: <path>`, a `.test-logs/*.jsonl` file. Read it only when the failure needs it.
 
 ## ReScript in tests
