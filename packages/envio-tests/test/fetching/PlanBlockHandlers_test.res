@@ -117,7 +117,7 @@ indexer.onBlock(
 type run = {id: string, count: int, last: int}
 type runWithEvents = {id: string, blocks: int, events: int, outOfOrder: int}
 
-describe("FetchState block handlers", () => {
+describe("Indexing plan: block handlers", () => {
   laterWildcardStart->Scenario.it(
     "run no further than the head while a wildcard starts past it",
     ~sources=[{chain: 1}],

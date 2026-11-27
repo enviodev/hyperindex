@@ -97,7 +97,7 @@ let chunksAfterTwoResponses = async (mock: MockSource.t, ~firstCount, ~secondCou
   mock->newFirstAddressQueries(~seen=[])
 }
 
-describe("FetchState response density and source range capacity over the indexer loop", () => {
+describe("Indexing plan: response density and source range capacity over the indexer loop", () => {
   // No query sends a row limit, so a probe stopping at block 390 is the source
   // stopping, however many items it brought: the 90 blocks become capacity and
   // the chunks span ceil(90 * 1.8) = 162 blocks.

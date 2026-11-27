@@ -102,7 +102,7 @@ let handlerOrder = async (
   runs
 }
 
-describe("FetchState batch priority across chains", () => {
+describe("Indexing plan: batch priority across chains", () => {
   scenario->Scenario.it(
     "takes the chain furthest behind its head first",
     ~sources,

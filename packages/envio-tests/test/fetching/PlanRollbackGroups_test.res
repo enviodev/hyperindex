@@ -155,7 +155,7 @@ let sources: array<Scenario.sourceMock> = [
   {chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]},
 ]
 
-describe("FetchState groups across a rollback", () => {
+describe("Indexing plan: groups across a rollback", () => {
   scenario->Scenario.it(
     "Keeps a group behind the rollback target and refetches the one past it with every surviving address",
     ~sources,

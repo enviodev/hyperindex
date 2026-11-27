@@ -41,7 +41,7 @@ let pendingShapes = (source: MockSource.t) => source.pendingItemsQueries->Array.
 
 let scenario = Scenario.make(~configYaml=configYaml(), ~schema)
 
-describe("FetchState queries over the indexer loop", () => {
+describe("Indexing plan: queries over the indexer loop", () => {
   scenario->Scenario.it(
     "Waits for a height, queries once, then waits for a new block at the head",
     ~sources=[{chain: 1337}],

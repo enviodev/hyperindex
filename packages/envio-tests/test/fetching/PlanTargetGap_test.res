@@ -55,7 +55,7 @@ let respondWithItemPerBlock = (~fromBlock, ~toBlock): MockSource.reply => Respon
   latestFetchedBlockNumber: toBlock,
 })
 
-describe("FetchState target containment over the indexer loop", () => {
+describe("Indexing plan: target containment over the indexer loop", () => {
   scenario->Scenario.it(
     "defers a gap past the target block, then fills it once the target reaches it",
     ~sources=[{chain: 1}, {chain: 2}],

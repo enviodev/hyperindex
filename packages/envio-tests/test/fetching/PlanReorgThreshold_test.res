@@ -79,7 +79,7 @@ let thresholdShortOfAndAt = async (
   (shortOf, await inReorgThreshold(indexer))
 }
 
-describe("FetchState readiness for the reorg threshold", () => {
+describe("Indexing plan: readiness for the reorg threshold", () => {
   startBlockPastHead->Scenario.it(
     "does not enter before the chain knows its head, even with a start block past the depth",
     ~sources,

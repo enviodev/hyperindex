@@ -126,7 +126,7 @@ indexer.onEvent({ contract: "Late", event: "TestEvent" }, async () => {});
 `,
 )
 
-describe("FetchState next query order", () => {
+describe("Indexing plan: next query order", () => {
   staggeredStarts->Scenario.it(
     "Queries every group behind the head, furthest behind first",
     ~sources=[{chain: 1337}],

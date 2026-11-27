@@ -135,7 +135,7 @@ let addressFreeQuery = (~contracts=["Gravatar"], fromBlock, toBlock) => {
   addressFreeContracts: contracts,
 }
 
-describe("FetchState client-side address filtering", () => {
+describe("Indexing plan: client-side address filtering", () => {
   scenario->Scenario.it(
     "fetches a contract over the threshold in one address-free query and keeps the other contract server-side",
     ~sources=[{chain: 1337}],

@@ -156,7 +156,7 @@ let giveFirstAddressDensity = async (mock: MockSource.t) => {
   ])
 }
 
-describe("FetchState query budget over the indexer loop", () => {
+describe("Indexing plan: query budget over the indexer loop", () => {
   makeStaggeredScenario(
     ~vaultStartBlock=10001,
   )->Scenario.it(

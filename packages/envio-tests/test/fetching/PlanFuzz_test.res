@@ -173,7 +173,7 @@ let regenerateAbove = (world, ~rng, ~keepUpTo) => {
       for _ in 1 to rng() < 0.3 ? 2 : 1 {
         let address = pick(rng, loggingAddresses)
         // A log in the block that registers its address would hinge on the
-        // order within the block, which FetchStateEarliestItem_test pins.
+        // order within the block, which PlanEarliestItem_test pins.
         let address =
           world.registrationBlocks->Dict.get(address) === Some(blockNumber)
             ? staticAddress

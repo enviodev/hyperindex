@@ -143,7 +143,7 @@ let reorgAbove700 = MockSource.Respond({
   prevRangeLastBlock: {blockNumber: 700, blockHash: "0x700a"},
 })
 
-describe("FetchState client-side filtering across a rollback", () => {
+describe("Indexing plan: client-side filtering across a rollback", () => {
   scenario->Scenario.it(
     "keeps a catch-up the rollback leaves behind, capped at the rollback target, with the contract still client-side",
     ~sources=[{chain: 1337, methods}],

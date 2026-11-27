@@ -126,7 +126,7 @@ let registerWhileAddressFreeQueryIsOpen = async (sourceMock: MockSource.t, ~regi
   ])
 }
 
-describe("FetchState client-side filtering catch-up requests", () => {
+describe("Indexing plan: client-side filtering catch-up requests", () => {
   scenario->Scenario.it(
     "catches an address registered behind the address-free frontier up to it, then drops the catch-up",
     ~sources=[{chain: 1337}],

@@ -71,7 +71,7 @@ let processedOrder = async (indexer: IndexerRunner.t) =>
 
 let singleStatic = scenarioWith(~addresses=[staticAddress])
 
-describe("FetchState earliest processable item over the indexer loop", () => {
+describe("Indexing plan: earliest processable item over the indexer loop", () => {
   // The registration joins the group once the group's open-ended request out
   // lands; what lies below that block is the registered address's catch-up.
   singleStatic->Scenario.it(

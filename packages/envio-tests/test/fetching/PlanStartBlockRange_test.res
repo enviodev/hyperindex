@@ -82,7 +82,7 @@ let restrictedPastEndBlock = scenarioWith(
   ~endBlock="\n    end_block: 200",
 )
 
-describe("FetchState start blocks over the indexer loop", () => {
+describe("Indexing plan: start blocks over the indexer loop", () => {
   restricted->Scenario.it(
     "Starts a partition at its registration's start block",
     ~sources=[{chain: 1337}],

@@ -61,7 +61,7 @@ let pendingShapes = (source: MockSource.t) =>
 
 let upTo = latestFetchedBlockNumber => MockSource.Respond({items: [], latestFetchedBlockNumber})
 
-describe("FetchState group joins over the indexer loop", () => {
+describe("Indexing plan: group joins over the indexer loop", () => {
   // The group's open-ended request is out when the registrations land, so
   // they join once it does, at the block it reports.
   scenario->Scenario.it(

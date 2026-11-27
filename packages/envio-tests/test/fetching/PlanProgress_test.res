@@ -38,7 +38,7 @@ let heldItem = (~blockNumber, ~logIndex, ~gate: MockSource.Gate.t): MockSource.i
   handler: _ => gate.wait(),
 }
 
-describe("FetchState progress", () => {
+describe("Indexing plan: progress", () => {
   scenario->Scenario.it(
     "reaches the fetched block when nothing is left to process",
     ~sources=[{chain: 1}],

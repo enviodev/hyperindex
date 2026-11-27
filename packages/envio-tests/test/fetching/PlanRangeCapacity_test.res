@@ -72,7 +72,7 @@ let gapFillsAfterPartialChunks = async (
   ->Array.toSorted(((a, _), (b, _)) => Int.compare(a, b))
 }
 
-describe("FetchState source range capacity", () => {
+describe("Indexing plan: source range capacity", () => {
   scenario->Scenario.it(
     "shrinks the chunks to an earlier chunk's partial response landing first",
     ~sources=[{chain: 1}],

@@ -99,7 +99,7 @@ let chunk = (~address, ~fromBlock, ~toBlock) => {
   reservedItems: None,
 }
 
-describe("FetchState per-chain concurrency over the indexer loop", () => {
+describe("Indexing plan: per-chain concurrency over the indexer loop", () => {
   makeScenario(
     ~addressCount=120,
   )->Scenario.it(
