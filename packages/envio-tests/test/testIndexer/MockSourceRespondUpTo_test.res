@@ -201,7 +201,7 @@ describe("MockSource.respondUpTo", () => {
         ->String.split("\n")
         ->Array.filter(line => line->String.includes("dropped")),
       ).toEqual([
-        "  items dropped by a query that doesn't fetch their address: block 40 log 0 from 0x0000000000000000000000000000000000000099 by partition 0 at 1..100",
+        "  items dropped by a query that doesn't fetch their address: block 40 log 0 from 0x0000000000000000000000000000000000000099 by the query at 1..100",
       ])
     },
   )

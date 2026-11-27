@@ -47,7 +47,7 @@ let dynamicAddresses = async (indexer: IndexerRunner.t) =>
 
 describe("contractRegister loop", () => {
   scenario->Scenario.it(
-    "does not hold back the next query of the partition that delivered the event",
+    "does not hold back the next query of the request that delivered the event",
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
@@ -64,10 +64,9 @@ describe("contractRegister loop", () => {
       ])
       // Real time: the held contractRegister runs off the clock.
       await Scenario.waitUntil(() => gate.entered.contents > 0, ~message="the contractRegister")
-      let pendingWhileHeld =
-        sourceMock.pendingItemsQueries->Array.map(query => (query.partitionId, query.fromBlock))
+      let pendingWhileHeld = sourceMock.pendingItemsQueries->Array.map(query => query.fromBlock)
       gate.release()
-      t.expect(pendingWhileHeld).toEqual([("0", 6)])
+      t.expect(pendingWhileHeld).toEqual([6])
     },
   )
 
@@ -178,7 +177,7 @@ describe("contractRegister loop", () => {
       ])
       t.expect(
         sourceMock.pendingItemsQueries
-        ->Array.filter(query => query.partitionId === "1")
+        ->Array.filter(query => query->MockSource.addresses->Utils.Array.notEmpty)
         ->Array.map(query => query->MockSource.addresses->Array.map(Address.toString)),
       ).toEqual([[address(1)->Address.toString]])
     },
