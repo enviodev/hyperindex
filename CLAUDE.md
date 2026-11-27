@@ -19,7 +19,7 @@ The contributor guide, for people and agents. A rule that a tool checks is not w
 
 ## Commands
 
-- `pnpm`, not `npm` or `npx`.
+- `pnpm`, not `npm` or `npx`. A fresh checkout needs `pnpm install` once.
 - A Rust change needs no manual build: the tests and the `envio` bin run `cargo build --lib` themselves before they load the addon.
 - One test: `cd packages/envio-tests && pnpm rescript && pnpm vitest run -t "name"`. CI runs the full suite; locally run only what the change touches.
 

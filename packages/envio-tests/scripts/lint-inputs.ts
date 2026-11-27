@@ -24,8 +24,15 @@ import { findRealTimeOnVirtualTime } from "./rules/virtualTime.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
+// git's own complaint stays out of the output: the one call that can fail is
+// the merge base, in a clone that never fetched main, and that is not an error.
 const git = (...args: string[]) =>
-  execFileSync("git", args, { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  execFileSync("git", args, {
+    cwd: repoRoot,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
 
 // Untracked files count: a test written a minute ago is linted before it is
 // ever staged. Ignored ones (build output, `node_modules`) don't.

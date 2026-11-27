@@ -11,11 +11,12 @@ description: >-
 The pipeline, in the order to edit it. All Rust paths are under `packages/cli/src`.
 
 1. **Failing test first.** A User API test in `packages/envio-tests` that sets the option in `~configYaml` and asserts what the indexer then does (see the `testing` skill).
-2. **`config_parsing/human_config.rs`**: the user-facing structs, one module per ecosystem (`evm`, `fuel`, `svm`). Add the field with its doc comment and `#[schemars(description = ...)]`: that text is the JSON schema and the editor hover. Use `#[serde(skip_serializing_if = "Option::is_none")]` for an optional field.
+2. **`config_parsing/human_config.rs`**: the user-facing structs, one module per ecosystem (`evm`, `fuel`, `svm`). Add the field with its doc comment and `#[schemars(description = ...)]`: that text is the JSON schema and the editor hover. Use `#[serde(skip_serializing_if = "Option::is_none")]` for an optional field. `cli_args/init_config.rs` builds these structs by hand, so the compiler sends you there next.
 3. **`config_parsing/system_config.rs`**: the validated internal form. Carry the field over and reject bad values with an error that names the YAML key. Cross-field checks go in `config_parsing/validation.rs`.
 4. **`config_parsing/public_config.rs`**: the internal JSON the runtime reads. Add the field in camelCase. Omit it when it holds the default (`skip_serializing_if`), so configs that don't use the option keep a byte-identical JSON.
 5. **`packages/envio/src/Config.res`**: add the field to the matching `S.schema` and to the record it parses into. New runtime logic that acts on the option goes in Rust; the ReScript side only reads and passes it.
-6. **`hbs_templating/codegen_templates.rs`**: only when the option changes the types a user sees (`<project>/.envio/types.d.ts`, `src/Indexer.res`). Its tests are snapshots: `INSTA_UPDATE=always cargo test --lib hbs_templating`, then read the `.snap` diff.
+6. **`packages/envio/index.d.ts`**: when the option shows on the config a user reads (`EvmChainConfig` and its Fuel and SVM twins). Nothing fails if this is missed.
+7. **`hbs_templating/codegen_templates.rs`**: only when the option changes the types a user sees (`<project>/.envio/types.d.ts`, `src/Indexer.res`). Its tests are snapshots: `INSTA_UPDATE=always cargo test --lib hbs_templating`, then read the `.snap` diff.
 
 ## Worked example: `start_block` on a contract address
 
