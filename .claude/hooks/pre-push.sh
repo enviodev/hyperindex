@@ -41,9 +41,9 @@ if printf '%s\n' "$changed" | grep -q '^packages/cli/'; then
     problems="$problems"$'\n'"Unformatted Rust (fix: cd packages/cli && cargo fmt):"$'\n'"$out"
   fi
 
-  # Clippy takes over a minute even with warm dependencies, so it is skipped
-  # while packages/cli is byte for byte what the last clean run saw. The stamp
-  # is taken before the run: an edit landing mid-run then forces another one.
+  # Clippy is the one slow check here, from 15 s warm to minutes cold, so it is
+  # skipped while packages/cli is byte for byte what the last clean run saw. The
+  # stamp is taken before the run: an edit landing mid-run forces another one.
   clippy_stamp_file=target/.clippy-clean
   clippy_stamp=$(
     {
