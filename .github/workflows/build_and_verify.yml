@@ -98,9 +98,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: ReScript format
-        run: git ls-files '*.res' '*.resi' | xargs packages/envio/node_modules/.bin/rescript format --check
-
       - name: Build linux-x64 platform npm package
         run: |
           node packages/build-envio/build-platform-package.ts \
@@ -165,6 +162,43 @@ jobs:
       # server has just freed is one it can hand to another test's connection.
       - name: Live storage tests
         run: cargo test --lib -- --ignored --test-threads=1 postgres::live clickhouse::live storage::live test_servers::tests
+
+  # Its own job rather than a step of build-envio-package: a failure there
+  # skips every test job, and an unformatted file should not hide test results.
+  rescript-format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: authorize
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 11
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      # This runs on the PR's own head, not its merge with main, so a branch
+      # older than the `format` script, or than a formatting fix on main, fails
+      # here over files it never touched until it merges main.
+      - name: ReScript format
+        run: |
+          pnpm format --check || {
+            echo "::error::ReScript format check failed. Run 'pnpm format' and commit the result. If the script is missing, or it names files this branch did not change, merge main first."
+            exit 1
+          }
 
   # Hypersync endpoint health check - non-blocking, external dependency
   hypersync-health-check:
