@@ -49,6 +49,7 @@ struct Candidate {
     from_block: i64,
     to_block: Option<i64>,
     items: i64,
+    chunk: bool,
 }
 
 struct FillState {
@@ -106,12 +107,13 @@ fn push_gap(
         return;
     }
     let max_block = range_end.unwrap_or(target_block);
-    let single = |candidates: &mut Vec<Candidate>, density: f64| {
+    let single = |candidates: &mut Vec<Candidate>, density: f64, chunk: bool| {
         candidates.push(Candidate {
             stream: stream_index,
             from_block: range_from,
             to_block: range_end,
             items: density_items_estimate(density, range_from, range_end, target_block),
+            chunk,
         })
     };
     match (stream.density, stream.chunk_range) {
@@ -132,18 +134,19 @@ fn push_gap(
                             Some(to_block),
                             target_block,
                         ),
+                        chunk: true,
                     });
                     from_block = to_block + 1;
                     created += 1;
                 }
             } else {
-                single(candidates, density);
+                single(candidates, density, range_end.is_some());
             }
         }
-        (Some(density), None) if density > 0. => single(candidates, density),
+        (Some(density), None) if density > 0. => single(candidates, density, false),
         _ => {
             let remaining = (target_block - range_from + 1).max(1);
-            single(candidates, stream_budget / remaining as f64);
+            single(candidates, stream_budget / remaining as f64, false);
         }
     }
 }
@@ -324,6 +327,7 @@ impl ChainPlan {
                     from_block: candidate.from_block,
                     to_block: candidate.to_block,
                     items_estimate: candidate.items.clamp(0, i64::from(u32::MAX)) as u32,
+                    chunk: candidate.chunk,
                     head: stream.head,
                 }));
             }
@@ -396,6 +400,7 @@ fn push_forward(
                         from_block,
                         to_block: Some(to_block),
                         items,
+                        chunk: true,
                     });
                     generated += items as f64;
                     from_block = to_block + 1;
@@ -422,6 +427,7 @@ fn push_forward(
                     from_block: fill.cursor,
                     to_block: stream.query_end,
                     items,
+                    chunk: false,
                 });
             }
         }

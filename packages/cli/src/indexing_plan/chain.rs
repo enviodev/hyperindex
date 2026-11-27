@@ -139,6 +139,9 @@ pub(crate) struct Request {
     pub from_block: i64,
     pub to_block: Option<i64>,
     pub items_estimate: u32,
+    /// A chunk of a pipeline. Anything else, a probe above all, holds its
+    /// stream's forward work until it lands, whatever its end.
+    pub chunk: bool,
     /// The chain's one forward stream at the head.
     pub head: bool,
 }
@@ -627,11 +630,16 @@ impl ChainPlan {
         Some(through)
     }
 
-    /// The covered blocks and the ones out in a request, for the need.
+    /// The covered blocks and the ones out in a request, for the need. A
+    /// request out that isn't a chunk takes everything from its start.
     pub fn taken(&self, need: u32) -> Ranges {
         let mut ranges = self.needs.coverage[need as usize].ranges();
         for request in self.requests_of(need) {
-            ranges.push((request.from_block, request.to_block.unwrap_or(i64::MAX)));
+            let to_block = match request.to_block {
+                Some(to_block) if request.chunk => to_block,
+                _ => i64::MAX,
+            };
+            ranges.push((request.from_block, to_block));
         }
         union(ranges)
     }
