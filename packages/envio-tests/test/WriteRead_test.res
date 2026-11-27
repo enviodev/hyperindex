@@ -523,14 +523,14 @@ describe("Write/read tests", () => {
 
               context.user.set({
                 id: testUserId,
-                address: "0x1234567890123456789012345678901234567890"->Utils.magic,
+                address: "0x1234567890123456789012345678901234567890"->Address.unsafeFromString,
                 updatesCountOnUserForTesting: 0,
                 accountType: "USER",
               })
 
               context.nftCollection.set({
                 id: testCollectionId,
-                contractAddress: "0xabcdef0123456789abcdef0123456789abcdef01"->Utils.magic,
+                contractAddress: "0xabcdef0123456789abcdef0123456789abcdef01"->Address.unsafeFromString,
                 name: "Test Collection",
                 symbol: "TEST",
                 maxSupply: BigInt.fromInt(100),

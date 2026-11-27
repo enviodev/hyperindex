@@ -1,422 +1,66 @@
-// A test that waits for the indexer to ask the source by counting event-loop
-// ticks (`await Utils.delay(0)`) or polling the pending queries guesses at how
-// many await hops production code takes. The guess is unwritable without trial
-// and error and breaks the day production code gains an await. It is also
-// unnecessary: `expectItemsQueries` waits for the queries it names, and a height
-// answer with no call pending is held for the next one.
+// Each rule lives in `rules/`, takes the repo's files and returns what breaks
+// it; `lint.test.ts` holds a bad and a good input for every one. A rule's
+// reason is its `fix` message, which is all a reader of a failed run sees.
 
-import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { findMissingDocPaths } from "./rules/docReferences.ts";
+import { findFakedTimers } from "./rules/fakeTimers.ts";
+import { findUnnamedHeightWaits } from "./rules/heightCalls.ts";
+import { findUnannotatedMagic } from "./rules/magicAnnotation.ts";
+import { findLogicInMigratedDirectories } from "./rules/migratedToRust.ts";
+import { findGuessedWaits } from "./rules/mockSteps.ts";
+import { findPerformanceReads } from "./rules/performanceReads.ts";
+import { findRawFieldPaths } from "./rules/rawFieldPath.ts";
+import { findUnsetDurations } from "./rules/reportedDurations.ts";
+import { summarizeRescriptDirection } from "./rules/rescriptDirection.ts";
+import type { file, violation } from "./rules/shared.ts";
+import { runtimeRoot } from "./rules/shared.ts";
+import { findRealClockInSources } from "./rules/sourceClock.ts";
+import { findLoggingInTests } from "./rules/testLogging.ts";
+import { findRealTimeOnVirtualTime } from "./rules/virtualTime.ts";
 
-const testRoot = fileURLToPath(new URL("../test", import.meta.url));
-// Paths are reported against the repo root rather than the cwd, so they mean the
-// same thing whether this runs from the package, from the root, or from CI — and
-// so GitHub can attach an annotation to the line.
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
-const delay = /^\s*(?:await\s+)?Utils\.delay\(0\)\s*$/;
-const mockStep =
-  /^\s*(?:await\s+)?(?:let\s+\S+\s*=\s*)?\S*\b(expectItemsQueries|expectBlockHashLookup|expectHeightCalls|respondUpTo|drainPendingItemsQueries|pendingItemsQueries|resolveGetHeightOrThrow|resolveInitialHeight|enterReorgThreshold)\b/;
-const pollStart = /\b(while\b|waitUntil\()/;
+const git = (...args: string[]) =>
+  execFileSync("git", args, { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 
-// The scan has to reach the next statement past whatever sits between it and
-// the delay. A comment that hid a violation would make the lint quietly useless.
-const nextCodeLine = (lines: string[], start: number): string | null => {
-  let inBlockComment = false;
-  for (let index = start; index < lines.length; index++) {
-    let rest = lines[index];
-    let code = "";
-    if (inBlockComment) {
-      const close = rest.indexOf("*/");
-      if (close === -1) continue;
-      rest = rest.slice(close + 2);
-      inBlockComment = false;
-    }
-    for (;;) {
-      const open = rest.indexOf("/*");
-      if (open === -1) {
-        code += rest;
-        break;
-      }
-      const close = rest.indexOf("*/", open + 2);
-      if (close === -1) {
-        code += rest.slice(0, open);
-        inBlockComment = true;
-        break;
-      }
-      code += rest.slice(0, open);
-      rest = rest.slice(close + 2);
-    }
-    const trimmed = code.trim();
-    if (trimmed === "" || trimmed.startsWith("//")) continue;
-    return code;
-  }
-  return null;
-};
-
-const resFiles = (dir: string): string[] =>
-  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) return resFiles(path);
-    return entry.isFile() && entry.name.endsWith(".res") ? [path] : [];
+// Untracked files count: a test written a minute ago is linted before it is
+// ever staged. Ignored ones (build output, `node_modules`) don't.
+const files: file[] = git("ls-files", "--cached", "--others", "--exclude-standard", "-z")
+  .split("\0")
+  .filter((path) => path !== "" && existsSync(join(repoRoot, path)))
+  .map((path) => {
+    let text: string | undefined;
+    return {
+      path,
+      get text() {
+        text ??= readFileSync(join(repoRoot, path), "utf8");
+        return text;
+      },
+    };
   });
 
-type violation = { file: string; line: number; title: string; fix: string };
-
-const violations: violation[] = [];
-for (const path of resFiles(testRoot)) {
-  const file = relative(repoRoot, path);
-  const lines = readFileSync(path, "utf8").split("\n");
-  lines.forEach((line, index) => {
-    const code = line.replace(/\/\/.*$/, "");
-    if (delay.test(code)) {
-      const step = nextCodeLine(lines, index + 1)?.match(mockStep)?.[1];
-      if (step) {
-        violations.push({
-          file,
-          line: index + 1,
-          title: `Utils.delay(0) before ${step}`,
-          fix:
-            step === "resolveGetHeightOrThrow"
-              ? "Delete the delay: a height answer with no call pending is held for the next call."
-              : `Delete the delay: \`${step}\` waits for what it answers, or answers only what is already pending.`,
-        });
-      }
-    }
-    // A poll's condition sits on the same line or the one after it.
-    if (pollStart.test(code)) {
-      const condition = `${code} ${nextCodeLine(lines, index + 1) ?? ""}`;
-      if (/\bpendingItemsQueries\b/.test(condition)) {
-        violations.push({
-          file,
-          line: index + 1,
-          title: "Polling pendingItemsQueries",
-          fix:
-            "Replace the poll with `await mock.expectItemsQueries([...])` naming the queries " +
-            "(`reply: LeavePending` for ones answered later).",
-        });
-      }
-    }
-  });
-}
-
-// A scenario on virtual time only moves when it advances its clock, so real
-// time spent between steps changes nothing it can observe, and a count taken
-// before a step stands in for what `expectNewHeightCalls` checks exactly.
-// A zero delay is a turn of the event loop, not time.
-const realDelay = /\bUtils\.delay\((?!0\))([^)]*)\)/;
-const realClock = /\bDate\.now\(/;
-// `length - 1` indexes the latest call, which is how a test answers one poll.
-const pollSnapshot = /\bgetHeightOrThrowCalls->Array\.length\b(?!\s*-\s*1)/;
-const scenarioStart = /\bScenario\.(?:it|run)\(/;
-
-// Work off the source clock (a handler or effect taking time, events from the
-// addon's threads, throttled writes) still takes real time, and says so: a
-// `// Real time:` comment covers the statement it sits on or above, the lines
-// below it indented at least as deep, up to the next blank line.
-const indentOf = (line: string) => line.length - line.trimStart().length;
-const isRealTimeAt = (lines: string[], index: number) => {
-  for (let at = index; at >= 0 && lines[at].trim() !== ""; at--) {
-    if (/\/\/\s*Real time:/.test(lines[at])) {
-      const indent = indentOf(lines[at]);
-      return lines.slice(at + 1, index + 1).every((line) => indentOf(line) >= indent);
-    }
-  }
-  return false;
-};
-
-for (const path of resFiles(testRoot)) {
-  const file = relative(repoRoot, path);
-  const lines = readFileSync(path, "utf8").split("\n");
-  const realTimeAt = (index: number) => isRealTimeAt(lines, index);
-  // Scenarios run on virtual time unless `~virtualTime=false` takes them off it,
-  // on `Scenario.make` for every test of that scenario or on one test.
-  const realTimeScenarios = new Set<string>();
-  // Scenarios a file makes through a function of its own count the same way.
-  lines.forEach((line, index) => {
-    const bound = line.match(/^let (\w+) =/);
-    if (!bound) return;
-    // The binding ends at the first line back at the margin: the call's own
-    // closing paren, or whatever top-level code follows a one-line call.
-    const next = lines.findIndex((later, at) => at > index && /^\S/.test(later));
-    const end = next === -1 ? lines.length : /^\)/.test(lines[next]) ? next + 1 : next;
-    const region = lines.slice(index, end).map((line) => line.replace(/\/\/.*$/, ""));
-    if (
-      region.some((line) => /\bScenario\.make\(/.test(line)) &&
-      region.some((line) => /~virtualTime=false\b/.test(line))
-    ) {
-      realTimeScenarios.add(bound[1]);
-    }
-  });
-  lines.forEach((line, index) => {
-    // `//` after a colon is a URL in a string, not a comment.
-    const code = line.replace(/(?<!:)\/\/.*$/, "");
-    // Helpers declare the default, and a test of a real-time scenario turns
-    // virtual time back on with it.
-    if (
-      /~virtualTime=true\b/.test(code) &&
-      realTimeScenarios.size === 0 &&
-      !file.includes("/helpers/")
-    ) {
-      violations.push({
-        file,
-        line: index + 1,
-        title: "~virtualTime=true is the default",
-        fix: "Delete it: scenarios run on virtual time unless they opt out.",
-      });
-    }
-    // Real time is the exception, and the reason is what keeps it from
-    // spreading by copy and paste.
-    const previous = lines[index - 1] ?? "";
-    if (
-      !file.includes("/helpers/") &&
-      /~virtualTime=false\b/.test(code) &&
-      !/~virtualTime=false\b.*(?<!:)\/\//.test(line) &&
-      !/^\s*\/\//.test(previous)
-    ) {
-      violations.push({
-        file,
-        line: index + 1,
-        title: "~virtualTime=false without a reason",
-        fix: "Say on the line above why this test needs real time, such as a source talking to a real server.",
-      });
-    }
-  });
-  const starts = lines.flatMap((line, index) => (scenarioStart.test(line) ? [index] : []));
-  starts.forEach((start, position) => {
-    const end = starts[position + 1] ?? lines.length;
-    const block = lines.slice(start, end);
-    const code = block.map((line) => line.replace(/\/\/.*$/, ""));
-    const receiver = block[0].match(/(\w+)\s*->\s*Scenario\.(?:it|run)\(|Scenario\.(?:it|run)\(\s*(\w+)/);
-    // `makeScenario(~name=...)->Scenario.it(` spreads the receiver over the
-    // lines before the one that names `Scenario.it`.
-    const factoryCall = lines
-      .slice(Math.max(0, start - 6), start + 1)
-      .join("\n")
-      .match(/(\w+)\([^()]*\)\s*->\s*Scenario\.(?:it|run)\($/m);
-    const name = receiver?.[1] ?? receiver?.[2] ?? factoryCall?.[1];
-    const onRealTime =
-      (name !== undefined &&
-        realTimeScenarios.has(name) &&
-        !code.some((line) => /~virtualTime=true\b/.test(line))) ||
-      code.some((line) => /~virtualTime=false\b/.test(line));
-    if (!onRealTime) {
-      code.forEach((line, offset) => {
-        const delay = line.match(realDelay);
-        if (delay && !realTimeAt(start + offset)) {
-          violations.push({
-            file,
-            line: start + offset + 1,
-            title: `Utils.delay(${delay[1]}) on virtual time`,
-            fix: `Replace it with \`await indexer.advanceTime(${delay[1]})\`: the source layer's timers only fire when the test advances the clock.`,
-          });
-        }
-        if (realClock.test(line) && !realTimeAt(start + offset)) {
-          violations.push({
-            file,
-            line: start + offset + 1,
-            title: "Reading the real clock on virtual time",
-            fix: "Time the scenario by how far it advanced: real time says nothing about when a virtual timer fired.",
-          });
-        }
-        if (pollSnapshot.test(line)) {
-          violations.push({
-            file,
-            line: start + offset + 1,
-            title: "Counting height calls by hand on virtual time",
-            fix: "Replace the count with `await mock.expectNewHeightCalls(n)` at the step that causes the polls.",
-          });
-        }
-      });
-    } else {
-      // A window shortened on real time races the test's own steps on a loaded
-      // runner: what lands between two of them is down to the scheduler.
-      const timing = code.findIndex((line) => /~sourceTiming=/.test(line));
-      if (timing !== -1) {
-        violations.push({
-          file,
-          line: start + timing + 1,
-          title: "~sourceTiming on real time",
-          fix: "Drop `~virtualTime=false` and drive its timers with `await indexer.advanceTime(ms)`.",
-        });
-      }
-    }
-  });
-}
-
-// A test names the height calls it causes; only a helper waits for one without
-// accounting for it, the way answering the first height does.
-for (const path of resFiles(testRoot)) {
-  if (path.includes(`${join("test", "helpers")}`)) continue;
-  const file = relative(repoRoot, path);
-  readFileSync(path, "utf8")
-    .split("\n")
-    .forEach((line, index) => {
-      if (/\.waitForHeightCall\(/.test(line.replace(/\/\/.*$/, ""))) {
-        violations.push({
-          file,
-          line: index + 1,
-          title: "waitForHeightCall in a test",
-          fix: "Name the call with `await mock.expectNewHeightCalls(n)`, or answer the first height with `Scenario.resolveInitialHeight`.",
-        });
-      }
-    });
-}
-
-// Faked timers replace the global setTimeout that Clock.real arms, so a test
-// that fakes them freezes the real-time parts of a run (startup, writes, the
-// mock's own deadlines) while leaving the virtual clock where it was.
-const fakeTimers = /\b[vV]i\.(?:useFakeTimers|advanceTimers\w*|runAllTimers\w*|runOnlyPendingTimers\w*|runToLastTimer\w*|setSystemTime)\b/;
-const testSources = (dir: string): string[] =>
-  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) return testSources(path);
-    return entry.isFile() && /\.(?:res|ts)$/.test(entry.name) ? [path] : [];
-  });
-for (const path of testSources(testRoot)) {
-  const file = relative(repoRoot, path);
-  readFileSync(path, "utf8")
-    .split("\n")
-    .forEach((line, index) => {
-      const match = line.replace(/\/\/.*$/, "").match(fakeTimers);
-      if (match) {
-        violations.push({
-          file,
-          line: index + 1,
-          title: `${match[0]} fakes vitest's timers`,
-          fix:
-            "Move time on the clock the code was given instead: `await indexer.advanceTime(ms)` " +
-            "for a scenario, or a `VirtualClock` passed as the module's clock for a unit test.",
-        });
-      }
-    });
-}
-
-// The source layer's time is whatever its clock says, so a scenario on virtual
-// time sees every timer it arms. One armed on the real clock fires on its own
-// schedule, between a test's steps, with nothing in the test to say so.
-const sourcesRoot = fileURLToPath(new URL("../../envio/src/sources", import.meta.url));
-// `Performance.now()` stays: it measures how long real work took, for request
-// stats, and a virtual clock would report every request as instant.
-const realTime = [
+const groups: { heading: string; rules: ((files: file[]) => violation[])[] }[] = [
   {
-    pattern: /(?<![.\w])(?:setTimeout|clearTimeout|setInterval)\(/,
-    use: "`clock.setTimeout(~label, ...)` and `clock.clearTimeout`",
+    heading: "These tests guess at how long the indexer takes to ask the source:",
+    rules: [findGuessedWaits, findRealTimeOnVirtualTime, findUnnamedHeightWaits, findFakedTimers, findUnsetDurations],
   },
-  { pattern: /\bUtils\.delay\(/, use: "`clock->Clock.delay(~label, millis)`" },
-  { pattern: /\bDate\.now\(/, use: "`clock.now()`" },
-  { pattern: /\bMath\.random\(/, use: "`clock.random()`" },
+  {
+    heading: "The runtime reads time the tests can't control:",
+    rules: [findRealClockInSources, findPerformanceReads],
+  },
+  {
+    heading: "This ReScript compiles, and the repo still refuses it:",
+    rules: [findUnannotatedMagic, findRawFieldPaths, findLoggingInTests, (files) => findLogicInMigratedDirectories(files)],
+  },
+  {
+    heading: "The contributor docs name what isn't in the repo:",
+    rules: [findMissingDocPaths],
+  },
 ];
-const sourceViolations: violation[] = [];
-// The run-wide timers outside the sources take the same clock.
-const clockedModules = ["LoadLayer.res", "EffectState.res", "Throttler.res"].map((name) =>
-  fileURLToPath(new URL(`../../envio/src/${name}`, import.meta.url)),
-);
-for (const path of [...resFiles(sourcesRoot), ...clockedModules]) {
-  const file = relative(repoRoot, path);
-  readFileSync(path, "utf8")
-    .split("\n")
-    .forEach((line, index) => {
-      const code = line.replace(/\/\/.*$/, "");
-      for (const { pattern, use } of realTime) {
-        if (pattern.test(code)) {
-          sourceViolations.push({
-            file,
-            line: index + 1,
-            title: `${code.match(pattern)?.[0]}...) on the real clock`,
-            fix: `Use ${use} on the clock the module was given: a virtual-time scenario only sees and moves time that goes through it.`,
-          });
-        }
-      }
-    });
-}
-
-// A duration the indexer reports reads the run's clock, so a scenario controls
-// it exactly: a handler that waits 5ms on virtual time accrues 0.005s, every
-// run. One read off `Performance` measures the scheduler instead, and a test of
-// it can only ask for "more than zero", which the metrics' millisecond rounding
-// turns into a coin flip. The files below still time on `Performance`, each for
-// the reason given; a new one needs a reason as good.
-const performanceRead = /\bPerformance\.(?:now|secondsSince)\b/;
-const realWork = "it times real I/O or CPU work, which virtual time would report as instant";
-const performanceAllowed: Record<string, string> = {
-  "Clock.res": "it is the real clock",
-  "Batch.res": realWork,
-  "Storage.res": realWork,
-  "Rollback.res": realWork,
-  "PruneStaleHistory.res": realWork,
-  "sources/RequestStat.res": realWork,
-  "sources/EvmHyperSyncSource.res": realWork,
-  "sources/SvmHyperSyncSource.res": realWork,
-  "sources/FuelHyperSyncSource.res": realWork,
-  "sources/RpcSource.res": realWork,
-  "Supervisor.res": "it reports the process's uptime",
-};
-const runtimeRoot = fileURLToPath(new URL("../../envio/src", import.meta.url));
-for (const path of resFiles(runtimeRoot)) {
-  const module = relative(runtimeRoot, path).split("\\").join("/");
-  if (module.startsWith("bindings/") || module in performanceAllowed) continue;
-  const file = relative(repoRoot, path);
-  readFileSync(path, "utf8")
-    .split("\n")
-    .forEach((line, index) => {
-      const match = line.replace(/\/\/.*$/, "").match(performanceRead);
-      if (match) {
-        sourceViolations.push({
-          file,
-          line: index + 1,
-          title: `${match[0]} times on the real clock`,
-          fix:
-            "Time it on the run's clock (`clock->Clock.readTimeRef`, then `Clock.secondsSince`), so a scenario sets the " +
-            "duration with `indexer.delay` and `advanceTime` and asserts it exactly.",
-        });
-      }
-    });
-}
-
-for (const path of resFiles(testRoot)) {
-  if (path.includes(`${join("test", "helpers")}`)) continue;
-  const file = relative(repoRoot, path);
-  const lines = readFileSync(path, "utf8").split("\n");
-  lines.forEach((line, index) => {
-    const code = line.replace(/(?<!:)\/\/.*$/, "");
-    // A real wait as a handler's whole body is there to take time, and the time
-    // a handler takes is measured on the run's clock: on virtual time it adds
-    // nothing, on real time it adds whatever the scheduler gives, which can
-    // round to zero. A `// Real time:` comment doesn't change that.
-    const handlerDelay = code.match(
-      /\b(?:preloadHandler|handler|contractRegister)\s*:\s*async\b.*\bUtils\.delay\((?!0\))([^)]*)\)/,
-    );
-    if (handlerDelay) {
-      violations.push({
-        file,
-        line: index + 1,
-        title: `A handler that takes time with Utils.delay(${handlerDelay[1]})`,
-        fix:
-          `Wait with \`await indexer.delay(${handlerDelay[1]})\` and let the test pass it with ` +
-          `\`await indexer.advanceTime(${handlerDelay[1]})\`: the handler then takes exactly that long.`,
-      });
-    }
-    // A duration only has to be more than zero when nothing set it, and a metric
-    // exported to the millisecond reads zero whenever the scheduler was quick.
-    const statement = lines.slice(Math.max(0, index - 2), index + 1).join("\n");
-    if (
-      />\s*0\.?(?![\d.])/.test(code) &&
-      /_seconds(?:_total)?"/.test(statement) &&
-      !isRealTimeAt(lines, index)
-    ) {
-      violations.push({
-        file,
-        line: index + 1,
-        title: "A duration metric asserted as more than zero",
-        fix:
-          "Assert its exact value: make the time pass with `indexer.delay` and `advanceTime`. " +
-          "For a metric of real work that virtual time can't set, say why on a `// Real time:` line above.",
-      });
-    }
-  });
-}
 
 const report = (list: violation[], heading: string) => {
   // An annotation puts the rule on the line that broke it, in the PR diff. The log
@@ -434,12 +78,52 @@ const report = (list: violation[], heading: string) => {
   );
 };
 
-if (violations.length > 0) {
-  report(violations, "These tests guess at how long the indexer takes to ask the source:");
+// CI checks out one commit, so there is no merge base there and the count is
+// printed only where there is history to count against.
+const printRescriptDirection = () => {
+  let base: string;
+  let changedPaths: string[];
+  try {
+    base = git("merge-base", "HEAD", "origin/main").trim();
+    changedPaths = [
+      ...git("diff", "--name-only", "-z", base, "--", runtimeRoot).split("\0"),
+      ...git("ls-files", "--others", "--exclude-standard", "-z", "--", runtimeRoot).split("\0"),
+    ].filter((path) => path !== "");
+  } catch {
+    return;
+  }
+  const atBase = changedPaths.flatMap((path) => {
+    try {
+      return [{ path, text: git("show", `${base}:${path}`) }];
+    } catch {
+      return [];
+    }
+  });
+  const { net, changed } = summarizeRescriptDirection(
+    atBase,
+    files.filter(({ path }) => changedPaths.includes(path)),
+  );
+  const signed = (count: number) => (count > 0 ? `+${count}` : `${count}`);
+  console.log(
+    [
+      `ReScript runtime against main: ${signed(net)} non-blank lines in ${runtimeRoot}**/*.res (new runtime logic goes in Rust).`,
+      ...changed.map(({ path, net }) => `  ${signed(net)} ${path}`),
+    ].join("\n"),
+  );
+};
+
+let failed = false;
+for (const { heading, rules } of groups) {
+  const violations = rules.flatMap((rule) => rule(files));
+  if (violations.length > 0) {
+    if (failed) console.error("");
+    report(violations, heading);
+    failed = true;
+  }
 }
-if (sourceViolations.length > 0) {
-  report(sourceViolations, "The runtime reads time the tests can't control:");
-}
-if (violations.length > 0 || sourceViolations.length > 0) {
+
+printRescriptDirection();
+
+if (failed) {
   process.exit(1);
 }

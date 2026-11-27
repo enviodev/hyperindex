@@ -163,7 +163,9 @@ let handleWriteBatch = (
         entityDict->Dict.set(rowKey(~table=entityConfig.table, ~scope, ~entityId), storedEntity)
         // The change already carries the checkpoint's chainId, so the entity
         // inside it stays unstamped.
-        entityChangeFor(checkpointId).sets->Array.push(entity->Utils.magic)->ignore
+        entityChangeFor(checkpointId).sets
+        ->Array.push(entity->(Utils.magic: Internal.entity => unknown))
+        ->ignore
       | Delete({entityId, checkpointId}) =>
         Dict.delete(entityDict->Obj.magic, rowKey(~table=entityConfig.table, ~scope, ~entityId))
         entityChangeFor(checkpointId).deleted->Array.push(entityId)->ignore
@@ -187,9 +189,18 @@ let handleWriteBatch = (
     )
 
     // Add checkpoint metadata
-    change->Dict.set("block", checkpointBlockNumbers->Array.getUnsafe(i)->Utils.magic)
-    change->Dict.set("chainId", checkpointChainIds->Array.getUnsafe(i)->Utils.magic)
-    change->Dict.set("eventsProcessed", checkpointEventsProcessed->Array.getUnsafe(i)->Utils.magic)
+    change->Dict.set(
+      "block",
+      checkpointBlockNumbers->Array.getUnsafe(i)->(Utils.magic: int => unknown),
+    )
+    change->Dict.set(
+      "chainId",
+      checkpointChainIds->Array.getUnsafe(i)->(Utils.magic: ChainId.t => unknown),
+    )
+    change->Dict.set(
+      "eventsProcessed",
+      checkpointEventsProcessed->Array.getUnsafe(i)->(Utils.magic: int => unknown),
+    )
 
     // Add entity changes for this checkpoint
     let checkpointKey = checkpointId->BigInt.toString

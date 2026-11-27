@@ -185,14 +185,14 @@ describe("EventConfigBuilder", () => {
     ]
     let schema = EventConfigBuilder.buildParamsSchema(params)
     let testParams: Internal.eventParams =
-      {"from": "0xabc", "to": "0xdef", "value": 100n}->Utils.magic
+      {"from": "0xabc", "to": "0xdef", "value": 100n}->(Utils.magic: {..} => Internal.eventParams)
     let json = testParams->S.reverseConvertToJsonOrThrow(schema)
     t.expect(json).toEqual(%raw(`{"from": "0xabc", "to": "0xdef", "value": "100"}`))
   })
 
   it("buildParamsSchema handles empty params", t => {
     let schema = EventConfigBuilder.buildParamsSchema([])
-    let testParams: Internal.eventParams = ()->Utils.magic
+    let testParams: Internal.eventParams = ()->(Utils.magic: unit => Internal.eventParams)
     let json = testParams->S.reverseConvertToJsonOrThrow(schema)
     t.expect(json).toEqual(%raw(`null`))
   })
@@ -203,7 +203,8 @@ describe("EventConfigBuilder", () => {
       {name: "details", abiType: "(string,string)", indexed: false},
     ]
     let schema = EventConfigBuilder.buildParamsSchema(params)
-    let testParams: Internal.eventParams = {"id": 1n, "details": ("hello", "world")}->Utils.magic
+    let testParams: Internal.eventParams =
+      {"id": 1n, "details": ("hello", "world")}->(Utils.magic: {..} => Internal.eventParams)
     let json = testParams->S.reverseConvertToJsonOrThrow(schema)
     t.expect(json).toEqual(%raw(`{"id": "1", "details": ["hello", "world"]}`))
   })
@@ -213,7 +214,8 @@ describe("EventConfigBuilder", () => {
       {name: "data", abiType: "(uint256,(uint256,string))", indexed: false},
     ]
     let schema = EventConfigBuilder.buildParamsSchema(params)
-    let testParams: Internal.eventParams = {"data": (1n, (2n, "hello"))}->Utils.magic
+    let testParams: Internal.eventParams =
+      {"data": (1n, (2n, "hello"))}->(Utils.magic: {..} => Internal.eventParams)
     let json = testParams->S.reverseConvertToJsonOrThrow(schema)
     t.expect(json).toEqual(%raw(`{"data": ["1", ["2", "hello"]]}`))
   })
@@ -223,7 +225,8 @@ describe("EventConfigBuilder", () => {
       {name: "ids", abiType: "uint256[]", indexed: false},
     ]
     let schema = EventConfigBuilder.buildParamsSchema(params)
-    let testParams: Internal.eventParams = {"ids": [1n, 2n, 3n]}->Utils.magic
+    let testParams: Internal.eventParams =
+      {"ids": [1n, 2n, 3n]}->(Utils.magic: {..} => Internal.eventParams)
     let json = testParams->S.reverseConvertToJsonOrThrow(schema)
     t.expect(json).toEqual(%raw(`{"ids": ["1", "2", "3"]}`))
   })

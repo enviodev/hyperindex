@@ -40,7 +40,7 @@ let backendName = (backend: backend) =>
   | #both => "both"
   }
 
-let selectedBackend: backend = switch %raw(`process.env.ENVIO_TEST_STORAGE`)->Nullable.toOption {
+let selectedBackend: backend = switch NodeJs.Process.process.env->Dict.get("ENVIO_TEST_STORAGE") {
 | None | Some("") | Some("postgres") => #postgres
 | Some("clickhouse") => #clickhouse
 | Some("both") => #both

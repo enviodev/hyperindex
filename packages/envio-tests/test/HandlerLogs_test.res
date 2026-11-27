@@ -1,5 +1,10 @@
 open Vitest
 
+@val external log: (string, {..}) => unit = "console.log"
+@val external logError: (string, JsError.t) => unit = "console.error"
+@val external warnTwo: (string, {..}, {..}) => unit = "console.warn"
+@val external logFormatted: (string, string, {..}) => unit = "console.log"
+
 let scenario = Scenario.make(
   ~configYaml=`
 name: handler-logs
@@ -303,10 +308,6 @@ describe("console in a handler", () => {
                   blockNumber: 5,
                   logIndex: 2,
                   handler: async _ => {
-                    let log: (string, {..}) => unit = %raw(`console.log`)
-                    let logError: (string, JsError.t) => unit = %raw(`console.error`)
-                    let warnTwo: (string, {..}, {..}) => unit = %raw(`console.warn`)
-                    let logFormatted: (string, string, {..}) => unit = %raw(`console.log`)
                     log("transfer", {"amount": 10n, "to": "0x1"})
                     logError("failed", error)
                     warnTwo("two objects", {"a": 1}, {"b": 2})

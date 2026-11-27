@@ -84,8 +84,16 @@ describe("Same-signature event across contracts with different param names", () 
     }
 
     t.expect((await decodeAs("TokenA"), await decodeAs("TokenB"))).toEqual((
-      (0, {"from": fromAddr, "to": toAddr, "value": value}->Utils.magic),
-      (1, {"src": fromAddr, "dst": toAddr, "wad": value}->Utils.magic),
+      (
+        0,
+        {"from": fromAddr, "to": toAddr, "value": value}->(
+          Utils.magic: {..} => Internal.eventParams
+        ),
+      ),
+      (
+        1,
+        {"src": fromAddr, "dst": toAddr, "wad": value}->(Utils.magic: {..} => Internal.eventParams),
+      ),
     ))
   })
 })
