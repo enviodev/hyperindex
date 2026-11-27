@@ -66,6 +66,8 @@ let runWith = async (args, ~env, ~logger) => {
         | Start({reset, cwd, env, config}) =>
           Config.prime(config)
           processChdir(cwd)
+          // Before the config reads the environment: `envio dev` hands its
+          // ClickHouse settings over here.
           applyEnv(env)
           await Main.start(~logger, ~reset)
         | Migrate({reset, config}) =>
