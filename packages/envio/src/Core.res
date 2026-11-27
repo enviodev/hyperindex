@@ -4,10 +4,7 @@
 
 // NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
-type evmHyperSyncClientCtor
-type evmRpcClientCtor
-type svmHyperSyncClientCtor
-type fuelHyperSyncClientCtor
+type sourceCtor
 type chainBufferCtor
 type pageCtor
 type storageCtor
@@ -35,6 +32,7 @@ type fromUserApiResult = {
 
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
+  readIndexerEnv: unit => string,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
@@ -43,14 +41,8 @@ type addon = {
   tsCheckHandlerFormat: string => unit,
   tsResolveCandidates: (string, Null.t<string>) => array<string>,
   tsNotFoundCandidates: (string, Null.t<string>, string) => array<string>,
-  @as("EvmHyperSyncClient")
-  evmHyperSyncClient: evmHyperSyncClientCtor,
-  @as("EvmRpcClient")
-  evmRpcClient: evmRpcClientCtor,
-  @as("SvmHyperSyncClient")
-  svmHyperSyncClient: svmHyperSyncClientCtor,
-  @as("FuelHyperSyncClient")
-  fuelHyperSyncClient: fuelHyperSyncClientCtor,
+  @as("Source")
+  source: sourceCtor,
   @as("ChainBuffer")
   chainBuffer: chainBufferCtor,
   @as("Page")

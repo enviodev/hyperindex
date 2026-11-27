@@ -18,17 +18,17 @@ use super::types::{
     ResumedChain,
 };
 use super::{AddChain, Holding, Initialize, Store, WriteError};
-use crate::clickhouse;
-use crate::clickhouse::client::{Connection, Tuning};
-use crate::columnar::{self, Arena, ColumnKind};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::Condition;
 use crate::logger::{BoundLogger, Level, Logger};
-use crate::postgres;
-use crate::postgres::client::{self, PgConnectionOptions, SslSetting};
-use crate::postgres::error::{message_of, to_napi};
-use crate::postgres::indexes::IndexEvent;
-use crate::postgres::param::Param;
+use crate::storage::clickhouse;
+use crate::storage::clickhouse::client::{Connection, Tuning};
+use crate::storage::columnar::{self, Arena, ColumnKind};
+use crate::storage::postgres;
+use crate::storage::postgres::client::{self, PgConnectionOptions, SslSetting};
+use crate::storage::postgres::error::{message_of, to_napi};
+use crate::storage::postgres::indexes::IndexEvent;
+use crate::storage::postgres::param::Param;
 
 #[napi(object)]
 pub struct PostgresOptions {
@@ -369,7 +369,7 @@ impl JsStorage {
             ssl: SslSetting::parse(&pg.ssl).map_err(to_napi)?,
             max_connections: pg.max_connections as usize,
             application_name: Some(pg.application_name),
-            extra_ca_file: std::env::var_os("NODE_EXTRA_CA_CERTS").map(Into::into),
+            extra_ca_file: crate::env::var_os("NODE_EXTRA_CA_CERTS").map(Into::into),
             connect_timeout: std::time::Duration::from_secs(30),
             keepalive: client::Keepalive::default(),
         })

@@ -8,7 +8,9 @@ use crate::{
         contract_import::converters::{fit_contract_name_to_events, normalize_contract_name},
         human_config::fuel::EventConfig,
     },
-    fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
+    ecosystems::fuel::abi::{
+        FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME,
+    },
     init_config::fuel::{ContractImportSelection, InitFlow, Network, SelectedContract, Template},
 };
 use anyhow::{Context, Result};

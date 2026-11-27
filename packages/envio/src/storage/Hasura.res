@@ -1,0 +1,500 @@
+type auth = {
+  role: string,
+  secret: string,
+}
+
+type validHasuraResponse = QuerySucceeded | AlreadyDone
+
+let auth = (s: Rest.s) => {
+  role: s.header("X-Hasura-Role", S.string),
+  secret: s.header("X-Hasura-Admin-Secret", S.string),
+}
+
+let responses = [
+  (s: Rest.Response.s) => {
+    s.status(200)
+    let _ = s.data(S.unknown)
+    QuerySucceeded
+  },
+  s => {
+    let _ = s.field("code", S.enum(["already-exists", "already-tracked"]))
+    AlreadyDone
+  },
+]
+
+let clearMetadataRoute = Rest.route(() => {
+  method: Post,
+  path: "",
+  input: s => {
+    let _ = s.field("type", S.literal("clear_metadata"))
+    let _ = s.field(
+      "args",
+      S.literal(
+        Object.make(),
+
+        // Otherwise the entity in gql will be prefixed with the schema name (when it's not public)
+      ),
+    )
+    s->auth
+  },
+  responses,
+})
+
+let reloadMetadataRoute = Rest.route(() => {
+  method: Post,
+  path: "",
+  input: s => {
+    let _ = s.field("type", S.literal("reload_metadata"))
+    {
+      "args": s.field("args", S.json(~validate=false)),
+      "auth": s->auth,
+    }
+  },
+  responses,
+})
+
+let trackTablesRoute = Rest.route(() => {
+  method: Post,
+  path: "",
+  input: s => {
+    let _ = s.field("type", S.literal("pg_track_tables"))
+    {
+      "args": s.field("args", S.json(~validate=false)),
+      "auth": s->auth,
+    }
+  },
+  responses,
+})
+
+let rawBodyRoute = Rest.route(() => {
+  method: Post,
+  path: "",
+  input: s => {
+    {
+      "bodyString": s.rawBody(S.string),
+      "auth": s->auth,
+    }
+  },
+  responses,
+})
+
+let sendOperation = async (~logger, ~endpoint, ~auth, ~operation: JSON.t) => {
+  let maxRetries = 3
+  let rec retry = async (~attempt) => {
+    try {
+      let _ = await rawBodyRoute->Rest.fetch(
+        {
+          "bodyString": operation->JSON.stringify,
+          "auth": auth,
+        },
+        ~client=Rest.client(endpoint),
+      )
+    } catch {
+    | exn =>
+      if attempt < maxRetries {
+        let backoffMs = Math.pow(2.0, ~exp=attempt->Int.toFloat)->Float.toInt * 1000
+        await Utils.delay(backoffMs)
+        await retry(~attempt=attempt + 1)
+      } else {
+        logger->Logger.warn(
+          "Hasura configuration request failed. Indexing will still work - but you may have issues querying data via GraphQL.",
+          ~params={"err": exn->Utils.prettifyExn},
+        )
+      }
+    }
+  }
+  await retry(~attempt=0)
+}
+
+let clearHasuraMetadata = async (~logger, ~endpoint, ~auth) => {
+  try {
+    let result = await clearMetadataRoute->Rest.fetch(auth, ~client=Rest.client(endpoint))
+    let msg = switch result {
+    | QuerySucceeded => "Hasura metadata cleared"
+    | AlreadyDone => "Hasura metadata already cleared"
+    }
+    logger->Logger.trace(msg)
+  } catch {
+  | exn =>
+    logger->Logger.error(
+      `There was an issue clearing metadata in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      ~params={"err": exn->Utils.prettifyExn},
+    )
+  }
+}
+
+let reloadHasuraMetadata = async (~logger, ~endpoint, ~auth) => {
+  try {
+    let result = await reloadMetadataRoute->Rest.fetch(
+      {
+        "auth": auth,
+        "args": {
+          "reload_sources": ["default"],
+        }->(Utils.magic: 'a => JSON.t),
+      },
+      ~client=Rest.client(endpoint),
+    )
+    let msg = switch result {
+    | QuerySucceeded => "Hasura metadata reloaded"
+    | AlreadyDone => "Hasura metadata reload acknowledged"
+    }
+    logger->Logger.trace(msg)
+  } catch {
+  | exn =>
+    logger->Logger.error(
+      `There was an issue reloading hasura metadata - table tracking may race with schema creation.`,
+      ~params={"err": exn->Utils.prettifyExn},
+    )
+  }
+}
+
+type columnConfig = {
+  // The GraphQL field name exposed by Hasura, when it differs from the
+  // column name in the database (eg with `column_name_format: snake_case`).
+  customName: option<string>,
+  comment: option<string>,
+}
+
+type trackTableConfig = {
+  tableName: string,
+  description: option<string>,
+  // Keyed by db column name
+  columnConfigs: dict<columnConfig>,
+}
+
+let makeColumnConfigs = (table: Table.table): dict<columnConfig> => {
+  let columnConfigs = dict{}
+  table.fields->Array.forEach(fieldOrDerived =>
+    switch fieldOrDerived {
+    | Table.Field(field) => {
+        let apiFieldName = field->Table.getApiFieldName
+        let dbFieldName = field->Table.getPgDbFieldName
+        // Expose renamed columns in GraphQL under the original field name
+        let customName = apiFieldName === dbFieldName ? None : Some(apiFieldName)
+        switch (customName, field.description) {
+        | (None, None) => ()
+        | (customName, comment) => columnConfigs->Dict.set(dbFieldName, {customName, comment})
+        }
+      }
+    | Table.DerivedFrom(_) => ()
+    }
+  )
+  columnConfigs
+}
+
+let trackTables = async (
+  ~logger,
+  ~endpoint,
+  ~auth,
+  ~pgSchema,
+  ~tableConfigs: array<trackTableConfig>,
+) => {
+  try {
+    let result = await trackTablesRoute->Rest.fetch(
+      {
+        "auth": auth,
+        "args": {
+          // If set to false, any warnings will cause the API call to fail and no new tables to be tracked. Otherwise tables that fail to track will be raised as warnings. (default: true)
+          "allow_warnings": false,
+          "tables": tableConfigs->Array.map(({tableName, description, columnConfigs}) => {
+            let configuration = dict{
+              "custom_name": tableName->(Utils.magic: string => JSON.t),
+            }
+            switch description {
+            | Some(d) => configuration->Dict.set("comment", d->(Utils.magic: string => JSON.t))
+            | None => ()
+            }
+            let columnConfigEntries = columnConfigs->Dict.toArray
+            if columnConfigEntries->Array.length > 0 {
+              let columnConfigJson = dict{}
+              columnConfigEntries->Array.forEach(((column, config)) => {
+                let entry = dict{}
+                switch config.customName {
+                | Some(customName) =>
+                  entry->Dict.set("custom_name", customName->(Utils.magic: string => JSON.t))
+                | None => ()
+                }
+                switch config.comment {
+                | Some(comment) =>
+                  entry->Dict.set("comment", comment->(Utils.magic: string => JSON.t))
+                | None => ()
+                }
+                columnConfigJson->Dict.set(column, entry->(Utils.magic: dict<JSON.t> => JSON.t))
+              })
+              configuration->Dict.set(
+                "column_config",
+                columnConfigJson->(Utils.magic: dict<JSON.t> => JSON.t),
+              )
+            }
+            {
+              "table": {
+                "name": tableName,
+                "schema": pgSchema,
+              },
+              "configuration": configuration,
+            }
+          }),
+        }->(Utils.magic: 'a => JSON.t),
+      },
+      ~client=Rest.client(endpoint),
+    )
+    let msg = switch result {
+    | QuerySucceeded => "Hasura finished tracking tables"
+    | AlreadyDone => "Hasura tables already tracked"
+    }
+    logger->Logger.trace(msg, ~params={"tableNames": tableConfigs->Array.map(c => c.tableName)})
+  } catch {
+  | exn =>
+    logger->Logger.error(
+      `There was an issue tracking tables in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      ~params={
+        "tableNames": tableConfigs->Array.map(c => c.tableName),
+        "err": exn->Utils.prettifyExn,
+      },
+    )
+  }
+}
+
+let createSelectPermission = async (
+  ~logger,
+  ~endpoint,
+  ~auth,
+  ~tableName: string,
+  ~pgSchema,
+  ~responseLimit,
+  ~aggregateEntities,
+) => {
+  await sendOperation(
+    ~logger,
+    ~endpoint,
+    ~auth,
+    ~operation={
+      "type": "pg_create_select_permission",
+      "args": {
+        "table": {
+          "schema": pgSchema,
+          "name": tableName,
+        },
+        "role": "public",
+        "source": "default",
+        "permission": {
+          "columns": "*",
+          "filter": Object.make(),
+          "limit": responseLimit,
+          "allow_aggregations": aggregateEntities->Array.includes(tableName),
+        },
+      },
+    }->(Utils.magic: 'a => JSON.t),
+  )
+}
+
+// The column_mapping references columns by their db names. A reference between
+// two per-chain entities is only meaningful within one chain, so the chain-id
+// column joins alongside the id — without it the relationship would resolve to
+// another chain's row with the same id.
+let makeColumnMapping = (~relationalKey, ~isDerivedFrom, ~chainIdColumn) => {
+  let pairs = [isDerivedFrom ? `"id": "${relationalKey}"` : `"${relationalKey}": "id"`]
+  switch chainIdColumn {
+  | Some(column) => pairs->Array.push(`"${column}": "${column}"`)->ignore
+  | None => ()
+  }
+  `{${pairs->Array.joinUnsafe(", ")}}`
+}
+
+type relationship = {
+  tableName: string,
+  // An array relationship when true, an object one otherwise.
+  isDerivedFrom: bool,
+  objectName: string,
+  relationalKey: string,
+  mappedEntity: string,
+  chainIdColumn: option<string>,
+  comment: option<string>,
+}
+
+let createEntityRelationship = async (
+  ~logger,
+  ~endpoint,
+  ~auth,
+  ~pgSchema,
+  {
+    tableName,
+    relationalKey,
+    objectName,
+    mappedEntity,
+    isDerivedFrom,
+    chainIdColumn,
+    comment,
+  }: relationship,
+) => {
+  let tableJson = {
+    "schema": pgSchema,
+    "name": tableName,
+  }->(Utils.magic: {..} => JSON.t)
+  let usingJson = {
+    "manual_configuration": {
+      "remote_table": {
+        "schema": pgSchema,
+        "name": mappedEntity,
+      },
+      "column_mapping": JSON.parseOrThrow(
+        makeColumnMapping(~relationalKey, ~isDerivedFrom, ~chainIdColumn),
+      ),
+    },
+  }->(Utils.magic: {..} => JSON.t)
+
+  let args = dict{
+    "table": tableJson,
+    "name": objectName->(Utils.magic: string => JSON.t),
+    "source": "default"->(Utils.magic: string => JSON.t),
+    "using": usingJson,
+  }
+  switch comment {
+  | Some(c) => args->Dict.set("comment", c->(Utils.magic: string => JSON.t))
+  | None => ()
+  }
+
+  await sendOperation(
+    ~logger,
+    ~endpoint,
+    ~auth,
+    ~operation={
+      "type": `pg_create_${isDerivedFrom ? "array" : "object"}_relationship`,
+      "args": args,
+    }->(Utils.magic: 'a => JSON.t),
+  )
+}
+
+let makeTableConfigs = (~userEntities: array<Internal.entityConfig>) => {
+  let exposedInternalTableConfigs = [
+    {
+      tableName: InternalTable.RawEvents.table.tableName,
+      description: None,
+      columnConfigs: dict{},
+    },
+    {
+      tableName: InternalTable.Views.metaViewName,
+      description: None,
+      columnConfigs: dict{},
+    },
+    {
+      tableName: InternalTable.Views.chainMetadataViewName,
+      description: None,
+      columnConfigs: dict{},
+    },
+  ]
+  let userTableConfigs =
+    userEntities
+    ->Array.filter(entity => !entity.internal)
+    ->Array.map(entity => {
+      tableName: entity.table.tableName,
+      description: entity.table.description,
+      columnConfigs: entity.table->makeColumnConfigs,
+    })
+  [exposedInternalTableConfigs, userTableConfigs]->Array.flat
+}
+
+// The relationships between the entities Hasura tracks. Relationships to an
+// @internal entity can't exist here: codegen rejects a reference from an
+// exposed entity to an @internal one.
+let makeRelationships = (~userEntities: array<Internal.entityConfig>, ~schema) => {
+  let tracked = (entityName: string) =>
+    userEntities->Array.find((e: Internal.entityConfig) => e.name === entityName)
+
+  // Both sides of a relationship must be per-chain for the chain to be part of
+  // the join; a per-chain entity referencing a cross-chain one resolves by id
+  // alone. The reverse (cross-chain referencing per-chain) is rejected at
+  // codegen, so it can't reach here.
+  let chainIdColumnOf = (entityName: string) =>
+    tracked(entityName)
+    ->Option.flatMap(e => e.table->Table.getChainIdField)
+    ->Option.map(Table.getPgDbFieldName)
+
+  userEntities
+  ->Array.filter(e => !e.internal)
+  ->Array.flatMap(entityConfig => {
+    let {tableName} = entityConfig.table
+    let ownChainIdColumn =
+      entityConfig.table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
+    let sharedChainIdColumn = mappedEntity =>
+      switch (ownChainIdColumn, chainIdColumnOf(mappedEntity)) {
+      | (Some(column), Some(_)) => Some(column)
+      | _ => None
+      }
+
+    let arrays =
+      entityConfig.table
+      ->Table.getDerivedFromFields
+      ->Array.map(derivedFromField => {
+        tableName,
+        isDerivedFrom: true,
+        objectName: derivedFromField.fieldName,
+        //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
+        relationalKey: schema
+        ->Schema.getDerivedFromPgFieldName(derivedFromField)
+        ->Utils.unwrapResultExn,
+        mappedEntity: derivedFromField.derivedFromEntity,
+        chainIdColumn: sharedChainIdColumn(derivedFromField.derivedFromEntity),
+        comment: derivedFromField.description,
+      })
+    // An entity kept in ClickHouse alone has no table here to point at.
+    let objects =
+      entityConfig.table
+      ->Table.getLinkedEntityFields
+      ->Array.filter(((_, linkedEntityName)) => tracked(linkedEntityName)->Option.isSome)
+      ->Array.map(((field, linkedEntityName)) => {
+        tableName,
+        isDerivedFrom: false,
+        objectName: field.fieldName,
+        relationalKey: field->Table.getPgDbFieldName,
+        mappedEntity: linkedEntityName,
+        chainIdColumn: sharedChainIdColumn(linkedEntityName),
+        comment: field.description,
+      })
+    arrays->Array.concat(objects)
+  })
+}
+
+let trackDatabase = async (
+  ~logger,
+  ~endpoint,
+  ~auth,
+  ~pgSchema,
+  ~userEntities: array<Internal.entityConfig>,
+  ~aggregateEntities,
+  ~responseLimit,
+  ~schema,
+) => {
+  let tableConfigs = makeTableConfigs(~userEntities)
+  let tableNames = tableConfigs->Array.map(c => c.tableName)
+
+  logger->Logger.info("Tracking tables in Hasura")
+
+  let _ = await clearHasuraMetadata(~logger, ~endpoint, ~auth)
+
+  // Force Hasura to re-introspect the source schema before tracking, otherwise
+  // freshly-created user tables may be invisible to pg_track_tables and the call
+  // returns `metadata-warnings` (HTTP 400), leaving tracking permanently broken.
+  await reloadHasuraMetadata(~logger, ~endpoint, ~auth)
+
+  await trackTables(~logger, ~endpoint, ~auth, ~pgSchema, ~tableConfigs)
+
+  for i in 0 to tableNames->Array.length - 1 {
+    let tableName = tableNames->Array.getUnsafe(i)
+    await createSelectPermission(
+      ~logger,
+      ~endpoint,
+      ~auth,
+      ~tableName,
+      ~pgSchema,
+      ~responseLimit,
+      ~aggregateEntities,
+    )
+  }
+
+  await makeRelationships(~userEntities, ~schema)->Utils.Array.awaitEach(relationship =>
+    createEntityRelationship(~logger, ~endpoint, ~auth, ~pgSchema, relationship)
+  )
+
+  logger->Logger.info("Hasura configuration completed")
+}

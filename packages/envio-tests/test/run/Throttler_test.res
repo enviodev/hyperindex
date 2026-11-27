@@ -1,0 +1,119 @@
+open Vitest
+
+let nextImmediate = () => Promise.make((resolve, _) => NodeJs.setImmediate(() => resolve()))
+
+describe("Throttler", () => {
+  Async.itWithOptions("Schedules and throttles functions as expected", {retry: 3}, async t => {
+    let throttler = Throttler.make(~intervalMillis=100, ~logger=Logger.makeInMemory())
+    let actionsCalled = []
+
+    throttler->Throttler.schedule(async () => actionsCalled->Array.push(1)->ignore)
+    throttler->Throttler.schedule(
+      async () => {
+        actionsCalled->Array.push(2)->ignore
+        JsError.throwWithMessage("Should have throttled 2nd scheduled fn in favour of following")
+      },
+    )
+    throttler->Throttler.schedule(async () => actionsCalled->Array.push(3)->ignore)
+
+    t.expect(
+      actionsCalled,
+      ~message="Should defer the scheduled fn off the schedule call",
+    ).toEqual([])
+    await nextImmediate()
+    t.expect(actionsCalled, ~message="Should call the scheduled fn on the next immediate").toEqual([
+      1,
+    ])
+
+    // Well before the interval the latest scheduled fn must still be throttled.
+    await Utils.delay(50)
+    t.expect(actionsCalled, ~message="Should still be called once before the interval").toEqual([1])
+
+    // Comfortably past the interval the latest scheduled fn must have run.
+    await Utils.delay(100)
+    t.expect(actionsCalled, ~message="Should have called latest scheduled fn after delay").toEqual([
+      1,
+      3,
+    ])
+  })
+
+  Async.itWithOptions("Does not continuously increase schedule time", {retry: 3}, async t => {
+    let throttler = Throttler.make(~intervalMillis=100, ~logger=Logger.makeInMemory())
+    let actionsCalled = []
+    throttler->Throttler.schedule(async () => actionsCalled->Array.push(1)->ignore)
+    await Utils.delay(50)
+    throttler->Throttler.schedule(async () => actionsCalled->Array.push(2)->ignore)
+    t.expect(actionsCalled, ~message="Scheduler should still be waiting for interval").toEqual([1])
+    await Utils.delay(100)
+    t.expect(
+      actionsCalled,
+      ~message="Scheduler should have been called straight after the initial interval",
+    ).toEqual([1, 2])
+  })
+
+  Async.itWithOptions("Does not run until previous task is finished", {retry: 3}, async t => {
+    let throttler = Throttler.make(~intervalMillis=50, ~logger=Logger.makeInMemory())
+    let actionsCalled = []
+    throttler->Throttler.schedule(
+      async () => {
+        await Utils.delay(200)
+        actionsCalled->Array.push(1)->ignore
+      },
+    )
+
+    throttler->Throttler.schedule(
+      async () => {
+        actionsCalled->Array.push(2)->ignore
+      },
+    )
+
+    t.expect(actionsCalled, ~message="First task is still busy").toEqual([])
+
+    // Interval has elapsed but the long-running first task is still in flight.
+    await Utils.delay(100)
+    t.expect(
+      actionsCalled,
+      ~message="Second task has not executed even though passed interval",
+    ).toEqual([])
+
+    await Utils.delay(200)
+
+    t.expect(
+      actionsCalled,
+      ~message="Should have finished task one and execute task two immediately",
+    ).toEqual([1, 2])
+  })
+
+  Async.itWithOptions(
+    "Does not immediately execute after a task has finished if below the interval",
+    {retry: 3},
+    async t => {
+      let throttler = Throttler.make(~intervalMillis=100, ~logger=Logger.makeInMemory())
+      let actionsCalled = []
+      throttler->Throttler.schedule(
+        async () => {
+          await Utils.delay(30)
+          actionsCalled->Array.push(1)->ignore
+        },
+      )
+      throttler->Throttler.schedule(
+        async () => {
+          actionsCalled->Array.push(2)->ignore
+        },
+      )
+
+      t.expect(actionsCalled, ~message="First task is still busy").toEqual([])
+      await Utils.delay(60)
+      t.expect(
+        actionsCalled,
+        ~message="First action finished, second action waiting for interval",
+      ).toEqual([1])
+
+      await Utils.delay(90)
+      t.expect(
+        actionsCalled,
+        ~message="Second action should have been called after the interval as passed",
+      ).toEqual([1, 2])
+    },
+  )
+})

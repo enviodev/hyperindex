@@ -5,12 +5,10 @@
 
 pub mod converters;
 
-use std::env;
-
 use crate::{
     cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::chain_helpers::NetworkWithExplorer,
-    evm::{abi::AbiOrNestedAbi, address::Address},
+    ecosystems::evm::{abi::AbiOrNestedAbi, address::Address},
 };
 use alloy_json_abi::JsonAbi;
 use anyhow::{anyhow, Context};
@@ -61,7 +59,7 @@ async fn contract_import_with_timeout(
     retry: u64,
     timeout: Duration,
 ) -> anyhow::Result<ContractImportResult> {
-    let api_url = env::var("ENVIO_API_URL").unwrap_or("https://envio.dev/api".to_string());
+    let api_url = crate::env::var("ENVIO_API_URL").unwrap_or("https://envio.dev/api".to_string());
     // Without a timeout an API that holds the socket open never returns, and the
     // retry below never sees the error that would let it try again. The timeout
     // spans the body read too, not just the connect and send.
@@ -70,7 +68,8 @@ async fn contract_import_with_timeout(
         .build()
         .context("Failed building the contract import HTTP client")?;
     // The body read is as prone to a stall as the request itself, so both share
-    // one error path and one retry.
+    // one error path and one retry. Parsing is separate: reqwest reports a
+    // stalled body read as a decode error too.
     let fetched = async {
         client
             .get(format!(
@@ -80,17 +79,16 @@ async fn contract_import_with_timeout(
             ))
             .send()
             .await?
-            .json::<ContractImportResponse>()
+            .bytes()
             .await
     }
     .await;
 
     let contract_import_response: ContractImportResponse = match fetched {
-        Ok(response) => response,
         // A body that arrived but does not parse is the API's answer, not a
         // blip, so it fails on the spot.
-        Err(err) if err.is_decode() => {
-            return Err(err).context("Failed to parse Contract Import response")
+        Ok(body) => {
+            serde_json::from_slice(&body).context("Failed to parse Contract Import response")?
         }
         Err(err) => {
             // Just a few retries in case of a bad internet connection
@@ -104,7 +102,7 @@ async fn contract_import_with_timeout(
 
     match contract_import_response {
         ContractImportResponse::Contract { name, abi } => {
-            let mut abi = match crate::evm::abi::parse(None, &abi)
+            let mut abi = match crate::ecosystems::evm::abi::parse(None, &abi)
                 .context("Failed to read the ABI the block explorer returned")?
             {
                 AbiOrNestedAbi::Abi(abi) => abi,
@@ -131,7 +129,7 @@ async fn contract_import_with_timeout(
 mod tests {
     use super::*;
     use crate::config_parsing::chain_helpers::NetworkWithExplorer;
-    use crate::mock_http;
+    use crate::sources::testing::mock_http;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use tokio::io::AsyncWriteExt;
@@ -147,8 +145,8 @@ mod tests {
 
     impl ApiUrl {
         fn set(url: String) -> Self {
-            let previous = env::var("ENVIO_API_URL").ok();
-            env::set_var("ENVIO_API_URL", url);
+            let previous = crate::env::var("ENVIO_API_URL");
+            std::env::set_var("ENVIO_API_URL", url);
             Self(previous)
         }
     }
@@ -156,8 +154,8 @@ mod tests {
     impl Drop for ApiUrl {
         fn drop(&mut self) {
             match &self.0 {
-                Some(previous) => env::set_var("ENVIO_API_URL", previous),
-                None => env::remove_var("ENVIO_API_URL"),
+                Some(previous) => std::env::set_var("ENVIO_API_URL", previous),
+                None => std::env::remove_var("ENVIO_API_URL"),
             }
         }
     }

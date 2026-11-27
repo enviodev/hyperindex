@@ -3,8 +3,8 @@ use super::{
     validation::{check_names_from_schema_for_reserved_words, is_valid_postgres_db_name},
 };
 use crate::{
+    codegen::codegen_templates::DerivedFieldTemplate,
     constants::project_paths::DEFAULT_SCHEMA_PATH,
-    hbs_templating::codegen_templates::DerivedFieldTemplate,
     project_paths::{path_utils, ParsedProjectPaths},
     type_schema::TypeIdent,
     utils::{text::Capitalize, unique_hashmap},
@@ -1904,47 +1904,6 @@ impl Field {
 
     fn validate_field_type(&self, schema: &Schema) -> anyhow::Result<()> {
         self.field_type.validate_type(schema)
-    }
-
-    pub fn get_relational_key(&self, schema: &Schema) -> anyhow::Result<String> {
-        match &self.field_type {
-            FieldType::DerivedFromField {
-                derived_from_field,
-                entity_name,
-            } => {
-                let entity_field = schema
-                    .entities
-                    .get(entity_name)
-                    .ok_or_else(|| anyhow!("Unexpected, entity {entity_name} does not exist"))?
-                    .get_field(derived_from_field)
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "Unexpected, field {derived_from_field} does not exist on entity \
-                             {entity_name}"
-                        )
-                    })?;
-
-                match entity_field.field_type.get_underlying_scalar() {
-                    //In the case where there is a recipracol lookup, the actual
-                    //underlying field contains _id at the end
-                    GqlScalar::Custom(name)
-                        if matches!(schema.try_get_type_def(&name)?, TypeDef::Entity(_)) =>
-                    {
-                        Ok(format!("{derived_from_field}_id"))
-                    }
-                    //In the case where its just an an ID or a string,
-                    //just keep the the field as is from what was
-                    //defined in @derivedFrom
-                    GqlScalar::ID | GqlScalar::String => Ok(derived_from_field.clone()),
-                    _ => Err(anyhow!(
-                        "Unexpected, derived from field is neither an ID, String or bidirectional \
-                         relationship"
-                    ))?,
-                }
-            }
-
-            FieldType::RegularField { .. } => Ok(self.name.clone()),
-        }
     }
 
     pub fn is_indexed_field(&self, entity: &Entity) -> bool {

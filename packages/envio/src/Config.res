@@ -17,11 +17,34 @@ type contract = {
   startBlock: option<int>,
 }
 
+// A HyperSync endpoint with the client options the environment sets.
+type hyperSync = {
+  url: string,
+  // Required to reach the service; checked when a source is built, so commands
+  // that never fetch don't need one.
+  apiToken: option<string>,
+  httpReqTimeoutMillis: int,
+  serializationFormat: IndexerEnv.serializationFormat,
+  enableQueryCaching: bool,
+  // The client's own logging: RUST_LOG when set, else ENVIO_HYPERSYNC_LOG_LEVEL.
+  logFilter: string,
+}
+
+let hyperSync = (url, ~env: IndexerEnv.t) => {
+  url,
+  apiToken: env.envioApiToken,
+  httpReqTimeoutMillis: env.hyperSync.clientTimeoutMillis,
+  serializationFormat: env.hyperSync.serializationFormat,
+  enableQueryCaching: env.hyperSync.enableQueryCaching,
+  logFilter: env.hyperSync.logFilter,
+}
+
 // Sources are instantiated lazily in ChainState from this config.
 type evmRpcConfig = {
   url: string,
   sourceFor: Source.sourceFor,
-  syncConfig: option<sourceSyncOptions>,
+  // With environment overrides applied.
+  syncConfig: sourceSyncOptions,
   ws: option<string>,
   headers: option<dict<string>>,
 }
@@ -37,9 +60,9 @@ type startBlock =
 type simulatedTransaction = {simulateIndex: int, blockNumber: int, transactionIndex: int}
 
 type sourceConfig =
-  | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
-  | FuelSourceConfig({hypersync: string})
-  | SvmSourceConfig({hypersync: string})
+  | EvmSourceConfig({hypersync: option<hyperSync>, rpcs: array<evmRpcConfig>})
+  | FuelSourceConfig({hypersync: hyperSync})
+  | SvmSourceConfig({hypersync: hyperSync})
   // A `simulate` run: the items the test fed in, parsed against the chain's
   // registrations. The source itself is built with the chain's address store,
   // like every other source, so it can apply the same gates.
@@ -77,17 +100,6 @@ type chain = {
   blockThrottle: int,
   contracts: array<contract>,
   sourceConfig: sourceConfig,
-}
-
-type sourceSync = {
-  initialBlockInterval: int,
-  backoffMultiplicative: float,
-  accelerationAdditive: int,
-  intervalCeiling: int,
-  backoffMillis: int,
-  queryTimeoutMillis: int,
-  fallbackStallTimeout: int,
-  pollingInterval: int,
 }
 
 // How a backend spells column names, mirroring `column_name_format` in
@@ -164,6 +176,9 @@ type t = {
   // reach, so its checkpoints have to be comparable across chains.
   checkpointSequence: CheckpointSequence.t,
   envioInfo: JSON.t,
+  // Read by Rust where the config is built; nothing below reads the
+  // environment itself.
+  env: IndexerEnv.t,
 }
 
 type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("realtime") Realtime
@@ -737,8 +752,8 @@ let toEnvioInfo = (publicConfigJson: JSON.t): JSON.t => {
   envioInfo
 }
 
-let fromPublic = (publicConfigJson: JSON.t) => {
-  let maxAddrInPartition = Env.maxAddrInPartition
+let fromPublic = (publicConfigJson: JSON.t, ~env=IndexerEnv.read()) => {
+  let maxAddrInPartition = env.maxPartitionSize
   // Parse public config
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
   | S.Raised(exn) =>
@@ -1031,55 +1046,54 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         publicChainConfig["rpcs"]
         ->Option.getOr([])
         ->Array.map((rpcConfig): evmRpcConfig => {
-          let initialBlockInterval = rpcConfig["initialBlockInterval"]
-          let backoffMultiplicative = rpcConfig["backoffMultiplicative"]
-          let accelerationAdditive = rpcConfig["accelerationAdditive"]
-          let intervalCeiling = rpcConfig["intervalCeiling"]
-          let backoffMillis = rpcConfig["backoffMillis"]
-          let queryTimeoutMillis = rpcConfig["queryTimeoutMillis"]
-          let fallbackStallTimeout = rpcConfig["fallbackStallTimeout"]
-          let pollingInterval = rpcConfig["pollingInterval"]
-          let hasSyncConfig =
-            initialBlockInterval->Option.isSome ||
-            backoffMultiplicative->Option.isSome ||
-            accelerationAdditive->Option.isSome ||
-            intervalCeiling->Option.isSome ||
-            backoffMillis->Option.isSome ||
-            queryTimeoutMillis->Option.isSome ||
-            fallbackStallTimeout->Option.isSome ||
-            pollingInterval->Option.isSome
-          let syncConfig: option<sourceSyncOptions> = if hasSyncConfig {
-            Some({
-              ?initialBlockInterval,
-              ?backoffMultiplicative,
-              ?accelerationAdditive,
-              ?intervalCeiling,
-              ?backoffMillis,
-              ?queryTimeoutMillis,
-              ?fallbackStallTimeout,
-              ?pollingInterval,
-            })
-          } else {
-            None
-          }
+          // The environment overrides config.yaml for the range knobs.
+          let overridden = (fromEnv, fromYaml) =>
+            switch fromEnv {
+            | Some(_) => fromEnv
+            | None => fromYaml
+            }
           {
             url: rpcConfig["url"],
             sourceFor: parseRpcSourceFor(rpcConfig["for"]),
-            syncConfig,
+            syncConfig: {
+              initialBlockInterval: ?overridden(
+                env.rpcSync.initialBlockInterval,
+                rpcConfig["initialBlockInterval"],
+              ),
+              backoffMultiplicative: ?overridden(
+                env.rpcSync.backoffMultiplicative,
+                rpcConfig["backoffMultiplicative"],
+              ),
+              accelerationAdditive: ?overridden(
+                env.rpcSync.accelerationAdditive,
+                rpcConfig["accelerationAdditive"],
+              ),
+              intervalCeiling: ?overridden(
+                env.rpcSync.intervalCeiling,
+                rpcConfig["intervalCeiling"],
+              ),
+              backoffMillis: ?rpcConfig["backoffMillis"],
+              queryTimeoutMillis: ?rpcConfig["queryTimeoutMillis"],
+              fallbackStallTimeout: ?rpcConfig["fallbackStallTimeout"],
+              pollingInterval: ?rpcConfig["pollingInterval"],
+            },
             ws: rpcConfig["ws"],
             headers: rpcConfig["headers"],
           }
         })
-      EvmSourceConfig({hypersync: publicChainConfig["hypersync"], rpcs})
+      EvmSourceConfig({
+        hypersync: publicChainConfig["hypersync"]->Option.map(url => hyperSync(url, ~env)),
+        rpcs,
+      })
     | Ecosystem.Fuel =>
       switch publicChainConfig["hypersync"] {
-      | Some(hypersync) => FuelSourceConfig({hypersync: hypersync})
+      | Some(url) => FuelSourceConfig({hypersync: hyperSync(url, ~env)})
       | None =>
         JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
       }
     | Ecosystem.Svm =>
       switch publicChainConfig["hypersync"] {
-      | Some(hypersync) => SvmSourceConfig({hypersync: hypersync})
+      | Some(url) => SvmSourceConfig({hypersync: hyperSync(url, ~env)})
       | None =>
         JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
       }
@@ -1189,7 +1203,12 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
     ecosystem,
     maxAddrInPartition,
-    clientFilterAddressThreshold: Env.clientFilterAddressThreshold,
+    // Caps one contract at a fifth of the chain's concurrency budget, so a
+    // single busy contract can't monopolise the query slots whatever the
+    // partition size.
+    clientFilterAddressThreshold: env.clientFilterAddressThreshold->Option.getOr(
+      maxAddrInPartition * FetchState.maxChainConcurrency / 5,
+    ),
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     reorgThresholdReadyTolerance: 100,
     lowercaseAddresses,
@@ -1201,6 +1220,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     allEnums,
     checkpointSequence: CheckpointSequence.fromEntities(userEntities),
     envioInfo: publicConfigJson->toEnvioInfo,
+    env,
   }
 
   switch publicConfig["isolatedChains"] {
@@ -1511,10 +1531,11 @@ let divergedMessage = (~resetCommand) =>
       (resetCommand, startOver),
     ])}`
 
-// The returned value is a pure function of the JSON: it holds only event
-// definitions, never handler/contractRegister/where state (that's layered on
-// separately as `HandlerRegister.registrationsByChainId`). That purity is
-// what lets this memoize without invalidation.
+// The returned value depends only on the JSON and the environment as it was at
+// the first load: it holds only event definitions, never
+// handler/contractRegister/where state (that's layered on separately as
+// `HandlerRegister.registrationsByChainId`). That is what lets this memoize
+// until the next `prime`.
 let load = () =>
   switch cached.contents {
   | Some(c) => c

@@ -5,7 +5,7 @@
 // unnecessary: `expectItemsQueries` waits for the queries it names, and a height
 // answer with no call pending is held for the next one.
 
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -310,7 +310,11 @@ const realTime = [
 ];
 const sourceViolations: violation[] = [];
 // The run-wide timers outside the sources take the same clock.
-const clockedModules = ["LoadLayer.res", "EffectState.res", "Throttler.res"].map((name) =>
+const clockedModules = [
+  "processing/LoadLayer.res",
+  "processing/EffectState.res",
+  "utils/Throttler.res",
+].map((name) =>
   fileURLToPath(new URL(`../../envio/src/${name}`, import.meta.url)),
 );
 for (const path of [...resFiles(sourcesRoot), ...clockedModules]) {
@@ -341,19 +345,26 @@ for (const path of [...resFiles(sourcesRoot), ...clockedModules]) {
 const performanceRead = /\bPerformance\.(?:now|secondsSince)\b/;
 const realWork = "it times real I/O or CPU work, which virtual time would report as instant";
 const performanceAllowed: Record<string, string> = {
-  "Clock.res": "it is the real clock",
-  "Batch.res": realWork,
-  "Storage.res": realWork,
-  "Rollback.res": realWork,
-  "PruneStaleHistory.res": realWork,
-  "sources/RequestStat.res": realWork,
-  "sources/EvmHyperSyncSource.res": realWork,
-  "sources/SvmHyperSyncSource.res": realWork,
-  "sources/FuelHyperSyncSource.res": realWork,
-  "sources/RpcSource.res": realWork,
-  "Supervisor.res": "it reports the process's uptime",
+  "utils/Clock.res": "it is the real clock",
+  "processing/Batch.res": realWork,
+  "storage/Storage.res": realWork,
+  "processing/Rollback.res": realWork,
+  "storage/PruneStaleHistory.res": realWork,
+  "sources/SourceManager.res": realWork,
+  "run/Supervisor.res": "it reports the process's uptime",
 };
 const runtimeRoot = fileURLToPath(new URL("../../envio/src", import.meta.url));
+// A moved or deleted module would otherwise leave its entry allowing nothing.
+for (const module of Object.keys(performanceAllowed)) {
+  if (!existsSync(join(runtimeRoot, module))) {
+    sourceViolations.push({
+      file: relative(repoRoot, fileURLToPath(import.meta.url)),
+      line: 1,
+      title: `No such module: ${module}`,
+      fix: "Point the entry in performanceAllowed at the module's current path, or remove it.",
+    });
+  }
+}
 for (const path of resFiles(runtimeRoot)) {
   const module = relative(runtimeRoot, path).split("\\").join("/");
   if (module.startsWith("bindings/") || module in performanceAllowed) continue;

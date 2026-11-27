@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use anyhow::{bail, Context, Result};
 
 use super::types::{CHANGE_COLUMN, DELETE, SET};
-use crate::columnar::{Arena, ColumnKind, ColumnSpec};
+use crate::storage::columnar::{Arena, ColumnKind, ColumnSpec};
 
 /// A decoded column value, in the shape it will take in JavaScript.
 #[derive(Debug, Clone, PartialEq)]

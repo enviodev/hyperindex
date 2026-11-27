@@ -1,0 +1,52 @@
+// Whole-indexer view over every chain's ChainState. `t` is opaque: other modules
+// read it through the accessors and change it only through the transitions here.
+
+type t
+
+let make: (
+  ~chainStates: dict<ChainState.t>,
+  ~isRealtime: bool,
+  ~targetBufferSize: int,
+  ~holdRealtime: bool,
+) => t
+
+// Accessors.
+let chainStates: t => dict<ChainState.t>
+let isRealtime: t => bool
+let chainIds: t => array<ChainId.t>
+let isCaughtUp: t => bool
+let isInReorgThreshold: t => bool
+let targetBufferSize: t => int
+let shouldSaveHistory: t => dict<bool>
+
+// Derived (pure).
+let getSafeCheckpointIdByChain: (
+  t,
+  ~sequence: CheckpointSequence.t,
+  ~committedFrontier: Frontier.t,
+) => array<(ChainId.t, option<Internal.checkpointId>)>
+
+// Cross-chain transitions.
+let releaseRealtime: t => unit
+let isHoldingRealtime: t => bool
+let hasArrivedAtHead: t => bool
+let isReadyToEnterReorgThreshold: (t, ~batch: Batch.t) => bool
+let prebuildNextBatch: (t, ~batchSizeTarget: int) => unit
+let createBatch: (
+  t,
+  ~config: Config.t,
+  ~frontier: Frontier.t,
+  ~batchSizeTarget: int,
+) => promise<Batch.t>
+let enterReorgThreshold: t => unit
+let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
+let markCaughtUpIfSettled: t => unit
+let markCaughtUpOnResume: t => unit
+let markReady: (t, ~readyAt: Date.t) => unit
+let reportFinished: t => unit
+
+// Fetch control.
+let checkAndFetch: (
+  t,
+  ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
+) => promise<unit>

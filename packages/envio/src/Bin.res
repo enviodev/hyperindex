@@ -1,20 +1,6 @@
 @val external processChdir: string => unit = "process.chdir"
 let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
 
-let logger = Logger.make({
-  strategy: Env.Logger.strategy,
-  logFile: Env.Logger.file,
-  level: Env.Logger.level->Option.getOr(#info),
-  fileLevel: Env.Logger.fileLevel,
-})
-
-// Crash on unhandled promise rejections with a readable error.
-// ReScript exceptions compile to plain objects, not Error instances, so Node.js prints "#<Object>".
-NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
-  logger->Logger.errorWithExn("Unhandled promise rejection", reason)
-  NodeJs.process->NodeJs.exitWithCode(Failure)
-})
-
 // Wire format mirrors the Rust `executor::Command` enum — a tagged JSON
 // object with a `kind` discriminator.
 type startCmd = {
@@ -56,9 +42,16 @@ let applyEnv = (env: dict<JSON.t>) =>
     }
   })
 
-let run = async args => {
+let runWith = async (args, ~env, ~logger) => {
+  // Crash on unhandled promise rejections with a readable error.
+  // ReScript exceptions compile to plain objects, not Error instances, so Node.js prints "#<Object>".
+  NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
+    logger->Logger.errorWithExn("Unhandled promise rejection", reason)
+    NodeJs.process->NodeJs.exitWithCode(Failure)
+  })
   try {
-    if Worker.isEnabled {
+    Worker.identify(env)
+    if Worker.isEnabled() {
       Worker.bindToSupervisor(~logger)
       // Its working directory, its environment and the chains it drives all came
       // with the fork, so a worker starts the same way every other process does.
@@ -73,6 +66,8 @@ let run = async args => {
         | Start({reset, cwd, env, config}) =>
           Config.prime(config)
           processChdir(cwd)
+          // Before the config reads the environment: `envio dev` hands its
+          // ClickHouse settings over here.
           applyEnv(env)
           await Main.start(~logger, ~reset)
         | Migrate({reset, config}) =>
@@ -100,3 +95,23 @@ let run = async args => {
     NodeJs.process->NodeJs.exitWithCode(Failure)
   }
 }
+
+let run = args =>
+  // Every problem with the environment, as one block, before anything starts.
+  switch IndexerEnv.read() {
+  | exception JsExn(error) =>
+    Console.error(error->JsExn.message->Option.getOr("Invalid environment"))
+    NodeJs.process->NodeJs.exitWithCode(Failure)
+    Promise.resolve()
+  | {logger: {strategy, file, ?level, fileLevel}} as env =>
+    runWith(
+      args,
+      ~env,
+      ~logger=Logger.make({
+        strategy,
+        logFile: file,
+        level: level->Option.getOr(#info),
+        fileLevel,
+      }),
+    )
+  }
