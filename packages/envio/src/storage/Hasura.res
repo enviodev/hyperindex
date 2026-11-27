@@ -93,7 +93,7 @@ let sendOperation = async (~logger, ~endpoint, ~auth, ~operation: JSON.t) => {
     | exn =>
       if attempt < maxRetries {
         let backoffMs = Math.pow(2.0, ~exp=attempt->Int.toFloat)->Float.toInt * 1000
-        await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMs)
+        await Utils.delay(backoffMs)
         await retry(~attempt=attempt + 1)
       } else {
         logger->Logger.warn(
