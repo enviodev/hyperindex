@@ -77,9 +77,10 @@ Link the issue above the case when there is one: `// https://github.com/enviodev
 Run only the tests relevant to your change — never the full suite locally. CI runs it on push.
 
 `pnpm vitest run` skips the checks that guard test inputs, so a green local run can
-still fail CI. Run `pnpm lint` in `packages/envio-tests` before you push: it takes
-under a second, and CI runs it ahead of every test. A CI failure whose closing line
-is `Test failed` while naming no test is this lint, not a test.
+still fail CI. `git push` runs that lint and, when Rust changed, clippy, and is
+refused with the findings while either fails: neither needs a run by hand. A CI
+failure whose closing line is `Test failed` while naming no test is this lint, not
+a test.
 
 ## ReScript
 

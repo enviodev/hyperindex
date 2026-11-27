@@ -22,9 +22,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_response.filePath // .tool_input.file_path' | { read -r f; case \"$f\" in */packages/cli/*) cd \"${f%%/packages/cli/*}/packages/cli\" && cargo fmt && cargo clippy --quiet --all-targets --all-features 2>&1 || true ;; esac; }",
-            "timeout": 60,
-            "statusMessage": "Running cargo fmt + clippy..."
+            "command": "jq -r '.tool_response.filePath // .tool_input.file_path' | { read -r f; case \"$f\" in */packages/cli/*.rs) cd \"${f%%/packages/cli/*}/packages/cli\" && cargo fmt 2>&1 || true ;; esac; }",
+            "timeout": 30,
+            "statusMessage": "Running cargo fmt..."
           },
           {
             "type": "command",
@@ -41,9 +41,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/check-format.sh",
-            "timeout": 120,
-            "statusMessage": "Checking formatting before push..."
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-push.sh",
+            "timeout": 600,
+            "statusMessage": "Checking before push..."
           }
         ]
       }
