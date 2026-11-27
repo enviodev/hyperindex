@@ -659,7 +659,26 @@ let run = async (
         await Utils.delay(0)
       }
       if settled.contents < 5 {
-        JsError.throwWithMessage("Timed out waiting for the indexer to go idle")
+        let busy =
+          [
+            (state->IndexerState.isProcessing, "processing a batch"),
+            (state->IndexerState.isRegisteringContracts, "registering contracts"),
+            (state->IndexerState.writeFiber->Option.isSome, "writing"),
+            (storageCallsInFlight.contents > 0, "waiting on a storage call"),
+            (state->IndexerState.shouldFinalizeIndexes, "due to finalize indexes"),
+            (
+              !Frontier.equals(
+                state->IndexerState.committedFrontier,
+                state->IndexerState.processedFrontier,
+              ),
+              "holding processed batches not yet committed",
+            ),
+          ]
+          ->Array.filter(((isBusy, _)) => isBusy)
+          ->Array.map(((_, what)) => what)
+        JsError.throwWithMessage(
+          `Timed out waiting for the indexer to go idle: still ${busy->Array.join(", ")}`,
+        )
       }
     }
 
