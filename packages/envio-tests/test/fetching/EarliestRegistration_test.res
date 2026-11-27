@@ -7,7 +7,7 @@ let hub = "0x00000000000000000000000000000000000000b1"
 
 // `Factory` points at a child, and the child announces its own birth through
 // the wildcard `Created.Born`. Either registers the child, from different
-// partitions, so they can arrive in any order. `Factory` can also open a `Hub`,
+// requests, so they can arrive in any order. `Factory` can also open a `Hub`,
 // a dynamic factory of children.
 let configYaml = (~childOptions) =>
   `
@@ -80,10 +80,10 @@ indexer.onEvent({ contract: "Child", event: "Ping" }, async ({ event, context })
 
 let scenario = Scenario.make(~configYaml=configYaml(~childOptions=""), ~schema, ~handlers)
 
-// `Child` starts at block 200, so every registration below it is effective
-// from 200.
+// `Child` starts at block 1200, so every registration below it is effective
+// from 1200.
 let lateStartScenario = Scenario.make(
-  ~configYaml=configYaml(~childOptions="\n        start_block: 200"),
+  ~configYaml=configYaml(~childOptions="\n        start_block: 1200"),
   ~schema,
   ~handlers,
 )
@@ -160,7 +160,7 @@ let registeredChildren = async (indexer: IndexerRunner.t) =>
 let isFetchingFor = (address, query) =>
   query->MockSource.addresses->Array.some(queried => queried->Address.toString === address)
 
-let isAddressFree = query => !(query->MockSource.selection).dependsOnAddresses
+let isAddressFree = (query: MockSource.pendingItemsQuery) => query->MockSource.addresses == []
 
 // The factory's first response points at `child` from block 50 while the
 // wildcard partition, which holds its birth, is still fetching.
@@ -366,14 +366,10 @@ describe("An address registered for one contract from two blocks", () => {
   })
 
   // The registration that moves the address earlier leaves the entry it
-  // replaces in the partition that already held it, so until the two
-  // partitions merge, both ask the source for the address and its events come
-  // back twice. This double fetch is a decision, not an oversight: removing the
-  // replaced entry from existing partitions was left out to keep the fix inside
-  // the address store, and near the head the address is in no partition's
-  // list. Whoever changes this changes the test on purpose.
+  // replaces in the request that already held it, which goes on fetching the
+  // address from that entry's block. The new one owes only what lies below it.
   scenario->Scenario.it(
-    "is fetched by both the partition that held it and the new one, and handled once",
+    "is fetched below the replaced entry's block by the new request, above it by the one that held it, and handled once",
     ~sources,
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
@@ -390,7 +386,7 @@ describe("An address registered for one contract from two blocks", () => {
       let fetchingChild =
         source.pendingItemsQueries
         ->Array.filter(isFetchingFor(child, ...))
-        ->Array.map(query => (query.partitionId, query.fromBlock))
+        ->ItemsQueryView.Summary.summarize
       await source.respondUpTo(
         300,
         ~items=[
@@ -401,37 +397,77 @@ describe("An address registered for one contract from two blocks", () => {
       )
 
       t.expect((fetchingChild, await pingedBlocks(indexer))).toEqual((
-        [("2", 50), ("3", 10)],
+        [
+          {fromBlock: 10, toBlock: Bounded(49), addresses: [child]},
+          {fromBlock: 50, toBlock: Bounded(799), addresses: [child]},
+        ],
         [20, 60, 200],
       ))
     },
   )
 })
 
+// The factory's pointer at 1150 gave the child a group of its own, whose
+// request is out when the wildcard one brings the birth at 1110. The earlier
+// registration joins the group at the block that request lands on, 1250, and
+// catches up below it.
+let answerBirthThenChild = async (
+  ~indexer: IndexerRunner.t,
+  ~source: MockSource.t,
+  ~wildcardItems,
+  ~childItems,
+) => {
+  await source.expectItemsQueries([
+    {
+      where: isAddressFree,
+      reply: Respond({items: wildcardItems, latestFetchedBlockNumber: 1250}),
+    },
+    {where: isFetchingFor(child, ...), reply: LeavePending},
+    {where: isFetchingFor(factory, ...), reply: LeavePending},
+  ])
+  await indexer.waitUntilIdle()
+  await source.expectItemsQueries([
+    {
+      where: isFetchingFor(child, ...),
+      reply: Respond({items: childItems, latestFetchedBlockNumber: 1250}),
+    },
+    {
+      where: isFetchingFor(factory, ...),
+      reply: Respond({items: [], latestFetchedBlockNumber: 1250}),
+    },
+    {where: isAddressFree, reply: LeavePending},
+  ])
+  await indexer.waitUntilIdle()
+}
+
 // https://github.com/enviodev/hyperindex/issues/1810
 describe("A rollback after an address moved to an earlier registration", () => {
-  // Inside the reorg threshold: registered at 110 after a registration at 150.
+  // Inside the reorg threshold: registered at 1110 after a registration at
+  // 1150. The head is far enough out that the chain starts in backfill, where
+  // the wildcard request trails the factory's.
   let replaceThenReorg = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~validUpTo) => {
-    source.resolveGetHeightOrThrow(300)
-    await source.respondUpTo(99)
+    source.resolveGetHeightOrThrow(1300)
+    await source.respondUpTo(1099)
     await source.expectItemsQueries([
       {
         where: isFetchingFor(factory, ...),
-        reply: Respond({items: [pointed(~blockNumber=150, child)], latestFetchedBlockNumber: 200}),
+        reply: Respond({
+          items: [pointed(~blockNumber=1150, child)],
+          latestFetchedBlockNumber: 1200,
+        }),
       },
-      {reply: LeavePending},
+      {where: isAddressFree, reply: LeavePending},
     ])
     await indexer.waitUntilIdle()
+    await answerBirthThenChild(
+      ~indexer,
+      ~source,
+      ~wildcardItems=[ping(~blockNumber=1105, child), born(~blockNumber=1110, child)],
+      ~childItems=[ping(~blockNumber=1160, child), ping(~blockNumber=1240, child)],
+    )
     await source.respondUpTo(
-      250,
-      ~items=[
-        ping(~blockNumber=105, child),
-        born(~blockNumber=110, child),
-        ping(~blockNumber=110, child),
-        ping(~blockNumber=120, child),
-        ping(~blockNumber=160, child),
-        ping(~blockNumber=240, child),
-      ],
+      1250,
+      ~items=[ping(~blockNumber=1110, child), ping(~blockNumber=1120, child)],
     )
     let beforeReorg = (await pingedBlocks(indexer), await registeredChildren(indexer))
     await source.expectItemsQueries([
@@ -439,13 +475,13 @@ describe("A rollback after an address moved to an earlier registration", () => {
         where: isAddressFree,
         reply: Respond({
           items: [],
-          latestFetchedBlockNumber: 251,
-          prevRangeLastBlock: {blockNumber: 250, blockHash: "0x250a"},
+          latestFetchedBlockNumber: 1251,
+          prevRangeLastBlock: {blockNumber: 1250, blockHash: "0x1250a"},
         }),
       },
       {reply: LeavePending},
     ])
-    await Scenario.driveRollback(~indexer, ~source, ~validUpTo, ~head=251)
+    await Scenario.driveRollback(~indexer, ~source, ~validUpTo, ~head=1251)
     await indexer.waitUntilIdle()
     await indexer.advanceTime(500)
     (beforeReorg, (await pingedBlocks(indexer), await registeredChildren(indexer)))
@@ -454,14 +490,14 @@ describe("A rollback after an address moved to an earlier registration", () => {
   let sources: array<Scenario.sourceMock> = [
     {chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]},
   ]
-  let beforeReorg = ([110, 120, 160, 240], [(child, 110)])
+  let beforeReorg = ([1110, 1120, 1160, 1240], [(child, 1110)])
 
   scenario->Scenario.it("to before both registrations drops the address", ~sources, async (
     ~t,
     ~indexer,
     ~source,
   ) => {
-    t.expect(await replaceThenReorg(~indexer, ~source=source(1337), ~validUpTo=100)).toEqual((
+    t.expect(await replaceThenReorg(~indexer, ~source=source(1337), ~validUpTo=1100)).toEqual((
       beforeReorg,
       ([], []),
     ))
@@ -471,9 +507,9 @@ describe("A rollback after an address moved to an earlier registration", () => {
     "to between the registrations keeps it from the earlier one",
     ~sources,
     async (~t, ~indexer, ~source) => {
-      t.expect(await replaceThenReorg(~indexer, ~source=source(1337), ~validUpTo=130)).toEqual((
+      t.expect(await replaceThenReorg(~indexer, ~source=source(1337), ~validUpTo=1130)).toEqual((
         beforeReorg,
-        ([110, 120], [(child, 110)]),
+        ([1110, 1120], [(child, 1110)]),
       ))
     },
   )
@@ -482,9 +518,9 @@ describe("A rollback after an address moved to an earlier registration", () => {
     "to after both registrations keeps it from the earlier one",
     ~sources,
     async (~t, ~indexer, ~source) => {
-      t.expect(await replaceThenReorg(~indexer, ~source=source(1337), ~validUpTo=200)).toEqual((
+      t.expect(await replaceThenReorg(~indexer, ~source=source(1337), ~validUpTo=1200)).toEqual((
         beforeReorg,
-        ([110, 120, 160], [(child, 110)]),
+        ([1110, 1120, 1160], [(child, 1110)]),
       ))
     },
   )
@@ -492,7 +528,7 @@ describe("A rollback after an address moved to an earlier registration", () => {
 
 // https://github.com/enviodev/hyperindex/issues/1810
 describe("An address registered twice below its contract's start block", () => {
-  // Both registrations are effective from block 200, the contract's start, so
+  // Both registrations are effective from block 1200, the contract's start, so
   // only their blocks tell them apart. The reorg takes the later one away.
   lateStartScenario->Scenario.it(
     "survives a rollback that removes the later registration",
@@ -507,50 +543,53 @@ describe("An address registered twice below its contract's start block", () => {
     ],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      source.resolveGetHeightOrThrow(300)
-      await source.respondUpTo(99)
+      source.resolveGetHeightOrThrow(1300)
+      await source.respondUpTo(1099)
       await source.expectItemsQueries([
         {
           where: isFetchingFor(factory, ...),
           reply: Respond({
-            items: [pointed(~blockNumber=150, child)],
-            latestFetchedBlockNumber: 200,
+            items: [pointed(~blockNumber=1150, child)],
+            latestFetchedBlockNumber: 1200,
           }),
         },
-        {reply: LeavePending},
+        {where: isAddressFree, reply: LeavePending},
       ])
       await indexer.waitUntilIdle()
-      await source.respondUpTo(
-        250,
-        ~items=[born(~blockNumber=110, child), ping(~blockNumber=210, child)],
+      await answerBirthThenChild(
+        ~indexer,
+        ~source,
+        ~wildcardItems=[born(~blockNumber=1110, child)],
+        ~childItems=[ping(~blockNumber=1210, child)],
       )
+      await source.respondUpTo(1250)
       await source.expectItemsQueries([
         {
           where: isAddressFree,
           reply: Respond({
             items: [],
-            latestFetchedBlockNumber: 251,
-            prevRangeLastBlock: {blockNumber: 250, blockHash: "0x250a"},
+            latestFetchedBlockNumber: 1251,
+            prevRangeLastBlock: {blockNumber: 1250, blockHash: "0x1250a"},
           }),
         },
         {reply: LeavePending},
       ])
-      // The new chain keeps the birth at 110 but not the pointer at 150, and
-      // its ping at 210 sits at another log index than the orphaned one.
+      // The new chain keeps the birth at 1110 but not the pointer at 1150, and
+      // its ping at 1210 sits at another log index than the orphaned one.
       await Scenario.driveRollback(
         ~indexer,
         ~source,
-        ~validUpTo=130,
-        ~head=251,
-        ~refetched=[ping(~blockNumber=210, ~logIndex=2, child)],
+        ~validUpTo=1130,
+        ~head=1251,
+        ~refetched=[ping(~blockNumber=1210, ~logIndex=2, child)],
       )
       await indexer.waitUntilIdle()
-      await source.respondUpTo(300, ~items=[ping(~blockNumber=280, child)])
+      await source.respondUpTo(1300, ~items=[ping(~blockNumber=1280, child)])
       await indexer.advanceTime(500)
 
       t.expect((await handledPingIds(indexer), await registeredChildren(indexer))).toEqual((
-        ["210-2", "280-1"],
-        [(child, 110)],
+        ["1210-2", "1280-1"],
+        [(child, 1110)],
       ))
     },
   )

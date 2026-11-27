@@ -16,7 +16,7 @@ chains:
     start_block: 1
     max_reorg_depth: 200
     contracts:
-      # Starts past the head, so only the block handler's partition queries.
+      # Starts past the head, so only the block handler's need queries.
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
         start_block: 1000000
@@ -65,8 +65,8 @@ let block = (blockNumber, ~hash, ~timestamp): MockSource.blockMock => {
   },
 }
 
-// The chain holds two partitions: the block handler's and the mock source's
-// own event registration, which has nothing to return. Every pending query is
+// The chain holds two needs: the block handler's and the mock source's own
+// event registration, which has nothing to return. Every pending query is
 // answered from the chain as it now stands, until the rollback settles. On the
 // re-orged chain every block above 100 has a new hash, which a query reports
 // for the block before its range.
@@ -101,7 +101,7 @@ let answerFromChain = async (
       }
       (query->MockSource.control).respond({
         items: [],
-        blocks: query.partitionId === "0"
+        blocks: (query->MockSource.selection).onBlockRegistrationIndexes->Utils.Array.notEmpty
           ? blocks->Array.filter(block =>
               block.blockNumber >= query.fromBlock && block.blockNumber <= toBlock
             )

@@ -1,5 +1,5 @@
-use anyhow::Context;
 use crate::address_store::client_filtered_contracts::ClientFilteredContracts;
+use anyhow::Context;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -137,6 +137,9 @@ pub(crate) struct NextPageParams {
     /// Whose learned block interval sizes the page: a need's, or the head
     /// stream's.
     pub interval_key: u32,
+    /// Reads the contracts fetched by address in one `eth_getLogs`, as a page
+    /// at the head does.
+    pub group_by_address: bool,
     /// The event registrations selecting logs, by chain-scoped id. Log
     /// selections and the matching index are derived internally from the
     /// registrations passed at construction. Empty selects no logs.
@@ -302,6 +305,8 @@ struct PageQuery<'a> {
     known_height: u64,
     retry: i64,
     selections: &'a [BuiltLogSelection],
+    /// Aligned with `selections`: what a grouped one was made of.
+    selection_parts: &'a [Vec<BuiltLogSelection>],
     address_set: &'a AddressSet,
     block_selection: &'a BlockSelection,
     /// Reads every block of the page in full.
@@ -518,6 +523,12 @@ impl EvmRpcClient {
             &params.client_filtered,
         )?;
 
+        let (selections, selection_parts) = if params.group_by_address {
+            logs::group_by_address(built.log_selections)
+        } else {
+            let parts = built.log_selections.iter().map(|_| Vec::new()).collect();
+            (built.log_selections, parts)
+        };
         let query = PageQuery {
             interval_key: params.interval_key,
             from_block,
@@ -525,7 +536,8 @@ impl EvmRpcClient {
             reorgable_from: params.reorgable_from,
             known_height: params.known_height,
             retry: params.retry,
-            selections: &built.log_selections,
+            selections: &selections,
+            selection_parts: &selection_parts,
             address_set,
             block_selection: &block_selection,
             transactions: transaction_read.as_ref(),
@@ -852,16 +864,24 @@ impl EvmRpcClient {
         query: &PageQuery<'_>,
         blocks: logs::LogBlocks<'_>,
         selection: &BuiltLogSelection,
+        parts: &[BuiltLogSelection],
     ) -> Result<Vec<RawLog>, RpcError> {
-        logs::request_selection_logs(&self.inner, &self.logger, blocks, selection, |origin| {
-            self.evm
-                .selection
-                .build_by_address(origin, query.address_set, |contract_names| {
-                    query
-                        .address_set
-                        .contract_chunks(contract_names, self.max_addresses_per_request)
-                })
-        })
+        logs::request_selection_logs(
+            &self.inner,
+            &self.logger,
+            blocks,
+            selection,
+            parts,
+            |origin| {
+                self.evm
+                    .selection
+                    .build_by_address(origin, query.address_set, |contract_names| {
+                        query
+                            .address_set
+                            .contract_chunks(contract_names, self.max_addresses_per_request)
+                    })
+            },
+        )
         .await
     }
 
@@ -881,7 +901,8 @@ impl EvmRpcClient {
             query
                 .selections
                 .iter()
-                .map(|selection| self.request_logs(query, blocks, selection)),
+                .zip(query.selection_parts)
+                .map(|(selection, parts)| self.request_logs(query, blocks, selection, parts)),
         )
         .await
         .into_iter()
@@ -940,7 +961,7 @@ impl EvmRpcClient {
                         ))
                     })?;
                     let found = self
-                        .recheck_block(query, &query.selections[index], block, hash)
+                        .recheck_block(query, index, block, hash)
                         .await?;
                     self.logger.log(
                         Level::TRACE,
@@ -974,15 +995,16 @@ impl EvmRpcClient {
     async fn recheck_block(
         &self,
         query: &PageQuery<'_>,
-        selection: &BuiltLogSelection,
+        index: usize,
         block: u64,
         hash: &str,
     ) -> Result<Vec<RawLog>, EnrichError> {
+        let (selection, parts) = (&query.selections[index], &query.selection_parts[index]);
         let by_hash = logs::LogBlocks::Hash {
             block_number: block,
             hash,
         };
-        let refusal = match self.request_logs(query, by_hash, selection).await {
+        let refusal = match self.request_logs(query, by_hash, selection, parts).await {
             Ok(found) => {
                 self.answered_block_hash_read.store(true, Ordering::Relaxed);
                 return Ok(found);
@@ -1014,6 +1036,7 @@ impl EvmRpcClient {
                 block_number: block,
             },
             selection,
+            parts,
         )
         .await
         .map_err(|error| EnrichError::Rpc(Arc::new(error)))

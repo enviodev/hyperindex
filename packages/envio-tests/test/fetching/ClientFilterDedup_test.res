@@ -1,9 +1,9 @@
 open Vitest
 
 // End-to-end guard that switching a contract to client-side address filtering
-// never double-processes an event. When the switch collapses a contract's
-// partitions into one address-free partition at their minimum frontier, the
-// address-free partition re-fetches the overlap; those re-delivered events must be
+// never double-processes an event. When the switch ends a contract's address
+// groups and fetches it address-free, the catch-up for the new addresses
+// re-fetches the overlap; those re-delivered events must be
 // deduped against the ones still in the buffer (nothing above the min frontier
 // has been processed yet).
 let scenario = Scenario.make(
@@ -59,8 +59,8 @@ describe("Client-side address filtering item dedup", () => {
       sourceMock.resolveGetHeightOrThrow(1000)
 
       // Fetch a Gravatar event at block 10 that registers 3 dynamic Gravatar
-      // addresses. That pushes Gravatar past the threshold and collapses its
-      // partitions into a single address-free partition mid-response.
+      // addresses. That pushes Gravatar past the threshold, so it is fetched
+      // address-free from then on.
       await sourceMock.expectItemsQueries([
         {
           fromBlock: 1,
@@ -71,10 +71,10 @@ describe("Client-side address filtering item dedup", () => {
         },
       ])
 
-      // The addresses register after the response that carried them, so the
-      // collapsed partition starts at their registration block and re-queries
+      // The addresses register after the response that carried them, so
+      // their catch-up starts at the registration block and re-queries
       // block 10 — the overlap the dedup must absorb. It re-delivers the
-      // block-10 event; advance both partitions so the buffered block-10 event
+      // block-10 event; advance both requests so the buffered block-10 event
       // becomes processable. The re-delivered copy must be deduped.
       await sourceMock.expectItemsQueries([
         {

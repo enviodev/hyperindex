@@ -135,16 +135,63 @@ async fn request(
         .await
 }
 
-/// Reads `selection` over `blocks`. When one block of an address-free
-/// selection holding client-filtered registrations is too large for the
-/// provider, it is read again the way `by_address` rebuilds it. A wider range
-/// goes back to the caller, whose retry shrinks it first. Nothing is
-/// remembered: the next range is asked address-free again.
+/// The by-address selections that constrain topic0 alone, as one selection
+/// asking for all of their addresses and topic0s. A log of one contract's
+/// address with another contract's topic0 comes back too; matching drops it.
+/// Aligned with what it returns, the selections each one was made of: none
+/// for one read as built.
+pub(super) fn group_by_address(
+    selections: Vec<BuiltLogSelection>,
+) -> (Vec<BuiltLogSelection>, Vec<Vec<BuiltLogSelection>>) {
+    let groupable = |selection: &BuiltLogSelection| {
+        matches!(selection.emitters, Emitters::Listed(_))
+            && selection
+                .topics
+                .first()
+                .is_some_and(|topic0| !topic0.is_empty())
+            && selection.topics.iter().skip(1).all(Vec::is_empty)
+    };
+    let (grouped, mut kept): (Vec<_>, Vec<_>) = selections.into_iter().partition(groupable);
+    let mut parts: Vec<Vec<BuiltLogSelection>> = kept.iter().map(|_| Vec::new()).collect();
+    if grouped.len() < 2 {
+        parts.extend(grouped.iter().map(|_| Vec::new()));
+        kept.extend(grouped);
+        return (kept, parts);
+    }
+    let mut addresses: Vec<String> = Vec::new();
+    let mut topic0s: Vec<String> = Vec::new();
+    for selection in &grouped {
+        for address in selection.addresses() {
+            if !addresses.contains(address) {
+                addresses.push(address.clone());
+            }
+        }
+        for topic0 in &selection.topics[0] {
+            if !topic0s.contains(topic0) {
+                topic0s.push(topic0.clone());
+            }
+        }
+    }
+    kept.push(BuiltLogSelection {
+        emitters: Emitters::Listed(addresses),
+        topics: vec![topic0s],
+    });
+    parts.push(grouped);
+    (kept, parts)
+}
+
+/// Reads `selection` over `blocks`. A grouped selection the provider refuses
+/// as too large is read as the selections it was made of, one request each.
+/// When one block of an address-free selection holding client-filtered
+/// registrations is too large, it is read again the way `by_address` rebuilds
+/// it. A wider range goes back to the caller, whose retry shrinks it first.
+/// Nothing is remembered: the next page asks the same way again.
 pub(super) async fn request_selection_logs(
     client: &JsonRpcClient,
     logger: &BoundLogger,
     blocks: LogBlocks<'_>,
     selection: &BuiltLogSelection,
+    parts: &[BuiltLogSelection],
     by_address: impl FnOnce(&AddressFreeOrigin) -> anyhow::Result<SelectionByAddress>,
 ) -> Result<Vec<RawLog>, RpcError> {
     let error = match request(client, blocks, selection).await {
@@ -152,6 +199,20 @@ pub(super) async fn request_selection_logs(
         Err(error) => error,
     };
     let (from_block, to_block) = blocks.bounds();
+    if parts.len() > 1 && is_answer_too_large(&error) {
+        let logs = request_all(client, blocks, parts).await?;
+        logger.log(
+            Level::TRACE,
+            "The RPC provider couldn't answer the contracts' addresses in one query, so the range was read with one query per contract.",
+            &json!({
+                "fromBlock": from_block,
+                "toBlock": to_block,
+                "requests": parts.len(),
+                "reason": error.to_string(),
+            }),
+        );
+        return Ok(logs);
+    }
     let origin = match &selection.emitters {
         Emitters::Any(origin)
             if from_block == to_block
@@ -188,6 +249,32 @@ pub(super) async fn request_selection_logs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn listed(addresses: &[&str], topics: &[&[&str]]) -> BuiltLogSelection {
+        BuiltLogSelection {
+            emitters: Emitters::Listed(addresses.iter().map(|a| a.to_string()).collect()),
+            topics: topics
+                .iter()
+                .map(|values| values.iter().map(|v| v.to_string()).collect())
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn groups_by_address_selections_on_topic0_alone_and_keeps_the_rest() {
+        let token = listed(&["0x01"], &[&["0xaa"], &[], &[], &[]]);
+        let pool = listed(&["0x02"], &[&["0xbb"], &[], &[], &[]]);
+        let filtered = listed(&["0x03"], &[&["0xcc"], &["0xdd"], &[], &[]]);
+        let (selections, parts) =
+            group_by_address(vec![token.clone(), filtered.clone(), pool.clone()]);
+        assert_eq!(
+            (selections, parts),
+            (
+                vec![filtered, listed(&["0x01", "0x02"], &[&["0xaa", "0xbb"]]),],
+                vec![vec![], vec![token, pool]],
+            )
+        );
+    }
 
     #[test]
     fn filter_trims_trailing_match_any_topics_and_omits_absent_addresses() {

@@ -1,10 +1,11 @@
 open Vitest
-open ItemsQueryView.ClientFiltered
+open ItemsQueryView.AddressFree
 
 // Once a contract is fetched client-side, an address it registers below what
-// the address-free partition has already covered gets an address-bound
-// catch-up partition over the gap, bounded by the block the address-free
-// partition is known to have fetched, and gone once it gets there.
+// the address-free need has requested gets one by-address catch-up over the
+// gap, bounded by the block the address-free need was requested through. While
+// the address-free query is open-ended and out, that block isn't known, so the
+// catch-up waits for it to land.
 let scenario = Scenario.make(
   ~configYaml=`
 name: fetch-state-client-filter-catch-up
@@ -42,6 +43,8 @@ indexer.onEvent({ contract: "NftFactory", event: "NftEvent" }, async () => {});
 `,
 )
 
+let nftFactoryConfigAddress = "0x00000000000000000000000000000000000000ff"
+
 let address = n => `0x${n->Int.toString->String.padStart(40, "0")}`->Address.unsafeFromString
 
 type registerOps = {add: Address.t => unit}
@@ -62,71 +65,74 @@ let eventAt = (handled, blockNumber): MockSource.itemMock => {
   handler: async _ => handled->Array.push(blockNumber)->ignore,
 }
 
-// The lowest pending query of each partition: a partition that learned its
-// event density from a response fetches ahead in chunks.
-let nextQueries = (sourceMock: MockSource.t) => {
-  let queries = sourceMock->pendingQueries
-  queries->Array.filter(query =>
-    !(
-      queries->Array.some(other =>
-        other.partitionId === query.partitionId && other.fromBlock < query.fromBlock
-      )
-    )
-  )
-}
+let isAddressFree = (query: MockSource.pendingItemsQuery) =>
+  (query->MockSource.selection).addressFreeContracts != []
+
+let isConfigGroupQuery = (query: ItemsQueryView.AddressFree.t) =>
+  query.addresses->Array.includes(nftFactoryConfigAddress)
+
+let gravatarQueries = (sourceMock: MockSource.t) =>
+  sourceMock->pendingQueries->Array.filter(query => !isConfigGroupQuery(query))
+
+let catchUpQueries = (sourceMock: MockSource.t) =>
+  sourceMock->gravatarQueries->Array.filter(query => query.addresses != [])
 
 let upTo = (~items=[], block) => MockSource.Respond({items, latestFetchedBlockNumber: block})
 
-let addressFree = (~partitionId="2", fromBlock, toBlock) => {
-  partitionId,
+let addressFree = (fromBlock, toBlock) => {
   fromBlock,
   toBlock,
   addresses: [],
-  clientFilteredContracts: Some(["Gravatar"]),
+  addressFreeContracts: ["Gravatar"],
 }
 
-let catchUp = (~partitionId="3", ~address=address(3), fromBlock, toBlock) => {
-  partitionId,
+let catchUp = (~address=address(3), fromBlock, toBlock) => {
   fromBlock,
   toBlock,
   addresses: [address->Address.toString],
-  clientFilteredContracts: None,
+  addressFreeContracts: [],
 }
 
-// Partition 0 registers two dynamic Gravatar addresses at block 3, crossing
-// the threshold of 1: address-free partition 2 fetches Gravatar from the
-// registration block, 3. Partition 0 had covered blocks 1 to 5 already, and its
-// query from block 6, out before the registration, still carries Gravatar's
-// config address.
-let collapseGravatar = async (sourceMock: MockSource.t, ~height=1000) => {
-  sourceMock.resolveGetHeightOrThrow(height)
+// The config group registers two dynamic Gravatar addresses at block 3,
+// crossing the threshold of 1. Its query from 6, out open-ended at a head of
+// 1000, still carries Gravatar's config address, so the two are caught up by
+// address over [3, 1000]. Both reach 1000 and the chain learns a head of
+// `height`: from 1001 Gravatar is fetched address-free.
+let reachAddressFree = async (sourceMock: MockSource.t, ~height=2000) => {
+  sourceMock.resolveGetHeightOrThrow(1000)
   await sourceMock.expectItemsQueries([
     {
       fromBlock: 1,
       reply: upTo(~items=[registerAt(3, [address(1), address(2)])], 5),
     },
   ])
+  await sourceMock.expectItemsQueries([
+    {fromBlock: 6, reply: upTo(1000)},
+    {fromBlock: 3, toBlock: Bounded(1000), reply: upTo(1000)},
+  ])
+  sourceMock.resolveGetHeightOrThrow(height)
 }
 
-// Partition 2 reaches block 50 and has its next, open-ended query out when
-// NftFactory's partition 0 fetches to the head and registers address 3 at
-// `registeredAt`.
+// The address-free need reaches 1050 and has its next, open-ended query out
+// when NftFactory's config group fetches to the head and registers address 3
+// at `registeredAt`.
 let registerWhileAddressFreeQueryIsOpen = async (sourceMock: MockSource.t, ~registeredAt) => {
-  await sourceMock->collapseGravatar
+  await sourceMock->reachAddressFree
   await sourceMock.expectItemsQueries([
-    {fromBlock: 3, reply: upTo(50)},
-    {fromBlock: 6, reply: LeavePending},
+    {fromBlock: 1001, where: isAddressFree, reply: upTo(1050)},
+    {fromBlock: 1001, address: nftFactoryConfigAddress, reply: LeavePending},
   ])
   await sourceMock.expectItemsQueries([
-    {fromBlock: 51, reply: LeavePending},
+    {fromBlock: 1051, where: isAddressFree, reply: LeavePending},
     {
-      fromBlock: 6,
-      reply: upTo(~items=[registerAt(registeredAt, [address(3)])], 1000),
+      fromBlock: 1001,
+      address: nftFactoryConfigAddress,
+      reply: upTo(~items=[registerAt(registeredAt, [address(3)])], 2000),
     },
   ])
 }
 
-describe("FetchState client-side filtering catch-up partitions", () => {
+describe("FetchState client-side filtering catch-up requests", () => {
   scenario->Scenario.it(
     "catches an address registered behind the address-free frontier up to it, then drops the catch-up",
     ~sources=[{chain: 1337}],
@@ -135,119 +141,99 @@ describe("FetchState client-side filtering catch-up partitions", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let handled = []
-      await sourceMock->collapseGravatar
+      await sourceMock->reachAddressFree
       await sourceMock.expectItemsQueries([
-        {fromBlock: 3, reply: upTo(~items=[registerAt(20, [address(3)])], 50)},
-        {fromBlock: 6, reply: LeavePending},
+        {
+          fromBlock: 1001,
+          where: isAddressFree,
+          reply: upTo(~items=[registerAt(1020, [address(3)])], 1050),
+        },
+        {fromBlock: 1001, address: nftFactoryConfigAddress, reply: LeavePending},
       ])
-      // Partition 2's query from 51 goes out before the contractRegister run
-      // registers address 3, so the catch-up stays open while it is.
+      // The address-free query from 1051 goes out before the contractRegister
+      // run registers address 3, so the catch-up waits for it.
       await indexer.waitUntilIdle()
+      let whileOpen = sourceMock->gravatarQueries
       await sourceMock.expectItemsQueries([
-        {reply: LeavePending},
-        {reply: LeavePending},
+        {fromBlock: 1051, where: isAddressFree, reply: upTo(1100)},
+        {fromBlock: 1001, address: nftFactoryConfigAddress, reply: LeavePending},
       ])
-      let withCatchUp = sourceMock->pendingQueries
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 1020, reply: LeavePending},
+        {where: isAddressFree, reply: LeavePending},
+        {fromBlock: 1001, address: nftFactoryConfigAddress, reply: LeavePending},
+      ])
+      let withCatchUp = sourceMock->catchUpQueries
 
       await sourceMock.expectItemsQueries([
-        {fromBlock: 20, reply: upTo(~items=[handled->eventAt(30)], 50)},
-        {fromBlock: 6, reply: upTo(1000)},
-      ])
-      // Both reach 100 together, leaving the catch-up nothing to cover.
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 51, reply: upTo(100)},
-        {fromBlock: 51, reply: upTo(100)},
+        {fromBlock: 1020, reply: upTo(~items=[handled->eventAt(1030)], 1100)},
+        {where: isAddressFree, reply: LeavePending},
+        {fromBlock: 1001, address: nftFactoryConfigAddress, reply: upTo(2000)},
       ])
       await indexer.waitUntilIdle()
 
       t.expect(
-        (withCatchUp, handled, sourceMock->nextQueries),
-        ~message="the catch-up fetches only the new address, and once level with partition 2 only partition 2 is left",
-      ).toEqual((
-        [
-          {
-            fromBlock: 6,
-            toBlock: Unbounded,
-            addresses: [
-              "0x00000000000000000000000000000000000000ff",
-              "0x2b2f78c5bf6d9c12ee1225d5f374aa91204580c3",
-            ],
-            clientFilteredContracts: None,
-          },
-          addressFree(51, Unbounded),
-          catchUp(20, Unbounded),
-        ],
-        [30],
-        [addressFree(101, Bounded(187))],
-      ))
+        (whileOpen, withCatchUp, handled, sourceMock->catchUpQueries),
+        ~message="the catch-up fetches only the new address up to the address-free frontier, then it is gone",
+      ).toEqual(([addressFree(1051, Unbounded)], [catchUp(1020, Bounded(1100))], [1030], []))
     },
   )
 
   scenario->Scenario.it(
-    "gives each successive registration its own catch-up partition",
+    "gives each successive registration its own catch-up",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
     ~maxAddrInPartition=10,
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await sourceMock->collapseGravatar
+      await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=1020)
+      await indexer.waitUntilIdle()
       await sourceMock.expectItemsQueries([
-        {fromBlock: 3, reply: upTo(~items=[registerAt(20, [address(3)])], 50)},
-        {fromBlock: 6, reply: LeavePending},
+        {fromBlock: 1051, where: isAddressFree, reply: upTo(1100)},
       ])
       await sourceMock.expectItemsQueries([
         {
-          fromBlock: 20,
-          reply: upTo(~items=[registerAt(30, [address(4)])], 40),
+          fromBlock: 1020,
+          toBlock: Bounded(1100),
+          reply: upTo(~items=[registerAt(1030, [address(4)])], 1100),
         },
-        {fromBlock: 51, reply: LeavePending},
+      ])
+      await indexer.waitUntilIdle()
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 1101, where: isAddressFree, reply: upTo(1150)},
       ])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 41, reply: LeavePending},
-        {reply: LeavePending},
+        {fromBlock: 1030, reply: LeavePending},
+        {fromBlock: 1151, where: isAddressFree, reply: LeavePending},
       ])
 
       t.expect(
-        sourceMock->pendingQueries->Array.filter(query => query.partitionId !== "0"),
-        ~message="address 4 starts its own catch-up at its block; partition 2 keeps its id",
-      ).toEqual([
-        addressFree(51, Unbounded),
-        catchUp(41, Unbounded),
-        catchUp(~partitionId="4", ~address=address(4), 30, Unbounded),
-      ])
+        sourceMock->catchUpQueries,
+        ~message="address 4 is caught up from its block to what the address-free need has requested",
+      ).toEqual([catchUp(~address=address(4), 1030, Bounded(1150))])
     },
   )
 
   scenario->Scenario.it(
-    "leaves a catch-up unbounded while the address-free query is open-ended, then bounds it at what that query covered",
+    "holds a catch-up while the address-free query is open-ended, then bounds it at what that query covered",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
     ~maxAddrInPartition=10,
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=20)
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 51, reply: LeavePending},
-        {fromBlock: 20, reply: LeavePending},
-      ])
-      let whileOpen = sourceMock->pendingQueries
+      await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=1020)
+      await indexer.waitUntilIdle()
+      let whileOpen = sourceMock->gravatarQueries
 
       await sourceMock.expectItemsQueries([
-        {fromBlock: 51, reply: upTo(120)},
-        {fromBlock: 20, reply: upTo(40)},
+        {fromBlock: 1051, where: isAddressFree, reply: upTo(1120)},
       ])
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 121, reply: LeavePending},
-        {fromBlock: 41, reply: LeavePending},
-      ])
+      await sourceMock.expectItemsQueries([{fromBlock: 1020, reply: LeavePending}])
 
       t.expect(
-        (whileOpen, sourceMock->pendingQueries),
-        ~message="no bound is guessed while partition 2's query is open-ended; then the catch-up stops at 120",
-      ).toEqual((
-        [addressFree(51, Unbounded), catchUp(20, Unbounded)],
-        [addressFree(121, Unbounded), catchUp(41, Bounded(120))],
-      ))
+        (whileOpen, sourceMock->gravatarQueries),
+        ~message="no bound is guessed while the address-free query is open-ended; then the catch-up stops at 1120",
+      ).toEqual(([addressFree(1051, Unbounded)], [catchUp(1020, Bounded(1120))]))
     },
   )
 
@@ -256,141 +242,92 @@ describe("FetchState client-side filtering catch-up partitions", () => {
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
     ~maxAddrInPartition=10,
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=20)
+      await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=1020)
+      await indexer.waitUntilIdle()
       await sourceMock.expectItemsQueries([
         {
-          fromBlock: 51,
-          reply: Respond({items: [], latestFetchedBlockNumber: 1100, knownHeight: 1500}),
+          fromBlock: 1051,
+          where: isAddressFree,
+          reply: Respond({items: [], latestFetchedBlockNumber: 2100, knownHeight: 2500}),
         },
-        {fromBlock: 20, reply: upTo(40)},
       ])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1101, reply: LeavePending},
-        {fromBlock: 41, reply: LeavePending},
-        {fromBlock: 1001, reply: LeavePending},
+        {fromBlock: 1020, reply: LeavePending},
+        {fromBlock: 2001, address: nftFactoryConfigAddress, reply: LeavePending},
       ])
-      t.expect(sourceMock->pendingQueries).toEqual([
+      t.expect(sourceMock->pendingQueries->Array.filter(query => query.addresses != [])).toEqual([
+        catchUp(1020, Bounded(2100)),
         {
-          fromBlock: 1001,
+          fromBlock: 2001,
           toBlock: Unbounded,
-          addresses: ["0x00000000000000000000000000000000000000ff"],
-          clientFilteredContracts: None,
+          addresses: [nftFactoryConfigAddress],
+          addressFreeContracts: [],
         },
-        addressFree(1101, Unbounded),
-        catchUp(41, Bounded(1100)),
       ])
     },
   )
 
   scenario->Scenario.it(
-    "drops an open-ended catch-up that comes back past the block the address-free partition reached",
+    "processes an event both the catch-up and the address-free query fetched once, then drops the catch-up",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
     ~maxAddrInPartition=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let handled = []
-      await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=20)
+      await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=1020)
+      await indexer.waitUntilIdle()
       await sourceMock.expectItemsQueries([
-        {fromBlock: 51, reply: upTo(~items=[handled->eventAt(60)], 120)},
-        {fromBlock: 20, reply: LeavePending},
+        {
+          fromBlock: 1051,
+          where: isAddressFree,
+          reply: upTo(~items=[handled->eventAt(1060)], 1120),
+        },
       ])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 20, reply: upTo(~items=[handled->eventAt(60)], 150)},
-        {reply: LeavePending},
+        {fromBlock: 1020, reply: upTo(~items=[handled->eventAt(1060)], 1120)},
       ])
       await indexer.waitUntilIdle()
 
       t.expect(
-        (handled, sourceMock->nextQueries),
-        ~message="the overlap both partitions fetched is processed once, and the catch-up is gone",
-      ).toEqual(([60], [addressFree(121, Bounded(207))]))
+        (handled, sourceMock->catchUpQueries),
+        ~message="the overlap both requests fetched is processed once, and the catch-up is gone",
+      ).toEqual(([1060], []))
     },
   )
 
   scenario->Scenario.it(
-    "keeps a catch-up unbounded when its own response lands first, then bounds it at what the address-free query covered",
+    "keeps a catch-up going to its bound after a partial response",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
     ~maxAddrInPartition=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let handled = []
-      await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=20)
+      await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=1020)
+      await indexer.waitUntilIdle()
       await sourceMock.expectItemsQueries([
-        {fromBlock: 20, reply: upTo(~items=[handled->eventAt(60)], 80)},
-        {fromBlock: 51, reply: LeavePending},
+        {fromBlock: 1051, where: isAddressFree, reply: upTo(1200)},
       ])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 81, reply: LeavePending},
-        {fromBlock: 51, reply: LeavePending},
-      ])
-      let aheadOfAddressFree = sourceMock->pendingQueries
-
-      // Routed before address 3 existed, partition 2's query carries none of
-      // its events.
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 51, reply: upTo(120)},
-        {fromBlock: 81, reply: upTo(100)},
+        {fromBlock: 1020, toBlock: Bounded(1200), reply: upTo(1080)},
       ])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 101, reply: LeavePending},
-        {fromBlock: 121, reply: LeavePending},
-      ])
-      let bounded = sourceMock->pendingQueries
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 101, reply: upTo(120)},
-        {fromBlock: 121, reply: LeavePending},
+        {
+          fromBlock: 1081,
+          toBlock: Bounded(1200),
+          reply: upTo(~items=[handled->eventAt(1085)], 1200),
+        },
+        {fromBlock: 1201, where: isAddressFree, reply: LeavePending},
       ])
       await indexer.waitUntilIdle()
 
       t.expect(
-        (aheadOfAddressFree, bounded, handled, sourceMock->pendingQueries),
-        ~message="the catch-up runs past partition 2 unbounded, stops at the 120 it covered, and block 60 is processed once",
-      ).toEqual((
-        [addressFree(51, Unbounded), catchUp(81, Unbounded)],
-        [addressFree(121, Unbounded), catchUp(101, Bounded(120))],
-        [60],
-        [addressFree(121, Unbounded)],
-      ))
-    },
-  )
-
-  scenario->Scenario.it(
-    "keeps a catch-up that ran past the address-free frontier until its last query lands",
-    ~sources=[{chain: 1337}],
-    ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
-    async (~t, ~indexer, ~source) => {
-      let sourceMock = source(1337)
-      let handled = []
-      await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=20)
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 20, reply: upTo(80)},
-        {fromBlock: 51, reply: LeavePending},
-      ])
-      // Partition 2 settles at 70, below the 80 the catch-up already passed,
-      // while the catch-up's next query is still out.
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 81, reply: LeavePending},
-        {fromBlock: 51, reply: upTo(70)},
-      ])
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 81, reply: upTo(~items=[handled->eventAt(85)], 90)},
-        {fromBlock: 71, reply: LeavePending},
-      ])
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 71, reply: upTo(~items=[handled->eventAt(85)], 200)},
-      ])
-      await sourceMock.expectItemsQueries([{reply: LeavePending}])
-      await indexer.waitUntilIdle()
-
-      t.expect(
-        (handled, sourceMock->nextQueries),
-        ~message="the catch-up's last response still lands, its event is processed once, and the catch-up asks nothing more",
-      ).toEqual(([85], [addressFree(201, Unbounded)]))
+        (handled, sourceMock->catchUpQueries),
+        ~message="the catch-up's last response lands, its event is processed once, and the catch-up asks nothing more",
+      ).toEqual(([1085], []))
     },
   )
 
@@ -399,19 +336,23 @@ describe("FetchState client-side filtering catch-up partitions", () => {
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
     ~maxAddrInPartition=10,
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      // Registered at 60, above partition 2's frontier of 50, but partition 2's
-      // query from 51 went out before the address existed.
-      await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=60)
+      // Registered at 1060, above the address-free frontier of 1050, but the
+      // address-free query from 1051 went out before the address existed.
+      await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=1060)
+      await indexer.waitUntilIdle()
       await sourceMock.expectItemsQueries([
-        {fromBlock: 51, reply: LeavePending},
-        {reply: LeavePending},
+        {fromBlock: 1051, where: isAddressFree, reply: upTo(1120)},
+      ])
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 1121, where: isAddressFree, reply: LeavePending},
+        {fromBlock: 1060, reply: LeavePending},
       ])
 
-      t.expect(sourceMock->pendingQueries).toEqual([
-        addressFree(51, Unbounded),
-        catchUp(60, Unbounded),
+      t.expect(sourceMock->gravatarQueries).toEqual([
+        catchUp(1060, Bounded(1120)),
+        addressFree(1121, Unbounded),
       ])
     },
   )
@@ -423,32 +364,44 @@ describe("FetchState client-side filtering catch-up partitions", () => {
     ~maxAddrInPartition=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      // Partition 2 fetches to the head it knows, 50, and waits there.
-      await sourceMock->collapseGravatar(~height=50)
+      // The address-free need fetches to the head it knows, 1300, and waits
+      // there.
+      await sourceMock->reachAddressFree(~height=1300)
       await sourceMock.expectItemsQueries([
-        {fromBlock: 3, reply: upTo(50)},
-        {fromBlock: 6, reply: LeavePending},
+        {fromBlock: 1001, where: isAddressFree, reply: upTo(1300)},
+        {fromBlock: 1001, address: nftFactoryConfigAddress, reply: LeavePending},
       ])
-      // Partition 0's query comes back past that head, registering address 3
-      // at 60. Partition 2's query from 51 goes out before the contractRegister
-      // run registers it, so address 3 gets a catch-up of its own.
+      // The config group's query comes back past that head, registering
+      // address 3 at 1360. The address-free query from 1301 goes out before
+      // the contractRegister run registers it, so address 3 gets a catch-up
+      // once that query lands.
       await sourceMock.expectItemsQueries([
         {
-          fromBlock: 6,
+          fromBlock: 1001,
+          address: nftFactoryConfigAddress,
           reply: Respond({
-            items: [registerAt(60, [address(3)])],
-            latestFetchedBlockNumber: 100,
-            knownHeight: 100,
+            items: [registerAt(1360, [address(3)])],
+            latestFetchedBlockNumber: 1400,
+            knownHeight: 2000,
           }),
         },
       ])
-      await sourceMock.expectItemsQueries([{fromBlock: 51, reply: LeavePending}])
       await indexer.waitUntilIdle()
-
-      t.expect(sourceMock->pendingQueries).toEqual([
-        addressFree(51, Unbounded),
-        catchUp(60, Unbounded),
+      let whileOpen = sourceMock->gravatarQueries
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 1301, where: isAddressFree, reply: upTo(1500)},
+        {fromBlock: 1401, address: nftFactoryConfigAddress, reply: LeavePending},
       ])
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 1360, reply: LeavePending},
+        {fromBlock: 1501, where: isAddressFree, reply: LeavePending},
+        {fromBlock: 1401, address: nftFactoryConfigAddress, reply: LeavePending},
+      ])
+
+      t.expect((whileOpen, sourceMock->catchUpQueries)).toEqual((
+        [addressFree(1301, Unbounded)],
+        [catchUp(1360, Bounded(1500))],
+      ))
     },
   )
 })

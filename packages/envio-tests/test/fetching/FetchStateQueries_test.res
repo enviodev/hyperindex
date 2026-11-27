@@ -26,14 +26,12 @@ type Seen {
 `
 
 type queryShape = {
-  partitionId: string,
   fromBlock: int,
   toBlock: MockSource.toBlock,
   addresses: array<string>,
 }
 
 let shapeOf = (query: MockSource.pendingItemsQuery) => {
-  partitionId: query.partitionId,
   fromBlock: query.fromBlock,
   toBlock: query.toBlock,
   addresses: query->MockSource.addresses->Array.map(Address.toString),
@@ -45,7 +43,7 @@ let scenario = Scenario.make(~configYaml=configYaml(), ~schema)
 
 describe("FetchState queries over the indexer loop", () => {
   scenario->Scenario.it(
-    "Waits for a height, queries once per partition, then waits for a new block at the head",
+    "Waits for a height, queries once, then waits for a new block at the head",
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
@@ -230,7 +228,7 @@ describe("FetchState queries over the indexer loop", () => {
   )
 
   let secondAddress = "0x1111111111111111111111111111111111111111"
-  let twoPartitions = (~endBlock) =>
+  let twoGroups = (~endBlock) =>
     Scenario.make(
       ~configYaml=`
 name: fetch-state-queries-ceiling
@@ -253,13 +251,14 @@ chains:
       ~schema,
     )
 
-  // Partition "0" holds the second address, so its 15 buffered items stay
-  // unprocessable until partition "1" catches up to them.
-  let proposesPastFullBuffer = async (~source: int => MockSource.t, ~toBlock) => {
+  // The second address's group answers first, so its 15 buffered items stay
+  // unprocessable until the static address's group catches up to them.
+  let proposesPastFullBuffer = async (~source: int => MockSource.t, ~head, ~toBlock) => {
     let sync = source(1337)
-    sync.resolveGetHeightOrThrow(30)
+    sync.resolveGetHeightOrThrow(head)
     await sync.expectItemsQueries([
       {
+        address: secondAddress,
         fromBlock: 0,
         toBlock,
         reply: Respond({
@@ -275,7 +274,7 @@ chains:
     sync->pendingShapes
   }
 
-  twoPartitions(
+  twoGroups(
     ~endBlock="\n    end_block: 25",
   )->Scenario.it(
     "Proposes a query up to the end block while the buffer is past its target",
@@ -284,7 +283,7 @@ chains:
     ~maxAddrInPartition=1,
     async (~t, ~indexer as _, ~source) => {
       t.expect(
-        await proposesPastFullBuffer(~source=chain => source(chain), ~toBlock=Bounded(25)),
+        await proposesPastFullBuffer(~source=chain => source(chain), ~head=30, ~toBlock=Bounded(25)),
       ).toEqual([
         {
           fromBlock: 0,
@@ -295,7 +294,9 @@ chains:
     },
   )
 
-  twoPartitions(
+  // A head far past the buffer keeps the chain in backfill, where each group
+  // has a request of its own.
+  twoGroups(
     ~endBlock="",
   )->Scenario.it(
     "Proposes an open-ended query while the buffer is past its target",
@@ -304,7 +305,7 @@ chains:
     ~maxAddrInPartition=1,
     async (~t, ~indexer as _, ~source) => {
       t.expect(
-        await proposesPastFullBuffer(~source=chain => source(chain), ~toBlock=Unbounded),
+        await proposesPastFullBuffer(~source=chain => source(chain), ~head=1000, ~toBlock=Unbounded),
       ).toEqual([
         {
           fromBlock: 0,

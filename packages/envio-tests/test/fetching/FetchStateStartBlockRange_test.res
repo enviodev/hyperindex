@@ -45,12 +45,14 @@ type queryShape = {
   events: array<string>,
 }
 
+let eventNames = ["Transfer", "Approval"]
+
 let pendingShapes = (source: MockSource.t) =>
   source.pendingItemsQueries->Array.map(query => {
     fromBlock: query.fromBlock,
     toBlock: query.toBlock,
-    events: (query->MockSource.selection).onEventRegistrations->Array.map(registration =>
-      registration.eventConfig.name
+    events: (query->MockSource.selection).onEventRegistrationIndexes->Array.map(index =>
+      eventNames->Array.getUnsafe(index)
     ),
   })
 

@@ -95,7 +95,7 @@ let dynamicAddressRows = async (indexer: IndexerRunner.t) =>
 
 let sources: array<Scenario.sourceMock> = [{chain: 1337, autoHeight: 1000}]
 
-// Answers partition "0"'s first query up to `latestFetchedBlockNumber` with
+// Answers the config group's first query up to `latestFetchedBlockNumber` with
 // `items`, then reads the queries the registrations leave the chain issuing.
 let registerInFirstResponse = async (
   sourceMock: MockSource.t,
@@ -109,7 +109,7 @@ let registerInFirstResponse = async (
       reply: Respond({items, latestFetchedBlockNumber}),
     },
   ])
-  // The partition's next query goes out with the response; the registrations
+  // The group's next query goes out with the response; the registrations
   // land once the contractRegister run over the response's blocks ends.
   await indexer.waitUntilIdle()
   await sourceMock.expectItemsQueries([
@@ -127,7 +127,7 @@ let fetchPendingAndReadRows = async (sourceMock: MockSource.t, indexer: IndexerR
   await dynamicAddressRows(indexer)
 }
 
-let staticPartitionQuery = (~fromBlock=101, ~toBlock=MockSource.Bounded(800), addresses) => {
+let staticGroupQuery = (~fromBlock=101, ~toBlock=MockSource.Bounded(800), addresses) => {
   fromBlock,
   toBlock,
   addresses: addresses->Array.concat([gravatar])->Array.toSorted(String.compare),
@@ -135,7 +135,7 @@ let staticPartitionQuery = (~fromBlock=101, ~toBlock=MockSource.Bounded(800), ad
 
 describe("Dynamic contract registration", () => {
   scenario->Scenario.it(
-    "leaves the partitions as they were when a contractRegister registers nothing",
+    "leaves the groups as they were when a contractRegister registers nothing",
     ~sources,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
@@ -144,7 +144,7 @@ describe("Dynamic contract registration", () => {
         [register(~blockNumber=10, "NoSuchContract", address1)],
       )
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
-        [staticPartitionQuery([])],
+        [staticGroupQuery([])],
         [],
       ))
     },
@@ -160,7 +160,7 @@ describe("Dynamic contract registration", () => {
         [register(~blockNumber=10, "Gravatar", gravatar)],
       )
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
-        [staticPartitionQuery([])],
+        [staticGroupQuery([])],
         [],
       ))
     },
@@ -206,7 +206,7 @@ describe("Dynamic contract registration", () => {
         sourceMock.pendingItemsQueries->summarize,
         await dynamicAddressRows(indexer),
       )).toEqual((
-        [staticPartitionQuery(~fromBlock=901, ~toBlock=Bounded(1000), [])],
+        [staticGroupQuery(~fromBlock=901, ~toBlock=Bounded(1000), [])],
         [(address1, "UnknownContract", 10), (address1, "UntrackedContract", 200)],
       ))
     },
@@ -223,7 +223,7 @@ describe("Dynamic contract registration", () => {
         [register(~blockNumber=10, "UnknownContract", gravatar)],
       )
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
-        [staticPartitionQuery([])],
+        [staticGroupQuery([])],
         [(gravatar, "UnknownContract", 10)],
       ))
     },
@@ -243,8 +243,8 @@ describe("Dynamic contract registration", () => {
       )
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
         [
-          staticPartitionQuery([]),
           {fromBlock: 5, toBlock: Bounded(800), addresses: [address1]},
+          staticGroupQuery([]),
         ],
         [(address2, "UnknownContract", 5), (address1, "Gravatar", 5)],
       ))
@@ -266,9 +266,9 @@ describe("Dynamic contract registration", () => {
       )
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
         [
-          staticPartitionQuery([]),
           {fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
           {fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
+          staticGroupQuery([]),
         ],
         [(address1, "Gravatar", 10), (address1, "NftFactory", 10)],
       ))
@@ -290,8 +290,8 @@ describe("Dynamic contract registration", () => {
       )
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
         [
-          staticPartitionQuery([]),
           {fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
+          staticGroupQuery([]),
         ],
         [(address1, "UnknownContract", 10), (address1, "Gravatar", 10)],
       ))
@@ -313,12 +313,12 @@ describe("Dynamic contract registration", () => {
       )
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
         [
-          staticPartitionQuery([]),
           {
             fromBlock: 10,
             toBlock: Bounded(800),
             addresses: [address1, address2],
           },
+          staticGroupQuery([]),
         ],
         [(address1, "Gravatar", 10), (address2, "Gravatar", 10)],
       ))
@@ -339,8 +339,8 @@ describe("Dynamic contract registration", () => {
       )
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
         [
-          staticPartitionQuery([]),
           {fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
+          staticGroupQuery([]),
         ],
         [(address1, "Gravatar", 10)],
       ))
@@ -348,7 +348,7 @@ describe("Dynamic contract registration", () => {
   )
 
   scenario->Scenario.it(
-    "splits a batch of registrations over maxAddrInPartition into several partitions",
+    "joins a batch of registrations to the open group until it is full, then starts a new group",
     ~sources,
     ~maxAddrInPartition=3,
     async (~t, ~indexer, ~source) => {
@@ -363,19 +363,15 @@ describe("Dynamic contract registration", () => {
         ],
       )
       t.expect(queries).toEqual([
-        staticPartitionQuery([]),
-        {
-          fromBlock: 2,
-          toBlock: Bounded(800),
-          addresses: [address1, address2, address3],
-        },
-        {fromBlock: 2, toBlock: Bounded(800), addresses: [address4]},
+        {fromBlock: 2, toBlock: Bounded(800), addresses: [address1, address2]},
+        {fromBlock: 2, toBlock: Bounded(800), addresses: [address3, address4]},
+        staticGroupQuery([]),
       ])
     },
   )
 
   scenario->Scenario.it(
-    "keeps each contract's registrations in partitions of their own",
+    "keeps each contract's registrations in groups of their own",
     ~sources,
     ~maxAddrInPartition=3,
     async (~t, ~indexer, ~source) => {
@@ -390,15 +386,15 @@ describe("Dynamic contract registration", () => {
         ],
       )
       t.expect(queries).toEqual([
-        staticPartitionQuery([]),
         {fromBlock: 2, toBlock: Bounded(800), addresses: [address1, address4]},
         {fromBlock: 2, toBlock: Bounded(800), addresses: [address2, address3]},
+        staticGroupQuery([]),
       ])
     },
   )
 
   scenario->Scenario.it(
-    "groups a batch's registrations into one partition unless they are too far apart",
+    "catches a batch's registrations up in one request however far apart they are",
     ~sources=[{chain: 1337, autoHeight: 1_000_000}],
     async (~t, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
@@ -423,20 +419,15 @@ describe("Dynamic contract registration", () => {
         },
       ])
       await sourceMock.expectItemsQueries([{reply: LeavePending}])
-      let earlyAddresses = [address1, address2]
+      let registered = [address1, address2, address3]
       t.expect(
         (first, sourceMock.pendingItemsQueries->summarize),
-        ~message="the far registration waits in a partition of its own until the earlier ones catch up",
+        ~message="the registrations catch up to where the group was asked through, then fetch with it",
       ).toEqual((
-        [{fromBlock: 2, toBlock: Bounded(999_800), addresses: earlyAddresses}],
+        [{fromBlock: 2, toBlock: Bounded(400_000), addresses: registered}],
         [
-          staticPartitionQuery(~fromBlock=400_001, ~toBlock=Bounded(999_800), []),
-          {
-            fromBlock: 100_001,
-            toBlock: Bounded(999_800),
-            addresses: earlyAddresses,
-          },
-          {fromBlock: 300_000, toBlock: Bounded(999_800), addresses: [address3]},
+          {fromBlock: 100_001, toBlock: Bounded(400_000), addresses: registered},
+          staticGroupQuery(~fromBlock=400_001, ~toBlock=Bounded(999_800), registered),
         ],
       ))
     },
@@ -491,10 +482,10 @@ describe("Dynamic contract registration", () => {
         indexer.infoAndAboveLogs()->Array.filter(({msg}) => msg->String.startsWith("Skipping")),
       )).toEqual((
         [
-          staticPartitionQuery([]),
-          {fromBlock: 101, toBlock: Bounded(800), addresses: [nftFactory]},
+          {fromBlock: 5, toBlock: Bounded(9), addresses: [address1]},
           {fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
-          {fromBlock: 5, toBlock: Bounded(800), addresses: [address1]},
+          staticGroupQuery([]),
+          {fromBlock: 101, toBlock: Bounded(800), addresses: [nftFactory]},
         ],
         [],
       ))
@@ -518,12 +509,12 @@ describe("Dynamic contract start blocks", () => {
       )
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
         [
-          staticPartitionQuery(~fromBlock=401, []),
           {
             fromBlock: 150,
             toBlock: Bounded(800),
             addresses: [address1, address2],
           },
+          staticGroupQuery(~fromBlock=401, []),
         ],
         [(address1, "Gravatar", 150), (address2, "Gravatar", 300)],
       ))

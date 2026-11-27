@@ -54,11 +54,14 @@ let sourceLogs = (indexer: IndexerRunner.t) =>
 let switchCount = (indexer: IndexerRunner.t) =>
   indexer.infoAndAboveLogs()->Array.filter(({msg}) => msg == "Switching data-source")->Array.length
 
-// Two addresses, one partition each, so one query can still be in flight on a
-// source while the other partition's wait holds it.
-let twoPartitionScenario = Scenario.make(
+let gravatar = "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+let secondGravatar = "0x1111111111111111111111111111111111111111"
+
+// Two addresses, one group each, so one query can still be in flight on a
+// source while the other group's wait holds it.
+let twoGroupScenario = Scenario.make(
   ~configYaml=`
-name: source-failover-two-partitions
+name: source-failover-two-groups
 rollback_on_reorg: false
 chains:
   - id: 1337
@@ -278,7 +281,7 @@ describe("Source failover", () => {
   )
 
   // https://github.com/enviodev/hyperindex/issues/1829
-  twoPartitionScenario->Scenario.it(
+  twoGroupScenario->Scenario.it(
     "Keeps a source held when a query sent before the hold succeeds",
     ~sources=[
       {chain: 1337, pollingInterval: 50},
@@ -290,37 +293,37 @@ describe("Source failover", () => {
       let sync = source(1337)
       let fallback = source(1337, ~index=1)
       // Sync never answers the first height; the fallback, recruited once that
-      // stalls, reports 200.
-      fallback.setAutoHeight(200)
+      // stalls, reports 2000.
+      fallback.setAutoHeight(2000)
       await indexer.advanceTime(10)
-      // Sync stopped at 100. Partition 1's first range stays in flight on it.
+      // Sync stopped at 1000. The second address's first range stays in flight
+      // on it.
       await sync.expectItemsQueries([
-        {fromBlock: 1, reply: upTo(100)},
-        {fromBlock: 1, reply: LeavePending},
+        {fromBlock: 1, address: gravatar, reply: upTo(1000)},
+        {fromBlock: 1, address: secondGravatar, reply: LeavePending},
       ])
       let waits = [100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 50]
       for retryCount in 0 to waits->Array.length - 1 {
         await sync.expectItemsQueries([
           {
+            address: gravatar,
             retryCount,
-            reply: Fail(Source.BehindHead({blockNumber: 101})),
+            reply: Fail(Source.BehindHead({blockNumber: 1001})),
           },
         ])
         await indexer.advanceTime(waits->Array.getUnsafe(retryCount))
       }
-      await fallback.expectItemsQueries([
-        {fromBlock: 101, retryCount: 13, reply: upTo(200)},
-      ])
+      await fallback.expectItemsQueries([{fromBlock: 1001, retryCount: 13, reply: upTo(2000)}])
 
       // The range it was sent before the hold is one it can serve, which shows
       // nothing about the head.
-      await sync.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
-      await fallback.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
+      await sync.expectItemsQueries([{fromBlock: 1, reply: upTo(1000)}])
+      await fallback.expectItemsQueries([{fromBlock: 1001, reply: LeavePending}])
       t.expect(sync.pendingItemsQueries).toEqual([])
     },
   )
 
-  twoPartitionScenario->Scenario.it(
+  twoGroupScenario->Scenario.it(
     "Doesn't hold a source that was benched while its query was in flight",
     ~sources=[
       {chain: 1337, pollingInterval: 50},
@@ -331,15 +334,24 @@ describe("Source failover", () => {
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       let fallback = source(1337, ~index=1)
-      sync.resolveGetHeightOrThrow(100)
+      sync.resolveGetHeightOrThrow(1000)
       await sync.expectNewHeightCalls(1)
       await sync.expectItemsQueries([
-        {fromBlock: 1, reply: LeavePending},
-        {fromBlock: 1, reply: LeavePending},
+        {fromBlock: 1, address: gravatar, reply: LeavePending},
+        {fromBlock: 1, address: secondGravatar, reply: LeavePending},
       ])
       let behindHead = MockSource.Fail(Source.BehindHead({blockNumber: 1}))
       let waits = [100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000]
-      (sync.pendingItemsQueries->Array.getUnsafe(0)->MockSource.control).fail(
+      let gravatarQuery =
+        sync.pendingItemsQueries
+        ->Array.find(
+          query =>
+            query->MockSource.addresses->Array.map(Address.toString) == [
+                gravatar->String.toLowerCase,
+              ],
+        )
+        ->Option.getOrThrow
+      (gravatarQuery->MockSource.control).fail(
         Source.BehindHead({blockNumber: 1}),
         ~requestStats=[],
       )
@@ -348,12 +360,13 @@ describe("Source failover", () => {
         await sync.expectItemsQueries([{retryCount, reply: behindHead}])
         await indexer.advanceTime(waits->Array.getUnsafe(retryCount))
       }
-      // The attempt that fails the source over is in flight when partition 1's
-      // query benches the source.
+      // The attempt that fails the source over is in flight when the second
+      // address's query benches the source.
       await sync.expectItemsQueries([{retryCount: 12, reply: LeavePending}])
       await sync.expectItemsQueries([
         {
-          fromBlock: 1,
+          address: secondGravatar,
+          retryCount: 0,
           reply: Fail(Source.Unusable({message: "test disable"})),
         },
       ])

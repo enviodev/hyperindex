@@ -30,6 +30,9 @@ type Counter {
 `,
 )
 
+let token1 = "0x0000000000000000000000000000000000000001"
+let token2 = "0x0000000000000000000000000000000000000002"
+
 let rateLimited = resetMs => MockSource.Fail(Source.RateLimited({resetMs: resetMs}))
 
 let rateLimitedSeconds = async (indexer: IndexerRunner.t) =>
@@ -65,19 +68,20 @@ describe("Rate-limit time", () => {
   scenario->Scenario.it(
     "Counts rate limits that overlap in time only once",
     ~sources=[{chain: 1}],
-    // One partition per address, so two queries are throttled at once.
+    // One group per address, and far enough from the head to stay in backfill,
+    // so two queries are throttled at once.
     ~maxAddrInPartition=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
-      mock.resolveGetHeightOrThrow(100)
+      mock.resolveGetHeightOrThrow(1000)
       await mock.expectItemsQueries([
-        {retryCount: 0, reply: rateLimited(300)},
-        {retryCount: 0, reply: rateLimited(300)},
+        {address: token1, retryCount: 0, reply: rateLimited(300)},
+        {address: token2, retryCount: 0, reply: rateLimited(300)},
       ])
       await indexer.advanceTime(300)
       await mock.expectItemsQueries([
-        {retryCount: 1, reply: LeavePending},
-        {retryCount: 1, reply: LeavePending},
+        {address: token1, retryCount: 1, reply: LeavePending},
+        {address: token2, retryCount: 1, reply: LeavePending},
       ])
       // Two 300ms waits side by side are 300ms of the chain being throttled.
       t.expect(await indexer->rateLimitedSeconds).toEqual([(Some("1"), Some(0.3))])

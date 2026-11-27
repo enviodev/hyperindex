@@ -54,7 +54,6 @@ let registering = (
 }
 
 type queryShape = {
-  partitionId: string,
   fromBlock: int,
   toBlock: MockSource.toBlock,
   addresses: array<string>,
@@ -62,7 +61,6 @@ type queryShape = {
 
 let pendingShapes = (source: MockSource.t) =>
   source.pendingItemsQueries->Array.map(query => {
-    partitionId: query.partitionId,
     fromBlock: query.fromBlock,
     toBlock: query.toBlock,
     addresses: query->MockSource.addresses->Array.map(Address.toString),
@@ -71,16 +69,18 @@ let pendingShapes = (source: MockSource.t) =>
 let upTo = latestFetchedBlockNumber => MockSource.Respond({items: [], latestFetchedBlockNumber})
 
 // Every block below sits past the first query's 9800, inside the reorg
-// threshold, where a rollback can reach. Partition "0" holds the static
-// address, fetched to block 9810; partition "1" holds addresses 1 and 2,
-// registered at blocks 9801 and 9802 and caught up to 9810; partition "2"
-// holds address 3, registered at block 9802 and fetched to it.
-let reachTwoPartitions = async (~indexer: IndexerRunner.t, ~sync: MockSource.t) => {
+// threshold, where a rollback can reach. Addresses 1 and 2, registered at
+// blocks 9801 and 9802, join the static address's group at 9900, where its
+// request out at the time ends, and catch up below it; that fills the group.
+// Address 3, registered at block 9802 by the catch-up, gets a group of its own,
+// fetched to 9802. The group's next response finds 9900 reorged.
+let reachTwoGroups = async (~indexer: IndexerRunner.t, ~sync: MockSource.t) => {
   sync.resolveGetHeightOrThrow(10_000)
   await sync.expectItemsQueries([{toBlock: Bounded(9800), reply: upTo(9800)}])
   await indexer.getBatchWritePromise()
   await sync.expectItemsQueries([
     {
+      fromBlock: 9801,
       reply: Respond({
         items: [
           registering(~blockNumber=9801, [address1]),
@@ -91,32 +91,36 @@ let reachTwoPartitions = async (~indexer: IndexerRunner.t, ~sync: MockSource.t) 
     },
   ])
   await indexer.waitUntilIdle()
+  await sync.expectItemsQueries([{fromBlock: 9811, reply: upTo(9900)}])
   await sync.expectItemsQueries([
     {
+      address: address1,
+      fromBlock: 9801,
+      toBlock: Bounded(9900),
       reply: Respond({
         items: [registering(~blockNumber=9802, ~logIndex=1, ~srcAddress=address1, [address3])],
-        latestFetchedBlockNumber: 9810,
+        latestFetchedBlockNumber: 9900,
       }),
     },
-    {reply: LeavePending},
+    {where: query => query.fromBlock > 9900, reply: LeavePending},
   ])
   await indexer.waitUntilIdle()
   await sync.expectItemsQueries([
-    {reply: upTo(9802)},
-    {reply: LeavePending},
-    {reply: LeavePending},
+    {address: address3, reply: upTo(9802)},
+    {where: query => query.fromBlock > 9900, reply: LeavePending},
   ])
   await indexer.getBatchWritePromise()
   await sync.expectItemsQueries([
     {
+      fromBlock: 9901,
       reply: Respond({
         items: [],
-        latestFetchedBlockNumber: 9820,
-        prevRangeLastBlock: {blockNumber: 9810, blockHash: "0x9810a"},
+        latestFetchedBlockNumber: 9918,
+        prevRangeLastBlock: {blockNumber: 9900, blockHash: "0x9900a"},
       }),
     },
-    {reply: LeavePending},
-    {reply: LeavePending},
+    {where: query => query.fromBlock > 9901, reply: LeavePending},
+    {address: address3, reply: LeavePending},
   ])
 }
 
@@ -129,13 +133,13 @@ let hashOf = (~blockNumber, ~validUpTo): BufferPage.observedBlock => {
 }
 
 // Rolls back to `validUpTo` and returns the queries the indexer issues next,
-// besides the one partition "2" had in flight from before the reorg.
+// besides any still in flight from before the reorg.
 let queriesAfterRollback = async (~indexer: IndexerRunner.t, ~sync: MockSource.t, ~validUpTo) => {
-  await reachTwoPartitions(~indexer, ~sync)
+  await reachTwoGroups(~indexer, ~sync)
   let inFlightBeforeReorg = sync.pendingItemsQueries->Array.copy
   await sync.expectBlockHashLookup({
-    blockNumbers: [9801, 9802],
-    reply: [hashOf(~blockNumber=9801, ~validUpTo), hashOf(~blockNumber=9802, ~validUpTo)],
+    blockNumbers: [9801, 9802, 9810],
+    reply: [9801, 9802, 9810]->Array.map(blockNumber => hashOf(~blockNumber, ~validUpTo)),
   })
   await indexer.getRollbackReadyPromise()
   await sync.expectItemsQueries([{where: query => query.fromBlock <= 9803, reply: LeavePending}])
@@ -151,9 +155,9 @@ let sources: array<Scenario.sourceMock> = [
   {chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]},
 ]
 
-describe("FetchState partitions across a rollback", () => {
+describe("FetchState groups across a rollback", () => {
   scenario->Scenario.it(
-    "Keeps a partition behind the rollback target and refetches the one past it with every surviving address",
+    "Keeps a group behind the rollback target and refetches the one past it with every surviving address",
     ~sources,
     ~maxAddrInPartition=3,
     async (~t, ~indexer, ~source) => {
@@ -237,7 +241,7 @@ indexer.contractRegister(
   )
 
   wildcardScenario->Scenario.it(
-    "Keeps the wildcard partition when a rollback undoes the only registration",
+    "Keeps the wildcard request when a rollback undoes the only registration",
     ~sources,
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
@@ -260,13 +264,14 @@ indexer.contractRegister(
         },
       ])
       await sync.expectItemsQueries([
-        {reply: LeavePending},
-        {reply: LeavePending},
+        {fromBlock: 9811, reply: LeavePending},
+        {address: address2, reply: LeavePending},
       ])
       let beforeReorg = sync->pendingShapes
       await indexer.getBatchWritePromise()
       await sync.expectItemsQueries([
         {
+          fromBlock: 9811,
           reply: Respond({
             items: [],
             latestFetchedBlockNumber: 9820,

@@ -200,8 +200,8 @@ Virtual time at the failure: t=0ms, seed 1 (ENVIO_TEST_SEED=1 replays it)
     t=0ms cleared height poll timeout
     t=0ms cleared stall poke
     t=0ms cleared stall timeout
-    t=0ms source(1): items query 1..100 (partition 0)
-    t=0ms source(1): items query 101.. (partition 0)
+    t=0ms source(1): items query 1..100
+    t=0ms source(1): items query 101..
     t=0ms armed throttled write for t=500ms
     t=0ms source(1): height call 2 (pending)
     t=0ms armed height poll timeout for t=60000ms
@@ -261,7 +261,7 @@ describe("A passing scenario body", () => {
               "level": JSON.String("trace"),
               "msg": JSON.String("Started querying"),
               "chainId": JSON.Number(1.),
-              "partitions": JSON.parseOrThrow(`{"0":{"fromBlock":1,"targetBlock":100,"targetEvents":5000}}`),
+              "requests": JSON.parseOrThrow(`[{"fromBlock":1,"toBlock":100,"targetEvents":5000}]`),
             },
           ),
         )

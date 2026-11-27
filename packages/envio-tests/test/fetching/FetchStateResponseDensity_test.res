@@ -1,7 +1,7 @@
 open Vitest
 
-// Two single-address partitions; holding partition "1"'s first probe in flight
-// keeps the chain cold, so every tick hands partition "0" targetBufferSize / 10
+// Two single-address groups; holding the second address's first probe in flight
+// keeps the chain cold, so every tick hands the first targetBufferSize / 10
 // fresh items. Each first probe reserves a 5000-item page, so the pool is at
 // least 100_000 for both to go out at once. An end block gives the probes a
 // toBlock.
@@ -33,37 +33,37 @@ ${endBlock->Option.mapOr("", endBlock =>
 
 let sources: array<Scenario.sourceMock> = [{chain: 1}]
 
+let first = "0x0000000000000000000000000000000000000001"
+let second = "0x0000000000000000000000000000000000000002"
+
 type issuedQuery = {
-  partitionId: string,
   fromBlock: int,
   toBlock: MockSource.toBlock,
 }
 
-// The queries issued since the last call, in arrival order.
-let takeNewQueries = (mock: MockSource.t, ~seen: array<MockSource.pendingItemsQuery>) => {
+// The first address's queries issued since the last call, in arrival order.
+let newFirstAddressQueries = (mock: MockSource.t, ~seen: array<MockSource.pendingItemsQuery>) => {
   mock
   ->MockSource.takeNewPendingItemsQueries(~seen)
+  ->Array.filter(query => query->MockSource.addresses->Array.map(Address.toString) == [first])
   ->Array.map((query): issuedQuery => {
-    partitionId: query.partitionId,
     fromBlock: query.fromBlock,
     toBlock: query.toBlock,
   })
 }
-
-let newPartitionZeroQueries = (mock, ~seen) =>
-  mock->takeNewQueries(~seen)->Array.filter(query => query.partitionId === "0")
 
 let chunk = (~fromBlock, ~toBlock) => {
   fromBlock,
   toBlock: Bounded(toBlock),
 }
 
-// Replies to partition "0"'s query at `fromBlock` with `count(query)` items, all
-// at the block the response reaches.
+// Replies to the first address's query at `fromBlock` with `count(query)` items,
+// all at the block the response reaches.
 let respond = (mock: MockSource.t, ~fromBlock, ~count, ~latestFetchedBlockNumber) =>
   mock.expectItemsQueries([
     {
       fromBlock,
+      address: first,
       reply: RespondWith(
         query => {
           items: Array.fromInitializer(~length=count(query), logIndex => {
@@ -76,25 +76,25 @@ let respond = (mock: MockSource.t, ~fromBlock, ~count, ~latestFetchedBlockNumber
     },
   ])
 
-let startHoldingPartitionOne = async (mock: MockSource.t) => {
+let startHoldingSecondAddress = async (mock: MockSource.t) => {
   mock.resolveGetHeightOrThrow(100_000)
   await mock.expectItemsQueries([
-    {fromBlock: 1, reply: LeavePending},
-    {fromBlock: 1, reply: LeavePending},
+    {fromBlock: 1, address: first, reply: LeavePending},
+    {fromBlock: 1, address: second, reply: LeavePending},
   ])
 }
 
 // Two 10-block probe responses set up 18-block chunks; with 10000 fresh items
 // the blended density decides how many of them go out.
 let chunksAfterTwoResponses = async (mock: MockSource.t, ~firstCount, ~secondCount) => {
-  await mock->startHoldingPartitionOne
+  await mock->startHoldingSecondAddress
   await mock->respond(~fromBlock=1, ~count=firstCount, ~latestFetchedBlockNumber=10)
   await mock->respond(~fromBlock=11, ~count=_ => secondCount, ~latestFetchedBlockNumber=20)
   await mock.expectItemsQueries([
     {fromBlock: 21, reply: LeavePending},
-    {reply: LeavePending},
+    {address: first, reply: LeavePending},
   ])
-  mock->newPartitionZeroQueries(~seen=[])
+  mock->newFirstAddressQueries(~seen=[])
 }
 
 describe("FetchState response density and source range capacity over the indexer loop", () => {
@@ -110,14 +110,14 @@ describe("FetchState response density and source range capacity over the indexer
     ~targetBufferSize=100_000,
     async (~t, ~indexer as _, ~source) => {
       let mock = source(1)
-      await mock->startHoldingPartitionOne
+      await mock->startHoldingSecondAddress
       await mock->respond(~fromBlock=1, ~count=_ => 1000, ~latestFetchedBlockNumber=300)
       await mock->respond(~fromBlock=301, ~count=_ => 10_000, ~latestFetchedBlockNumber=390)
       await mock.expectItemsQueries([
         {fromBlock: 391, reply: LeavePending},
         {fromBlock: 553, reply: LeavePending},
       ])
-      t.expect(mock->newPartitionZeroQueries(~seen=[])).toEqual([
+      t.expect(mock->newFirstAddressQueries(~seen=[])).toEqual([
         chunk(~fromBlock=391, ~toBlock=552),
         chunk(~fromBlock=553, ~toBlock=714),
       ])
@@ -131,24 +131,24 @@ describe("FetchState response density and source range capacity over the indexer
     ~targetBufferSize=100_000,
     async (~t, ~indexer as _, ~source) => {
       let mock = source(1)
-      await mock->startHoldingPartitionOne
+      await mock->startHoldingSecondAddress
       await mock->respond(~fromBlock=1, ~count=_ => 1000, ~latestFetchedBlockNumber=10)
       await mock->respond(~fromBlock=11, ~count=_ => 1000, ~latestFetchedBlockNumber=20)
       await mock.expectItemsQueries([
         {fromBlock: 111, toBlock: Bounded(128), reply: LeavePending},
-        {reply: LeavePending},
+        {address: first, reply: LeavePending},
       ])
       let seen = mock.pendingItemsQueries->Array.copy
       await mock->respond(~fromBlock=21, ~count=_ => 500, ~latestFetchedBlockNumber=25)
       await mock.expectItemsQueries([
         {fromBlock: 26, reply: LeavePending},
         {fromBlock: 174, reply: LeavePending},
-        {reply: LeavePending},
+        {address: first, reply: LeavePending},
       ])
       // Chunks send no item cap, so the 5 blocks it reached are the source's
       // capacity: the gap it left is fetched whole and new chunks shrink to
       // ceil(5 * 1.8) = 9 blocks, filling the pipeline back to 12.
-      t.expect(mock->newPartitionZeroQueries(~seen)).toEqual(
+      t.expect(mock->newFirstAddressQueries(~seen)).toEqual(
         Array.concat(
           [chunk(~fromBlock=26, ~toBlock=38)],
           Array.fromInitializer(

@@ -171,15 +171,24 @@ describe("contractRegister loop", () => {
       })
       await indexer.getRollbackReadyPromise()
       sourceMock.drainPendingItemsQueries()
-      await sourceMock.expectItemsQueries([
-        {reply: LeavePending},
-        {reply: LeavePending},
-      ])
+      await sourceMock.expectItemsQueries([{reply: LeavePending}, {reply: LeavePending}])
       t.expect(
-        sourceMock.pendingItemsQueries
-        ->Array.filter(query => query->MockSource.addresses->Utils.Array.notEmpty)
-        ->Array.map(query => query->MockSource.addresses->Array.map(Address.toString)),
-      ).toEqual([[address(1)->Address.toString]])
+        sourceMock.pendingItemsQueries->Array.map(
+          query => (
+            query.fromBlock,
+            query.toBlock,
+            query->MockSource.addresses->Array.map(Address.toString),
+          ),
+        ),
+        ~message="550's registration is fetched, from its block and in the group; 620's is not",
+      ).toEqual([
+        (550, Bounded(551), [address(1)->Address.toString]),
+        (
+          552,
+          Unbounded,
+          ["0x2b2f78c5bf6d9c12ee1225d5f374aa91204580c3", address(1)->Address.toString],
+        ),
+      ])
     },
   )
 })

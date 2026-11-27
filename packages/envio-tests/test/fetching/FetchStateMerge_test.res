@@ -7,7 +7,7 @@ let address3 = "0x3333333333333333333333333333333333333333"
 
 // Each scenario learns a head far past where it fetches: within 200 blocks of
 // the head, registered contracts are fetched address-free and never get
-// partitions of their own.
+// groups of their own.
 let scenario = Scenario.make(
   ~configYaml=`
 name: fetch-state-merge
@@ -56,26 +56,15 @@ let registering = (
   params: dict{"addresses": addresses->(Utils.magic: array<string> => unknown)},
 }
 
-type queryShape = {
-  partitionId: string,
-  fromBlock: int,
-  toBlock: MockSource.toBlock,
-  addresses: array<string>,
-}
-
-let pendingShapes = (source: MockSource.t) =>
-  source.pendingItemsQueries->Array.map(query => {
-    partitionId: query.partitionId,
-    fromBlock: query.fromBlock,
-    toBlock: query.toBlock,
-    addresses: query->MockSource.addresses->Array.map(Address.toString),
-  })
+let pendingShapes = (source: MockSource.t) => source.pendingItemsQueries->ItemsQueryView.Summary.summarize
 
 let upTo = latestFetchedBlockNumber => MockSource.Respond({items: [], latestFetchedBlockNumber})
 
-describe("FetchState partition merging over the indexer loop", () => {
+describe("FetchState group joins over the indexer loop", () => {
+  // The group's open-ended request is out when the registrations land, so
+  // they join once it does, at the block it reports.
   scenario->Scenario.it(
-    "Merges registrations below an idle partition into it, and gives one that would overflow it a partition of its own",
+    "Joins registrations to the open group, and gives one that would overflow it a group of its own",
     ~sources=[{chain: 1337}],
     ~maxAddrInPartition=3,
     async (~t, ~indexer, ~source) => {
@@ -93,57 +82,39 @@ describe("FetchState partition merging over the indexer loop", () => {
         },
       ])
       await indexer.waitUntilIdle()
-      await sync.expectItemsQueries([
-        {reply: LeavePending},
-        {reply: LeavePending},
-      ])
+      await sync.expectItemsQueries([{fromBlock: 11, reply: LeavePending}])
       let afterFirstRegistrations = sync->pendingShapes
 
+      await sync.expectItemsQueries([{fromBlock: 11, reply: upTo(20)}])
       await sync.expectItemsQueries([
         {
+          address: address1,
+          fromBlock: 1,
+          toBlock: Bounded(20),
           reply: Respond({
             items: [registering(~blockNumber=2, ~logIndex=1, ~srcAddress=address1, [address3])],
-            latestFetchedBlockNumber: 10,
+            latestFetchedBlockNumber: 20,
           }),
         },
-        {reply: LeavePending},
+        {where: query => query.fromBlock > 20, reply: LeavePending},
       ])
       await indexer.waitUntilIdle()
       await sync.expectItemsQueries([
-        {reply: LeavePending},
-        {reply: LeavePending},
-        {reply: LeavePending},
+        {address: address3, reply: LeavePending},
+        {where: query => query.fromBlock > 20, reply: LeavePending},
       ])
       await indexer.advanceTime(1000)
 
-      t.expect((afterFirstRegistrations, sync->pendingShapes)).toEqual((
+      // The group has a density by now, so it goes on in chunks; the first
+      // one shows who is in it.
+      t.expect((afterFirstRegistrations, sync->pendingShapes->Array.slice(~start=0, ~end=2))).toEqual((
+        [{fromBlock: 11, toBlock: Unbounded, addresses: [staticAddress]}],
         [
+          {fromBlock: 2, toBlock: Unbounded, addresses: [address3]},
           {
-            fromBlock: 11,
-            toBlock: Unbounded,
-            addresses: [staticAddress],
-          },
-          {
-            fromBlock: 1,
-            toBlock: Unbounded,
-            addresses: [address1, address2],
-          },
-        ],
-        [
-          {
-            fromBlock: 11,
-            toBlock: Unbounded,
-            addresses: [staticAddress],
-          },
-          {
-            fromBlock: 11,
-            toBlock: Unbounded,
-            addresses: [address1, address2],
-          },
-          {
-            fromBlock: 2,
-            toBlock: Unbounded,
-            addresses: [address3],
+            fromBlock: 21,
+            toBlock: Bounded(38),
+            addresses: [address1, address2, staticAddress],
           },
         ],
       ))
@@ -151,7 +122,7 @@ describe("FetchState partition merging over the indexer loop", () => {
   )
 
   scenario->Scenario.it(
-    "Gives a registration between a bounded partition's range its own partition rather than merging into it",
+    "Gives a registration within a catch-up's range a group of its own rather than joining it",
     ~sources=[{chain: 1337}],
     ~maxAddrInPartition=2,
     async (~t, ~indexer, ~source) => {
@@ -165,61 +136,46 @@ describe("FetchState partition merging over the indexer loop", () => {
           }),
         },
       ])
-      // Partition 0's next query goes out before the contractRegister run
-      // registers address 1, so the address gets a catch-up partition, open
-      // while that query is.
+      // The group's next query goes out before the contractRegister run
+      // registers address 1, so the address joins the group at the block that
+      // query reports and catches up below it.
       await indexer.waitUntilIdle()
+      await sync.expectItemsQueries([{fromBlock: 501, reply: upTo(600)}])
       await sync.expectItemsQueries([
-        {reply: LeavePending},
-        {reply: LeavePending},
+        {address: address1, fromBlock: 100, toBlock: Bounded(600), reply: LeavePending},
+        {where: query => query.fromBlock > 600, reply: LeavePending},
       ])
-      let afterFirstRegistration = sync->pendingShapes
+      // The group goes on in chunks; its first one shows who is in it.
+      let afterFirstRegistration = sync->pendingShapes->Array.slice(~start=0, ~end=2)
 
       await sync.expectItemsQueries([
         {
+          address: address1,
+          fromBlock: 100,
+          toBlock: Bounded(600),
           reply: Respond({
             items: [registering(~blockNumber=200, ~srcAddress=address1, [address2])],
             latestFetchedBlockNumber: 400,
           }),
         },
-        {reply: LeavePending},
+        {where: query => query.fromBlock > 600, reply: LeavePending},
       ])
       await indexer.waitUntilIdle()
       await sync.expectItemsQueries([
-        {reply: LeavePending},
-        {reply: LeavePending},
-        {reply: LeavePending},
+        {address: address1, fromBlock: 401, reply: LeavePending},
+        {address: address2, reply: LeavePending},
+        {where: query => query.fromBlock > 600, reply: LeavePending},
       ])
 
-      t.expect((afterFirstRegistration, sync->pendingShapes)).toEqual((
+      t.expect((afterFirstRegistration, sync->pendingShapes->Array.slice(~start=0, ~end=3))).toEqual((
         [
-          {
-            fromBlock: 501,
-            toBlock: Unbounded,
-            addresses: [staticAddress],
-          },
-          {
-            fromBlock: 100,
-            toBlock: Unbounded,
-            addresses: [address1],
-          },
+          {fromBlock: 100, toBlock: Bounded(600), addresses: [address1]},
+          {fromBlock: 601, toBlock: Bounded(780), addresses: [address1, staticAddress]},
         ],
         [
-          {
-            fromBlock: 501,
-            toBlock: Unbounded,
-            addresses: [staticAddress],
-          },
-          {
-            fromBlock: 401,
-            toBlock: Unbounded,
-            addresses: [address1],
-          },
-          {
-            fromBlock: 200,
-            toBlock: Unbounded,
-            addresses: [address2],
-          },
+          {fromBlock: 200, toBlock: Unbounded, addresses: [address2]},
+          {fromBlock: 401, toBlock: Bounded(600), addresses: [address1]},
+          {fromBlock: 601, toBlock: Bounded(780), addresses: [address1, staticAddress]},
         ],
       ))
     },
@@ -269,21 +225,24 @@ indexer.contractRegister({ contract: "ContractA", event: "Registered" }, async (
 `,
   )
 
+  let isWildcard = (query: MockSource.pendingItemsQuery) => query->MockSource.addresses == []
+
   wildcardScenario->Scenario.it(
-    "Keeps the wildcard partition apart while registrations get partitions of their own",
+    "Keeps the wildcard request apart while registrations get a group of their own",
     ~sources=[{chain: 1337}],
     ~maxAddrInPartition=2,
     async (~t, ~indexer as _, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(10_000)
       await sync.expectItemsQueries([
-        {reply: LeavePending},
-        {reply: LeavePending},
+        {where: isWildcard, reply: LeavePending},
+        {address: contractAAddress, reply: LeavePending},
       ])
       let initial = sync->pendingShapes
       await sync.expectItemsQueries([
-        {reply: LeavePending},
+        {where: isWildcard, reply: LeavePending},
         {
+          address: contractAAddress,
           reply: Respond({
             items: [
               {
@@ -299,9 +258,9 @@ indexer.contractRegister({ contract: "ContractA", event: "Registered" }, async (
         },
       ])
       await sync.expectItemsQueries([
-        {reply: LeavePending},
-        {reply: LeavePending},
-        {reply: LeavePending},
+        {where: isWildcard, reply: LeavePending},
+        {address: contractAAddress, reply: LeavePending},
+        {address: address1, reply: LeavePending},
       ])
       t.expect((initial, sync->pendingShapes)).toEqual((
         [
@@ -310,29 +269,30 @@ indexer.contractRegister({ contract: "ContractA", event: "Registered" }, async (
         ],
         [
           {fromBlock: 0, toBlock: Unbounded, addresses: []},
-          {fromBlock: 11, toBlock: Unbounded, addresses: [contractAAddress]},
           {fromBlock: 2, toBlock: Unbounded, addresses: [address1]},
+          {fromBlock: 11, toBlock: Unbounded, addresses: [contractAAddress]},
         ],
       ))
     },
   )
 
+  // Within 200 blocks of the head, one request carries the wildcard and the
+  // addresses together.
   wildcardScenario->Scenario.it(
-    "Keeps querying a wildcard partition behind the head instead of waiting for a new block",
+    "Keeps querying a wildcard behind the head instead of waiting for a new block",
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       await sync.expectNewHeightCalls(1)
       sync.resolveGetHeightOrThrow(2)
       await sync.expectItemsQueries([
-        {reply: Respond({items: [], latestFetchedBlockNumber: 1})},
-        {reply: Respond({items: [], latestFetchedBlockNumber: 2})},
+        {fromBlock: 0, reply: Respond({items: [], latestFetchedBlockNumber: 1})},
       ])
       await sync.expectItemsQueries([{reply: LeavePending}])
       await indexer.advanceTime(1000)
       await sync.expectNewHeightCalls(0)
       t.expect(sync->pendingShapes).toEqual([
-        {fromBlock: 2, toBlock: Unbounded, addresses: []},
+        {fromBlock: 2, toBlock: Unbounded, addresses: [contractAAddress]},
       ])
     },
   )

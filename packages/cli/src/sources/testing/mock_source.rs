@@ -625,7 +625,9 @@ impl Ledger {
                     .collect::<Vec<_>>()
                     .join("\n")
             ),
-            (None, None) => "\nNo query field tells them apart; tell them apart with `where`.".to_string(),
+            (None, None) => {
+                "\nNo query field tells them apart; tell them apart with `where`.".to_string()
+            }
         };
         format!(
             "expectItemsQueries can reply to more than one pending query with {}:\n{}{suggestion}",
@@ -988,13 +990,8 @@ impl MockSource {
         addresses: Vec<String>,
         known_height: i64,
     ) -> u32 {
-        self.ledger.take_items_query(
-            from_block,
-            to_block,
-            retry_count,
-            addresses,
-            known_height,
-        )
+        self.ledger
+            .take_items_query(from_block, to_block, retry_count, addresses, known_height)
     }
 
     #[napi]

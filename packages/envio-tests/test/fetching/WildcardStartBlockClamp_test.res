@@ -50,6 +50,9 @@ indexer.onEvent({ contract: "Token", event: "Transfer", wildcard: true }, async 
 `,
 )
 
+let ledger = "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+let isWildcard = (query: MockSource.pendingItemsQuery) => query->MockSource.addresses == []
+
 describe("Wildcard contract with a far-ahead start block on one chain of many", () => {
   scenario->Scenario.it(
     "does not hold the other chains behind the alignment clamp",
@@ -69,6 +72,7 @@ describe("Wildcard contract with a far-ahead start block on one chain of many", 
       // pinned at 0% would put on it.
       await wildcardChain.expectItemsQueries([
         {
+          address: ledger,
           fromBlock: 1,
           toBlock: Bounded(99_800),
           reply: Respond({
@@ -79,6 +83,7 @@ describe("Wildcard contract with a far-ahead start block on one chain of many", 
       ])
       await plainChain.expectItemsQueries([
         {
+          address: ledger,
           fromBlock: 1,
           toBlock: Bounded(99_800),
           reply: Respond({
@@ -93,6 +98,7 @@ describe("Wildcard contract with a far-ahead start block on one chain of many", 
           }),
         },
         {
+          where: isWildcard,
           fromBlock: 1,
           toBlock: Bounded(99_800),
           reply: Respond({items: [], latestFetchedBlockNumber: 20_000}),
@@ -103,8 +109,8 @@ describe("Wildcard contract with a far-ahead start block on one chain of many", 
       // The plain chain keeps fetching past the first alignment margin, and the
       // wildcard chain from its frontier too.
       await plainChain.expectItemsQueries([
-        {fromBlock: 20_001, reply: LeavePending},
-        {fromBlock: 20_001, reply: LeavePending},
+        {where: isWildcard, fromBlock: 20_001, reply: LeavePending},
+        {address: ledger, fromBlock: 20_001, reply: LeavePending},
       ])
       await wildcardChain.expectItemsQueries([
         {fromBlock: 30_001, toBlock: Bounded(99_800), reply: LeavePending},

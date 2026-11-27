@@ -1,6 +1,6 @@
 open Vitest
 
-// Transaction handlers fetch through a partition of their own, which a restart
+// Transaction handlers fetch through a need of their own, which a restart
 // rebuilds from the committed progress. Each run counts itself, so a
 // transaction the resumed run reads twice or skips shows in the counts.
 
@@ -16,7 +16,7 @@ chains:
     start_block: 1
     max_reorg_depth: 200
     contracts:
-      # Starts past the head, so only the transaction handler's partition reads.
+      # Starts past the head, so only the transaction handler's need reads.
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
         start_block: 1000000
@@ -65,7 +65,7 @@ let transactions = (~upTo) =>
   })
 
 // Answers every pending query from a chain whose head is `head`, recording
-// where the transaction handler's partition asked to start.
+// where the transaction handler's requests asked to start.
 let answerUpTo = async (~source: MockSource.t, ~head, ~fromBlocks: array<int>) =>
   for _ in 0 to 300 {
     source.pendingItemsQueries
@@ -75,12 +75,14 @@ let answerUpTo = async (~source: MockSource.t, ~head, ~fromBlocks: array<int>) =
       | Bounded(toBlock) => Pervasives.min(toBlock, head)
       | Unbounded => head
       }
-      if query.partitionId === "0" {
+      if (query->MockSource.selection).onTransactionRegistrationIndexes->Utils.Array.notEmpty {
         fromBlocks->Array.push(query.fromBlock)->ignore
       }
       (query->MockSource.control).respond({
         items: [],
-        transactions: query.partitionId === "0"
+        transactions: (
+          query->MockSource.selection
+        ).onTransactionRegistrationIndexes->Utils.Array.notEmpty
           ? transactions(~upTo=head)->Array.filter(transaction =>
               transaction.blockNumber >= query.fromBlock && transaction.blockNumber <= toBlock
             )

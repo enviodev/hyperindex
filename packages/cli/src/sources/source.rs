@@ -16,9 +16,9 @@ use super::failure::{block_u32, ClientError, SourceFailure};
 use super::fuel_hypersync::{self, FuelHyperSyncClient};
 use super::request_stats::RequestStat;
 use super::svm_hypersync::{self, SvmHyperSyncClient};
-use crate::indexing_plan::FetchRequest;
 use crate::chain_buffer::page::Page;
 use crate::chain_buffer::{ChainBuffer, Ecosystem};
+use crate::indexing_plan::FetchRequest;
 use crate::logger::{BoundLogger, Level, Logger};
 
 /// How often a HyperSync source is asked for the height while nothing is
@@ -391,6 +391,7 @@ impl Source {
                         u64::from(to_block).min(known_height)
                     }),
                     interval_key: request.interval_key(),
+                    group_by_address: request.is_head(),
                     on_event_registration_indexes: selection.on_event_registration_indexes,
                     on_block_registration_indexes: selection.on_block_registration_indexes,
                     on_transaction_registration_indexes: selection

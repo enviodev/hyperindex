@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use crate::address_store::client_filtered_contracts::ClientFilteredContracts;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;

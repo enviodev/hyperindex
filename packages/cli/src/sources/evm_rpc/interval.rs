@@ -51,13 +51,7 @@ impl IntervalState {
     }
 
     /// Additive increase: grows this stream's interval, capped at `source_max`.
-    pub fn grow(
-        &self,
-        stream: u32,
-        executed_interval: u64,
-        cfg: &SyncConfig,
-        source_max: u64,
-    ) {
+    pub fn grow(&self, stream: u32, executed_interval: u64, cfg: &SyncConfig, source_max: u64) {
         self.by_stream.lock().unwrap().insert(
             stream,
             (executed_interval + cfg.acceleration_additive).min(source_max),

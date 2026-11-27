@@ -37,23 +37,45 @@ type Seen {
   )
 
 type queryShape = {
-  partitionId: string,
   fromBlock: int,
   toBlock: MockSource.toBlock,
   reservedItems: option<int>,
   addresses: array<string>,
 }
 
+// The items reserved by an open-ended probe. Probes starting at one block are
+// told apart by the order they were started in, which is the order they reached
+// the source.
+let probeReservation = (
+  mock: MockSource.t,
+  ~indexer: IndexerRunner.t,
+  query: MockSource.pendingItemsQuery,
+) =>
+  switch query.toBlock {
+  | Bounded(_) => None
+  | Unbounded =>
+    let isProbeAtSameBlock = (other: MockSource.pendingItemsQuery) =>
+      other.retryCount === 0 && other.fromBlock === query.fromBlock && other.toBlock === Unbounded
+    let earlierProbes =
+      [...mock.repliedItemsQueries, ...mock.pendingItemsQueries]
+      ->Array.filter(other =>
+        other->isProbeAtSameBlock && other->MockSource.queryId < query->MockSource.queryId
+      )
+      ->Array.length
+    indexer
+    ->QueryReservations.startedTicks
+    ->Array.flat
+    ->Array.filter(request => request.fromBlock === query.fromBlock && request.targetBlock === None)
+    ->Array.get(earlierProbes)
+    ->Option.map(request => request.reservedItems)
+  }
+
 // The pending queries, each open-ended probe with the buffer items it reserved.
 let pendingShapes = (source: MockSource.t, ~indexer: IndexerRunner.t) =>
   source.pendingItemsQueries->Array.map(query => {
-    partitionId: query.partitionId,
     fromBlock: query.fromBlock,
     toBlock: query.toBlock,
-    reservedItems: indexer->QueryReservations.probeReservation(
-      ~partitionId=query.partitionId,
-      ~fromBlock=query.fromBlock,
-    ),
+    reservedItems: source->probeReservation(~indexer, query),
     addresses: query->MockSource.addresses->Array.map(Address.toString),
   })
 
@@ -106,12 +128,12 @@ indexer.onEvent({ contract: "Late", event: "TestEvent" }, async () => {});
 
 describe("FetchState next query order", () => {
   staggeredStarts->Scenario.it(
-    "Queries every partition behind the head, furthest behind first",
+    "Queries every group behind the head, furthest behind first",
     ~sources=[{chain: 1337}],
     ~maxAddrInPartition=1,
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
-      sync.resolveGetHeightOrThrow(10)
+      sync.resolveGetHeightOrThrow(100_000)
       await sync.expectItemsQueries([
         {reply: LeavePending},
         {reply: LeavePending},
@@ -144,7 +166,7 @@ describe("FetchState next query order", () => {
 
   let exited = ref(false)
   scenarioWith(~addressCount=4, ~endBlock="\n    end_block: 11")->Scenario.it(
-    "Skips partitions at the head, waits for a block once all reach it, and stops at the end block",
+    "Queries the head in one stream, waits for a block once it reaches it, and stops at the end block",
     ~sources=[{chain: 1337}],
     ~maxAddrInPartition=1,
     ~onExit=() => exited := true,
@@ -152,43 +174,21 @@ describe("FetchState next query order", () => {
       let sync = source(1337)
       await sync.expectNewHeightCalls(1)
       sync.resolveGetHeightOrThrow(10)
-      await sync.expectItemsQueries([
-        {reply: upTo(10)},
-        {reply: upTo(10)},
-        {reply: upTo(6)},
-        {reply: upTo(4)},
-      ])
-      await sync.expectItemsQueries([
-        {reply: LeavePending},
-        {reply: LeavePending},
-      ])
+      await sync.expectItemsQueries([{reply: upTo(6)}])
+      await sync.expectItemsQueries([{reply: LeavePending}])
       await indexer.advanceTime(1000)
       await sync.expectNewHeightCalls(0)
       let behindHead = sync->pendingShapes(~indexer)
 
-      await sync.expectItemsQueries([
-        {reply: upTo(10)},
-        {reply: upTo(10)},
-      ])
+      await sync.expectItemsQueries([{reply: upTo(10)}])
       await sync.expectNewHeightCalls(1)
       let atHead = sync->pendingShapes(~indexer)
 
       sync.resolveGetHeightOrThrow(20)
-      await sync.expectItemsQueries([
-        {reply: LeavePending},
-        {reply: LeavePending},
-        {reply: LeavePending},
-        {reply: LeavePending},
-      ])
+      await sync.expectItemsQueries([{reply: LeavePending}])
       let toEndBlock = sync->pendingShapes(~indexer)
-      await sync.expectItemsQueries([
-        {reply: upTo(11)},
-        {reply: upTo(11)},
-        {reply: upTo(11)},
-        {reply: LeavePending},
-      ])
       await indexer.waitUntilIdle()
-      let exitedBeforeLastPartition = exited.contents
+      let exitedBeforeEndBlock = exited.contents
       await sync.expectItemsQueries([{reply: upTo(11)}])
       await indexer.getBatchWritePromise()
       await indexer.advanceTime(100_000)
@@ -199,50 +199,12 @@ describe("FetchState next query order", () => {
         atHead,
         toEndBlock,
         sync->pendingShapes(~indexer),
-        exitedBeforeLastPartition,
+        exitedBeforeEndBlock,
         exited.contents,
       )).toEqual((
-        [
-          {
-            fromBlock: 7,
-            toBlock: Bounded(11),
-            reservedItems: None,
-            addresses: ["0x0000000000000000000000000000000000000003"],
-          },
-          {
-            fromBlock: 5,
-            toBlock: Bounded(11),
-            reservedItems: None,
-            addresses: ["0x0000000000000000000000000000000000000004"],
-          },
-        ],
+        [{fromBlock: 7, toBlock: Bounded(11), reservedItems: None, addresses}],
         [],
-        [
-          {
-            fromBlock: 11,
-            toBlock: Bounded(11),
-            reservedItems: None,
-            addresses: ["0x0000000000000000000000000000000000000004"],
-          },
-          {
-            fromBlock: 11,
-            toBlock: Bounded(11),
-            reservedItems: None,
-            addresses: ["0x0000000000000000000000000000000000000003"],
-          },
-          {
-            fromBlock: 11,
-            toBlock: Bounded(11),
-            reservedItems: None,
-            addresses: ["0x0000000000000000000000000000000000000002"],
-          },
-          {
-            fromBlock: 11,
-            toBlock: Bounded(11),
-            reservedItems: None,
-            addresses: ["0x0000000000000000000000000000000000000001"],
-          },
-        ],
+        [{fromBlock: 11, toBlock: Bounded(11), reservedItems: None, addresses}],
         [],
         false,
         true,
@@ -262,14 +224,7 @@ describe("FetchState next query order", () => {
         Array.fromInitializer(~length=count, i => {MockSource.blockNumber: from + i, logIndex: 0})
       let chunkRanges = () =>
         sync.pendingItemsQueries->Array.map(
-          query => (
-            query.fromBlock,
-            query.toBlock,
-            indexer->QueryReservations.probeReservation(
-              ~partitionId=query.partitionId,
-              ~fromBlock=query.fromBlock,
-            ),
-          ),
+          query => (query.fromBlock, query.toBlock, sync->probeReservation(~indexer, query)),
         )
       sync.resolveGetHeightOrThrow(1_000_000)
       await sync.expectItemsQueries([

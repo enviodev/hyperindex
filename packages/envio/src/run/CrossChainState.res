@@ -327,7 +327,7 @@ let checkAndFetch = async (
     {
       chainId,
       processingBlockNumber: cs->ChainState.processingBlockNumber,
-      processedDensity: ?cs->ChainState.processedDensity,
+      processedDensity: ?(cs->ChainState.processedDensity),
     }
   })
   let works =

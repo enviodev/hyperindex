@@ -146,7 +146,7 @@ let regenerateAbove = (world, ~rng, ~keepUpTo) => {
     )
     // https://github.com/enviodev/hyperindex/issues/1810
     // Registered again from a later block, often by an emitter in another
-    // partition, so the later registration can reach the indexer first. The
+    // group, so the later registration can reach the indexer first. The
     // address is indexed from its earliest one either way.
     planned->Array.forEach(((_, address)) => {
       let registeredAt = world.registrationBlocks->Dict.getUnsafe(address)
@@ -216,13 +216,26 @@ let expectedHandled = world =>
 // A failed query is retried within the same request until a rollback makes it
 // stale; a retry already sent by then is stale too, and none is sent after.
 type awaitedRetry = {
-  partitionId: string,
+  addresses: array<string>,
   fromBlock: int,
   suggestedToBlock: option<int>,
 }
 
+let lowercaseAddresses = (query: MockSource.pendingItemsQuery) =>
+  query->MockSource.addresses->Array.map(address => address->Address.toString->String.toLowerCase)
+
+// What a query has fetched, for the re-fetch check: each address it names, or
+// the contract's logs address-free when it names none. An address-free need
+// starts from the lowest block its contract's groups were requested through,
+// so it may cover what a by-address query of one of them already fetched.
+let fetchedKeys = query =>
+  switch query->lowercaseAddresses {
+  | [] => ["address-free"]
+  | addresses => addresses
+  }
+
 let isRetryOf = (query: MockSource.pendingItemsQuery, retry) =>
-  retry.partitionId === query.partitionId &&
+  retry.addresses == query->lowercaseAddresses &&
   retry.fromBlock === query.fromBlock &&
   switch retry.suggestedToBlock {
   | Some(toBlock) => query.toBlock === Bounded(toBlock) && query.retryCount === 0
@@ -241,7 +254,7 @@ type fuzz = {
   // In flight when a rollback started: the indexer drops their replies.
   stale: Set.t<MockSource.pendingItemsQuery>,
   awaitedRetries: array<awaitedRetry>,
-  fetchedByPartition: dict<array<(int, int)>>,
+  fetchedByKey: dict<array<(int, int)>>,
   // Registered by a handled log some reply carried, so a query may name them.
   servedRegistrations: Set.t<string>,
   // Blocks a reply told the indexer the hash of, so a reorg can contradict one.
@@ -261,7 +274,7 @@ let note = (fuzz, step) => {
 }
 
 let describeQuery = (query: MockSource.pendingItemsQuery) =>
-  `p${query.partitionId} ${query.fromBlock->Int.toString}..${switch query.toBlock {
+  `${query->fetchedKeys->Array.join(",")} ${query.fromBlock->Int.toString}..${switch query.toBlock {
     | Bounded(toBlock) => toBlock->Int.toString
     | Unbounded => ""
     }}`
@@ -291,13 +304,9 @@ let inspectNewQueries = fuzz =>
       // source to gate it on the address store; else it reads as wildcard.
       if (
         query->MockSource.addresses->Array.length === 0 &&
-          !(
-            (query->MockSource.selection).clientFilteredContracts
-            ->Option.getOr([])
-            ->Array.includes("Gravatar")
-          )
+          !((query->MockSource.selection).addressFreeContracts->Array.includes("Gravatar"))
       ) {
-        fuzz->violate(`${described} names no address and doesn't client-filter Gravatar`)
+        fuzz->violate(`${described} names no address and doesn't fetch Gravatar address-free`)
       }
 
       // A stale query was planned on the orphaned chain, so it answers only
@@ -311,21 +320,26 @@ let inspectNewQueries = fuzz =>
             fuzz->violate(`${described} names ${address}, which no handled log registered`)
           }
         )
-        fuzz.fetchedByPartition
-        ->Dict.get(query.partitionId)
-        ->Option.getOr([])
-        ->Array.forEach(((fetchedFrom, fetchedTo)) =>
-          if (
-            fetchedTo >= query.fromBlock &&
-              switch query.toBlock {
-              | Bounded(toBlock) => fetchedFrom <= toBlock
-              | Unbounded => true
-              }
-          ) {
-            fuzz->violate(
-              `${described} re-fetches ${fetchedFrom->Int.toString}..${fetchedTo->Int.toString}, which its partition already fetched`,
-            )
-          }
+        query
+        ->fetchedKeys
+        ->Array.forEach(key =>
+          fuzz.fetchedByKey
+          ->Dict.get(key)
+          ->Option.getOr([])
+          ->Array.forEach(
+            ((fetchedFrom, fetchedTo)) =>
+              if (
+                fetchedTo >= query.fromBlock &&
+                  switch query.toBlock {
+                  | Bounded(toBlock) => fetchedFrom <= toBlock
+                  | Unbounded => true
+                  }
+              ) {
+                fuzz->violate(
+                  `${described} re-fetches ${fetchedFrom->Int.toString}..${fetchedTo->Int.toString} of ${key}, which was already fetched`,
+                )
+              },
+          )
         )
       }
     }
@@ -374,14 +388,18 @@ let respond = (fuzz, query: MockSource.pendingItemsQuery, ~latest, ~prevRangeLas
     })
     fuzz.observedBlocks->Set.add(latest)
     fuzz.observedBlocks->Set.add(query.fromBlock - 1)
-    let fetched = switch fuzz.fetchedByPartition->Dict.get(query.partitionId) {
-    | Some(fetched) => fetched
-    | None =>
-      let fetched = []
-      fuzz.fetchedByPartition->Dict.set(query.partitionId, fetched)
-      fetched
-    }
-    fetched->Array.push((query.fromBlock, latest))
+    query
+    ->fetchedKeys
+    ->Array.forEach(key => {
+      let fetched = switch fuzz.fetchedByKey->Dict.get(key) {
+      | Some(fetched) => fetched
+      | None =>
+        let fetched = []
+        fuzz.fetchedByKey->Dict.set(key, fetched)
+        fetched
+      }
+      fetched->Array.push((query.fromBlock, latest))
+    })
   }
 }
 
@@ -478,9 +496,9 @@ let completeRollback = async (fuzz, ~seed) => {
   | None => ()
   }
   fuzz->note(`rolled back to ${target->Int.toString}`)
-  fuzz.fetchedByPartition
+  fuzz.fetchedByKey
   ->Dict.keysToArray
-  ->Array.forEach(key => fuzz.fetchedByPartition->Dict.delete(key))
+  ->Array.forEach(key => fuzz.fetchedByKey->Dict.delete(key))
   fuzz.servedRegistrations
   ->Set.toArray
   ->Array.forEach(address =>
@@ -542,7 +560,7 @@ let failRandomly = fuzz =>
     }
     if !(fuzz.stale->Set.has(query)) {
       fuzz.awaitedRetries->Array.push({
-        partitionId: query.partitionId,
+        addresses: query->lowercaseAddresses,
         fromBlock: query.fromBlock,
         suggestedToBlock,
       })
@@ -679,7 +697,7 @@ let fuzzSeed = async (~t: Vitest.testContext, ~indexer, ~source: MockSource.t, ~
     seen: Set.make(),
     awaitedRetries: [],
     stale: Set.make(),
-    fetchedByPartition: Dict.make(),
+    fetchedByKey: Dict.make(),
     servedRegistrations: Set.make(),
     observedBlocks: Set.make(),
     validUpTo: worldEnd,

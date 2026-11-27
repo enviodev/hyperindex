@@ -41,11 +41,7 @@ let newQueries = (mock: MockSource.t, ~indexer, ~chainId, ~seen) =>
   ->Array.map(query => (
     query.fromBlock,
     query.toBlock,
-    indexer->QueryReservations.reservation(
-      ~chainId,
-      ~partitionId=query.partitionId,
-      ~fromBlock=query.fromBlock,
-    ),
+    indexer->QueryReservations.reservation(~chainId, ~fromBlock=query.fromBlock),
   ))
 
 // Chain 1 reaches `leaderFetchedTo` while chain 2's first query is held, then

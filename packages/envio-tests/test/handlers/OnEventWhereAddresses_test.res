@@ -206,10 +206,17 @@ describe("onEvent where chain.<Contract>.addresses", () => {
       async indexer =>
         t.expect(await readRoutedAndQueries(indexer)).toEqual((
           expectedRows,
-          // Only the configured address ever went out, before the registered
-          // one took the contract past the threshold.
-          ([configured->ServedEvmChain.addressTopic], true),
-          ([configured->ServedEvmChain.addressTopic], true),
+          // The first query covers the whole chain with the configured
+          // address. The registered one, past the threshold, is caught up by
+          // address up to there, so no address-free query is left to make.
+          (
+            [configured, registered]->Array.map(ServedEvmChain.addressTopic)->ServedEvmChain.sorted,
+            false,
+          ),
+          (
+            [configured, registered]->Array.map(ServedEvmChain.addressTopic)->ServedEvmChain.sorted,
+            false,
+          ),
         )),
     )
   )

@@ -16,7 +16,7 @@ chains:
     start_block: 1
     max_reorg_depth: 200
     contracts:
-      # Starts past the head, so only the transaction handler's partition reads.
+      # Starts past the head, so only the transaction handler's need reads.
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
         start_block: 1000000
@@ -103,7 +103,9 @@ let answerFromChain = async (
       }
       (query->MockSource.control).respond({
         items: [],
-        transactions: query.partitionId === "0"
+        transactions: (
+          query->MockSource.selection
+        ).onTransactionRegistrationIndexes->Utils.Array.notEmpty
           ? transactions->Array.filter(transaction =>
               transaction.blockNumber >= query.fromBlock && transaction.blockNumber <= toBlock
             )

@@ -38,25 +38,27 @@ let registeringItem = (
   params: dict{"contractAddress": contractAddress->(Utils.magic: string => unknown)},
 }
 
-// Registers `addresses` at block 5, carries every partition to block 100 so the
-// registrations are persisted, and restarts: the restarted chain builds its
-// partitions from the stored static and dynamic addresses together.
+// Registers `addresses` at block 5 from the query of `emitterAddress`, carries
+// every request to block 100 so the registrations are persisted, and restarts:
+// the restarted chain lays out its groups from the stored static and dynamic
+// addresses together.
 let restartWithRegistered = async (
   ~indexer: IndexerRunner.t,
   ~sourceMock: MockSource.t,
   ~emitter,
-  ~otherStartingPartitionIds=[],
-  ~partitionIdsToFinish,
+  ~emitterAddress,
+  ~otherStartingAddresses=[],
   addresses,
 ) => {
-  let finish = (partitionId): MockSource.expectedItemsQuery => {
-    partitionId,
+  let finish = (address): MockSource.expectedItemsQuery => {
+    address,
     reply: Respond({items: [], latestFetchedBlockNumber: 100}),
   }
   await sourceMock.expectItemsQueries(
     [
       (
         {
+          address: emitterAddress,
           fromBlock: 0,
           reply: Respond({
             items: addresses->Array.mapWithIndex((address, logIndex) =>
@@ -66,16 +68,16 @@ let restartWithRegistered = async (
           }),
         }: MockSource.expectedItemsQuery
       ),
-    ]->Array.concat(otherStartingPartitionIds->Array.map(finish)),
+    ]->Array.concat(otherStartingAddresses->Array.map(finish)),
   )
   await sourceMock.expectItemsQueries(
-    partitionIdsToFinish
+    addresses
     ->Array.map(finish)
     ->Array.concat(
-      ["0"]
-      ->Array.concat(otherStartingPartitionIds)
-      ->Array.map((partitionId): MockSource.expectedItemsQuery => {
-        partitionId,
+      [emitterAddress]
+      ->Array.concat(otherStartingAddresses)
+      ->Array.map((address): MockSource.expectedItemsQuery => {
+        address,
         reply: LeavePending,
       }),
     ),
@@ -85,7 +87,7 @@ let restartWithRegistered = async (
   await sourceMock->pendingQueries
 }
 
-describe("Partitions a chain starts with", () => {
+describe("Groups a chain starts with", () => {
   let single = Scenario.make(
     ~configYaml=chainYaml(
       ~name="fetch-state-single-static",
@@ -158,7 +160,7 @@ indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async () => {});
   })
 })
 
-describe("Partitions a chain resumes with", () => {
+describe("Groups a chain resumes with", () => {
   let sameContract = Scenario.make(
     ~configYaml=chainYaml(
       ~name="fetch-state-resume-same-contract",
@@ -187,7 +189,7 @@ indexer.contractRegister({ contract: "Gravatar", event: "Register" }, async ({ e
         ~indexer,
         ~sourceMock=source(1337),
         ~emitter="Gravatar",
-        ~partitionIdsToFinish=["1"],
+        ~emitterAddress=gravatar,
         [dynamic1],
       )
       t.expect(queries).toEqual([
@@ -224,7 +226,7 @@ indexer.contractRegister({ contract: "ContractA", event: "Register" }, async ({ 
   )
 
   otherContract->Scenario.it(
-    "gives every address a partition of its own past maxAddrInPartition",
+    "gives every address a group of its own past maxAddrInPartition",
     ~sources=[{chain: 1337, autoHeight: 1000}],
     ~maxAddrInPartition=1,
     async (~t, ~indexer, ~source) => {
@@ -232,27 +234,26 @@ indexer.contractRegister({ contract: "ContractA", event: "Register" }, async ({ 
         ~indexer,
         ~sourceMock=source(1337),
         ~emitter="ContractA",
-        ~otherStartingPartitionIds=["1"],
-        ~partitionIdsToFinish=["2", "3"],
+        ~emitterAddress=contractA1,
+        ~otherStartingAddresses=[contractA2],
         [dynamic1, dynamic2],
       )
-      let query = (partitionId, address) => {
-        partitionId,
+      let query = address => {
         fromBlock: 101,
         toBlock: MockSource.Bounded(800),
         addresses: [address],
       }
       t.expect(queries).toEqual([
-        query("0", contractA1),
-        query("1", contractA2),
-        query("2", dynamic1),
-        query("3", dynamic2),
+        query(dynamic1),
+        query(dynamic2),
+        query(contractA1),
+        query(contractA2),
       ])
     },
   )
 })
 
-describe("Partitions of contracts with different start blocks", () => {
+describe("Groups of contracts with different start blocks", () => {
   let withContractBFrom = startBlock =>
     Scenario.make(
       ~configYaml=chainYaml(
@@ -280,7 +281,7 @@ indexer.onEvent({ contract: "ContractB", event: "TestEvent" }, async () => {});
   let farStart = withContractBFrom(20_002)
 
   closeStart->Scenario.it(
-    "fetches a contract starting close to another in the same partition from the start",
+    "fetches a contract starting close to another in the same group from the start",
     ~sources=[{chain: 1337, autoHeight: 100_000}],
     async (~t, ~indexer as _, ~source) => {
       t.expect(await source(1337)->pendingQueries).toEqual([

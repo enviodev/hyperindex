@@ -364,41 +364,49 @@ impl StoreInner {
     /// still on the contractRegister backlog, which holds processing, and so
     /// every batch write, below both blocks. A config address (block -1) is
     /// never retired.
-    /// Sets `retired` when it retires an entry, whose pending write the caller
-    /// then drops: once per batch, not once per retirement.
+    /// Returns the entry it retired, whose pending write the caller then
+    /// drops: once per batch, not once per retirement.
     fn register_one(
         &mut self,
         reg: &AddressRegistration,
         track_unwritten: bool,
-        retired: &mut bool,
-    ) -> RegistrationVerdict {
+    ) -> (RegistrationVerdict, Option<Id>) {
         let Some(key) = address_key(self.ecosystem, &reg.address) else {
-            return RegistrationVerdict {
-                kind: VERDICT_INVALID.to_string(),
-                fetchable: false,
-            };
+            return (
+                RegistrationVerdict {
+                    kind: VERDICT_INVALID.to_string(),
+                    fetchable: false,
+                },
+                None,
+            );
         };
         let contract_idx = self
             .contract_idx(&reg.contract_name)
             .expect("register_all validates every contract name before applying the batch");
-        if let Some(id) = self.live_id_for(&key, contract_idx) {
+        let retired = self.live_id_for(&key, contract_idx);
+        if let Some(id) = retired {
             if reg.registration_block >= self.entries.registration_block(id) {
-                return RegistrationVerdict {
-                    kind: VERDICT_DUPLICATE.to_string(),
-                    fetchable: false,
-                };
+                return (
+                    RegistrationVerdict {
+                        kind: VERDICT_DUPLICATE.to_string(),
+                        fetchable: false,
+                    },
+                    None,
+                );
             }
             self.retire(id);
-            *retired = true;
         }
         let id = self.insert(&key, contract_idx, reg.registration_block);
         if track_unwritten {
             self.unwritten.push(id);
         }
-        RegistrationVerdict {
-            kind: VERDICT_ADDED.to_string(),
-            fetchable: self.contract_depends_on_addresses[contract_idx as usize],
-        }
+        (
+            RegistrationVerdict {
+                kind: VERDICT_ADDED.to_string(),
+                fetchable: self.contract_depends_on_addresses[contract_idx as usize],
+            },
+            retired,
+        )
     }
 
     /// Registers a row read back from storage, whose key is already the store's
@@ -551,7 +559,11 @@ impl AddressStore {
         &self,
         registrations: Vec<AddressRegistration>,
     ) -> napi::Result<Vec<RegistrationVerdict>> {
-        self.register_all(registrations, true)
+        Ok(self
+            .register_all(registrations, true)?
+            .into_iter()
+            .map(|(verdict, _)| verdict)
+            .collect())
     }
 
     /// Registers rows the database already holds, columnar: one packed buffer of
@@ -864,12 +876,12 @@ impl AddressStore {
     /// Rejects the whole batch before applying any of it: an unknown contract
     /// name or an out-of-range block is a bug upstream, and a caller that
     /// survives the error must not find the earlier registrations already
-    /// applied.
+    /// applied. Each verdict comes with the entry its registration retired.
     pub(crate) fn register_all(
         &self,
         registrations: Vec<AddressRegistration>,
         track_unwritten: bool,
-    ) -> napi::Result<Vec<RegistrationVerdict>> {
+    ) -> napi::Result<Vec<(RegistrationVerdict, Option<Id>)>> {
         let mut guard = self.inner.write().unwrap();
         let store = &mut *guard;
         for reg in registrations.iter() {
@@ -881,12 +893,11 @@ impl AddressStore {
             }
             check_registration_block(reg.registration_block)?;
         }
-        let mut retired = false;
-        let verdicts = registrations
+        let verdicts: Vec<(RegistrationVerdict, Option<Id>)> = registrations
             .iter()
-            .map(|reg| store.register_one(reg, track_unwritten, &mut retired))
+            .map(|reg| store.register_one(reg, track_unwritten))
             .collect();
-        if retired {
+        if verdicts.iter().any(|(_, retired)| retired.is_some()) {
             let entries = &store.entries;
             store.unwritten.retain(|&id| !entries.is_dead(id));
         }
@@ -1043,7 +1054,7 @@ pub(crate) mod test_support {
                 })
             })
             .collect();
-        for verdict in store.register_all(registrations, false).unwrap() {
+        for (verdict, _) in store.register_all(registrations, false).unwrap() {
             assert_eq!(verdict.kind, VERDICT_ADDED, "test fixture address rejected");
         }
         store

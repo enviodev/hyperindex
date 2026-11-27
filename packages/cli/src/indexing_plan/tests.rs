@@ -255,7 +255,12 @@ fn addresses_past_a_group_s_room_start_a_group_at_the_block_it_was_asked_through
     let overflow_group = plan.groups.need[1];
     let lists: Vec<(Vec<String>, Option<i64>)> = (0..plan.needs.len())
         .filter(|&need| plan.needs.is_list(need))
-        .map(|need| (addresses_of(&plan, need), plan.needs.to_block[need as usize]))
+        .map(|need| {
+            (
+                addresses_of(&plan, need),
+                plan.needs.to_block[need as usize],
+            )
+        })
         .collect();
     assert_eq!(
         (

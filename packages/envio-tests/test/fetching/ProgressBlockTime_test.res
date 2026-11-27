@@ -53,7 +53,7 @@ type Counter {
 `,
 )
 
-// Two addresses so `maxAddrInPartition=1` splits the chain into two partitions.
+// Two addresses so `maxAddrInPartition=1` lays the chain out in two groups.
 let twoPartitionScenario = Scenario.make(
   ~configYaml=`
 name: progress-block-time-partitions
@@ -80,6 +80,9 @@ type Counter {
 }
 `,
 )
+
+let firstAddress = "0x0000000000000000000000000000000000000001"
+let secondAddress = "0x0000000000000000000000000000000000000002"
 
 let chainLabel = Dict.fromArray([("chainId", "1")])
 
@@ -195,8 +198,10 @@ describe("Progress block time", () => {
     },
   )
 
-  // One partition can fetch ahead while the other holds the progress frontier
-  // back, so the reorg lands above the block progress is committed at.
+  // One group can fetch ahead while the other holds the progress frontier
+  // back, so the reorg lands above the block progress is committed at. The head
+  // is far enough out that the chain stays in backfill, where each group has a
+  // request of its own.
   twoPartitionScenario->Scenario.it(
     "keeps the timestamp when a reorg above the progress block leaves it where it is",
     ~sources=[{chain: 1, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
@@ -204,51 +209,57 @@ describe("Progress block time", () => {
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
 
-      mock.resolveGetHeightOrThrow(300)
+      mock.resolveGetHeightOrThrow(2000)
       await mock.expectItemsQueries([
         {
+          address: firstAddress,
           fromBlock: 1,
-          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+          reply: Respond({items: [], latestFetchedBlockNumber: 1800}),
         },
         {
+          address: secondAddress,
           fromBlock: 1,
-          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+          reply: Respond({items: [], latestFetchedBlockNumber: 1800}),
         },
       ])
       await indexer.getBatchWritePromise()
 
       t.expect(
         await metricValue(indexer, "envio_progress_block_time_seconds"),
-        ~message="both partitions reached block 100, so progress is at 100",
-      ).toBe("100")
+        ~message="both groups reached block 1800, so progress is at 1800",
+      ).toBe("1800")
 
-      // Only partition 0 reaches the head, so the store learns block 300 while
-      // the progress frontier - the minimum across partitions - stays at 100.
-      // Partition 1 reports a different hash for block 300, so the reorg is
-      // above the progress block and the rollback leaves progress at 100.
+      // Only the first group reaches the head, so the store learns block 2000
+      // while the progress frontier - the minimum across groups - stays at
+      // 1800. The second group reports a different hash for block 2000, so the
+      // reorg is above the progress block and the rollback leaves progress at
+      // 1800.
       await mock.expectItemsQueries([
         {
-          fromBlock: 101,
-          reply: Respond({items: [], latestFetchedBlockNumber: 300}),
+          address: firstAddress,
+          fromBlock: 1801,
+          reply: Respond({items: [], latestFetchedBlockNumber: 2000}),
         },
         {
-          fromBlock: 101,
+          address: secondAddress,
+          fromBlock: 1801,
           reply: Respond({
             items: [],
-            latestFetchedBlockNumber: 300,
-            latestFetchedBlockHash: "0x300a",
+            latestFetchedBlockNumber: 2000,
+            latestFetchedBlockHash: "0x2000a",
           }),
         },
       ])
 
-      // No stored block in the reorg window lies below the reorged 300, so the
-      // rollback falls back to block 100, just below the window, without a lookup.
+      // No stored block in the reorg window lies below the reorged 2000, so the
+      // rollback falls back to block 1800, just below the window, without a
+      // lookup.
       let trace = await traceThroughRollback(~indexer, ~mock)
 
       t.expect(
         (mock.getBlockHashesCalls, trace),
-        ~message="block 100 was never orphaned, so its timestamp is still its own",
-      ).toEqual(([], ["100|100"]))
+        ~message="block 1800 was never orphaned, so its timestamp is still its own",
+      ).toEqual(([], ["1800|1800"]))
     },
   )
 

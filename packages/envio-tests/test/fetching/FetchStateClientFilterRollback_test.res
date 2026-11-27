@@ -1,5 +1,5 @@
 open Vitest
-open ItemsQueryView.ClientFiltered
+open ItemsQueryView.AddressFree
 
 // Reorgs are tracked over the last 1500 blocks of a 2000-block chain, so these
 // rollbacks land far more than 200 blocks below the head, where only the
@@ -43,6 +43,8 @@ indexer.onEvent({ contract: "NftFactory", event: "NftEvent" }, async () => {});
 
 let methods = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
+let nftFactoryConfigAddress = "0x00000000000000000000000000000000000000ff"
+
 let address = n => `0x${n->Int.toString->String.padStart(40, "0")}`->Address.unsafeFromString
 
 type registerOps = {add: Address.t => unit}
@@ -57,28 +59,28 @@ let registerAt = (blockNumber, addresses): MockSource.itemMock => {
   },
 }
 
-let nftFactory = (~partitionId="0", fromBlock) => {
-  partitionId,
+let isAddressFree = (query: MockSource.pendingItemsQuery) =>
+  (query->MockSource.selection).addressFreeContracts != []
+
+let nftFactory = fromBlock => {
   fromBlock,
   toBlock: Unbounded,
-  addresses: ["0x00000000000000000000000000000000000000ff"],
-  clientFilteredContracts: None,
+  addresses: [nftFactoryConfigAddress],
+  addressFreeContracts: [],
 }
 
-let addressFree = (~partitionId, fromBlock) => {
-  partitionId,
+let addressFreeChunk = (fromBlock, toBlock) => {
   fromBlock,
-  toBlock: Unbounded,
+  toBlock: Bounded(toBlock),
   addresses: [],
-  clientFilteredContracts: Some(["Gravatar"]),
+  addressFreeContracts: ["Gravatar"],
 }
 
-let catchUp = (~partitionId, fromBlock, toBlock) => {
-  partitionId,
+let catchUp = (fromBlock, toBlock) => {
   fromBlock,
   toBlock,
   addresses: [address(3)->Address.toString],
-  clientFilteredContracts: None,
+  addressFreeContracts: [],
 }
 
 let hashes = (blockNumbers, ~validUpTo) =>
@@ -90,11 +92,13 @@ let hashes = (blockNumbers, ~validUpTo) =>
     blockTimestamp: blockNumber,
   })
 
-// Partition 0 registers two dynamic Gravatar addresses at block 3, crossing
-// the threshold of 1, so address-free partition 2 fetches Gravatar. Both reach
-// the reorg window at 500, where partition 2 fetches to 650 and registers
-// address 3 at 620: catch-up partition 3 fetches it from 620, open-ended while
-// partition 2's query from 651, out before the registration, is.
+// The config group registers two dynamic Gravatar addresses at block 3,
+// crossing the threshold of 1. Its query from 6 stops short of the reorg
+// window at 499, so the two are caught up by address over [3, 499] and
+// Gravatar goes address-free from 500. There the address-free query fetches
+// to 650 and registers address 3 at 620. Its next query, from 651, goes out
+// before the registration, so address 3's catch-up waits for it: it lands at
+// 700 and the catch-up goes out over [620, 700].
 let registerInReorgWindow = async (sourceMock: MockSource.t) => {
   sourceMock.resolveGetHeightOrThrow(2000)
   await sourceMock.expectItemsQueries([
@@ -113,21 +117,30 @@ let registerInReorgWindow = async (sourceMock: MockSource.t) => {
   await sourceMock.expectItemsQueries([
     {
       fromBlock: 500,
+      where: isAddressFree,
       reply: Respond({
         items: [registerAt(620, [address(3)])],
         blocks: [{blockNumber: 630}],
         latestFetchedBlockNumber: 650,
       }),
     },
-    {fromBlock: 500, reply: LeavePending},
+    {fromBlock: 500, address: nftFactoryConfigAddress, reply: LeavePending},
+  ])
+  await sourceMock.expectItemsQueries([
+    {
+      fromBlock: 651,
+      where: isAddressFree,
+      reply: Respond({items: [], blocks: [{blockNumber: 680}], latestFetchedBlockNumber: 700}),
+    },
+    {fromBlock: 500, address: nftFactoryConfigAddress, reply: LeavePending},
   ])
 }
 
-// Partition 2's next response finds block 650 re-orged.
-let reorgAbove650 = MockSource.Respond({
+// The address-free need's next response finds block 700 re-orged.
+let reorgAbove700 = MockSource.Respond({
   items: [],
-  latestFetchedBlockNumber: 700,
-  prevRangeLastBlock: {blockNumber: 650, blockHash: "0x650a"},
+  latestFetchedBlockNumber: 750,
+  prevRangeLastBlock: {blockNumber: 700, blockHash: "0x700a"},
 })
 
 describe("FetchState client-side filtering across a rollback", () => {
@@ -141,35 +154,40 @@ describe("FetchState client-side filtering across a rollback", () => {
       await sourceMock->registerInReorgWindow
       await sourceMock.expectItemsQueries([
         {fromBlock: 620, reply: LeavePending},
-        {fromBlock: 651, reply: reorgAbove650},
+        {fromBlock: 701, where: isAddressFree, reply: reorgAbove700},
+        {where: isAddressFree, reply: LeavePending},
+        {fromBlock: 500, address: nftFactoryConfigAddress, reply: LeavePending},
       ])
+      // These stay pending next to the re-queries, dropped by the rollback.
+      let droppedCount = sourceMock.pendingItemsQueries->Array.length
       await sourceMock.expectBlockHashLookup({
-        blockNumbers: [620, 630],
-        reply: [620, 630]->hashes(~validUpTo=630),
+        blockNumbers: [620, 630, 650, 680],
+        reply: [620, 630, 650, 680]->hashes(~validUpTo=630),
       })
       await indexer.getRollbackReadyPromise()
       await sourceMock.expectItemsQueries([
-        {fromBlock: 620, reply: LeavePending},
+        {fromBlock: 620, toBlock: Bounded(630), reply: LeavePending},
         {fromBlock: 631, reply: LeavePending},
-        {fromBlock: 500, reply: LeavePending},
+        {where: isAddressFree, reply: LeavePending},
+        {address: nftFactoryConfigAddress, reply: LeavePending},
       ])
 
+      // The address-free need keeps the density it learned, so it goes on in
+      // chunks.
       t.expect(
-        sourceMock->pendingQueries,
-        ~message="the rebuilt partitions keep address 3's catch-up below 630 and Gravatar address-free above it",
+        sourceMock->pendingQueries->Array.slice(~start=droppedCount),
+        ~message="after the rollback address 3 is caught up below 630 and Gravatar is address-free above it",
       ).toEqual([
-        // Dispatched before the rollback, and voided by it.
         nftFactory(500),
-        catchUp(~partitionId="3", 620, Unbounded),
-        nftFactory(500),
-        catchUp(~partitionId="2", 620, Bounded(630)),
-        addressFree(~partitionId="1", 631),
+        catchUp(620, Bounded(630)),
+        addressFreeChunk(631, 720),
+        addressFreeChunk(721, 810),
       ])
     },
   )
 
   scenario->Scenario.it(
-    "folds a catch-up the rollback leaves level with the address-free partition back into it",
+    "leaves no catch-up once the rollback puts the address-free need level with it",
     ~sources=[{chain: 1337, methods}],
     ~clientFilterAddressThreshold=1,
     ~maxAddrInPartition=10,
@@ -179,34 +197,33 @@ describe("FetchState client-side filtering across a rollback", () => {
       await sourceMock.expectItemsQueries([
         {
           fromBlock: 620,
-          reply: Respond({items: [], blocks: [{blockNumber: 640}], latestFetchedBlockNumber: 645}),
+          reply: Respond({items: [], blocks: [{blockNumber: 640}], latestFetchedBlockNumber: 1060}),
         },
-        {fromBlock: 651, reply: LeavePending},
+        {where: isAddressFree, reply: LeavePending},
+        {fromBlock: 500, address: nftFactoryConfigAddress, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 646, reply: LeavePending},
-        {fromBlock: 651, reply: reorgAbove650},
+        {fromBlock: 701, where: isAddressFree, reply: reorgAbove700},
+        {where: isAddressFree, reply: LeavePending},
+        {fromBlock: 500, address: nftFactoryConfigAddress, reply: LeavePending},
       ])
+      // These stay pending next to the re-queries, dropped by the rollback.
+      let droppedCount = sourceMock.pendingItemsQueries->Array.length
       await sourceMock.expectBlockHashLookup({
-        blockNumbers: [619, 620, 630, 640, 645],
-        reply: [619, 620, 630, 640, 645]->hashes(~validUpTo=640),
+        blockNumbers: [619, 620, 630, 640, 650, 680],
+        reply: [619, 620, 630, 640, 650, 680]->hashes(~validUpTo=640),
       })
       await indexer.getRollbackReadyPromise()
       await sourceMock.expectItemsQueries([
         {fromBlock: 641, reply: LeavePending},
-        {fromBlock: 500, reply: LeavePending},
+        {where: isAddressFree, reply: LeavePending},
+        {address: nftFactoryConfigAddress, reply: LeavePending},
       ])
 
       t.expect(
-        sourceMock->pendingQueries,
-        ~message="rolled back to 640, the catch-up has nothing left to cover",
-      ).toEqual([
-        // Dispatched before the rollback, and voided by it.
-        nftFactory(500),
-        catchUp(~partitionId="3", 646, Unbounded),
-        nftFactory(500),
-        addressFree(~partitionId="1", 641),
-      ])
+        sourceMock->pendingQueries->Array.slice(~start=droppedCount),
+        ~message="rolled back to 640, address 3 has nothing left to catch up",
+      ).toEqual([nftFactory(500), addressFreeChunk(641, 730), addressFreeChunk(731, 820)])
     },
   )
 })

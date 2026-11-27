@@ -31,6 +31,9 @@ type Counter {
 `,
 )
 
+let token1 = "0x0000000000000000000000000000000000000001"
+let token2 = "0x0000000000000000000000000000000000000002"
+
 let sources: array<Scenario.sourceMock> = [
   {chain: 1, methods: [#getHeightOrThrow, #getItemsOrThrow]},
 ]
@@ -148,8 +151,8 @@ Give each query its own entry, told apart by address:
   {address: "0x0000000000000000000000000000000000000002", reply: …}`),
       )
       await mock.expectItemsQueries([
-        {reply: Respond({items: []})},
-        {reply: Respond({items: []})},
+        {address: token1, reply: Respond({items: []})},
+        {address: token2, reply: Respond({items: []})},
       ])
       await indexer.getBatchWritePromise()
     },
@@ -178,7 +181,9 @@ Give each query its own entry, told apart by address:
       await indexer.getBatchWritePromise()
       t.expect((
         askedAbout->Array.length > 0,
-        askedAbout->Array.every(addresses => addresses == ["0x0000000000000000000000000000000000000001"]),
+        askedAbout->Array.every(
+          addresses => addresses == ["0x0000000000000000000000000000000000000001"],
+        ),
       )).toEqual((true, true))
     },
   )
@@ -191,23 +196,29 @@ Give each query its own entry, told apart by address:
       let mock = source(1)
       mock.resolveGetHeightOrThrow(2000)
       t.expect(
-        await failureOf(mock.expectItemsQueries([{reply: Respond({items: []})}])),
+        await failureOf(mock.expectItemsQueries([{address: token1, reply: Respond({items: []})}])),
       ).toEqual(
         Some(`expectItemsQueries matched every entry, but these pending queries are in none:
-  {fromBlock: 1, toBlock: Bounded(1800), retryCount: 0}
+  {fromBlock: 1, toBlock: Bounded(1800), retryCount: 0, addresses: [0x0000000000000000000000000000000000000002]}
 Reply to them in this list, or keep them pending:
-  {reply: LeavePending}`),
+  {fromBlock: 1, reply: LeavePending}`),
       )
 
       await mock.expectItemsQueries([
-        {reply: Respond({items: []})},
+        {address: token1, reply: Respond({items: []})},
         {reply: LeavePending},
       ])
       t.expect(
-        mock.pendingItemsQueries,
-        ~message="partition 0 was checked and left pending",
-      ).toEqual([{fromBlock: 1, toBlock: Bounded(1800), retryCount: 0}])
-      await mock.expectItemsQueries([{reply: Respond({items: []})}])
+        mock.pendingItemsQueries->Array.map(
+          query => (
+            query.fromBlock,
+            query.toBlock,
+            query->MockSource.addresses->Array.map(Address.toString),
+          ),
+        ),
+        ~message="the other address's query was checked and left pending",
+      ).toEqual([(1, Bounded(1800), [token2])])
+      await mock.expectItemsQueries([{address: token2, reply: Respond({items: []})}])
       await indexer.getBatchWritePromise()
     },
   )
@@ -215,25 +226,25 @@ Reply to them in this list, or keep them pending:
   // The unlisted check runs once the list matches. A sibling's follow-up that
   // landed after it would move the failure to whichever later list ran first.
   scenario->Scenario.it(
-    "sees every partition's follow-up before checking for unlisted queries",
+    "sees every request's follow-up before checking for unlisted queries",
     ~sources,
     ~maxAddrInPartition=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(2000)
       await mock.expectItemsQueries([
-        {reply: Respond({items: [], latestFetchedBlockNumber: 50})},
-        {reply: Respond({items: [], latestFetchedBlockNumber: 50})},
+        {address: token1, reply: Respond({items: [], latestFetchedBlockNumber: 50})},
+        {address: token2, reply: Respond({items: [], latestFetchedBlockNumber: 50})},
       ])
       t.expect(
         await failureOf(
-          mock.expectItemsQueries([{fromBlock: 51, reply: LeavePending}]),
+          mock.expectItemsQueries([{fromBlock: 51, address: token1, reply: LeavePending}]),
         ),
       ).toEqual(
         Some(`expectItemsQueries matched every entry, but these pending queries are in none:
-  {fromBlock: 51, toBlock: Bounded(1800), retryCount: 0}
+  {fromBlock: 51, toBlock: Bounded(1800), retryCount: 0, addresses: [0x0000000000000000000000000000000000000002]}
 Reply to them in this list, or keep them pending:
-  {reply: LeavePending}`),
+  {fromBlock: 51, reply: LeavePending}`),
       )
       await mock.respondUpTo(2000)
       await indexer.getBatchWritePromise()
@@ -248,10 +259,7 @@ Reply to them in this list, or keep them pending:
     let mock = source(1)
     t.expect(
       await failureOf(
-        mock.expectItemsQueries(
-          [{toBlock: Unbounded, reply: LeavePending}],
-          ~within=50.,
-        ),
+        mock.expectItemsQueries([{toBlock: Unbounded, reply: LeavePending}], ~within=50.),
       ),
       ~message="nothing is pending before the chain knows the head",
     ).toEqual(
@@ -277,13 +285,13 @@ Pending:
   #0 {fromBlock: 1, reply: Respond(…)}
   #1 {reply: LeavePending} (every query it matches is taken by a reply)
 Pending:
-  {fromBlock: 1, toBlock: Bounded(100), retryCount: 0}`),
+  {fromBlock: 1, toBlock: Bounded(100), retryCount: 0, addresses: [0x0000000000000000000000000000000000000001, 0x0000000000000000000000000000000000000002]}`),
     )
     await mock.respondUpTo(300)
     await indexer.getBatchWritePromise()
   })
 
-  // A partition asks for its next range only once its last one is answered, so a
+  // A group asks for its next range only once its last one is answered, so a
   // list naming both waits for a query that can't come yet.
   scenario->Scenario.it(
     "times out naming a query that may only follow an earlier reply",
@@ -306,8 +314,8 @@ Pending:
   #1 {reply: LeavePending}
   #2 {fromBlock: 101, reply: Respond(…)} (matches no pending query)
 Pending:
-  {fromBlock: 1, toBlock: Bounded(1800), retryCount: 0}
-  {fromBlock: 1, toBlock: Bounded(1800), retryCount: 0}
+  {fromBlock: 1, toBlock: Bounded(1800), retryCount: 0, addresses: [0x0000000000000000000000000000000000000001]}
+  {fromBlock: 1, toBlock: Bounded(1800), retryCount: 0, addresses: [0x0000000000000000000000000000000000000002]}
 The list replies only once every entry matches, but the indexer may send a query only after an earlier one is answered. If an unmatched entry is such a follow-up, expect it in a later expectItemsQueries call.`),
       )
       await mock.respondUpTo(2000)
@@ -323,15 +331,19 @@ The list replies only once every entry matches, but the indexer may send a query
       let mock = source(1)
       mock.resolveGetHeightOrThrow(2000)
       await mock.expectItemsQueries([
-        {reply: Respond({items: []})},
+        {address: token1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
         {reply: LeavePending},
       ])
-      await mock.expectItemsQueries([{reply: Respond({items: []})}])
+      await mock.expectItemsQueries([
+        {address: token2, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+        {fromBlock: 101, reply: LeavePending},
+      ])
       let replied = mock.repliedItemsQueries->Array.copy
       let _ = await failureOf(
         mock.expectItemsQueries([
           {
             fromBlock: 101,
+            address: token1,
             reply: Respond({items: [{blockNumber: 50, logIndex: 0}]}),
           },
           {reply: LeavePending},
@@ -358,8 +370,8 @@ The list replies only once every entry matches, but the indexer may send a query
         {reply: LeavePending},
       ])
       t.expect(
-        mock.repliedItemsQueries->Array.map(query =>
-          query->MockSource.addresses->Array.map(Address.toString)
+        mock.repliedItemsQueries->Array.map(
+          query => query->MockSource.addresses->Array.map(Address.toString),
         ),
       ).toEqual([["0x0000000000000000000000000000000000000002"]])
       await mock.respondUpTo(2000)
@@ -474,23 +486,23 @@ The list replies only once every entry matches, but the indexer may send a query
     await indexer.getBatchWritePromise()
   })
 
-  // One partition reaching the block doesn't carry a partition still behind it.
+  // One group reaching the block doesn't carry a group still behind it.
   scenario->Scenario.it(
-    "fetches every partition up to the block, not just the first to reach it",
+    "fetches every group up to the block, not just the first to reach it",
     ~sources,
     ~maxAddrInPartition=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(2000)
       await mock.expectItemsQueries([
-        {reply: Respond({items: []})},
-        {reply: Respond({items: [], latestFetchedBlockNumber: 50})},
+        {address: token1, reply: Respond({items: []})},
+        {address: token2, reply: Respond({items: [], latestFetchedBlockNumber: 50})},
       ])
       await indexer.getBatchWritePromise()
       await mock.respondUpTo(2000)
       await indexer.getBatchWritePromise()
       t.expect((await indexer.metric("envio_progress_block"), mock.pendingItemsQueries)).toEqual((
-        [{value: "300", labels: dict{"chainId": "1"}}],
+        [{value: "2000", labels: dict{"chainId": "1"}}],
         [],
       ))
     },
@@ -506,7 +518,7 @@ The list replies only once every entry matches, but the indexer may send a query
       await mock.respondUpTo(2000)
       await indexer.getBatchWritePromise()
       t.expect((await indexer.metric("envio_progress_block"), mock.pendingItemsQueries)).toEqual((
-        [{value: "300", labels: dict{"chainId": "1"}}],
+        [{value: "2000", labels: dict{"chainId": "1"}}],
         [],
       ))
     },
@@ -523,12 +535,12 @@ The list replies only once every entry matches, but the indexer may send a query
         query => {items: [], latestFetchedBlockNumber: query.fromBlock + 49},
       )
       await mock.expectItemsQueries([
-        {reply: halfway},
-        {reply: halfway},
+        {address: token1, reply: halfway},
+        {address: token2, reply: halfway},
       ])
       await mock.expectItemsQueries([
-        {fromBlock: 51, reply: LeavePending},
-        {fromBlock: 51, reply: LeavePending},
+        {fromBlock: 51, address: token1, reply: LeavePending},
+        {fromBlock: 51, address: token2, reply: LeavePending},
       ])
       t.expect(mock.pendingItemsQueries->Array.map(query => query.fromBlock)).toEqual([51, 51])
       await mock.respondUpTo(2000)

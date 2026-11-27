@@ -179,6 +179,8 @@ pub struct FetchRequest {
     to_block: Option<i64>,
     items_estimate: u32,
     interval_key: u32,
+    /// The chain's one forward stream at the head.
+    head: bool,
     /// (index, start block), ascending by index.
     event_registrations: Vec<(u32, Option<i64>)>,
     block_registrations: Vec<u32>,
@@ -271,6 +273,7 @@ impl FetchRequest {
             to_block: request.to_block,
             items_estimate: 0,
             interval_key: HEAD_STREAM_INTERVAL_KEY,
+            head: false,
             event_registrations: request
                 .on_event_registration_indexes
                 .into_iter()
@@ -333,6 +336,10 @@ impl FetchRequest {
 
     pub(crate) fn interval_key(&self) -> u32 {
         self.interval_key
+    }
+
+    pub(crate) fn is_head(&self) -> bool {
+        self.head
     }
 
     pub(crate) fn requested_from_block(&self) -> i64 {
@@ -421,6 +428,11 @@ fn request_handle(chain: &ChainPlan, slot: u32, generation: u32) -> FetchRequest
     event_registrations.dedup();
     ids.sort_unstable();
     ids.dedup();
+    // Read address-free already, a contract's addresses would only ask the
+    // source again for logs it returns.
+    ids.retain(|&id| {
+        !address_free_contracts.contains(&store.contract_names()[store.contract_of(id) as usize])
+    });
     store.sort_in_set_order(&mut ids);
     address_free_contracts.sort_unstable();
     drop(store);
@@ -436,6 +448,7 @@ fn request_handle(chain: &ChainPlan, slot: u32, generation: u32) -> FetchRequest
         } else {
             request.needs[0]
         },
+        head: request.head,
         event_registrations: event_registrations
             .into_iter()
             .map(|index| (index, chain.config.events[index as usize].start_block))
@@ -582,8 +595,7 @@ impl IndexingPlan {
                 processed_density: tick.processed_density,
             });
         }
-        let planned =
-            budget::take_requests(
+        let planned = budget::take_requests(
             &mut chains,
             &inputs,
             f64::from(target_buffer_size),

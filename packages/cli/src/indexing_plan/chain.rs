@@ -258,6 +258,10 @@ pub(crate) struct ChainPlan {
     pub open_group: Vec<Option<u32>>,
     pub address_free_need: Vec<Option<u32>>,
     pending_joins: Vec<PendingJoin>,
+    /// (registered, retired): an address registered again from an earlier
+    /// block. The retired entry stays in its needs, which go on fetching the
+    /// address from its block.
+    replaced: Vec<(Id, Id)>,
     pub head_mode: bool,
     pub head_learned: Learned,
     /// The source that answered last, whose capacity sizes the next chunks.
@@ -313,6 +317,7 @@ impl ChainPlan {
             open_group: vec![None; contract_count],
             address_free_need: vec![None; contract_count],
             pending_joins: Vec::new(),
+            replaced: Vec::new(),
             head_mode: false,
             head_learned: Learned::default(),
             last_source: 0,
@@ -435,7 +440,8 @@ impl ChainPlan {
             let floor = self
                 .events_floor(&address_free_registrations)
                 .unwrap_or(i64::MIN);
-            let covered = address_free_floor.map_or(progress, |f| f.min(progress.max(floor)));
+            let covered =
+                address_free_floor.map_or(progress.max(floor), |f| f.min(progress.max(floor)));
             let need = self.add_need(
                 What::Logs {
                     registrations: address_free_registrations.clone(),
@@ -484,7 +490,9 @@ impl ChainPlan {
         drop(store);
 
         if self.needs.len() == 0 && !self.config.has_generated_block_handlers {
-            let address_count: u32 = (0..contract_count).map(|c| store_live_count(&self.store, c)).sum();
+            let address_count: u32 = (0..contract_count)
+                .map(|c| store_live_count(&self.store, c))
+                .sum();
             return Err(format!(
                 "Invalid configuration: Nothing to fetch on chain {}. addresses={address_count}, \
                  onEventRegistrations={}, normalRegistrations={}. Make sure that you provided at \
@@ -492,7 +500,11 @@ impl ChainPlan {
                  or have onBlock or onTransaction handlers.",
                 self.config.chain_id,
                 self.config.events.len(),
-                self.config.events.iter().filter(|reg| reg.depends_on_addresses).count(),
+                self.config
+                    .events
+                    .iter()
+                    .filter(|reg| reg.depends_on_addresses)
+                    .count(),
             ));
         }
         Ok(notices)
@@ -649,8 +661,20 @@ impl ChainPlan {
         let Some(&first) = needs.next() else {
             return Vec::new();
         };
-        needs.fold(self.taken(first), |taken, &need| {
-            intersection(&taken, &self.taken(need))
+        if needs.len() == 0 {
+            return self.taken(first);
+        }
+        // Past its end a need takes nothing more, so it holds back no other
+        // need of its stream there.
+        let taken_to_end = |need: u32| {
+            let mut taken = self.taken(need);
+            if let Some(to_block) = self.needs.to_block[need as usize] {
+                taken = union([taken, vec![(to_block + 1, i64::MAX)]].concat());
+            }
+            taken
+        };
+        needs.fold(taken_to_end(first), |taken, &need| {
+            intersection(&taken, &taken_to_end(need))
         })
     }
 
@@ -773,15 +797,18 @@ impl ChainPlan {
         }
         let store = self.store.clone();
         let store = store.read().unwrap();
+        // A group holding other contracts' addresses too carries on with them;
+        // the switched ones split off into a group of their own that ends.
+        let mut ending: Vec<(Vec<Id>, Option<u32>, i64, u32)> = Vec::new();
         for group in 0..self.groups.ids.len() {
             let need = self.groups.need[group];
             if !self.needs.live[need as usize] || self.needs.is_finished(need) {
                 continue;
             }
-            let has_contract = self.groups.ids[group]
+            let (switched, others): (Vec<Id>, Vec<Id>) = self.groups.ids[group]
                 .iter()
-                .any(|&id| contracts.contains(&store.contract_of(id)));
-            if !has_contract {
+                .partition(|&&id| contracts.contains(&store.contract_of(id)));
+            if switched.is_empty() {
                 continue;
             }
             let through = self
@@ -789,14 +816,53 @@ impl ChainPlan {
                 .unwrap_or(self.known_height)
                 .max(self.needs.coverage[need as usize].covered_through);
             lowest = lowest.min(through);
-            self.groups.ids[group].retain(|&id| !contracts.contains(&store.contract_of(id)));
             self.groups.sealed[group] = true;
-            if self.groups.ids[group].is_empty() {
-                let to_block = &mut self.needs.to_block[need as usize];
-                *to_block = Some(to_block.map_or(through, |to| to.min(through)));
+            let ends_at = self.needs.to_block[need as usize];
+            if others.is_empty() || ends_at.is_some_and(|to| to <= through) {
+                self.needs.to_block[need as usize] =
+                    Some(ends_at.map_or(through, |to| to.min(through)));
+                continue;
             }
+            let contract_of_all = |ids: &[Id]| {
+                let first = store.contract_of(ids[0]);
+                ids.iter()
+                    .all(|&id| store.contract_of(id) == first)
+                    .then_some(first)
+            };
+            self.groups.contract[group] = contract_of_all(&others);
+            self.groups.ids[group] = others;
+            ending.push((switched.clone(), contract_of_all(&switched), through, need));
         }
         drop(store);
+        for (ids, contract, through, carrying_on) in ending {
+            let group = self.groups.ids.len() as u32;
+            let n = carrying_on as usize;
+            let need = self.add_need(
+                match &self.needs.what[n] {
+                    What::Logs { registrations, .. } => What::Logs {
+                        registrations: registrations.clone(),
+                        addresses: Addresses::Group(group),
+                    },
+                    other => other.clone(),
+                },
+                self.needs.floor[n],
+                self.needs.floor[n],
+                Some(through),
+            );
+            let m = need as usize;
+            self.needs.coverage[m] = self.needs.coverage[n].clone();
+            self.needs.learned[m] = self.needs.learned[n].clone();
+            self.needs.ever_requested[m] = self.needs.ever_requested[n];
+            for request in self.requests.slots.iter_mut().flatten() {
+                if request.needs.contains(&carrying_on) {
+                    request.needs.push(need);
+                }
+            }
+            self.groups.ids.push(ids);
+            self.groups.contract.push(contract);
+            self.groups.sealed.push(true);
+            self.groups.need.push(need);
+        }
         // With no group to end, a contract switched at the head joins the head
         // stream where it has been asked through; its addresses owe what lies
         // below as catch-ups.
@@ -867,7 +933,14 @@ impl ChainPlan {
         let mut registering: Vec<u32> = Vec::new();
         {
             let store = self.store.read().unwrap();
-            for (reg, verdict) in registrations.iter().zip(verdicts) {
+            let mut next_id = first_new_id;
+            for (reg, (verdict, retired)) in registrations.iter().zip(verdicts) {
+                if verdict.kind == VERDICT_ADDED {
+                    if let Some(retired) = retired {
+                        self.replaced.push((next_id, retired));
+                    }
+                    next_id += 1;
+                }
                 if verdict.kind == VERDICT_INVALID {
                     notices.push(Notice::SkippedInvalidAddress {
                         contract_name: reg.contract_name.clone(),
@@ -944,6 +1017,20 @@ impl ChainPlan {
             Some(end) => end.min(through),
             None => through,
         };
+        // An address registered again from an earlier block owes only what
+        // lies below its retired entry's block: that entry's needs fetch the rest.
+        let store = self.store.read().unwrap();
+        let fetched_from = ids
+            .iter()
+            .map(|id| {
+                self.replaced
+                    .iter()
+                    .find(|(registered, _)| registered == id)
+                    .map(|&(_, retired)| store.effective_start_block_of(retired))
+            })
+            .collect::<Option<Vec<i64>>>()
+            .and_then(|starts| starts.into_iter().max());
+        drop(store);
         let need = self.add_need(
             What::Logs {
                 registrations,
@@ -954,6 +1041,9 @@ impl ChainPlan {
             Some(to_block),
         );
         self.needs.joins[need as usize] = Some(joins);
+        if let Some(fetched_from) = fetched_from {
+            self.needs.coverage[need as usize].add(fetched_from, to_block);
+        }
     }
 
     fn new_group(&mut self, contract: u32, ids: Vec<Id>, covered_through: Option<i64>) -> u32 {
@@ -1193,10 +1283,13 @@ impl ChainPlan {
     fn learned_mut(&mut self, request: &Request) -> Option<&mut Learned> {
         if request.head {
             Some(&mut self.head_learned)
-        } else if let [need] = request.needs[..] {
-            Some(&mut self.needs.learned[need as usize])
         } else {
-            None
+            // A request shared by a need and the one a switch split off from it
+            // learns for the first.
+            request
+                .needs
+                .first()
+                .map(|&need| &mut self.needs.learned[need as usize])
         }
     }
 
@@ -1240,8 +1333,14 @@ impl ChainPlan {
         self.requests.drop_all();
         let store = self.store.clone();
         let store = store.read().unwrap();
-        let survives =
-            |id: &Id| store.is_live(*id) && store.registration_block_of(*id) <= target_block;
+        let kept = |id: Id| store.registration_block_of(id) <= target_block;
+        self.replaced.retain(|&(registered, retired)| {
+            store.is_live(registered) && kept(registered) && kept(retired)
+        });
+        let replaced = &self.replaced;
+        let survives = |id: &Id| {
+            kept(*id) && (store.is_live(*id) || replaced.iter().any(|&(_, retired)| retired == *id))
+        };
         for group in 0..self.groups.ids.len() {
             self.groups.ids[group].retain(survives);
             if self.groups.ids[group].is_empty() {

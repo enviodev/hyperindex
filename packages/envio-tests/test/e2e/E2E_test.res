@@ -43,12 +43,12 @@ type SimpleEntity {
 
 let scenario = makeScenario(~name="e2e", ~chains=chainYaml(1337))
 
-// Partition ids and the chain's range-cost budget follow the contract set, so
-// this scenario keeps the address-less contracts alongside the addressed ones.
-let partitionScenario = Scenario.make(
+// Groups and the chain's range-cost budget follow the contract set, so this
+// scenario keeps the address-less contracts alongside the addressed ones.
+let groupScenario = Scenario.make(
   ~supervised=false,
   ~configYaml=`
-name: e2e-partitions
+name: e2e-groups
 rollback_on_reorg: true${contractsYaml}  - name: SimpleNft
     events:
       - event: "Transfer(address indexed from, address indexed to, uint256 tokenId)"
@@ -1219,7 +1219,7 @@ describe("E2E tests", () => {
   )
 
   scenario->Scenario.it(
-    "Partition queries adjust ranges depending on responses",
+    "Queries adjust ranges depending on responses",
     ~sources=[{chain: 1337, methods}],
     async (~t as _, ~indexer, ~source) => {
       let sourceMock = source(1337)
@@ -1282,7 +1282,7 @@ describe("E2E tests", () => {
         {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
-      // Drain the in-flight 540-chunk backlog so the partition regenerates its
+      // Drain the in-flight 540-chunk backlog so the need regenerates its
       // tail at the grown chunkRange (540). New tail chunks reach ceil(540*1.8)=972.
       await sourceMock.expectItemsQueries(
         sourceMock.pendingItemsQueries->Array.map(
@@ -1302,7 +1302,7 @@ describe("E2E tests", () => {
 
       // Phase B — chunks shrink on partial response:
       // Resolve the first pending chunk (at queue front) at a small partial range
-      // (100 blocks) so the partition advances and the heuristic shrinks.
+      // (100 blocks) so the need advances and the heuristic shrinks.
       let firstPending = sourceMock.pendingItemsQueries->Array.get(0)->Option.getOrThrow
       await sourceMock.expectItemsQueries([
         {
@@ -1456,27 +1456,31 @@ describe("E2E tests", () => {
     },
   )
 
-  partitionScenario->Scenario.it(
-    "Partitions too far apart fetch separately, then fold together at the head",
+  groupScenario->Scenario.it(
+    "Dynamic contracts far from the config addresses fetch in a group of their own, then fold together at the head",
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      // Queries described by the block they start at rather than by partition
-      // id: the ids follow the contract set, the ranges follow the behaviour
-      // under test.
-      let partitionAt = fromBlock =>
-        sourceMock.pendingItemsQueries
-        ->Array.find(query => query.fromBlock === fromBlock)
-        ->Option.map(query => query.partitionId)
+      let dc1 = "0x1111111111111111111111111111111111111111"
+      let dc2 = "0x2222222222222222222222222222222222222222"
+      let pendingRequests = () =>
+        sourceMock.pendingItemsQueries->Array.map(
+          query => (
+            query.fromBlock,
+            query.toBlock,
+            query->MockSource.addresses->Array.map(Address.toString),
+          ),
+        )
 
       sourceMock.resolveGetHeightOrThrow(100_000)
 
-      // One partition for the config addresses, querying to the reorg threshold.
-      // Register DC1 at block 5000 and DC2 at block 25100. The 20100-block gap
-      // exceeds tooFarBlockRange (20000), so they cannot share a partition. The
-      // events at blocks 3000-3099 give the chain a density signal; without one
-      // it is cold and its target block is capped, which would gate the far
-      // partitions this choreography relies on fetching in parallel.
+      // One request for the config addresses, querying to the reorg threshold.
+      // Register DC1 at block 5000 and DC2 at block 25100. Gravatar's config
+      // group also holds NftFactory, so it is sealed: DC1 starts a group of its
+      // own, which DC2 joins before it is requested. The events at blocks
+      // 3000-3099 give the chain a density signal; without one it is cold and
+      // its target block is capped, which would gate the far group this
+      // choreography relies on fetching in parallel.
       await sourceMock.expectItemsQueries([
         {
           fromBlock: 1,
@@ -1491,9 +1495,7 @@ describe("E2E tests", () => {
                 logIndex: 0,
                 contractRegister: async args => {
                   let context = args.context->asRegisterContext
-                  context.chain.gravatar.add(
-                    "0x1111111111111111111111111111111111111111"->Address.unsafeFromString,
-                  )
+                  context.chain.gravatar.add(dc1->Address.unsafeFromString)
                 },
               },
               {
@@ -1501,9 +1503,7 @@ describe("E2E tests", () => {
                 logIndex: 0,
                 contractRegister: async args => {
                   let context = args.context->asRegisterContext
-                  context.chain.gravatar.add(
-                    "0x2222222222222222222222222222222222222222"->Address.unsafeFromString,
-                  )
+                  context.chain.gravatar.add(dc2->Address.unsafeFromString)
                 },
               },
             ],
@@ -1515,21 +1515,19 @@ describe("E2E tests", () => {
 
       await sourceMock.expectItemsQueries([
         {fromBlock: 5000, reply: LeavePending},
-        {fromBlock: 25100, reply: LeavePending},
         {fromBlock: 25101, reply: LeavePending},
       ])
-      let dc1Partition = partitionAt(5000)
-      let dc2Partition = partitionAt(25100)
       t.expect(
-        (dc1Partition != dc2Partition, dc1Partition->Option.isSome && dc2Partition->Option.isSome),
-        ~message="each dynamic contract fetches from its own registration block, in its own partition",
-      ).toEqual((true, true))
+        pendingRequests()->Array.toSorted(((a, _, _), (b, _, _)) => Int.compare(a, b)),
+        ~message="the dynamic contracts fetch from DC1's registration block, apart from the config group",
+      ).toEqual([
+        (5000, Bounded(99800), [dc1, dc2]),
+        (25101, Bounded(99800), [gravatar->String.toLowerCase]),
+      ])
 
-      // Each partition reaches the reorg threshold on its own: a partition with
-      // a query in flight can't merge, and each always has one until it is
-      // done. Near the head they fold into the single address-free partition.
+      // Each group reaches the reorg threshold on its own. Near the head one
+      // request carries every need, the dynamic contracts address-free.
       await sourceMock.expectItemsQueries([
-        {fromBlock: 25100, reply: Respond({items: [], latestFetchedBlockNumber: 99800})},
         {fromBlock: 5000, reply: Respond({items: [], latestFetchedBlockNumber: 99800})},
         {fromBlock: 25101, reply: Respond({items: [], latestFetchedBlockNumber: 99800})},
       ])
@@ -1538,15 +1536,14 @@ describe("E2E tests", () => {
       sourceMock.resolveGetHeightOrThrow(100_100)
       await sourceMock.expectItemsQueries([{fromBlock: 99801, reply: LeavePending}])
       t.expect(
-        sourceMock.pendingItemsQueries->Array.map(
-          query => (
-            query.partitionId != dc1Partition->Option.getUnsafe &&
-              query.partitionId != dc2Partition->Option.getUnsafe,
-            query->MockSource.addresses->Array.length,
+        (
+          pendingRequests(),
+          sourceMock.pendingItemsQueries->Array.map(
+            query => (query->MockSource.selection).addressFreeContracts,
           ),
         ),
-        ~message="the partitions fold into a single new address-free partition",
-      ).toEqual([(true, 0)])
+        ~message="the groups fold into a single request, Gravatar's dynamic addresses address-free",
+      ).toEqual(([(99801, Bounded(99900), [])], [["Gravatar"]]))
     },
   )
 

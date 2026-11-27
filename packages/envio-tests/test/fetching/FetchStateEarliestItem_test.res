@@ -5,7 +5,7 @@ let secondAddress = "0x1111111111111111111111111111111111111111"
 let registeredAddress = "0x2222222222222222222222222222222222222222"
 
 // The head sits far past where each scenario fetches, so a registered address
-// gets a partition of its own rather than the address-free one used near it.
+// joins its contract's group rather than going address-free near the head.
 
 let scenarioWith = (~addresses, ~extra="") =>
   Scenario.make(
@@ -72,8 +72,10 @@ let processedOrder = async (indexer: IndexerRunner.t) =>
 let singleStatic = scenarioWith(~addresses=[staticAddress])
 
 describe("FetchState earliest processable item over the indexer loop", () => {
+  // The registration joins the group once the group's open-ended request out
+  // lands; what lies below that block is the registered address's catch-up.
   singleStatic->Scenario.it(
-    "Processes events below a registration's block while the new partition catches up",
+    "Processes events below a registration's block while the registered address catches up",
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
@@ -90,15 +92,24 @@ describe("FetchState earliest processable item over the indexer loop", () => {
           }),
         },
       ])
-      await sync.expectItemsQueries([
-        {reply: LeavePending},
-        {reply: LeavePending},
-      ])
-      await indexer.getBatchWritePromise()
+      await sync.expectItemsQueries([{fromBlock: 11, reply: LeavePending}])
+      await indexer.advanceTime(1000)
       let beforeCatchUp = await processedOrder(indexer)
       await sync.expectItemsQueries([
-        {fromBlock: 3, reply: Respond({items: [], latestFetchedBlockNumber: 10})},
-        {reply: LeavePending},
+        {fromBlock: 11, reply: Respond({items: [], latestFetchedBlockNumber: 20})},
+      ])
+      await sync.expectItemsQueries([
+        {
+          address: registeredAddress,
+          fromBlock: 3,
+          toBlock: Bounded(20),
+          reply: Respond({items: [], latestFetchedBlockNumber: 20}),
+        },
+        {
+          address: registeredAddress,
+          where: query => query.fromBlock > 20,
+          reply: LeavePending,
+        },
       ])
       await indexer.getBatchWritePromise()
       t.expect((beforeCatchUp, await processedOrder(indexer))).toEqual((["2:1"], ["2:1 3:0 6:2"]))
@@ -106,7 +117,7 @@ describe("FetchState earliest processable item over the indexer loop", () => {
   )
 
   singleStatic->Scenario.it(
-    "Holds back events at a registration's block until the new partition fetches it",
+    "Holds back events at a registration's block until the registered address's catch-up fetches it",
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
@@ -123,18 +134,24 @@ describe("FetchState earliest processable item over the indexer loop", () => {
           }),
         },
       ])
-      await sync.expectItemsQueries([
-        {reply: LeavePending},
-        {reply: LeavePending},
-      ])
+      await sync.expectItemsQueries([{fromBlock: 501, reply: LeavePending}])
       await indexer.advanceTime(1000)
       let beforeCatchUp = await processedOrder(indexer)
       await sync.expectItemsQueries([
+        {fromBlock: 501, reply: Respond({items: [], latestFetchedBlockNumber: 600})},
+      ])
+      await sync.expectItemsQueries([
         {
+          address: registeredAddress,
           fromBlock: 2,
-          reply: Respond({items: [], latestFetchedBlockNumber: 500}),
+          toBlock: Bounded(600),
+          reply: Respond({items: [], latestFetchedBlockNumber: 600}),
         },
-        {reply: LeavePending},
+        {
+          address: registeredAddress,
+          where: query => query.fromBlock > 600,
+          reply: LeavePending,
+        },
       ])
       await indexer.getBatchWritePromise()
       t.expect((beforeCatchUp, await processedOrder(indexer))).toEqual(([], ["2:1 5:0 6:1"]))
@@ -144,7 +161,7 @@ describe("FetchState earliest processable item over the indexer loop", () => {
   scenarioWith(
     ~addresses=[staticAddress, secondAddress],
   )->Scenario.it(
-    "Processes nothing while another partition hasn't fetched the start block",
+    "Processes nothing while another group hasn't fetched the start block",
     ~sources=[{chain: 1337}],
     ~maxAddrInPartition=1,
     async (~t, ~indexer, ~source) => {
@@ -152,22 +169,27 @@ describe("FetchState earliest processable item over the indexer loop", () => {
       sync.resolveGetHeightOrThrow(10_000)
       await sync.expectItemsQueries([
         {
+          address: staticAddress,
           reply: Respond({
             items: [event(~blockNumber=0, ~logIndex=1)],
             latestFetchedBlockNumber: 1,
           }),
         },
-        {reply: LeavePending},
+        {address: secondAddress, reply: LeavePending},
       ])
       await sync.expectItemsQueries([
-        {reply: LeavePending},
-        {reply: LeavePending},
+        {address: staticAddress, fromBlock: 2, reply: LeavePending},
+        {address: secondAddress, fromBlock: 0, reply: LeavePending},
       ])
       await indexer.advanceTime(1000)
       let whileBehind = await processedOrder(indexer)
       await sync.expectItemsQueries([
-        {fromBlock: 0, reply: Respond({items: [], latestFetchedBlockNumber: 1})},
-        {reply: LeavePending},
+        {
+          address: secondAddress,
+          fromBlock: 0,
+          reply: Respond({items: [], latestFetchedBlockNumber: 1}),
+        },
+        {address: staticAddress, reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
       t.expect((whileBehind, await processedOrder(indexer))).toEqual(([], ["0:1"]))

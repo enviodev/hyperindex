@@ -282,12 +282,12 @@ describe("A chain at the head against real sources", () => {
             await indexer->waitForSeen(`${height->Int.toString}-0`)
             await indexer->waitForSeen(`${height->Int.toString}-1`)
           }
-          let both = [pool, token]->Array.join(",")
+          let both = [token, pool]->Array.join(",")
           t.expect(headGetLogsCalls->Array.toSorted(String.compare)).toEqual([
             `301 ${both} ok`,
+            `302 ${token} ok`,
             `302 ${both} refused`,
             `302 ${pool} ok`,
-            `302 ${token} ok`,
             `303 ${both} ok`,
           ])
         },

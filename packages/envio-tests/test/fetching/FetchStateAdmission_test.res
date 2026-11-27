@@ -43,11 +43,7 @@ describe("Admission into the shared buffer pool", () => {
           chain =>
             source(chain).pendingItemsQueries->Array.map(
               query =>
-                indexer->QueryReservations.reservation(
-                  ~chainId=chain,
-                  ~partitionId=query.partitionId,
-                  ~fromBlock=query.fromBlock,
-                ),
+                indexer->QueryReservations.reservation(~chainId=chain, ~fromBlock=query.fromBlock),
             ),
         ),
       ).toEqual(chainIds->Array.map(chain => chain <= 10 ? [Some(10)] : []))

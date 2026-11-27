@@ -1,9 +1,9 @@
 open Vitest
 
-// Once every partition of a chain is within 200 blocks of the head the chain
-// can fetch, its dynamic contracts are fetched without their addresses: their
-// partitions fold into the single address-free partition, so a new block costs
-// one query instead of one per partition, and the query keeps the same shape
+// Once every need of a chain is within 200 blocks of the head the chain can
+// fetch, its dynamic contracts are fetched without their addresses: one
+// request stream carries them all, so a new block costs one query instead of
+// one per address group, and the query keeps the same shape
 // while contracts keep being registered. Further back, queries keep sending
 // addresses. The switch is per chain and sticky for the run.
 let chainYaml = (~id, ~options="") =>
@@ -85,8 +85,8 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
   scenario->Scenario.it(
     "fetches every dynamic contract in one address-free query per new block",
     ~sources=[{chain: 1337}],
-    // One address per partition, so the three Gravatar addresses take three
-    // partitions and three queries per block until the switch folds them.
+    // One address per group, so the three Gravatar addresses take three
+    // groups and three queries per block until the switch.
     ~maxAddrInPartition=1,
     async (~t, ~indexer, ~source) => {
       let processed = []
@@ -97,7 +97,7 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
       sourceMock.resolveGetHeightOrThrow(300)
 
       // Far from the head: the config address registers two dynamic
-      // addresses, and each partition's query carries its own address.
+      // addresses, and each group's query carries its own address.
       await sourceMock.expectItemsQueries([
         {
           fromBlock: 1,
@@ -342,14 +342,14 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
           {items: [], latestFetchedBlockNumber: 600, knownHeight: 600}
         },
       )
-      // The query budget lets two partitions out at first, the third once one
+      // The query budget lets two groups out at first, the third once one
       // of them is answered.
       await sourceMock.expectItemsQueries([
-        {fromBlock: 301, where: isAddressBound, reply: respondUpTo600},
-        {fromBlock: 301, where: isAddressBound, reply: respondUpTo600},
+        {fromBlock: 301, address: configAddress->Address.toString, reply: respondUpTo600},
+        {fromBlock: 301, address: first->Address.toString, reply: respondUpTo600},
       ])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 301, where: isAddressBound, reply: respondUpTo600},
+        {fromBlock: 301, address: second->Address.toString, reply: respondUpTo600},
       ])
 
       sourceMock.resolveGetHeightOrThrow(601)

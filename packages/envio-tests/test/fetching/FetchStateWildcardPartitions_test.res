@@ -14,24 +14,21 @@ let contractA = "0xa000000000000000000000000000000000000001"
 let contractB = "0xb000000000000000000000000000000000000001"
 
 type selectionSummary = {
-  partitionId: string,
-  dependsOnAddresses: bool,
+  byAddress: bool,
   events: array<string>,
 }
 
-let summarizeSelections = (queries: array<MockSource.pendingItemsQuery>) =>
+// `eventNames` names each registration by its index: the handlers in the order
+// they are registered, then the mock source's two of its own.
+let summarizeSelections = (queries: array<MockSource.pendingItemsQuery>, ~eventNames) =>
   queries
   ->Array.map(query => {
-    let selection = query->MockSource.selection
-    {
-      partitionId: query.partitionId,
-      dependsOnAddresses: selection.dependsOnAddresses,
-      events: selection.onEventRegistrations->Array.map(registration =>
-        `${registration.eventConfig.contractName}.${registration.eventConfig.name}`
-      ),
-    }
+    byAddress: query->MockSource.addresses->Array.length > 0,
+    events: (query->MockSource.selection).onEventRegistrationIndexes->Array.map(index =>
+      eventNames->Array.getUnsafe(index)
+    ),
   })
-  ->Array.toSorted((a, b) => String.compare(a.partitionId, b.partitionId))
+  ->Array.toSorted((a, b) => compare(a.byAddress, b.byAddress)->Int.toFloat)
 
 let chainYaml = (~name, ~contracts) =>
   `
@@ -101,6 +98,18 @@ indexer.onEvent({ contract: "Gravatar", event: "TestEvent", wildcard: true }, as
 `,
 )
 
+let scenarioEventNames = [
+  "Factory.Register",
+  "Factory.Transfer",
+  "SimpleNft.Transfer",
+  "Gravatar.TestEvent",
+  "Gravatar.TestEvent",
+  "Factory.MockEvent",
+  "Factory.MockEvent",
+]
+
+let isWildcard = (query: MockSource.pendingItemsQuery) => query->MockSource.addresses == []
+
 let register = (~blockNumber, ~logIndex=0, contractName, contractAddress): MockSource.itemMock => {
   event: "Factory.Register",
   blockNumber,
@@ -112,7 +121,7 @@ let register = (~blockNumber, ~logIndex=0, contractName, contractAddress): MockS
   },
 }
 
-describe("Wildcard and address-filtered partitions", () => {
+describe("Wildcard and address-filtered requests", () => {
   scenario->Scenario.it(
     "fetches wildcard events without addresses, and no address of a contract with only wildcard events",
     ~sources=[{chain: 1337, autoHeight: 1000}],
@@ -121,7 +130,7 @@ describe("Wildcard and address-filtered partitions", () => {
       await sourceMock.expectItemsQueries([{reply: LeavePending}])
       t.expect((
         sourceMock.pendingItemsQueries->summarize,
-        sourceMock.pendingItemsQueries->summarizeSelections,
+        sourceMock.pendingItemsQueries->summarizeSelections(~eventNames=scenarioEventNames),
       )).toEqual((
         [
           {fromBlock: 0, toBlock: Bounded(800), addresses: []},
@@ -129,16 +138,16 @@ describe("Wildcard and address-filtered partitions", () => {
         ],
         [
           {
-            dependsOnAddresses: false,
+            byAddress: false,
             events: ["Gravatar.TestEvent", "Gravatar.TestEvent"],
           },
-          // A wildcard event filtered by addresses goes with the address queries.
+          // A wildcard event filtered by addresses goes with its contract's
+          // addresses. SimpleNft has none yet, so nothing fetches its event.
           {
-            dependsOnAddresses: true,
+            byAddress: true,
             events: [
               "Factory.Register",
               "Factory.Transfer",
-              "SimpleNft.Transfer",
               "Factory.MockEvent",
               "Factory.MockEvent",
             ],
@@ -154,8 +163,9 @@ describe("Wildcard and address-filtered partitions", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       await sourceMock.expectItemsQueries([
-        {reply: LeavePending},
+        {where: isWildcard, reply: LeavePending},
         {
+          address: factory0,
           reply: Respond({
             items: [
               register(~blockNumber=3, "Gravatar", gravatar4),
@@ -168,13 +178,14 @@ describe("Wildcard and address-filtered partitions", () => {
           }),
         },
       ])
-      // Partition 1's next query goes out with its response; the
+      // The Factory group's next query goes out with its response; the
       // registrations land once the contractRegister run that follows ends.
       await indexer.waitUntilIdle()
       await sourceMock.expectItemsQueries([
-        {reply: LeavePending},
-        {fromBlock: 101, reply: LeavePending},
-        {reply: LeavePending},
+        {where: isWildcard, reply: LeavePending},
+        {address: factory0, fromBlock: 101, reply: LeavePending},
+        {address: simpleNft1, reply: LeavePending},
+        {address: factory5, reply: LeavePending},
       ])
       t.expect(
         sourceMock.pendingItemsQueries->summarize,
@@ -182,22 +193,22 @@ describe("Wildcard and address-filtered partitions", () => {
       ).toEqual([
         {fromBlock: 0, toBlock: Bounded(800), addresses: []},
         {
-          fromBlock: 101,
-          toBlock: Bounded(800),
-          addresses: [factory0, factory1],
-        },
-        {
           fromBlock: 3,
           toBlock: Bounded(800),
           addresses: [simpleNft1, simpleNft2, simpleNft3],
         },
         {fromBlock: 6, toBlock: Bounded(800), addresses: [factory5]},
+        {
+          fromBlock: 101,
+          toBlock: Bounded(800),
+          addresses: [factory0, factory1],
+        },
       ])
     },
   )
 })
 
-describe("Partitions of address-filtered contracts", () => {
+describe("Groups of address-filtered contracts", () => {
   let filtered = Scenario.make(
     ~configYaml=chainYaml(
       ~name="fetch-state-address-filtered-start-blocks",
@@ -237,14 +248,21 @@ indexer.onEvent(
   )
 
   filtered->Scenario.it(
-    "fetches address-filtered contracts with different start blocks in one partition",
+    "fetches address-filtered contracts with different start blocks in one group",
     ~sources=[{chain: 1337, autoHeight: 1000}],
     async (~t, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
       await sourceMock.expectItemsQueries([{reply: LeavePending}])
       t.expect((
         sourceMock.pendingItemsQueries->summarize,
-        sourceMock.pendingItemsQueries->summarizeSelections,
+        sourceMock.pendingItemsQueries->summarizeSelections(
+          ~eventNames=[
+            "ContractA.Transfer",
+            "ContractB.Transfer",
+            "ContractA.MockEvent",
+            "ContractA.MockEvent",
+          ],
+        ),
       )).toEqual((
         [
           {
@@ -255,7 +273,7 @@ indexer.onEvent(
         ],
         [
           {
-            dependsOnAddresses: true,
+            byAddress: true,
             events: [
               "ContractA.Transfer",
               "ContractB.Transfer",

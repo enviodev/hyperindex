@@ -1,6 +1,6 @@
 open Vitest
 
-// A block handler selecting fields is fetched by a partition of its own, which
+// A block handler selecting fields is fetched by a need of its own, which
 // a restart rebuilds from the committed progress. Each run counts itself, so a
 // block the resumed run reads twice or skips shows in the counts.
 
@@ -16,7 +16,7 @@ chains:
     start_block: 1
     max_reorg_depth: 200
     contracts:
-      # Starts past the head, so only the block handler's partition reads blocks.
+      # Starts past the head, so only the block handler's need reads blocks.
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
         start_block: 1000000
@@ -68,7 +68,7 @@ let handlerBlocks = (~upTo) =>
   })
 
 // Answers every pending query from a chain whose head is `head`, recording
-// where the block handler's partition asked to start.
+// where the block handler's requests asked to start.
 let answerUpTo = async (~source: MockSource.t, ~head, ~fromBlocks: array<int>) =>
   for _ in 0 to 300 {
     source.pendingItemsQueries
@@ -78,12 +78,12 @@ let answerUpTo = async (~source: MockSource.t, ~head, ~fromBlocks: array<int>) =
       | Bounded(toBlock) => Pervasives.min(toBlock, head)
       | Unbounded => head
       }
-      if query.partitionId === "0" {
+      if (query->MockSource.selection).onBlockRegistrationIndexes->Utils.Array.notEmpty {
         fromBlocks->Array.push(query.fromBlock)->ignore
       }
       (query->MockSource.control).respond({
         items: [],
-        blocks: query.partitionId === "0"
+        blocks: (query->MockSource.selection).onBlockRegistrationIndexes->Utils.Array.notEmpty
           ? handlerBlocks(~upTo=head)->Array.filter(block =>
               block.blockNumber >= query.fromBlock && block.blockNumber <= toBlock
             )
