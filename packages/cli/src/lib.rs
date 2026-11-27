@@ -2,6 +2,9 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 mod address_store;
+#[cfg(test)]
+mod allocation_counter;
+mod arrow_columns;
 mod chain_buffer;
 mod cli_args;
 mod clock;
@@ -17,6 +20,7 @@ pub mod constants;
 pub mod docker_env;
 pub mod executor;
 mod hex;
+mod hypersync_http;
 mod indexer_env;
 mod js_value;
 #[cfg(test)]
@@ -33,6 +37,8 @@ mod storage;
 mod template_dirs;
 #[cfg(test)]
 mod test_servers;
+#[cfg(test)]
+mod test_tls;
 mod text_position;
 mod ts_loader;
 mod tui;

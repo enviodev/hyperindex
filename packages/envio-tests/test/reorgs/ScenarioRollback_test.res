@@ -100,7 +100,7 @@ describe("Scenario rollback and history", () => {
       // The depth search asks which blocks still hold. Only those up to 100 do,
       // so the rollback target is the checkpoint at block 100 and the block-200
       // write has no history at or before it — it's removed rather than restored.
-      await Scenario.driveRollback(~source, ~validUpTo=100)
+      await Scenario.driveRollback(~indexer, ~source, ~validUpTo=100)
       await indexer.waitUntilIdle()
 
       let counters: array<counter> = await indexer.query("Counter")
@@ -175,7 +175,7 @@ describe("Scenario rollback and history", () => {
           }),
         },
       ])
-      await Scenario.driveRollback(~source, ~validUpTo=100)
+      await Scenario.driveRollback(~indexer, ~source, ~validUpTo=100)
       await indexer.waitUntilIdle()
 
       let counters: array<counter> = await indexer.query("Counter")

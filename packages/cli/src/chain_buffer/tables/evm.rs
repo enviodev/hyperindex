@@ -63,39 +63,30 @@ impl<'a> LogView<'a> {
     }
 }
 
-/// Appends a HyperSync log. A log without its key or emitter is malformed.
-pub(crate) fn push_log(builder: &mut ChunkBuilder, log: &simple_types::Log) -> Result<()> {
-    let block_number = u64::from(log.block_number.context("log.blockNumber missing")?);
-    let log_index = u64::from(log.log_index.context("log.logIndex missing")?);
+/// A log's stored fields, borrowed from wherever the source holds them.
+pub(crate) struct LogRow<'a> {
+    pub(crate) block_number: u64,
+    pub(crate) log_index: Option<u64>,
+    pub(crate) transaction_index: u64,
+    pub(crate) address: &'a [u8],
+    pub(crate) topics: [Option<&'a [u8]>; 4],
+    pub(crate) data: &'a [u8],
+}
+
+/// Appends a log. A log without its index can't be keyed.
+pub(crate) fn push_log_row(builder: &mut ChunkBuilder, log: &LogRow) -> Result<()> {
+    let log_index = log.log_index.context("log.logIndex missing")?;
     anyhow::ensure!(
         log_index <= MAX_POSITION,
         "log.logIndex {log_index} is past what the buffer keys hold"
     );
-    builder.push_row(make_key(block_number, log_index), 0, 0);
-    builder.set_u64(
-        log_column::TRANSACTION_INDEX,
-        u64::from(
-            log.transaction_index
-                .context("log.transactionIndex missing")?,
-        ),
-    );
-    builder.set_bytes(
-        log_column::ADDRESS,
-        log.address
-            .as_ref()
-            .context("log.address missing")?
-            .as_slice(),
-    );
-    for (position, topic) in log.topics.iter().enumerate().take(4) {
-        builder.set_optional_bytes(
-            log_column::TOPIC0 + position,
-            topic.as_ref().map(|topic| topic.as_slice()),
-        );
+    builder.push_row(make_key(log.block_number, log_index), 0, 0);
+    builder.set_u64(log_column::TRANSACTION_INDEX, log.transaction_index);
+    builder.set_bytes(log_column::ADDRESS, log.address);
+    for (position, topic) in log.topics.iter().enumerate() {
+        builder.set_optional_bytes(log_column::TOPIC0 + position, *topic);
     }
-    builder.set_bytes(
-        log_column::DATA,
-        log.data.as_ref().map(|data| data.as_ref()).unwrap_or(&[]),
-    );
+    builder.set_bytes(log_column::DATA, log.data);
     Ok(())
 }
 

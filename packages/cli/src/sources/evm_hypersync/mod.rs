@@ -1,9 +1,10 @@
 use std::sync::{Arc, Once};
 
 use anyhow::{Context, Result};
+use arrow::array::{BinaryArray, RecordBatch, UInt64Array};
 use hypersync_client::{
     format::{Address, LogArgument},
-    net_types, simple_types, RateLimitResponse,
+    net_types, simple_types,
 };
 
 use crate::address_store::AddressSet;
@@ -13,7 +14,7 @@ use crate::chain_buffer::{
     matching::EvmMatcher,
     page::{Page, PageData},
     selection::evm::BuiltLogSelection,
-    tables::evm::LogView,
+    tables::evm::{LogRow, LogView},
     ChainBuffer, Ecosystem, EvmRegistrations, Shared,
 };
 use crate::ecosystems::evm::fields::{
@@ -27,11 +28,16 @@ use crate::sources::request_stats::RequestStat;
 
 pub(crate) mod config;
 mod field_selection;
+#[cfg(test)]
+mod served_page_tests;
 mod transaction_selection;
+mod transport;
 
+use crate::arrow_columns::{bytes_at, fixed_bytes_at, typed_column, u64_at};
 pub(crate) use config::ClientConfig;
 use field_selection::field_selection;
 use net_types::LogField;
+use transport::{QueryOutcome, Transport};
 
 static LOGGER_INIT: Once = Once::new();
 
@@ -60,7 +66,7 @@ pub(crate) fn first_line(error: &anyhow::Error) -> String {
 }
 
 pub(crate) struct EvmHyperSyncClient {
-    inner: hypersync_client::Client,
+    transport: Transport,
     chain: Arc<Shared>,
     evm: Arc<EvmRegistrations>,
 }
@@ -68,18 +74,15 @@ pub(crate) struct EvmHyperSyncClient {
 impl EvmHyperSyncClient {
     /// Execute one raw HyperSync page. Public methods decide how much of the
     /// response to convert for their specific caller.
-    async fn get_raw(
-        &self,
-        query: net_types::Query,
-    ) -> Result<hypersync_client::QueryResponse, ClientError> {
-        let res = self
-            .inner
-            .get_with_rate_limit(&query)
+    async fn get_raw(&self, query: net_types::Query) -> Result<transport::Response, ClientError> {
+        match self
+            .transport
+            .query(&query)
             .await
-            .context("run inner query")?;
-        match res {
-            RateLimitResponse::Success { response, .. } => Ok(response),
-            RateLimitResponse::RateLimited(info) => Err(rate_limited(&info)),
+            .context("run inner query")?
+        {
+            QueryOutcome::Response(response) => Ok(response),
+            QueryOutcome::RateLimited(info) => Err(rate_limited(&info)),
         }
     }
 
@@ -91,13 +94,16 @@ impl EvmHyperSyncClient {
         init_logger(&cfg.log_filter);
         let chain = buffer.shared();
         let evm = chain.evm()?;
-        let inner = hypersync_client::Client::new_with_agent(cfg.into(), user_agent)
-            .context("build client")?;
-        Ok(EvmHyperSyncClient { inner, chain, evm })
+        let transport = cfg.into_transport(user_agent).context("build client")?;
+        Ok(EvmHyperSyncClient {
+            transport,
+            chain,
+            evm,
+        })
     }
 
     pub(crate) async fn get_height(&self) -> Result<u64, ClientError> {
-        self.inner.get_height().await.map_err(|error| {
+        self.transport.height().await.map_err(|error| {
             ClientError::Other(anyhow::anyhow!(
                 "Failed to get HyperSync height: {}",
                 first_line(&error)
@@ -130,7 +136,7 @@ impl EvmHyperSyncClient {
                     ..Default::default()
                 };
                 let response = self.get_raw(query).await?;
-                let (next, page) = block_hash_page(response);
+                let (next, page) = block_hash_page(response)?;
                 // `include_all_blocks` leaves no gaps, so the last block the
                 // page covered is the one before where it stopped.
                 Ok(HashPage {
@@ -274,7 +280,11 @@ impl EvmHyperSyncClient {
         };
 
         let response = self.get_raw(query).await?;
-        let response_blocks = response.data.blocks.iter().map(Vec::len).sum::<usize>() as i64;
+        let response_blocks = response
+            .blocks
+            .iter()
+            .map(RecordBatch::num_rows)
+            .sum::<usize>() as i64;
 
         let next_block: i64 = response
             .next_block
@@ -285,18 +295,19 @@ impl EvmHyperSyncClient {
             block_selection.blocks_run_on(block_query.from_block..(next_block as u64));
         let matcher = &self.evm.matcher;
         let transaction_matcher = selects_transactions.then_some(&self.chain.transaction_matcher);
-        let mut page = tokio::task::block_in_place(|| {
-            process_response(
-                response.data.blocks,
-                response.data.transactions,
-                response.data.logs,
-                matcher,
-                transaction_matcher,
-                &validated_block_fields,
-                &requested_transaction_fields,
-                &handler_blocks,
-            )
-        })?;
+        // Inline rather than `block_in_place`: matching reads the columns in
+        // place, and handing the worker's slot to a fresh thread on every page
+        // cost more than the work.
+        let mut page = process_response(
+            &response.blocks,
+            &response.transactions,
+            &response.logs,
+            matcher,
+            transaction_matcher,
+            &validated_block_fields,
+            &requested_transaction_fields,
+            &handler_blocks,
+        )?;
 
         // The rollback guard's blocks are reorg-detection inputs like any
         // other: the guard's head block covers the tip of the scanned range,
@@ -385,14 +396,24 @@ pub(crate) struct ItemsResponse {
 
 /// Convert only the two values needed by the block-hash paginator. Raw blocks
 /// move directly into the response store without constructing napi block DTOs.
-fn block_hash_page(mut response: hypersync_client::QueryResponse) -> (u64, PageData) {
+fn block_hash_page(response: transport::Response) -> Result<(u64, PageData)> {
     let mut page = PageData::new(Ecosystem::Evm);
     let mut rows = page.blocks.builder();
-    for block in std::mem::take(&mut response.data.blocks).iter().flatten() {
-        chain_buffer::tables::evm::push_block(&mut rows, block, 0);
+    for batch in &response.blocks {
+        let columns = ObservedBlockColumns::of(batch)?;
+        for row in 0..batch.num_rows() {
+            if let Some(number) = u64_at(columns.number, row) {
+                chain_buffer::tables::evm::push_observed_block(
+                    &mut rows,
+                    number,
+                    fixed_bytes_at(columns.hash, row, 32, "block.hash")?,
+                    None,
+                );
+            }
+        }
     }
     page.add_blocks(rows.finish());
-    (response.next_block, page)
+    Ok((response.next_block, page))
 }
 
 /// The guard's head block, with its time, and the parent of the first block
@@ -438,9 +459,9 @@ fn sorted_set<T: Ord>(mut keys: Vec<T>) -> Vec<T> {
 /// non-nullable field or a joined row.
 #[allow(clippy::too_many_arguments)]
 fn process_response(
-    blocks: Vec<Vec<simple_types::Block>>,
-    transactions: Vec<Vec<simple_types::Transaction>>,
-    logs: Vec<Vec<simple_types::Log>>,
+    blocks: &[RecordBatch],
+    transactions: &[RecordBatch],
+    logs: &[RecordBatch],
     matcher: &EvmMatcher,
     transaction_matcher: Option<&TransactionMatcher>,
     validated_block_fields: &[BlockField],
@@ -455,32 +476,47 @@ fn process_response(
     let mut log_rows = page.events.builder();
     {
         let store = matcher.read_store();
-        for log in logs.iter().flatten() {
-            let block_number = u64::from(log.block_number.context("log.blockNumber missing")?);
-            let transaction_index = u64::from(
-                log.transaction_index
-                    .context("log.transactionIndex missing")?,
-            ) as u32;
-            let address = log.address.as_ref().context("log.address missing")?;
-            let view = LogView {
-                block_number,
-                address: address.as_slice(),
-                topics: std::array::from_fn(|position| {
-                    log.topics
-                        .get(position)
-                        .and_then(Option::as_ref)
-                        .map(|topic| topic.as_slice())
-                }),
-            };
-            let found = matcher.classify(&view, &store);
-            if !found.kept {
-                continue;
+        // Every fetched log is matched here, most of them to be dropped under
+        // client-side filtering, so a log is read in place and only a kept one
+        // is copied.
+        for batch in logs {
+            let columns = LogColumns::of(batch)?;
+            for row in 0..batch.num_rows() {
+                let block_number =
+                    u64_at(columns.block_number, row).context("log.blockNumber missing")?;
+                let transaction_index = u64_at(columns.transaction_index, row)
+                    .context("log.transactionIndex missing")?;
+                let address = fixed_bytes_at(columns.address, row, 20, "log.address")?
+                    .context("log.address missing")?;
+                let mut topics = [None; 4];
+                for (position, topic) in topics.iter_mut().enumerate() {
+                    *topic = fixed_bytes_at(columns.topics[position], row, 32, "log.topic")?;
+                }
+                let view = LogView {
+                    block_number,
+                    address,
+                    topics,
+                };
+                let found = matcher.classify(&view, &store);
+                if !found.kept {
+                    continue;
+                }
+                if found.registers {
+                    registering_blocks.push(block_number);
+                }
+                referenced_transactions.push((block_number, transaction_index as u32));
+                chain_buffer::tables::evm::push_log_row(
+                    &mut log_rows,
+                    &LogRow {
+                        block_number,
+                        log_index: u64_at(columns.log_index, row),
+                        transaction_index,
+                        address,
+                        topics,
+                        data: bytes_at(columns.data, row).unwrap_or(&[]),
+                    },
+                )?;
             }
-            if found.registers {
-                registering_blocks.push(block_number);
-            }
-            referenced_transactions.push((block_number, transaction_index));
-            chain_buffer::tables::evm::push_log(&mut log_rows, log)?;
         }
     }
     page.add_events(log_rows.finish());
@@ -492,40 +528,50 @@ fn process_response(
         let fetched = rpc_fields::tx_mask(requested_transaction_fields);
         let mut kept = Vec::new();
         let mut rows = page.transactions.builder();
-        for tx in transactions.iter().flatten() {
-            // A row without its key backs no log; if a kept log wanted it, the
-            // coverage check below reports the transaction missing. A
-            // transaction selection returned it as one the handlers may run on,
-            // and nothing later would notice it dropped.
-            let (Some(block_number), Some(transaction_index)) =
-                (tx.block_number, tx.transaction_index)
-            else {
-                if transaction_matcher.is_some() {
-                    let name = if tx.block_number.is_none() {
-                        "blockNumber"
-                    } else {
-                        "transactionIndex"
-                    };
-                    push_unique(&mut missing, format!("transaction.{name}"));
+        for batch in transactions {
+            let block_numbers = typed_column::<UInt64Array>(batch, "block_number")?;
+            let transaction_indexes = typed_column::<UInt64Array>(batch, "transaction_index")?;
+            for row in 0..batch.num_rows() {
+                // A row without its key backs no log; if a kept log wanted it,
+                // the coverage check below reports the transaction missing. A
+                // transaction selection returned it as one the handlers may run
+                // on, and nothing later would notice it dropped.
+                let (Some(block_number), Some(transaction_index)) =
+                    (u64_at(block_numbers, row), u64_at(transaction_indexes, row))
+                else {
+                    if transaction_matcher.is_some() {
+                        let name = if u64_at(block_numbers, row).is_none() {
+                            "blockNumber"
+                        } else {
+                            "transactionIndex"
+                        };
+                        push_unique(&mut missing, format!("transaction.{name}"));
+                    }
+                    continue;
+                };
+                let key = (block_number, transaction_index as u32);
+                let referenced = referenced_transactions.binary_search(&key).is_ok();
+                // Only a row the page may keep is read whole.
+                if !referenced && transaction_matcher.is_none() {
+                    continue;
                 }
-                continue;
-            };
-            let key = (u64::from(block_number), u64::from(transaction_index) as u32);
-            let handled = transaction_matcher.is_some_and(|transaction_matcher| {
-                transaction_matcher.matches_any(&TransactionView::of_transaction(tx, fetched))
-            });
-            if handled {
-                handled_transactions.push(key);
-            } else if referenced_transactions.binary_search(&key).is_err() {
-                continue;
-            }
-            for &field in requested_transaction_fields {
-                if let Some(name) = transaction_field_missing(tx, field) {
-                    push_unique(&mut missing, format!("transaction.{}", name));
+                let tx = read_transaction(batch, row)?;
+                let handled = transaction_matcher.is_some_and(|transaction_matcher| {
+                    transaction_matcher.matches_any(&TransactionView::of_transaction(&tx, fetched))
+                });
+                if handled {
+                    handled_transactions.push(key);
+                } else if !referenced {
+                    continue;
                 }
+                for &field in requested_transaction_fields {
+                    if let Some(name) = transaction_field_missing(&tx, field) {
+                        push_unique(&mut missing, format!("transaction.{}", name));
+                    }
+                }
+                kept.push(key);
+                chain_buffer::tables::evm::push_transaction(&mut rows, &tx, fetched)?;
             }
-            kept.push(key);
-            chain_buffer::tables::evm::push_transaction(&mut rows, tx, fetched)?;
         }
         page.add_transactions(rows.finish());
         let kept = sorted_set(kept);
@@ -536,9 +582,6 @@ fn process_response(
         }
     }
 
-    let returned_blocks: Vec<&simple_types::Block> = blocks.iter().flatten().collect();
-    let present_block_numbers =
-        sorted_set(returned_blocks.iter().filter_map(|b| b.number).collect());
     let referenced_blocks = sorted_set(
         referenced_transactions
             .iter()
@@ -548,18 +591,44 @@ fn process_response(
             .collect(),
     );
     let is_referenced = |number: u64| referenced_blocks.binary_search(&number).is_ok();
-    for block in &returned_blocks {
-        let referenced = block.number.is_some_and(is_referenced);
-        for &field in validated_block_fields {
-            if !referenced && !REQUIRED_BLOCK_FIELDS.contains(&field) {
-                continue;
-            }
-            if let Some(name) = block_field_missing(block, field) {
-                push_unique(&mut missing, format!("block.{}", name));
-            }
+    // A block a kept row reads is read whole; any other block only for its
+    // number, hash and time, in place.
+    let mut returned_blocks = Vec::new();
+    for batch in blocks {
+        let columns = ObservedBlockColumns::of(batch)?;
+        for row in 0..batch.num_rows() {
+            let number = u64_at(columns.number, row);
+            let block = if number.is_some_and(is_referenced) {
+                let block = read_block(batch, row)?;
+                for &field in validated_block_fields {
+                    if let Some(name) = block_field_missing(&block, field) {
+                        push_unique(&mut missing, format!("block.{}", name));
+                    }
+                }
+                ReturnedBlock::Read(Box::new(block))
+            } else {
+                let observed = ObservedBlock {
+                    number,
+                    hash: fixed_bytes_at(columns.hash, row, 32, "block.hash")?,
+                    timestamp: bytes_at(columns.timestamp, row),
+                };
+                for &field in validated_block_fields {
+                    if let Some(name) = observed.required_field_missing(field) {
+                        push_unique(&mut missing, format!("block.{}", name));
+                    }
+                }
+                ReturnedBlock::Observed(observed)
+            };
+            returned_blocks.push(block);
         }
     }
     if !validated_block_fields.is_empty() {
+        let present_block_numbers = sorted_set(
+            returned_blocks
+                .iter()
+                .filter_map(ReturnedBlock::number)
+                .collect(),
+        );
         for block_number in &referenced_blocks {
             if present_block_numbers.binary_search(block_number).is_err() {
                 push_unique(&mut missing, "block".into());
@@ -573,23 +642,118 @@ fn process_response(
     let fetched = BlockField::store_mask(validated_block_fields);
     let mut rows = page.blocks.builder();
     for block in returned_blocks {
-        if block.number.is_some_and(is_referenced) {
-            chain_buffer::tables::evm::push_block(&mut rows, block, fetched);
-        } else if let Some(number) = block.number {
-            chain_buffer::tables::evm::push_observed_block(
+        match block {
+            ReturnedBlock::Read(block) => {
+                chain_buffer::tables::evm::push_block(&mut rows, &block, fetched)
+            }
+            ReturnedBlock::Observed(ObservedBlock {
+                number: Some(number),
+                hash,
+                timestamp,
+            }) => chain_buffer::tables::evm::push_observed_block(
                 &mut rows,
                 number,
-                block.hash.as_ref().map(|hash| hash.as_slice()),
-                block
-                    .timestamp
-                    .as_ref()
+                hash,
+                timestamp
                     .and_then(|time| map_i64(&Some(time)).ok().flatten())
                     .map(|time| time as u64),
-            );
+            ),
+            ReturnedBlock::Observed(ObservedBlock { number: None, .. }) => {}
         }
     }
     page.add_blocks(rows.finish());
     Ok(page)
+}
+
+/// The columns of the log table a page reads.
+struct LogColumns<'a> {
+    block_number: Option<&'a UInt64Array>,
+    log_index: Option<&'a UInt64Array>,
+    transaction_index: Option<&'a UInt64Array>,
+    address: Option<&'a BinaryArray>,
+    data: Option<&'a BinaryArray>,
+    topics: [Option<&'a BinaryArray>; 4],
+}
+
+impl<'a> LogColumns<'a> {
+    fn of(batch: &'a RecordBatch) -> Result<Self> {
+        Ok(LogColumns {
+            block_number: typed_column(batch, "block_number")?,
+            log_index: typed_column(batch, "log_index")?,
+            transaction_index: typed_column(batch, "transaction_index")?,
+            address: typed_column(batch, "address")?,
+            data: typed_column(batch, "data")?,
+            topics: [
+                typed_column(batch, "topic0")?,
+                typed_column(batch, "topic1")?,
+                typed_column(batch, "topic2")?,
+                typed_column(batch, "topic3")?,
+            ],
+        })
+    }
+}
+
+struct ObservedBlockColumns<'a> {
+    number: Option<&'a UInt64Array>,
+    hash: Option<&'a BinaryArray>,
+    timestamp: Option<&'a BinaryArray>,
+}
+
+impl<'a> ObservedBlockColumns<'a> {
+    fn of(batch: &'a RecordBatch) -> Result<Self> {
+        Ok(ObservedBlockColumns {
+            number: typed_column(batch, "number")?,
+            hash: typed_column(batch, "hash")?,
+            timestamp: typed_column(batch, "timestamp")?,
+        })
+    }
+}
+
+/// A block no kept row reads: what reorg detection and progress need of it.
+struct ObservedBlock<'a> {
+    number: Option<u64>,
+    hash: Option<&'a [u8]>,
+    timestamp: Option<&'a [u8]>,
+}
+
+impl ObservedBlock<'_> {
+    /// Only the required fields are demanded of a block nothing reads.
+    fn required_field_missing(&self, field: BlockField) -> Option<&'static str> {
+        match field {
+            BlockField::Number => self.number.is_none().then_some("number"),
+            BlockField::Hash => self.hash.is_none().then_some("hash"),
+            BlockField::Timestamp => self.timestamp.is_none().then_some("timestamp"),
+            _ => None,
+        }
+    }
+}
+
+enum ReturnedBlock<'a> {
+    Read(Box<simple_types::Block>),
+    Observed(ObservedBlock<'a>),
+}
+
+impl ReturnedBlock<'_> {
+    fn number(&self) -> Option<u64> {
+        match self {
+            ReturnedBlock::Read(block) => block.number,
+            ReturnedBlock::Observed(observed) => observed.number,
+        }
+    }
+}
+
+fn read_block(batch: &RecordBatch, row: usize) -> Result<simple_types::Block> {
+    simple_types::Block::try_from(hypersync_client::arrow_reader::BlockReader::new(
+        batch, row,
+    )?)
+    .context("convert block")
+}
+
+fn read_transaction(batch: &RecordBatch, row: usize) -> Result<simple_types::Transaction> {
+    simple_types::Transaction::try_from(hypersync_client::arrow_reader::TransactionReader::new(
+        batch, row,
+    )?)
+    .context("convert transaction")
 }
 
 /// Block fields the indexer always needs: `number` keys the page's blocks and
@@ -664,6 +828,185 @@ mod tests {
         }
     }
 
+    /// A column for a field some row has, the way the server serves only the
+    /// fields a query selects.
+    fn u64_column(values: Vec<Option<u64>>) -> Option<arrow::array::ArrayRef> {
+        values
+            .iter()
+            .any(Option::is_some)
+            .then(|| Arc::new(UInt64Array::from(values)) as arrow::array::ArrayRef)
+    }
+
+    fn bytes_column(values: Vec<Option<&[u8]>>) -> Option<arrow::array::ArrayRef> {
+        values
+            .iter()
+            .any(Option::is_some)
+            .then(|| Arc::new(BinaryArray::from(values)) as arrow::array::ArrayRef)
+    }
+
+    fn batch(columns: Vec<(&str, Option<arrow::array::ArrayRef>)>) -> RecordBatch {
+        RecordBatch::try_from_iter(
+            columns
+                .into_iter()
+                .filter_map(|(name, column)| column.map(|column| (name, column))),
+        )
+        .unwrap()
+    }
+
+    fn blocks_batch(blocks: &[simple_types::Block]) -> RecordBatch {
+        batch(vec![
+            (
+                "number",
+                u64_column(blocks.iter().map(|b| b.number).collect()),
+            ),
+            (
+                "hash",
+                bytes_column(
+                    blocks
+                        .iter()
+                        .map(|b| b.hash.as_ref().map(|v| v.as_slice()))
+                        .collect(),
+                ),
+            ),
+            (
+                "timestamp",
+                bytes_column(
+                    blocks
+                        .iter()
+                        .map(|b| b.timestamp.as_ref().map(|v| v.as_ref()))
+                        .collect(),
+                ),
+            ),
+            (
+                "gas_used",
+                bytes_column(
+                    blocks
+                        .iter()
+                        .map(|b| b.gas_used.as_ref().map(|v| v.as_ref()))
+                        .collect(),
+                ),
+            ),
+        ])
+    }
+
+    fn transactions_batch(transactions: &[simple_types::Transaction]) -> RecordBatch {
+        batch(vec![
+            (
+                "block_number",
+                u64_column(
+                    transactions
+                        .iter()
+                        .map(|t| t.block_number.map(u64::from))
+                        .collect(),
+                ),
+            ),
+            (
+                "transaction_index",
+                u64_column(
+                    transactions
+                        .iter()
+                        .map(|t| t.transaction_index.map(u64::from))
+                        .collect(),
+                ),
+            ),
+            (
+                "hash",
+                bytes_column(
+                    transactions
+                        .iter()
+                        .map(|t| t.hash.as_ref().map(|v| v.as_slice()))
+                        .collect(),
+                ),
+            ),
+        ])
+    }
+
+    fn logs_batch(logs: &[simple_types::Log]) -> RecordBatch {
+        let topic = |position: usize| {
+            bytes_column(
+                logs.iter()
+                    .map(|log| {
+                        log.topics
+                            .get(position)
+                            .and_then(Option::as_ref)
+                            .map(|topic| topic.as_slice())
+                    })
+                    .collect(),
+            )
+        };
+        batch(vec![
+            (
+                "log_index",
+                u64_column(logs.iter().map(|l| l.log_index.map(u64::from)).collect()),
+            ),
+            (
+                "block_number",
+                u64_column(logs.iter().map(|l| l.block_number.map(u64::from)).collect()),
+            ),
+            (
+                "transaction_index",
+                u64_column(
+                    logs.iter()
+                        .map(|l| l.transaction_index.map(u64::from))
+                        .collect(),
+                ),
+            ),
+            (
+                "address",
+                bytes_column(
+                    logs.iter()
+                        .map(|l| l.address.as_ref().map(|v| v.as_slice()))
+                        .collect(),
+                ),
+            ),
+            (
+                "data",
+                bytes_column(
+                    logs.iter()
+                        .map(|l| l.data.as_ref().map(|v| v.as_ref()))
+                        .collect(),
+                ),
+            ),
+            ("topic0", topic(0)),
+            ("topic1", topic(1)),
+            ("topic2", topic(2)),
+            ("topic3", topic(3)),
+        ])
+    }
+
+    fn batches<T>(tables: &[Vec<T>], to_batch: fn(&[T]) -> RecordBatch) -> Vec<RecordBatch> {
+        tables
+            .iter()
+            .filter(|rows| !rows.is_empty())
+            .map(|rows| to_batch(rows))
+            .collect()
+    }
+
+    /// `process_response` over rows written as the client's row types, laid
+    /// out as the Arrow tables the server would send.
+    #[allow(clippy::too_many_arguments)]
+    fn process_rows(
+        blocks: Vec<Vec<simple_types::Block>>,
+        transactions: Vec<Vec<simple_types::Transaction>>,
+        logs: Vec<Vec<simple_types::Log>>,
+        matcher: &EvmMatcher,
+        transaction_matcher: Option<&TransactionMatcher>,
+        validated_block_fields: &[BlockField],
+        requested_transaction_fields: &[TransactionField],
+        handler_blocks: &[u64],
+    ) -> std::result::Result<PageData, ClientError> {
+        process_response(
+            &batches(&blocks, blocks_batch),
+            &batches(&transactions, transactions_batch),
+            &batches(&logs, logs_batch),
+            matcher,
+            transaction_matcher,
+            validated_block_fields,
+            requested_transaction_fields,
+            handler_blocks,
+        )
+    }
+
     /// Same shape as `full_log`, but on a topic0 no fixture registration pins —
     /// so it routes nowhere.
     fn unmatched_log(block_number: u64) -> simple_types::Log {
@@ -680,7 +1023,7 @@ mod tests {
     fn missing_block_field_returns_typed_error() {
         // The server returned no block for the log but the user asked for
         // block.number/hash/timestamp.
-        let err = process_response(
+        let err = process_rows(
             vec![],
             vec![],
             vec![vec![full_log(1)]],
@@ -707,7 +1050,7 @@ mod tests {
             hash: Some(Default::default()),
             ..Default::default()
         };
-        let err = process_response(
+        let err = process_rows(
             vec![vec![block]],
             vec![],
             vec![vec![full_log(1)]],
@@ -739,7 +1082,7 @@ mod tests {
             hash: Some(Default::default()),
             ..Default::default()
         };
-        let err = process_response(
+        let err = process_rows(
             vec![vec![block]],
             vec![],
             vec![vec![full_log(1)]],
@@ -771,7 +1114,7 @@ mod tests {
             timestamp: Some(Default::default()),
             ..Default::default()
         };
-        let page = process_response(
+        let page = process_rows(
             vec![vec![block]],
             vec![],
             vec![vec![full_log(1)]],
@@ -805,7 +1148,7 @@ mod tests {
             transaction_index: Some(0u64.into()),
             ..Default::default()
         };
-        let err = process_response(
+        let err = process_rows(
             vec![vec![block]],
             vec![vec![tx]],
             vec![vec![full_log(1)]],
@@ -836,7 +1179,7 @@ mod tests {
             timestamp: Some(Default::default()),
             ..Default::default()
         };
-        let err = process_response(
+        let err = process_rows(
             vec![vec![block]],
             vec![],
             vec![vec![full_log(1)]],
@@ -875,7 +1218,7 @@ mod tests {
             ..Default::default()
         };
 
-        let page = process_response(
+        let page = process_rows(
             vec![vec![block]],
             vec![vec![tx]],
             vec![vec![full_log(7)]],
@@ -909,7 +1252,7 @@ mod tests {
             ..Default::default()
         };
 
-        let page = process_response(
+        let page = process_rows(
             vec![vec![block(1), block(2)]],
             vec![vec![tx(1), tx(2)]],
             vec![vec![full_log(1), unmatched_log(2)]],
@@ -954,7 +1297,7 @@ mod tests {
         // routes nowhere, so nothing will ever read them and the page stands.
         // Without this, filtering the stores would silently diverge from what
         // the coverage check still insists the source deliver.
-        let page = process_response(
+        let page = process_rows(
             vec![],
             vec![],
             vec![vec![unmatched_log(1)]],
@@ -981,7 +1324,7 @@ mod tests {
             gas_used: (number == 1).then(Default::default),
             ..Default::default()
         };
-        let page = process_response(
+        let page = process_rows(
             vec![vec![block(1), block(2)]],
             vec![],
             vec![vec![full_log(1), unmatched_log(2)]],
@@ -1018,7 +1361,7 @@ mod tests {
             ..Default::default()
         };
 
-        let page = process_response(
+        let page = process_rows(
             vec![vec![block]],
             vec![vec![
                 simple_types::Transaction {

@@ -8,7 +8,7 @@ describe("IndexerState fetch stall accounting", () => {
     let state = TestIndexerState.make()
 
     state->IndexerState.markProcessingStalledOnFetch
-    await Time.resolvePromiseAfterDelay(~delayMilliseconds=50)
+    await Utils.delay(50)
     // A second mark while one is open must not restart the interval, or a loop
     // that idles across several fetch kicks would under-report.
     state->IndexerState.markProcessingStalledOnFetch
@@ -23,7 +23,7 @@ describe("IndexerState fetch stall accounting", () => {
       let state = TestIndexerState.make()
 
       state->IndexerState.markProcessingStalledOnFetch
-      await Time.resolvePromiseAfterDelay(~delayMilliseconds=50)
+      await Utils.delay(50)
       state->IndexerState.beginReorg(~chainId=1->ChainId.fromInt, ~blockNumber=100)
       // Settled, not discarded: the wait before the reorg still has to land in
       // the counter.
@@ -33,7 +33,7 @@ describe("IndexerState fetch stall accounting", () => {
       // Stands in for the rollback. Without the settle in beginReorg this span
       // would fold into the stall on the next beginProcessing, double-counting
       // time envio_rollback_seconds already owns.
-      await Time.resolvePromiseAfterDelay(~delayMilliseconds=50)
+      await Utils.delay(50)
       state->IndexerState.beginProcessing
 
       t.expect(state->stalledOnFetchSeconds).toBe(settledOnReorg)

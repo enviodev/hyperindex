@@ -569,9 +569,28 @@ let captureRefusal = () => {
 // Answers whatever the reorg resolution asks for: block hashes for the depth
 // search (blocks past `validUpTo` come back re-orged), and, for every query up
 // to `head`, the `refetched` items of its range: what the new chain holds.
-let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetched=[]) => {
-  for _ in 0 to 300 {
-    if source.getBlockHashesCalls->Array.length > 0 {
+// Driven in waves until the rollback has run and its refetch is answered,
+// rather than for a number of ticks: the rollback reads and writes the
+// database between lookups, so slow storage outlasts any fixed count, and a
+// refetch asked for after the count ran out left the rollback's diff, which
+// only lands beside the next batch, unwritten.
+let driveRollback = async (
+  ~indexer: IndexerRunner.t,
+  ~source: MockSource.t,
+  ~validUpTo,
+  ~head=301,
+  ~refetched=[],
+) => {
+  let isDue = (query: MockSource.pendingItemsQuery) => query.fromBlock <= head
+  let rollbacksBefore = indexer.snapshot().rollbackCount
+  let hasRolledBack = () => indexer.snapshot().rollbackCount > rollbacksBefore
+  let isDone = ref(false)
+  let waves = ref(0)
+  while !isDone.contents && waves.contents < 1000 {
+    waves := waves.contents + 1
+    let answeredLookups = source.getBlockHashesCalls->Utils.Array.notEmpty
+    let answeredQueries = source.pendingItemsQueries->Array.some(isDue)
+    if answeredLookups {
       let requested = source.getBlockHashesCalls->Array.copy
       source.resolveGetBlockHashes(
         requested
@@ -591,7 +610,7 @@ let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetc
     // Replied to one by one, so a query past `head` stays pending for the
     // caller rather than failing a match that doesn't list it.
     source.pendingItemsQueries
-    ->Array.filter(query => query.fromBlock <= head)
+    ->Array.filter(isDue)
     ->Array.forEach(query => {
       let latest = switch query.toBlock {
       | Bounded(toBlock) => Math.Int.min(toBlock, head)
@@ -604,7 +623,21 @@ let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetc
         latestFetchedBlockNumber: latest,
       })
     })
-    await Utils.delay(0)
+    await indexer.waitUntilIdle()
+    isDone :=
+      hasRolledBack() &&
+      !answeredLookups &&
+      !answeredQueries &&
+      !indexer.isResolvingReorg() &&
+      source.getBlockHashesCalls->Utils.Array.isEmpty &&
+      !(source.pendingItemsQueries->Array.some(isDue))
+  }
+  if !isDone.contents {
+    JsError.throwWithMessage(
+      hasRolledBack()
+        ? "The rollback's refetch was still being asked for"
+        : "The rollback never finished",
+    )
   }
 }
 
@@ -628,6 +661,6 @@ let reorgAbove = async (
       }),
     },
   ])
-  await driveRollback(~source, ~validUpTo, ~head=head + 1, ~refetched?)
+  await driveRollback(~indexer, ~source, ~validUpTo, ~head=head + 1, ~refetched?)
   await indexer.waitUntilIdle()
 }

@@ -1224,7 +1224,7 @@ mod tests {
             format!(
                 "Couldn't connect to ClickHouse at {url}. Check that it is running and that \
                  ENVIO_CLICKHOUSE_HOST points at it: error sending request for url \
-                 ({url}/?wait_end_of_query=1): error trying to connect: tcp connect error: \
+                 ({url}/?wait_end_of_query=1): client error (Connect): tcp connect error: \
                  Connection refused (os error 111)"
             ),
         );

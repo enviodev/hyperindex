@@ -1,25 +1,26 @@
 use std::time::Duration;
 
+use crate::hypersync_http::{HttpClient, HttpVersion};
+
 /// The Solana HyperSync client options the indexer sets.
+///
+/// There are no retry settings: every failure has to reach SourceManager,
+/// which backs off on the indexer's clock, surfaces the throttling and can
+/// fail over.
 pub(crate) struct SvmClientConfig {
     pub url: String,
     pub api_token: String,
     pub http_req_timeout_millis: u64,
 }
 
-impl From<SvmClientConfig> for hypersync_client_solana::config::ClientConfig {
-    fn from(c: SvmClientConfig) -> Self {
-        Self {
-            url: c.url,
-            bearer_token: Some(c.api_token),
-            http_req_timeout: Duration::from_millis(c.http_req_timeout_millis),
-            // Retries belong to the indexer, not the client: every failure has
-            // to reach SourceManager, which backs off on the indexer's clock,
-            // surfaces the throttling and can fail over. A sleep inside the
-            // client is invisible to all of that.
-            max_num_retries: 0,
-            proactive_rate_limit_sleep: false,
-            ..Self::default()
-        }
+impl SvmClientConfig {
+    pub(super) fn into_http_client(self, user_agent: String) -> anyhow::Result<HttpClient> {
+        HttpClient::new(
+            &self.url,
+            (!self.api_token.is_empty()).then_some(self.api_token),
+            user_agent,
+            HttpVersion::Http1,
+            Duration::from_millis(self.http_req_timeout_millis),
+        )
     }
 }

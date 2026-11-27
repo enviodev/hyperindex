@@ -25,7 +25,17 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["raw_value"] }
 serde_yaml = "0.9.19"
 regex = "1.12"
-reqwest = { version = "0.11", features = ["json"] }
+# rustls trusting the OS store and the bundled webpki roots, like the Postgres
+# client: custom CAs (corporate proxies) verify, and so do public ones in an
+# image without ca-certificates. reqwest's defaults otherwise, minus native-tls.
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "charset",
+  "http2",
+  "macos-system-configuration",
+  "rustls-tls-native-roots",
+  "rustls-tls-webpki-roots",
+] }
 strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
 tokio = { version = "1.49", features = [
@@ -48,12 +58,13 @@ thiserror = "1.0.50"
 fuel-abi-types = "0.7.0"
 hypersync-client = "1.2.0"
 hypersync-net-types = "0.12.3"
-# Response encoding for the test-only mock HyperSync server, matching the
-# formats hypersync-client decodes.
-arrow = { version = "57", default-features = false, features = ["ipc"] }
+# The HyperSync servers' response formats: Arrow IPC (ZSTD compressed) inside
+# Cap'n Proto. arrow must stay the version hypersync-client builds on, whose row
+# readers take our record batches.
+arrow = { version = "57", default-features = false, features = ["ipc", "ipc_compression"] }
 capnp = "0.23"
-hyperfuel-client = "4.0.0"
-polars-arrow = "0.42"
+hyperfuel-format = "4"
+hyperfuel-net-types = "5"
 hypersync-client-solana = "0.2.0"
 hypersync-solana-net-types = "0.2.0"
 # Validate user-supplied SVM program and account IDs decode to exactly 32 bytes.
@@ -61,6 +72,7 @@ bs58 = "0.5.1"
 faster-hex = "0.9"
 ruint = "1"
 env_logger = "0.11"
+log = "0.4"
 arrayvec = "0.7"
 schemars = { version = "1.2", features = ["preserve_order"] }
 convert_case = "0.6.0"
@@ -111,6 +123,8 @@ integration_tests = ["hypersync_health"]
 napi-build = "=2.3.1"
 
 [dev-dependencies]
+# Builds an IPC footer arrow's writer can't: one listing no record batches.
+flatbuffers = "25"
 tempdir = "0.3.7"
 paste = "1.0.15"
 tracing-subscriber = "0.3.22"
@@ -119,12 +133,3 @@ insta = "1.48.0"
 vt100 = "0.16.2"
 proptest = "1"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
-
-# NOTE: this is needed for aarch64 linux, since linking of openssl has caused issues via the package manager
-#       See here for this workaround: https://docs.rs/openssl/latest/openssl/#vendored
-#   It should be possible to use a linked version of openssl, but after hours of trying I (Jason) was unsuccessful.
-[target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
-openssl = { version = "0.10.75", features = ["vendored"] }
-
-[target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.dependencies]
-openssl = { version = "0.10.75", features = ["vendored"] }

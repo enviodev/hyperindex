@@ -75,7 +75,7 @@ describe("A query in flight when a rollback lands", () => {
           }),
         },
       ])
-      await Scenario.driveRollback(~source=first, ~validUpTo=100)
+      await Scenario.driveRollback(~indexer, ~source=first, ~validUpTo=100)
       await indexer.waitUntilIdle()
 
       await indexer.advanceTime(5000)

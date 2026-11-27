@@ -26,11 +26,11 @@ describe("Throttler", () => {
     ])
 
     // Well before the interval the latest scheduled fn must still be throttled.
-    await Time.resolvePromiseAfterDelay(~delayMilliseconds=50)
+    await Utils.delay(50)
     t.expect(actionsCalled, ~message="Should still be called once before the interval").toEqual([1])
 
     // Comfortably past the interval the latest scheduled fn must have run.
-    await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
+    await Utils.delay(100)
     t.expect(actionsCalled, ~message="Should have called latest scheduled fn after delay").toEqual([
       1,
       3,
@@ -41,10 +41,10 @@ describe("Throttler", () => {
     let throttler = Throttler.make(~intervalMillis=100, ~logger=Logger.makeInMemory())
     let actionsCalled = []
     throttler->Throttler.schedule(async () => actionsCalled->Array.push(1)->ignore)
-    await Time.resolvePromiseAfterDelay(~delayMilliseconds=50)
+    await Utils.delay(50)
     throttler->Throttler.schedule(async () => actionsCalled->Array.push(2)->ignore)
     t.expect(actionsCalled, ~message="Scheduler should still be waiting for interval").toEqual([1])
-    await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
+    await Utils.delay(100)
     t.expect(
       actionsCalled,
       ~message="Scheduler should have been called straight after the initial interval",
@@ -56,7 +56,7 @@ describe("Throttler", () => {
     let actionsCalled = []
     throttler->Throttler.schedule(
       async () => {
-        await Time.resolvePromiseAfterDelay(~delayMilliseconds=200)
+        await Utils.delay(200)
         actionsCalled->Array.push(1)->ignore
       },
     )
@@ -70,13 +70,13 @@ describe("Throttler", () => {
     t.expect(actionsCalled, ~message="First task is still busy").toEqual([])
 
     // Interval has elapsed but the long-running first task is still in flight.
-    await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
+    await Utils.delay(100)
     t.expect(
       actionsCalled,
       ~message="Second task has not executed even though passed interval",
     ).toEqual([])
 
-    await Time.resolvePromiseAfterDelay(~delayMilliseconds=200)
+    await Utils.delay(200)
 
     t.expect(
       actionsCalled,
@@ -92,7 +92,7 @@ describe("Throttler", () => {
       let actionsCalled = []
       throttler->Throttler.schedule(
         async () => {
-          await Time.resolvePromiseAfterDelay(~delayMilliseconds=30)
+          await Utils.delay(30)
           actionsCalled->Array.push(1)->ignore
         },
       )
@@ -103,13 +103,13 @@ describe("Throttler", () => {
       )
 
       t.expect(actionsCalled, ~message="First task is still busy").toEqual([])
-      await Time.resolvePromiseAfterDelay(~delayMilliseconds=60)
+      await Utils.delay(60)
       t.expect(
         actionsCalled,
         ~message="First action finished, second action waiting for interval",
       ).toEqual([1])
 
-      await Time.resolvePromiseAfterDelay(~delayMilliseconds=90)
+      await Utils.delay(90)
       t.expect(
         actionsCalled,
         ~message="Second action should have been called after the interval as passed",

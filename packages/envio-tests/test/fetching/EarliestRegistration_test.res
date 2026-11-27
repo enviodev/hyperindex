@@ -445,7 +445,7 @@ describe("A rollback after an address moved to an earlier registration", () => {
       },
       {reply: LeavePending},
     ])
-    await Scenario.driveRollback(~source, ~validUpTo, ~head=251)
+    await Scenario.driveRollback(~indexer, ~source, ~validUpTo, ~head=251)
     await indexer.waitUntilIdle()
     await indexer.advanceTime(500)
     (beforeReorg, (await pingedBlocks(indexer), await registeredChildren(indexer)))
@@ -538,6 +538,7 @@ describe("An address registered twice below its contract's start block", () => {
       // The new chain keeps the birth at 110 but not the pointer at 150, and
       // its ping at 210 sits at another log index than the orphaned one.
       await Scenario.driveRollback(
+        ~indexer,
         ~source,
         ~validUpTo=130,
         ~head=251,

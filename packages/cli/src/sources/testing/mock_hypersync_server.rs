@@ -43,6 +43,8 @@ use crate::sources::testing::mock_http;
 
 const QUERY_PATH: &str = "/query/arrow-ipc";
 const CAPNP_QUERY_PATH: &str = "/query/arrow-ipc/capnp";
+/// Solana HyperSync's query path; only a fixed body answers it.
+const SVM_QUERY_PATH: &str = "/query/arrow";
 const HEIGHT_PATH: &str = "/height";
 const HEIGHT_SSE_PATH: &str = "/height/sse";
 
@@ -66,6 +68,14 @@ struct State {
     /// Rows the server holds the way HyperSync holds a chain: a query no queued
     /// response answers gets the rows its selection matches. See `chain_page`.
     chain: Option<Value>,
+    /// One page, encoded ahead of time, answering every query. Serving it costs
+    /// the server no encoding, so a benchmark measures only the client.
+    fixed_page: Option<FixedPage>,
+}
+
+struct FixedPage {
+    plain: Arc<Vec<u8>>,
+    cached: Arc<Vec<u8>>,
 }
 
 /// A HyperSync server bound to a localhost port, ephemeral unless one is given.
@@ -194,6 +204,34 @@ impl MockHyperSyncServer {
     }
 }
 
+impl MockHyperSyncServer {
+    /// Answer every query from now on with the page `spec` encodes. See
+    /// `build_page` for the spec shape; it must carry `nextBlock`. Returns the
+    /// size of the encoded page.
+    #[cfg(test)]
+    pub(crate) fn serve_fixed_page(&self, spec: &Value) -> Result<usize> {
+        let encode = |wrap| build_page(Some(spec), &Value::Null, 0, wrap).map(Arc::new);
+        let page = FixedPage {
+            plain: encode(Wrap::Plain)?,
+            cached: encode(Wrap::Cached)?,
+        };
+        let size = page.plain.len();
+        self.state.lock().unwrap().fixed_page = Some(page);
+        Ok(size)
+    }
+
+    /// Answer every query from now on with `body` as it is: a page another
+    /// chain's server encodes, on its own query path.
+    #[cfg(test)]
+    pub(crate) fn serve_fixed_body(&self, body: Vec<u8>) {
+        let body = Arc::new(body);
+        self.state.lock().unwrap().fixed_page = Some(FixedPage {
+            plain: body.clone(),
+            cached: body,
+        });
+    }
+}
+
 impl Drop for MockHyperSyncServer {
     fn drop(&mut self) {
         self.close();
@@ -263,7 +301,9 @@ async fn handle_connection(
                 stream_heights(&mut stream, state, shutdown).await?;
                 return Ok(());
             }
-            ("POST", QUERY_PATH) => answer_query(&mut stream, &state, body, Wrap::Plain).await?,
+            ("POST", QUERY_PATH | SVM_QUERY_PATH) => {
+                answer_query(&mut stream, &state, body, Wrap::Plain).await?
+            }
             ("POST", CAPNP_QUERY_PATH) => match CapnpRequest::from_capnp_bytes(&request.body) {
                 // The client asks by id first when it caches queries, and sends
                 // the full query once told the id isn't known. Like HyperSync,
@@ -327,6 +367,16 @@ async fn answer_query(
     body: String,
     wrap: Wrap,
 ) -> Result<()> {
+    let fixed_page = {
+        let state = state.lock().unwrap();
+        state.fixed_page.as_ref().map(|page| match wrap {
+            Wrap::Plain => page.plain.clone(),
+            Wrap::Cached => page.cached.clone(),
+        })
+    };
+    if let Some(page) = fixed_page {
+        return write_response(stream, 200, "application/octet-stream", &page).await;
+    }
     let (spec, chain, height) = {
         let mut state = state.lock().unwrap();
         state.queries.push(body.clone());
@@ -850,8 +900,12 @@ fn encode_table(rows: Option<&Value>, kind_of: fn(&str) -> Result<Kind>) -> Resu
     let schema = Arc::new(Schema::new(fields));
     let mut out = Vec::new();
     {
-        let mut writer =
-            FileWriter::try_new(&mut out, &schema).context("create arrow ipc writer")?;
+        // HyperSync compresses every buffer with ZSTD.
+        let options = arrow::ipc::writer::IpcWriteOptions::default()
+            .try_with_compression(Some(arrow::ipc::CompressionType::ZSTD))
+            .context("set arrow ipc compression")?;
+        let mut writer = FileWriter::try_new_with_options(&mut out, &schema, options)
+            .context("create arrow ipc writer")?;
         if !columns.is_empty() {
             let batch = RecordBatch::try_new(schema.clone(), columns)
                 .context("build arrow record batch")?;

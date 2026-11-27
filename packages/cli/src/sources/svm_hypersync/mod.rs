@@ -5,10 +5,10 @@ use anyhow::{Context, Result};
 
 pub(crate) mod config;
 mod transaction_counts;
+mod transport;
 
-use hypersync_client_solana::from_arrow::blocks_from_arrow;
+use hypersync_client_solana::from_arrow;
 use hypersync_client_solana::simple_types as simple;
-use hypersync_client_solana::RateLimitInfo;
 use hypersync_solana_net_types::field_selection::{BlockField, SolanaFieldSelection};
 use hypersync_solana_net_types::query::SolanaQuery;
 
@@ -22,66 +22,53 @@ use crate::chain_buffer::tables::svm::{
 };
 use crate::chain_buffer::{ChainBuffer, Ecosystem, Shared, SvmRegistrations};
 use crate::ecosystems::svm::types;
+use crate::hypersync_http::HttpClient;
 use crate::sources::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::sources::failure::ClientError;
 use crate::sources::request_stats::RequestStat;
 pub(crate) use config::SvmClientConfig;
-
-/// The marker the client leaves in the error chain on a 429. It exposes no
-/// typed variant for a rate limit — the 429 is folded into an `anyhow` context
-/// line — so the message is the only signal.
-const RATE_LIMITED_MARKER: &str = "rate limited by server";
-
-/// Map a failed query to the marker `SourceManager` backs off on when the
-/// server rate limited it, and to a plain failure otherwise. `rate_limit` is
-/// the client's state, which it refreshed from the same response's headers.
-fn map_query_error(error: anyhow::Error, rate_limit: Option<RateLimitInfo>) -> ClientError {
-    if !format!("{error:?}").contains(RATE_LIMITED_MARKER) {
-        return error.into();
-    }
-    // A 429 without a reset header still has to back off, or the source would
-    // spin straight back into the closed window.
-    let reset_secs = rate_limit
-        .and_then(|info| info.suggested_wait_secs())
-        .unwrap_or(1);
-    ClientError::RateLimited {
-        reset_ms: reset_secs * 1000,
-    }
-}
+use transport::{QueryOutcome, SvmResponse};
 
 impl SvmHyperSyncClient {
     /// Run one query, surfacing a rate limit to the source manager rather than
     /// sleeping it out inside the call.
-    async fn run_query(&self, query: &SolanaQuery) -> Result<simple::SolanaResponse, ClientError> {
-        self.inner
-            .get(query)
+    async fn run(&self, query: &SolanaQuery) -> Result<SvmResponse, ClientError> {
+        match transport::query(&self.http, query)
             .await
-            .context("solana get")
-            .map_err(|e| map_query_error(e, self.inner.rate_limit_info()))
+            .context("solana get")?
+        {
+            QueryOutcome::Response(response) => Ok(response),
+            // A 429 without a reset header still has to back off, or the
+            // source would spin straight back into the closed window.
+            QueryOutcome::RateLimited(info) => Err(ClientError::RateLimited {
+                reset_ms: info.suggested_wait_secs().unwrap_or(1) * 1000,
+            }),
+        }
+    }
+
+    async fn run_query(&self, query: &SolanaQuery) -> Result<simple::SolanaResponse, ClientError> {
+        let response = self.run(query).await?;
+        Ok(decode_rows(&response)?)
     }
 
     /// Run a `transaction_counts::query`, tallying its transaction rows
     /// without decoding them.
     async fn run_counting_query(&self, query: &SolanaQuery) -> Result<CountedPage, ClientError> {
-        let response = self
-            .inner
-            .get_arrow(query)
-            .await
-            .context("solana get")
-            .map_err(|e| map_query_error(e, self.inner.rate_limit_info()))?;
-        let tables = &response.data.tables;
-        let blocks = tables
-            .get("blocks")
-            .map(blocks_from_arrow)
-            .transpose()
-            .context("decode blocks")?
-            .unwrap_or_default();
-        let counts = tables
-            .get("transactions")
-            .map(transaction_counts::count_by_slot)
-            .transpose()
-            .context("count transactions")?
-            .unwrap_or_default();
+        let response = self.run(query).await?;
+        let mut blocks = Vec::new();
+        for batch in response.table("blocks") {
+            blocks.extend(from_arrow::blocks_from_arrow(batch).context("decode blocks")?);
+        }
+        let mut counts: HashMap<u64, SvmTransactionCounts> = HashMap::new();
+        for batch in response.table("transactions") {
+            let batch_counts =
+                transaction_counts::count_by_slot(batch).context("count transactions")?;
+            for (slot, batch_count) in batch_counts {
+                let count = counts.entry(slot).or_default();
+                count.total += batch_count.total;
+                count.failed += batch_count.failed;
+            }
+        }
         Ok(CountedPage {
             next_slot: response.next_slot,
             blocks,
@@ -90,8 +77,46 @@ impl SvmHyperSyncClient {
     }
 }
 
+/// The response's tables as the client's row types, batch by batch.
+fn decode_rows(response: &SvmResponse) -> Result<simple::SolanaResponse> {
+    let mut rows = simple::SolanaResponse {
+        next_slot: response.next_slot,
+        rollback_guard: response.rollback_guard.clone(),
+        response_bytes: response.response_bytes,
+        ..Default::default()
+    };
+    for (table, batches) in &response.tables {
+        for batch in batches.iter().filter(|batch| batch.num_rows() > 0) {
+            match table.as_str() {
+                "blocks" => rows
+                    .blocks
+                    .extend(from_arrow::blocks_from_arrow(batch).context("decode blocks")?),
+                "transactions" => rows.transactions.extend(
+                    from_arrow::transactions_from_arrow(batch).context("decode transactions")?,
+                ),
+                "instruction_calls" => rows.instruction_calls.extend(
+                    from_arrow::instruction_calls_from_arrow(batch)
+                        .context("decode instruction_calls")?,
+                ),
+                "logs" => rows
+                    .logs
+                    .extend(from_arrow::logs_from_arrow(batch).context("decode logs")?),
+                "account_activity" => rows.account_activity.extend(
+                    from_arrow::account_activity_from_arrow(batch)
+                        .context("decode account_activity")?,
+                ),
+                "rewards" => rows
+                    .rewards
+                    .extend(from_arrow::rewards_from_arrow(batch).context("decode rewards")?),
+                _ => {}
+            }
+        }
+    }
+    Ok(rows)
+}
+
 pub(crate) struct SvmHyperSyncClient {
-    inner: Arc<hypersync_client_solana::Client>,
+    http: HttpClient,
     chain: Arc<Shared>,
     /// The chain's registrations, matched against what a query returns so a
     /// page keeps only the instructions some registration takes.
@@ -106,17 +131,14 @@ impl SvmHyperSyncClient {
     ) -> anyhow::Result<SvmHyperSyncClient> {
         let chain = buffer.shared();
         let svm = chain.svm()?;
-        let inner = hypersync_client_solana::Client::new_with_agent(cfg.into(), user_agent)
+        let http = cfg
+            .into_http_client(user_agent)
             .context("build solana client")?;
-        Ok(SvmHyperSyncClient {
-            inner: Arc::new(inner),
-            chain,
-            svm,
-        })
+        Ok(SvmHyperSyncClient { http, chain, svm })
     }
 
     pub(crate) async fn get_height(&self) -> Result<u64, ClientError> {
-        Ok(self.inner.get_height().await?)
+        Ok(transport::height(&self.http).await?)
     }
 
     /// Fetch the inclusive range spanning `block_numbers` into one page. Each
@@ -542,18 +564,14 @@ mod tests {
 
     const TOKEN_METADATA_PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 
-    /// Live test against `solana.hypersync.xyz`. Run with:
-    ///     cargo test -p envio --lib svm_hypersync_source::tests -- --ignored --nocapture
-    #[tokio::test]
-    #[ignore]
-    async fn live_query_token_metadata() {
-        let client = SvmHyperSyncClient::new(
+    fn client_at(url: String) -> SvmHyperSyncClient {
+        SvmHyperSyncClient::new(
             SvmClientConfig {
-                url: "https://solana.hypersync.xyz".into(),
-                api_token: String::new(),
-                http_req_timeout_millis: 30_000,
+                url,
+                api_token: std::env::var("ENVIO_API_TOKEN").unwrap_or_default(),
+                http_req_timeout_millis: 60_000,
             },
-            "hyperindex-test".into(),
+            "test".into(),
             &ChainBuffer::make(
                 crate::chain_buffer::ChainBufferConfig {
                     registrations: crate::chain_buffer::RegistrationsInput::Svm {
@@ -568,9 +586,37 @@ mod tests {
                 },
                 &svm_store(&[]),
             )
-            .expect("build buffer"),
+            .unwrap(),
         )
-        .expect("build client");
+        .unwrap()
+    }
+
+    // https://github.com/enviodev/hyperindex/issues/1691
+    #[cfg(target_os = "linux")]
+    #[tokio::test(start_paused = true)]
+    async fn an_unreachable_server_fails_at_the_connect_timeout() {
+        let blackhole = crate::hypersync_http::test_support::Blackhole::new();
+        let client = client_at(blackhole.url());
+        // The paused clock jumps to whichever timeout fires first, so the
+        // elapsed time names the timer.
+        let start = tokio::time::Instant::now();
+        let result = client.get_height().await.map(|_| ());
+        let elapsed = start.elapsed();
+        let connect_timeout = crate::hypersync_http::CONNECT_TIMEOUT;
+        assert!(
+            result.is_err()
+                && elapsed >= connect_timeout
+                && elapsed < connect_timeout + std::time::Duration::from_secs(1),
+            "{result:?} after {elapsed:?}"
+        );
+    }
+
+    /// Live test against `solana.hypersync.xyz`. Run with:
+    ///     cargo test -p envio --lib sources::svm_hypersync::tests -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn live_query_token_metadata() {
+        let client = client_at("https://solana.hypersync.xyz".to_string());
 
         let height = client.get_height().await.expect("get_height") as i64;
         eprintln!("current slot: {}", height);
@@ -634,50 +680,48 @@ mod tests {
         );
     }
 
-    /// The error shape the client's retry loop produces on a 429: the marker
-    /// arrives only as an `anyhow` context line, so the mapping is a message
-    /// match rather than a typed variant.
-    fn rate_limited_error() -> anyhow::Error {
-        anyhow::anyhow!("")
-            .context("rate limited by server (remaining=0/5 reqs, resets_in=42s)")
-            .context("solana get")
+    /// What the client reports when the server answers a query with `reply`
+    /// (a status, its headers and body, as the mock server takes them).
+    async fn failure_for(reply: serde_json::Value) -> ClientError {
+        let server =
+            crate::sources::testing::mock_hypersync_server::MockHyperSyncServer::new(None, None)
+                .unwrap();
+        server.push_response(reply.to_string()).unwrap();
+        let client = client_at(server.url());
+        client
+            .run(&SolanaQuery::default())
+            .await
+            .err()
+            .expect("a failed query")
     }
 
-    #[test]
-    fn a_rate_limited_query_carries_the_reset_window() {
-        let error = map_query_error(
-            rate_limited_error(),
-            Some(RateLimitInfo {
-                remaining: Some(0),
-                reset_secs: Some(42),
-                ..Default::default()
-            }),
-        );
-        assert!(matches!(
-            error,
-            ClientError::RateLimited { reset_ms: 42_000 }
-        ));
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rate_limited_query_carries_the_reset_window() {
+        let resets = [
+            failure_for(serde_json::json!({
+                "status": 429,
+                "headers": {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "42"},
+            }))
+            .await,
+            // Without a reset header it still backs off, or the source would
+            // spin straight back into the closed window.
+            failure_for(serde_json::json!({"status": 429})).await,
+        ]
+        .map(|error| match error {
+            ClientError::RateLimited { reset_ms } => Some(reset_ms),
+            _ => None,
+        });
+        assert_eq!(resets, [Some(42_000), Some(1_000)]);
     }
 
-    #[test]
-    fn a_rate_limit_without_a_reset_header_still_backs_off() {
-        let error = map_query_error(rate_limited_error(), Some(RateLimitInfo::default()));
-        assert!(matches!(
-            error,
-            ClientError::RateLimited { reset_ms: 1_000 }
-        ));
-    }
-
-    #[test]
-    fn other_failures_keep_their_own_message() {
-        let error = map_query_error(
-            anyhow::anyhow!("connection reset").context("solana get"),
-            Some(RateLimitInfo {
-                remaining: Some(0),
-                reset_secs: Some(42),
-                ..Default::default()
-            }),
-        );
+    #[tokio::test(flavor = "multi_thread")]
+    async fn other_failures_keep_the_servers_message() {
+        let error = failure_for(serde_json::json!({
+            "status": 500,
+            "headers": {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "42"},
+            "body": "connection reset",
+        }))
+        .await;
         assert!(
             matches!(&error, ClientError::Other(error) if format!("{error:#}").contains("connection reset")),
             "{error:?}"
