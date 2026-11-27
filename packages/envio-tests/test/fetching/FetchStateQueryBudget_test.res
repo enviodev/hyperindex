@@ -115,15 +115,13 @@ let chunk = (~partitionId, ~fromBlock, ~toBlock) => {
 let givePartitionZeroDensity = async (mock: MockSource.t) => {
   await mock.expectItemsQueries([
     {
-      partitionId: "0",
       fromBlock: 1,
       reply: Respond({items: itemsAt(~blockNumber=10, ~count=1000), latestFetchedBlockNumber: 10}),
     },
-    {partitionId: "1", fromBlock: 1, reply: LeavePending},
+    {fromBlock: 1, reply: LeavePending},
   ])
   await mock.expectItemsQueries([
     {
-      partitionId: "0",
       fromBlock: 11,
       reply: Respond({items: itemsAt(~blockNumber=15, ~count=1000), latestFetchedBlockNumber: 20}),
     },
@@ -143,8 +141,8 @@ describe("FetchState query budget over the indexer loop", () => {
       let seen = []
       mock.resolveGetHeightOrThrow(100_000)
       await mock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 1, reply: LeavePending},
-        {partitionId: "1", fromBlock: 10_001, reply: LeavePending},
+        {fromBlock: 1, reply: LeavePending},
+        {fromBlock: 10_001, reply: LeavePending},
       ])
       // Sending no row limit, a probe that knows nothing may bring back a full
       // page, so the one starting at 10001 reserves as much as the frontier
@@ -169,7 +167,6 @@ describe("FetchState query budget over the indexer loop", () => {
       // other chains out of the shared pool until it answers.
       await mock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           reply: Respond({
             items: itemsAt(~blockNumber=10, ~count=10),
@@ -179,17 +176,16 @@ describe("FetchState query budget over the indexer loop", () => {
       ])
       // Partition "1" hasn't answered, so the frontier stays at block 0 and the
       // chain still has no density: its probe goes out once the first lands.
-      await mock.expectItemsQueries([{partitionId: "1", fromBlock: 1, reply: LeavePending}])
+      await mock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
       t.expect(indexer->QueryReservations.startedTicks).toEqual([
         [
           {
-            QueryReservations.partitionId: "0",
-            fromBlock: 1,
+            QueryReservations.fromBlock: 1,
             targetBlock: None,
             reservedItems: 1000,
           },
         ],
-        [{partitionId: "1", fromBlock: 1, targetBlock: None, reservedItems: 1000}],
+        [{fromBlock: 1, targetBlock: None, reservedItems: 1000}],
       ])
     },
   )
@@ -204,23 +200,23 @@ describe("FetchState query budget over the indexer loop", () => {
       let seen = []
       mock.resolveGetHeightOrThrow(100_000)
       await mock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 1, reply: LeavePending},
-        {partitionId: "1", fromBlock: 1, reply: LeavePending},
+        {fromBlock: 1, reply: LeavePending},
+        {fromBlock: 1, reply: LeavePending},
       ])
       let coldProbes = mock->takeNewQueries(~indexer, ~seen)
       await mock->givePartitionZeroDensity
       await mock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 111, toBlock: Bounded(128), reply: LeavePending},
-        {partitionId: "0", reply: LeavePending},
+        {fromBlock: 111, toBlock: Bounded(128), reply: LeavePending},
+        {reply: LeavePending},
       ])
       let chunksBesideReservation = mock->takeNewQueries(~indexer, ~seen)
       await mock.expectItemsQueries([
-        {partitionId: "1", fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 5})},
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 5})},
       ])
       await mock.expectItemsQueries([
-        {partitionId: "1", fromBlock: 6, reply: LeavePending},
-        {partitionId: "0", fromBlock: 165, reply: LeavePending},
-        {partitionId: "0", reply: LeavePending},
+        {fromBlock: 6, reply: LeavePending},
+        {fromBlock: 165, reply: LeavePending},
+        {reply: LeavePending},
       ])
       let probeThenChunks = mock->takeNewQueries(~indexer, ~seen)
       t.expect({
@@ -268,13 +264,12 @@ describe("FetchState query budget over the indexer loop", () => {
       let seen = []
       mock.resolveGetHeightOrThrow(100_000)
       await mock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 1, reply: LeavePending},
-        {partitionId: "1", fromBlock: 1, reply: LeavePending},
+        {fromBlock: 1, reply: LeavePending},
+        {fromBlock: 1, reply: LeavePending},
       ])
       let coldProbes = mock->takeNewQueries(~indexer, ~seen)
       await mock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           reply: Respond({
             items: itemsAt(~blockNumber=10, ~count=5000),
@@ -284,7 +279,6 @@ describe("FetchState query budget over the indexer loop", () => {
       ])
       await mock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 11,
           reply: Respond({
             items: itemsAt(~blockNumber=15, ~count=10_000),
@@ -292,7 +286,7 @@ describe("FetchState query budget over the indexer loop", () => {
           }),
         },
       ])
-      await mock.expectItemsQueries([{partitionId: "0", fromBlock: 21, reply: LeavePending}])
+      await mock.expectItemsQueries([{fromBlock: 21, reply: LeavePending}])
       let chunks = mock->takeNewQueries(~indexer, ~seen)
       t.expect((coldProbes, chunks)).toEqual((
         [
@@ -318,8 +312,8 @@ describe("FetchState query budget over the indexer loop", () => {
       mock.resolveGetHeightOrThrow(60)
       await mock->givePartitionZeroDensity
       await mock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 57, reply: LeavePending},
-        {partitionId: "0", reply: LeavePending},
+        {fromBlock: 57, reply: LeavePending},
+        {reply: LeavePending},
       ])
       t.expect(
         mock->takeNewQueries(~indexer, ~seen)->Array.filter(query => query.partitionId === "0"),
@@ -345,7 +339,6 @@ describe("FetchState query budget over the indexer loop", () => {
       mock.resolveGetHeightOrThrow(60)
       await mock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           reply: Respond({
             items: itemsAt(~blockNumber=10, ~count=100),
@@ -355,7 +348,6 @@ describe("FetchState query budget over the indexer loop", () => {
       ])
       await mock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 11,
           reply: Respond({
             items: itemsAt(~blockNumber=15, ~count=100),
@@ -364,8 +356,8 @@ describe("FetchState query budget over the indexer loop", () => {
         },
       ])
       await mock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 57, reply: LeavePending},
-        {partitionId: "0", reply: LeavePending},
+        {fromBlock: 57, reply: LeavePending},
+        {reply: LeavePending},
       ])
       t.expect(mock->takeNewQueries(~indexer, ~seen=[])).toEqual([
         chunk(~partitionId="0", ~fromBlock=21, ~toBlock=38),
@@ -385,15 +377,14 @@ describe("FetchState query budget over the indexer loop", () => {
       mock.resolveGetHeightOrThrow(100_000)
       await mock->givePartitionZeroDensity
       await mock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 111, reply: LeavePending},
-        {partitionId: "0", reply: LeavePending},
+        {fromBlock: 111, reply: LeavePending},
+        {reply: LeavePending},
       ])
       let seen = mock.pendingItemsQueries->Array.copy
       // The chunk at 39 lands with 120000 items it can't release until the
       // chunk at 21, which stops short at block 30, is filled in.
       await mock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 39,
           reply: Respond({
             items: itemsAt(~blockNumber=40, ~count=120_000),
@@ -401,16 +392,15 @@ describe("FetchState query budget over the indexer loop", () => {
           }),
         },
       ])
-      await mock.expectItemsQueries([{partitionId: "0", fromBlock: 129, reply: LeavePending}])
+      await mock.expectItemsQueries([{fromBlock: 129, reply: LeavePending}])
       let afterDenseChunk = mock->takeNewQueries(~indexer, ~seen)
       await mock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 21,
           reply: Respond({items: [], latestFetchedBlockNumber: 30}),
         },
       ])
-      await mock.expectItemsQueries([{partitionId: "0", fromBlock: 31, reply: LeavePending}])
+      await mock.expectItemsQueries([{fromBlock: 31, reply: LeavePending}])
       t.expect((afterDenseChunk, mock->takeNewQueries(~indexer, ~seen))).toEqual((
         // The 1800 items it released buy one chunk, now priced at the new density.
         [chunk(~partitionId="0", ~fromBlock=129, ~toBlock=146)],
@@ -431,21 +421,19 @@ describe("FetchState query budget over the indexer loop", () => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(100_000)
       let dense: MockSource.expectedItemsQuery = {
-        partitionId: "0",
         reply: Respond({
           items: itemsAt(~blockNumber=10, ~count=1000),
           latestFetchedBlockNumber: 10,
         }),
       }
       let empty: MockSource.expectedItemsQuery = {
-        partitionId: "1",
         reply: Respond({items: [], latestFetchedBlockNumber: 10}),
       }
       await mock.expectItemsQueries(denseFirst ? [dense, empty] : [empty, dense])
       await indexer.getBatchWritePromise()
       await mock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 11, reply: LeavePending},
-        {partitionId: "1", fromBlock: 11, reply: LeavePending},
+        {fromBlock: 11, reply: LeavePending},
+        {fromBlock: 11, reply: LeavePending},
       ])
       let (first, second) = denseFirst ? ("0", "1") : ("1", "0")
       t.expect(mock->takeNewQueries(~indexer, ~seen=[])).toEqual([

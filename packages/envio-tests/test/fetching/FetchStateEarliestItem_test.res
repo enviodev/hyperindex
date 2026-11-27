@@ -80,7 +80,6 @@ describe("FetchState earliest processable item over the indexer loop", () => {
       sync.resolveGetHeightOrThrow(10_000)
       await sync.expectItemsQueries([
         {
-          partitionId: "0",
           reply: Respond({
             items: [
               event(~blockNumber=6, ~logIndex=2),
@@ -92,14 +91,14 @@ describe("FetchState earliest processable item over the indexer loop", () => {
         },
       ])
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
       let beforeCatchUp = await processedOrder(indexer)
       await sync.expectItemsQueries([
-        {partitionId: "1", fromBlock: 3, reply: Respond({items: [], latestFetchedBlockNumber: 10})},
-        {partitionId: "0", reply: LeavePending},
+        {fromBlock: 3, reply: Respond({items: [], latestFetchedBlockNumber: 10})},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
       t.expect((beforeCatchUp, await processedOrder(indexer))).toEqual((["2:1"], ["2:1 3:0 6:2"]))
@@ -114,7 +113,6 @@ describe("FetchState earliest processable item over the indexer loop", () => {
       sync.resolveGetHeightOrThrow(10_000)
       await sync.expectItemsQueries([
         {
-          partitionId: "0",
           reply: Respond({
             items: [
               event(~blockNumber=6, ~logIndex=1),
@@ -126,18 +124,17 @@ describe("FetchState earliest processable item over the indexer loop", () => {
         },
       ])
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.advanceTime(1000)
       let beforeCatchUp = await processedOrder(indexer)
       await sync.expectItemsQueries([
         {
-          partitionId: "1",
           fromBlock: 2,
           reply: Respond({items: [], latestFetchedBlockNumber: 500}),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
       t.expect((beforeCatchUp, await processedOrder(indexer))).toEqual(([], ["2:1 5:0 6:1"]))
@@ -155,23 +152,22 @@ describe("FetchState earliest processable item over the indexer loop", () => {
       sync.resolveGetHeightOrThrow(10_000)
       await sync.expectItemsQueries([
         {
-          partitionId: "0",
           reply: Respond({
             items: [event(~blockNumber=0, ~logIndex=1)],
             latestFetchedBlockNumber: 1,
           }),
         },
-        {partitionId: "1", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.advanceTime(1000)
       let whileBehind = await processedOrder(indexer)
       await sync.expectItemsQueries([
-        {partitionId: "1", fromBlock: 0, reply: Respond({items: [], latestFetchedBlockNumber: 1})},
-        {partitionId: "0", reply: LeavePending},
+        {fromBlock: 0, reply: Respond({items: [], latestFetchedBlockNumber: 1})},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
       t.expect((whileBehind, await processedOrder(indexer))).toEqual(([], ["0:1"]))
@@ -188,7 +184,6 @@ describe("FetchState earliest processable item over the indexer loop", () => {
       sync.resolveGetHeightOrThrow(10_000)
       await sync.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 0,
           toBlock: Bounded(0),
           reply: Respond({items: [event(~blockNumber=0)]}),

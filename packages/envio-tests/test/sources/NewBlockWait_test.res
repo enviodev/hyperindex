@@ -551,7 +551,6 @@ describe("Catching up a contract registered at the head", () => {
       ])
       await sync.expectItemsQueries([
         {
-          partitionId: "1",
           reply: Respond({items: [], latestFetchedBlockNumber: 100, knownHeight: 105}),
         },
       ])

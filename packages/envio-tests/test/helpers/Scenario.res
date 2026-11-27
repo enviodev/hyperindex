@@ -503,7 +503,6 @@ let enterReorgThreshold = async (
   await resolveInitialHeight(~source, ~head)
   await source.expectItemsQueries([
     {
-      partitionId: "0",
       fromBlock,
       toBlock: Bounded(preThresholdTo),
       retryCount: 0,

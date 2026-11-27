@@ -109,12 +109,12 @@ let makeHyperSyncSource = (~url) => {
       ~addressStore,
     ),
   )
-  (source, addressStore->AddressStore.emptySet)
+  (source, (addressStore, []))
 }
 
 let fetchOutcome = (
   source: Source.t,
-  ~addressSet,
+  ~addressing,
   ~fromBlock=10,
   ~onBlockRegistrations=named("headers"),
   ~toBlock=Some(13),
@@ -123,23 +123,22 @@ let fetchOutcome = (
   ~reorgableFrom=None,
 ) =>
   source.getItems(
-    ~fromBlock,
+    ~request=TestSources.request(
+      ~fromBlock,
+      ~toBlock=?toBlock,
+      ~addressStore=addressing->Pair.first,
+      ~contractNames=addressing->Pair.second,
+      ~onBlockRegistrations=onBlockRegistrations->Array.filter(BlockItem.isFetched),
+    ),
     ~toBlock,
-    ~addressSet,
+    ~retry=0,
     ~reorgableFrom,
     ~knownHeight,
-    ~partitionId="0",
-    ~selection=FetchState.makeSelection(
-      ~dependsOnAddresses=false,
-      ~onEventRegistrations=[],
-      ~onBlockRegistrations,
-    ),
-    ~retry=0,
   )
 
 let fetch = async (
   source,
-  ~addressSet,
+  ~addressing,
   ~fromBlock=?,
   ~onBlockRegistrations=?,
   ~toBlock=?,
@@ -148,7 +147,7 @@ let fetch = async (
 ) =>
   switch (
     await source->fetchOutcome(
-      ~addressSet,
+      ~addressing,
       ~fromBlock?,
       ~onBlockRegistrations?,
       ~toBlock?,
@@ -201,7 +200,7 @@ let makeRpcSource = (~url) => {
       ~addressStore,
     ),
   )
-  (source, addressStore->AddressStore.emptySet)
+  (source, (addressStore, []))
 }
 
 let rpcBlock = number => {
@@ -229,8 +228,8 @@ describe("A block handler selecting fields, fetched from an RPC", () => {
       ~name="block handler page",
       ~calls=[10, 12]->Array.map(getBlockCall),
       async mock => {
-        let (source, addressSet) = makeRpcSource(~url=mock.url)
-        await (await source->fetch(~addressSet))->materializedBlocks
+        let (source, addressing) = makeRpcSource(~url=mock.url)
+        await (await source->fetch(~addressing))->materializedBlocks
       },
     )
 
@@ -265,11 +264,11 @@ describe("A block handler with no block to read, fetched from an RPC", () => {
       ~name="final range without a handler block",
       ~calls=[],
       async mock => {
-        let (source, addressSet) = makeRpcSource(~url=mock.url)
+        let (source, addressing) = makeRpcSource(~url=mock.url)
 
         (
           await source->fetch(
-            ~addressSet,
+            ~addressing,
             ~fromBlock=11,
             ~onBlockRegistrations=named("sparse"),
             ~toBlock=Some(20_000),
@@ -290,11 +289,11 @@ describe("A block handler with no block to read, fetched from an RPC", () => {
       ~name="reorgable range without a handler block",
       ~calls=Array.fromInitializer(~length=11, i => 100 + i)->Array.map(getBlockCall),
       async mock => {
-        let (source, addressSet) = makeRpcSource(~url=mock.url)
+        let (source, addressing) = makeRpcSource(~url=mock.url)
 
         (
           await source->fetch(
-            ~addressSet,
+            ~addressing,
             ~fromBlock=11,
             ~onBlockRegistrations=named("sparse"),
             ~toBlock=Some(20_000),
@@ -315,9 +314,9 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     let (queries, latestFetchedBlockNumber) = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({blocks: [10, 11, 12, 13]->Array.map(header)})
-        let page = await source->fetch(~addressSet)
+        let page = await source->fetch(~addressing)
         (server->MockHyperSyncServer.takeQueries, page.latestFetchedBlockNumber)
       },
     )
@@ -341,8 +340,8 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     let (queries, latestFetchedBlockNumber) = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
-        let page = await source->fetch(~addressSet, ~onBlockRegistrations=named("early"))
+        let (source, addressing) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        let page = await source->fetch(~addressing, ~onBlockRegistrations=named("early"))
         (server->MockHyperSyncServer.takeQueries, (page.latestFetchedBlockNumber, page.knownHeight))
       },
     )
@@ -357,10 +356,10 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     let queries = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({blocks: [10, 11, 12, 13]->Array.map(header)})
         let _ = await source->fetch(
-          ~addressSet,
+          ~addressing,
           ~onBlockRegistrations=named("early"),
           ~reorgableFrom=Some(10),
         )
@@ -385,10 +384,10 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     let (queries, page, items) = await MockHyperSyncServer.withServer(
       ~height=20_000,
       async server => {
-        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({blocks: [header(10)]})
         let page = await source->fetch(
-          ~addressSet,
+          ~addressing,
           ~onBlockRegistrations=named("sparse"),
           ~toBlock=Some(20_000),
           ~knownHeight=20_000,
@@ -423,13 +422,13 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     let (queries, latestFetchedBlockNumber) = await MockHyperSyncServer.withServer(
       ~height=20_000,
       async server => {
-        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({
           blocks: [10, 5010, 10_010, 15_010]->Array.map(header),
           nextBlock: 20_001,
         })
         let page = await source->fetch(
-          ~addressSet,
+          ~addressing,
           ~onBlockRegistrations=named("sparse"),
           ~toBlock=Some(20_000),
           ~knownHeight=20_000,
@@ -458,10 +457,10 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     let (queries, latestFetchedBlockNumber) = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({blocks: [header(10)]})
         let page = await source->fetch(
-          ~addressSet,
+          ~addressing,
           ~onBlockRegistrations=named("sparse"),
           ~toBlock=None,
           ~knownHeight=100,
@@ -488,10 +487,10 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     let latestFetchedBlockNumber = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({blocks: [header(10)]})
         let page = await source->fetch(
-          ~addressSet,
+          ~addressing,
           ~onBlockRegistrations=named("sparse"),
           ~toBlock=Some(20_000),
           ~knownHeight=100,
@@ -509,10 +508,10 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     let queries = await MockHyperSyncServer.withServer(
       ~height=20_000,
       async server => {
-        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({blocks: [10, 11, 12, 13]->Array.map(header)})
         let _ = await source->fetch(
-          ~addressSet,
+          ~addressing,
           ~onBlockRegistrations=named("sparse"),
           ~knownHeight=20_000,
           ~reorgableFrom=Some(13),
@@ -539,12 +538,12 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     let queries = await MockHyperSyncServer.withServer(
       ~height=100_000,
       async server => {
-        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({
           blocks: [10, 11, 12, 13]->Array.map(header),
           nextBlock: 14,
         })
-        let _ = await source->fetch(~addressSet, ~toBlock=None, ~knownHeight=100_000)
+        let _ = await source->fetch(~addressing, ~toBlock=None, ~knownHeight=100_000)
         server->MockHyperSyncServer.takeQueries
       },
     )
@@ -563,9 +562,9 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     let blocks = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({blocks: [10, 11, 12, 13]->Array.map(header)})
-        await (await source->fetch(~addressSet))->materializedBlocks
+        await (await source->fetch(~addressing))->materializedBlocks
       },
     )
 
@@ -597,9 +596,9 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     let error = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({blocks: [10, 11, 13]->Array.map(header)})
-        switch (await source->fetchOutcome(~addressSet)).result {
+        switch (await source->fetchOutcome(~addressing)).result {
         | Ok(_) => None
         | Error(failure) => Some(failure)
         }

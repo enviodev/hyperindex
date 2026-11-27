@@ -36,14 +36,6 @@ type drainedAddress = {
   checkpointIdx: int,
 }
 
-type makeSetOptions = {
-  minId?: int,
-  fromStartBlock?: int,
-  toStartBlock?: int,
-  offset?: int,
-  limit?: int,
-}
-
 @send external newEvm: (Core.addressStoreCtor, array<contract>) => t = "newEvm"
 @send external newSvm: (Core.addressStoreCtor, array<contract>) => t = "newSvm"
 @send external newFuel: (Core.addressStoreCtor, array<contract>) => t = "newFuel"
@@ -97,10 +89,6 @@ let contractsOf = (
   })
 }
 
-@send external nextId: t => int = "nextId"
-
-@send external emptySet: t => AddressSet.t = "emptySet"
-
 @send
 external registerBatchRaw: (t, array<registration>) => array<rawVerdict> = "registerBatch"
 
@@ -125,7 +113,6 @@ external drainForWrite: (t, int, array<int>) => array<drainedAddress> = "drainFo
 
 @send external pendingCount: t => int = "pendingCount"
 
-@send external makeSetRaw: (t, string, makeSetOptions) => AddressSet.t = "makeSet"
 @send external contractCount: (t, string) => int = "contractCount"
 
 type contractAddressCount = {contractName: string, count: int}
@@ -138,12 +125,6 @@ type contractAddressCount = {contractName: string, count: int}
 @send external isIndexedAt: (t, Address.t, string, int) => bool = "isIndexedAt"
 
 type rolledBackAddress = {address: NodeJs.Buffer.t, contractId: int}
-
-// Ids are tombstoned rather than reused, so sets built before the rollback
-// still point at the right entries.
-@send external rollback: (t, int) => array<rolledBackAddress> = "rollback"
-
-@send external dynamicContractNames: t => array<string> = "dynamicContractNames"
 
 // The one place the store spells an address the way the chain shows it: the
 // setting comes from the caller, since the store keeps keys, not spellings.
@@ -163,5 +144,3 @@ let toVerdict = (raw: rawVerdict): verdict =>
 let registerBatch = (store: t, registrations: array<registration>): array<verdict> =>
   store->registerBatchRaw(registrations)->Array.map(toVerdict)
 
-let makeSet = (store: t, ~contractName, ~options={}: makeSetOptions) =>
-  store->makeSetRaw(contractName, options)

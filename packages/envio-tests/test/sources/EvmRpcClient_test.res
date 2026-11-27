@@ -256,18 +256,26 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     ~fromBlock,
     ~toBlockCeiling,
     ~indexes,
-    ~addressSet,
+    ~contractNames,
   ) => {
     let {result} = await source.getItems(
-      ~fromBlock,
+      ~request=IndexingPlan.Request.standalone(
+        {
+          fromBlock,
+          toBlock: toBlockCeiling,
+          onEventRegistrationIndexes: indexes,
+          onBlockRegistrationIndexes: [],
+          onTransactionRegistrationIndexes: [],
+          addressFreeContracts: [],
+        },
+        ~addressStore,
+        ~contractNames,
+      ),
       ~toBlock=Some(toBlockCeiling),
-      ~addressSet,
+      ~retry=0,
       ~reorgableFrom=None,
       // Far below the head, where a page's blocks aren't checked one by one.
       ~knownHeight=toBlockCeiling + 1_000,
-      ~partitionId="0",
-      ~selection=LogDecoding.selectionOf(indexes),
-      ~retry=0,
     )
     switch result {
     | Ok({page, latestFetchedBlockNumber}) => (
@@ -322,7 +330,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~fromBlock=100,
           ~toBlockCeiling=100,
           ~indexes=[3],
-          ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+          ~contractNames=["ERC20"],
         )
         (
           result,
@@ -399,7 +407,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~fromBlock=1,
           ~toBlockCeiling=1,
           ~indexes=[3],
-          ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+          ~contractNames=["ERC20"],
         )
         items->Array.length
       },
@@ -454,7 +462,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~fromBlock=0,
           ~toBlockCeiling=5000,
           ~indexes=[0],
-          ~addressSet=addressStore->AddressStore.emptySet,
+          ~contractNames=[],
         )
         result
       },
@@ -514,7 +522,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~fromBlock=firstBlock,
           ~toBlockCeiling=firstBlock + blockCount - 1,
           ~indexes=[3],
-          ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+          ~contractNames=["ERC20"],
         )
         (result, eventItems->Array.length)
       },
@@ -556,7 +564,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~fromBlock=firstBlock,
           ~toBlockCeiling=firstBlock,
           ~indexes=[3],
-          ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+          ~contractNames=["ERC20"],
         )
         result
       },
@@ -608,7 +616,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~fromBlock=firstBlock,
           ~toBlockCeiling=firstBlock + 9,
           ~indexes=[3],
-          ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+          ~contractNames=["ERC20"],
         )
         switch result {
         | Error(Backoff({?backoffMillis})) => backoffMillis
@@ -669,7 +677,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
             ~fromBlock=firstBlock,
             ~toBlockCeiling=lastBlock,
             ~indexes=[3],
-            ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+            ~contractNames=["ERC20"],
           )
 
         let (failed, _) = await page()
@@ -755,7 +763,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
             ~fromBlock=firstBlock,
             ~toBlockCeiling=firstBlock + blockCount - 1,
             ~indexes=[3],
-            ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+            ~contractNames=["ERC20"],
           )
           (result, eventItems->Array.length, peakInFlight.contents)
         },

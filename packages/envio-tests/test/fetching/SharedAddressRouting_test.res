@@ -79,29 +79,23 @@ let makeSource = (~url) => {
       ~addressStore,
     ),
   )
-  let addressSet =
-    addressStore
-    ->AddressStore.makeSet(~contractName="Token")
-    ->AddressSet.merge(addressStore->AddressStore.makeSet(~contractName="Vault"))
-  (source, addressSet, addressStore)
+  (source, addressStore)
 }
 
-let fetch = async (source: Source.t, ~addressSet) =>
+let fetch = async (source: Source.t, ~addressStore) =>
   switch (
     await source.getItems(
-      ~reorgableFrom=None,
-      ~fromBlock=10,
+      ~request=TestSources.request(
+        ~fromBlock=10,
+        ~toBlock=10,
+        ~addressStore,
+        ~contractNames=["Token", "Vault"],
+        ~onEventRegistrations=onEventRegistrations(),
+      ),
       ~toBlock=Some(10),
-      ~addressSet,
-      ~knownHeight=100,
-      ~partitionId="mock-partition",
-      ~selection={
-        dependsOnAddresses: true,
-        onEventRegistrations: onEventRegistrations(),
-        onBlockRegistrations: [],
-        onTransactionRegistrations: [],
-      },
       ~retry=0,
+      ~reorgableFrom=None,
+      ~knownHeight=100,
     )
   ).result {
   | Ok(itemsPage) => itemsPage
@@ -147,9 +141,9 @@ describe("An address indexed by two contracts", () => {
     let queries = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet, _) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressStore) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse(page)
-        let _ = await source->fetch(~addressSet)
+        let _ = await source->fetch(~addressStore)
         server->MockHyperSyncServer.takeQueries
       },
     )
@@ -183,9 +177,9 @@ describe("An address indexed by two contracts", () => {
     let items = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet, addressStore) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressStore) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse(page)
-        let response = await source->fetch(~addressSet)
+        let response = await source->fetch(~addressStore)
         await response.page->TestChainBuffer.itemsOf(
           ~onEventRegistrations=onEventRegistrations(),
           ~addressStore,

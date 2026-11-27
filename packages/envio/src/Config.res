@@ -15,6 +15,8 @@ type contract = {
   addresses: array<Address.t>,
   events: array<Internal.eventConfig>,
   startBlock: option<int>,
+  // Nothing of the contract is fetched past it.
+  endBlock: option<int>,
 }
 
 // A HyperSync endpoint with the client options the environment sets.
@@ -206,6 +208,7 @@ let chainContractSchema = S.schema(s =>
   {
     "addresses": s.matches(S.option(S.array(S.string))),
     "startBlock": s.matches(S.option(S.int)),
+    "endBlock": s.matches(S.option(S.int)),
   }
 )
 
@@ -994,6 +997,7 @@ let fromPublic = (publicConfigJson: JSON.t, ~env=IndexerEnv.read()) => {
           ->Option.getOr([])
         let addresses = rawAddresses->Array.map(Address.unsafeFromString)
         let startBlock = chainContract->Option.flatMap(cc => cc["startBlock"])
+        let endBlock = chainContract->Option.flatMap(cc => cc["endBlock"])
 
         // Build event definitions from JSON (field selections resolved
         // inline). Handlers and per-chain `where` filters are layered on
@@ -1015,6 +1019,7 @@ let fromPublic = (publicConfigJson: JSON.t, ~env=IndexerEnv.read()) => {
           addresses,
           events,
           startBlock,
+          endBlock,
         }
       })
 
@@ -1203,11 +1208,10 @@ let fromPublic = (publicConfigJson: JSON.t, ~env=IndexerEnv.read()) => {
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
     ecosystem,
     maxAddrInPartition,
-    // Caps one contract at a fifth of the chain's concurrency budget, so a
-    // single busy contract can't monopolise the query slots whatever the
-    // partition size.
+    // Caps one contract at a fifth of the 100 requests a chain may have out,
+    // so a single busy contract can't take every slot whatever the group size.
     clientFilterAddressThreshold: env.clientFilterAddressThreshold->Option.getOr(
-      maxAddrInPartition * FetchState.maxChainConcurrency / 5,
+      maxAddrInPartition * 20,
     ),
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     reorgThresholdReadyTolerance: 100,

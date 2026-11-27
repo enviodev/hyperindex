@@ -17,6 +17,8 @@ type mockHyperSyncServerCtor
 type mockSourceCtor
 // Test-only: the virtual clock a scenario's source layer runs on.
 type virtualClockCtor
+type indexingPlanCtor
+type fetchRequestCtor
 type fromUserApiOptions = {
   schema?: string,
   env?: dict<string>,
@@ -63,6 +65,11 @@ type addon = {
   mockSource: mockSourceCtor,
   @as("VirtualClock")
   virtualClock: virtualClockCtor,
+  @as("IndexingPlan")
+  indexingPlan: indexingPlanCtor,
+  @as("FetchRequest")
+  fetchRequest: fetchRequestCtor,
+  headDistance: unit => int,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
   normalizeEvmAddress: (~address: string, ~shouldChecksum: bool) => Null.t<Address.t>,
   renderAddresses: (

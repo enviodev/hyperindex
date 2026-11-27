@@ -229,7 +229,6 @@ let reachFirstQuery = async (~source: MockSource.t) => {
 }
 
 let firstQuery = (items): MockSource.expectedItemsQuery => {
-  partitionId: "0",
   fromBlock: 1,
   toBlock: Bounded(100),
   reply: Respond({items: items}),

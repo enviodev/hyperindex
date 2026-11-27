@@ -94,8 +94,8 @@ type t = {
   // wait period instead of on every epoch that re-enters the wait before any
   // new block is found. Reset when blocks are found.
   mutable waitingLogged: bool,
-  // Should take into consideration partitions fetching for previous states (before rollback)
-  mutable fetchingPartitionsCount: int,
+  // Includes requests still out for a state before a rollback.
+  mutable requestsInFlight: int,
   recoveryTimeout: float,
   clock: Clock.t,
   // Why a source was last disabled for good. A disabled source is never
@@ -212,7 +212,7 @@ let queryingSeconds = (sourceManager: t) =>
 
 // Partition queries currently in flight on this chain's sources. Summed across
 // chains by CrossChainState to enforce the indexer-wide concurrency budget.
-let inFlightCount = sourceManager => sourceManager.fetchingPartitionsCount
+let inFlightCount = sourceManager => sourceManager.requestsInFlight
 
 let getRateLimitTimeMs = sourceManager =>
   sourceManager.committedRateLimitTimeMs +.
@@ -412,7 +412,7 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
     queriedSource: initialActiveSource,
     waitingForNewBlockStateId: None,
     waitingLogged: false,
-    fetchingPartitionsCount: 0,
+    requestsInFlight: 0,
     newBlockStallTimeout,
     newBlockStallTimeoutRealtime,
     stalledPollingInterval,
@@ -445,29 +445,25 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
   sourceManager.status = newStatus
 }
 
-// Carry out the fetch decision made by CrossChainState.checkAndFetch: either
-// dispatch the admitted queries or start waiting for a new block. Selection
-// (getNextQuery + cross-chain admission) happens upstream so the budget is split
-// per query across all chains.
+// Carries out a chain's share of a fetch tick: runs the requests the plan
+// handed out, or waits for a new block.
 let dispatch = async (
   sourceManager: t,
-  ~fetchState: FetchState.t,
+  ~knownHeight,
   ~executeQuery,
   ~waitForNewBlock,
   ~onNewBlock,
-  ~action: FetchState.nextQuery,
+  ~work: IndexingPlan.chainFetchWork,
   ~stateId,
-) => {
-  switch action {
-  | NothingToQuery => ()
-  | WaitingForNewBlock =>
+) =>
+  if work.waitForNewBlock {
     switch sourceManager.waitingForNewBlockStateId {
     | Some(waitingStateId) if waitingStateId >= stateId => ()
     | Some(_) // Case for the prev state before a rollback
     | None =>
       sourceManager->trackNewStatus(~newStatus=WaitingForNewBlock)
       sourceManager.waitingForNewBlockStateId = Some(stateId)
-      let knownHeight = await waitForNewBlock(~knownHeight=fetchState.knownHeight)
+      let knownHeight = await waitForNewBlock(~knownHeight)
       switch sourceManager.waitingForNewBlockStateId {
       | Some(waitingStateId) if waitingStateId === stateId => {
           sourceManager->trackNewStatus(~newStatus=Idle)
@@ -478,27 +474,22 @@ let dispatch = async (
       | None => ()
       }
     }
-  | Ready(queries) => {
-      // Queries are already marked in flight by ChainState.startFetchingQueries
-      // when they were admitted; here we just execute them.
-      sourceManager.fetchingPartitionsCount =
-        sourceManager.fetchingPartitionsCount + queries->Array.length
-      sourceManager->trackNewStatus(~newStatus=Querying)
-      let _ = await queries
-      ->Array.map(q => {
-        let promise = q->executeQuery
-        let _ = promise->Promise.thenResolve(_ => {
-          sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
-          if sourceManager.fetchingPartitionsCount === 0 {
-            sourceManager->trackNewStatus(~newStatus=Idle)
-          }
-        })
-        promise
+  } else {
+    sourceManager.requestsInFlight = sourceManager.requestsInFlight + work.requests->Array.length
+    sourceManager->trackNewStatus(~newStatus=Querying)
+    let _ = await work.requests
+    ->Array.map(request => {
+      let promise = request->executeQuery
+      let _ = promise->Promise.thenResolve(_ => {
+        sourceManager.requestsInFlight = sourceManager.requestsInFlight - 1
+        if sourceManager.requestsInFlight === 0 {
+          sourceManager->trackNewStatus(~newStatus=Idle)
+        }
       })
-      ->Promise.all
-    }
+      promise
+    })
+    ->Promise.all
   }
-}
 
 // Stops the held source's height poll.
 let releaseHold = (sourceState: sourceState) =>
@@ -556,7 +547,7 @@ let holdUntilCaughtUp = (sourceManager: t, sourceState: sourceState) => {
       ~pollsBehindStream=true,
       ~onHeight=height =>
         sourceState.health = if (
-          sourceManager->highestKnownHeight - height <= FetchState.headClientFilteringDistance
+          sourceManager->highestKnownHeight - height <= Core.getAddon().headDistance()
         ) {
           Working
         } else {
@@ -1124,7 +1115,7 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
 
 let executeQuery = async (
   sourceManager: t,
-  ~query: FetchState.query,
+  ~request: IndexingPlan.fetchRequest,
   ~knownHeight,
   ~isRealtime,
   ~reorgableFrom,
@@ -1142,7 +1133,8 @@ let executeQuery = async (
   // Sources where the query is impossible - lazily allocated, excluded for the duration of this query
   let excludedSourcesRef = ref(None)
 
-  let toBlockRef = ref(query.toBlock)
+  let fromBlock = request->IndexingPlan.Request.fromBlock
+  let toBlockRef = ref(request->IndexingPlan.Request.toBlock)
   let responseRef = ref(None)
   let retryRef = ref(0)
 
@@ -1162,7 +1154,7 @@ let executeQuery = async (
           ~params={
             "source": s.source.name,
             "previousSource": sourceManager.queriedSource.name,
-            "fromBlock": query.fromBlock,
+            "fromBlock": fromBlock,
           },
         )
       }
@@ -1179,24 +1171,20 @@ let executeQuery = async (
 
     let logger = sourceManager.logger->Logger.withFields({
       "logType": "Block Range Query",
-      "partitionId": query.partitionId,
       "source": source.name,
-      "fromBlock": query.fromBlock,
+      "fromBlock": fromBlock,
       "toBlock": toBlock,
-      "addresses": query.addresses->AddressSet.size,
+      "addresses": request->IndexingPlan.Request.addresses->Array.length,
       "retry": retry,
     })
 
     let startedAt = Performance.now()
     let outcome = switch await source.getItems(
-      ~fromBlock=query.fromBlock,
+      ~request,
       ~toBlock,
-      ~addressSet=query.addresses,
-      ~reorgableFrom,
-      ~partitionId=query.partitionId,
-      ~knownHeight,
-      ~selection=query.selection->FetchState.narrowSelectionToRange(~toBlock),
       ~retry,
+      ~reorgableFrom,
+      ~knownHeight,
     ) {
     | outcome => outcome
     | exception exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to fetch block Range")
@@ -1228,6 +1216,7 @@ let executeQuery = async (
             latestFetchedBlockNumber,
             knownHeight: reportedHeight->Option.getOr(knownHeight),
             totalTimeElapsed: startedAt->Performance.secondsSince,
+            sourceIndex: sourceManager.sourcesState->Array.indexOf(sourceState),
           })
       }
 
@@ -1247,7 +1236,7 @@ let executeQuery = async (
       retryRef := retryRef.contents + 1
 
     | Error(Unusable({message, ?blockNumber})) =>
-      // Several partitions can fail on the same source at once; only the one
+      // Several requests can fail on the same source at once; only the one
       // that disables it reports why.
       if sourceManager->disableSource(sourceState) {
         sourceManager.disableReason = Some(message)

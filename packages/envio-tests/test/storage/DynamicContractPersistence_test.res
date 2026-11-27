@@ -69,7 +69,6 @@ let registeringItem = (~blockNumber, ~event, address: Address.t): MockSource.ite
 }
 
 let firstQuery = (items): MockSource.expectedItemsQuery => {
-  partitionId: "0",
   fromBlock: 1,
   reply: Respond({items, latestFetchedBlockNumber: 200}),
 }

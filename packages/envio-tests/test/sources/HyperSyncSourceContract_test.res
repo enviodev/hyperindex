@@ -121,36 +121,34 @@ let makeSource = (~url, ~lowercaseAddresses=true) => {
       ~shouldChecksum=!lowercaseAddresses,
     ),
   )
-  (source, addressStore->AddressStore.makeSet(~contractName="Token"))
+  (source, (addressStore, ["Token"]))
 }
 
 let fetch = (
   source: Source.t,
-  ~addressSet,
+  ~addressing,
   ~fromBlock=10,
   ~toBlock=Some(11),
   ~reorgableFrom=None,
 ) =>
   source.getItems(
-    ~fromBlock,
-    ~toBlock,
-    ~addressSet,
-    ~reorgableFrom,
-    ~knownHeight=100,
-    ~partitionId="mock-partition",
-    ~selection={
-      dependsOnAddresses: true,
-      onEventRegistrations: onEventRegistrations()->(
+    ~request=TestSources.request(
+      ~fromBlock,
+      ~toBlock=?toBlock,
+      ~addressStore=addressing->Pair.first,
+      ~contractNames=addressing->Pair.second,
+      ~onEventRegistrations=onEventRegistrations()->(
         Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>
       ),
-      onBlockRegistrations: [],
-      onTransactionRegistrations: [],
-    },
+    ),
+    ~toBlock,
     ~retry=0,
+    ~reorgableFrom,
+    ~knownHeight=100,
   )
 
-let fetchPage = async (source, ~addressSet, ~fromBlock=?, ~toBlock=?, ~reorgableFrom=?) =>
-  switch (await source->fetch(~addressSet, ~fromBlock?, ~toBlock?, ~reorgableFrom?)).result {
+let fetchPage = async (source, ~addressing, ~fromBlock=?, ~toBlock=?, ~reorgableFrom=?) =>
+  switch (await source->fetch(~addressing, ~fromBlock?, ~toBlock?, ~reorgableFrom?)).result {
   | Ok(itemsPage) => itemsPage
   | Error(failure) => JsError.throwWithMessage(failure->Source.failureMessage)
   }
@@ -235,9 +233,9 @@ describe("HyperSync source contract", () => {
     let queries = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse(page)
-        let _ = await source->fetch(~addressSet)
+        let _ = await source->fetch(~addressing)
         server->MockHyperSyncServer.takeQueries
       },
     )
@@ -281,9 +279,9 @@ describe("HyperSync source contract", () => {
     let queries = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse(page)
-        let _ = await source->fetch(~addressSet, ~reorgableFrom=Some(10))
+        let _ = await source->fetch(~addressing, ~reorgableFrom=Some(10))
         server->MockHyperSyncServer.takeQueries
       },
     )
@@ -303,9 +301,9 @@ describe("HyperSync source contract", () => {
     let items = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse(page)
-        let {page} = await source->fetchPage(~addressSet)
+        let {page} = await source->fetchPage(~addressing)
         await page->joinedItems
       },
     )
@@ -395,9 +393,9 @@ describe("HyperSync source contract", () => {
             ),
           ]),
         })
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
         let {page} = await source->fetchPage(
-          ~addressSet,
+          ~addressing,
           ~toBlock=Some(12),
           ~reorgableFrom=Some(10),
         )
@@ -433,7 +431,7 @@ describe("HyperSync source contract", () => {
     let missingHashes = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({
           ...page,
           rollbackGuard: JSON.parseOrThrow(
@@ -442,7 +440,7 @@ describe("HyperSync source contract", () => {
               )}","firstBlockNumber":10,"firstParentHash":"${blockHash(9)}"}`,
           ),
         })
-        let {page} = await source->fetchPage(~addressSet)
+        let {page} = await source->fetchPage(~addressing)
         // The guard's head block and the parent of the range's first block are
         // reorg-detection inputs, so they come back hashed alongside the range.
         page->BufferPage.missingHashes([9, 10, 20, 21])
@@ -486,7 +484,7 @@ describe("HyperSync source contract", () => {
     let requestStats = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({
           ...page,
           // Block 12 carries no log, so nothing routes to it. It is still a block
@@ -504,7 +502,7 @@ describe("HyperSync source contract", () => {
             ),
           ]),
         })
-        let {requestStats} = await source->fetch(~addressSet, ~toBlock=Some(12))
+        let {requestStats} = await source->fetch(~addressing, ~toBlock=Some(12))
         requestStats->Array.map(({method, ?responseBlocks}) => (method, responseBlocks))
       },
     )
@@ -516,8 +514,8 @@ describe("HyperSync source contract", () => {
     let requestStats = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
-        let {requestStats} = await source->fetch(~addressSet)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
+        let {requestStats} = await source->fetch(~addressing)
         requestStats->Array.map(({method, ?responseBlocks}) => (method, responseBlocks))
       },
     )
@@ -529,7 +527,7 @@ describe("HyperSync source contract", () => {
     let result = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({
           ...page,
           // The query asked for `gas_used`; this page answers without it.
@@ -542,7 +540,7 @@ describe("HyperSync source contract", () => {
             ),
           ],
         })
-        (await source->fetch(~addressSet)).result
+        (await source->fetch(~addressing)).result
       },
     )
 
@@ -564,13 +562,13 @@ describe("HyperSync source responses", () => {
     let result = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushRawReply({
           status: 429,
           headers: dict{"x-ratelimit-reset": "3", "x-ratelimit-remaining": "0"},
           body: "slow down",
         })
-        (await source->fetch(~addressSet)).result->latestFetchedBlockOf
+        (await source->fetch(~addressing)).result->latestFetchedBlockOf
       },
     )
     t.expect(result).toEqual(Error(RateLimited({resetMs: 3000})))
@@ -580,9 +578,9 @@ describe("HyperSync source responses", () => {
     let result = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({nextBlock: 10})
-        (await source->fetch(~addressSet)).result->latestFetchedBlockOf
+        (await source->fetch(~addressing)).result->latestFetchedBlockOf
       },
     )
     t.expect(result).toEqual(Error(BehindHead({blockNumber: 10})))
@@ -592,9 +590,9 @@ describe("HyperSync source responses", () => {
     let summary = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({...page, nextBlock: 11, archiveHeight: 60})
-        let response = await source->fetchPage(~addressSet, ~fromBlock=10, ~toBlock=Some(11))
+        let response = await source->fetchPage(~addressing, ~fromBlock=10, ~toBlock=Some(11))
         {
           "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
           "knownHeight": response.knownHeight,
@@ -615,12 +613,12 @@ describe("HyperSync source responses", () => {
     let (result, queries) = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushRawReply({status: 413})
         server->MockHyperSyncServer.pushResponse({nextBlock: 26})
         let result =
           (
-            await source->fetch(~addressSet, ~fromBlock=10, ~toBlock=Some(41))
+            await source->fetch(~addressing, ~fromBlock=10, ~toBlock=Some(41))
           ).result->latestFetchedBlockOf
         (
           result,
@@ -643,7 +641,7 @@ describe("HyperSync source responses", () => {
     let counts = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({
           ...page,
           logs: [
@@ -661,7 +659,7 @@ describe("HyperSync source responses", () => {
             ),
           ],
         })
-        let response = await source->fetchPage(~addressSet)
+        let response = await source->fetchPage(~addressing)
         response.page->TestChainBuffer.pageRowCount
       },
     )
@@ -672,12 +670,12 @@ describe("HyperSync source responses", () => {
     let summary = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(
+        let (source, addressing) = makeSource(
           ~url=server->MockHyperSyncServer.url,
           ~lowercaseAddresses=false,
         )
         server->MockHyperSyncServer.pushResponse(page)
-        let {page} = await source->fetchPage(~addressSet)
+        let {page} = await source->fetchPage(~addressing)
         let items = await page->joinedItems(~shouldChecksum=true)
         let summary = items->Array.map(eventSummary)->Array.getUnsafe(0)
         {
@@ -756,7 +754,7 @@ describe("HyperSync source responses", () => {
     let result = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse({
           ...page,
           blocks: [
@@ -772,7 +770,7 @@ describe("HyperSync source responses", () => {
             ),
           ],
         })
-        (await source->fetch(~addressSet)).result->latestFetchedBlockOf
+        (await source->fetch(~addressing)).result->latestFetchedBlockOf
       },
     )
     t.expect(result).toEqual(
@@ -793,9 +791,9 @@ describe("EvmHyperSyncSource - request accounting", () => {
     let methods = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressing) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushRawReply({status: 500, body: "upstream exploded"})
-        switch await source->fetch(~addressSet) {
+        switch await source->fetch(~addressing) {
         | {result: Error(_), requestStats} =>
           requestStats->Array.map(({Source.method: method}) => method)
         | {result: Ok(_)} => []

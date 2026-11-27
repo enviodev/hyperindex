@@ -61,7 +61,6 @@ describe("FetchState queries over the indexer loop", () => {
 
       await sync.expectItemsQueries([
         {
-          partitionId: "0",
           reply: Respond({
             items: [{blockNumber: 2, logIndex: 0}, {blockNumber: 1, logIndex: 0}],
             latestFetchedBlockNumber: 10,
@@ -78,7 +77,6 @@ describe("FetchState queries over the indexer loop", () => {
         [],
         [
           {
-            partitionId: "0",
             fromBlock: 0,
             toBlock: Unbounded,
             addresses: [staticAddress],
@@ -87,7 +85,6 @@ describe("FetchState queries over the indexer loop", () => {
         [],
         [
           {
-            partitionId: "0",
             fromBlock: 11,
             toBlock: Unbounded,
             addresses: [staticAddress],
@@ -117,7 +114,6 @@ describe("FetchState queries over the indexer loop", () => {
       sync.resolveGetHeightOrThrow(10)
       await sync.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 0,
           toBlock: Bounded(10),
           reply: Respond({items: [{blockNumber: 1, logIndex: 0}]}),
@@ -139,7 +135,6 @@ describe("FetchState queries over the indexer loop", () => {
       sync.resolveGetHeightOrThrow(10)
       await sync.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 0,
           toBlock: Bounded(11),
           reply: Respond({items: [{blockNumber: 1, logIndex: 0}], latestFetchedBlockNumber: 10}),
@@ -151,7 +146,6 @@ describe("FetchState queries over the indexer loop", () => {
       await sync.expectItemsQueries([{reply: LeavePending}])
       t.expect(sync->pendingShapes).toEqual([
         {
-          partitionId: "0",
           fromBlock: 11,
           toBlock: Bounded(11),
           addresses: [staticAddress],
@@ -169,7 +163,6 @@ describe("FetchState queries over the indexer loop", () => {
       await sync.expectItemsQueries([{reply: LeavePending}])
       t.expect(sync->pendingShapes).toEqual([
         {
-          partitionId: "0",
           fromBlock: 0,
           toBlock: Bounded(9),
           addresses: [staticAddress],
@@ -209,7 +202,6 @@ describe("FetchState queries over the indexer loop", () => {
         [],
         [
           {
-            partitionId: "0",
             fromBlock: 0,
             toBlock: Bounded(8),
             addresses: [staticAddress],
@@ -229,7 +221,6 @@ describe("FetchState queries over the indexer loop", () => {
       await sync.expectItemsQueries([{reply: LeavePending}])
       t.expect(sync->pendingShapes).toEqual([
         {
-          partitionId: "0",
           fromBlock: 0,
           toBlock: Bounded(8),
           addresses: [staticAddress],
@@ -269,7 +260,6 @@ chains:
     sync.resolveGetHeightOrThrow(30)
     await sync.expectItemsQueries([
       {
-        partitionId: "0",
         fromBlock: 0,
         toBlock,
         reply: Respond({
@@ -281,7 +271,7 @@ chains:
         }),
       },
     ])
-    await sync.expectItemsQueries([{partitionId: "1", reply: LeavePending}])
+    await sync.expectItemsQueries([{reply: LeavePending}])
     sync->pendingShapes
   }
 
@@ -297,7 +287,6 @@ chains:
         await proposesPastFullBuffer(~source=chain => source(chain), ~toBlock=Bounded(25)),
       ).toEqual([
         {
-          partitionId: "1",
           fromBlock: 0,
           toBlock: Bounded(25),
           addresses: [staticAddress],
@@ -318,7 +307,6 @@ chains:
         await proposesPastFullBuffer(~source=chain => source(chain), ~toBlock=Unbounded),
       ).toEqual([
         {
-          partitionId: "1",
           fromBlock: 0,
           toBlock: Unbounded,
           addresses: [staticAddress],

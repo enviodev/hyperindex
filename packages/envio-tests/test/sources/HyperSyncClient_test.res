@@ -47,7 +47,6 @@ let addressStore = TestAddresses.storeOf(
   ],
   ~addresses=[{address: usdcAddress, contractName: "ERC20", registrationBlock: -1}],
 )
-let usdcSet = addressStore->AddressStore.makeSet(~contractName="ERC20")
 
 let makeSource = (~eventRegistrations, ~apiToken=testApiToken) =>
   TestSources.hyperSync(
@@ -66,14 +65,22 @@ let runQuery = async (
   ~eventRegistrations=[transferEventRegistration],
 ) => {
   let {result} = await source.getItems(
-    ~fromBlock,
+    ~request=IndexingPlan.Request.standalone(
+      {
+        fromBlock,
+        toBlock,
+        onEventRegistrationIndexes: registrationIndexes,
+        onBlockRegistrationIndexes: [],
+        onTransactionRegistrationIndexes: [],
+        addressFreeContracts: [],
+      },
+      ~addressStore,
+      ~contractNames=["ERC20"],
+    ),
     ~toBlock=Some(toBlock),
-    ~addressSet=usdcSet,
+    ~retry=0,
     ~reorgableFrom=None,
     ~knownHeight=toBlock,
-    ~partitionId="0",
-    ~selection=LogDecoding.selectionOf(registrationIndexes),
-    ~retry=0,
   )
   switch result {
   | Ok(itemsPage) =>

@@ -219,7 +219,7 @@ describe("Chain-scoped rollback", () => {
             prevRangeLastBlock: {blockNumber: 102, blockHash: "0x102a"},
           }),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
 
       await source1.expectBlockHashLookup({
@@ -417,7 +417,7 @@ describe("Per-chain history and removal", () => {
             prevRangeLastBlock: {blockNumber: 102, blockHash: "0x102a"},
           }),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await source1.expectBlockHashLookup({
         blockNumbers: [101],

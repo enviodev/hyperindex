@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use crate::address_store::client_filtered_contracts::ClientFilteredContracts;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -149,14 +150,10 @@ impl FuelHyperSyncClient {
         params: EventItemsQuery,
         address_set: &AddressSet,
     ) -> Result<(EventItemsResponse, Page), ClientError> {
-        let client_filtered =
-            crate::address_store::client_filtered_contracts::ClientFilteredContracts::from_vec(
-                params.client_filtered_contracts.clone().unwrap_or_default(),
-            );
         let built = self.fuel.selection.build(
             &params.registration_indexes,
             address_set,
-            &client_filtered,
+            &params.client_filtered,
         )?;
 
         let query = build_query(&params, &built).context("build query")?;
@@ -185,10 +182,9 @@ pub(crate) struct EventItemsQuery {
     /// Inclusive; `None` queries to the end of available data.
     pub to_block: Option<i64>,
     pub registration_indexes: Vec<i64>,
-    /// Contract names to fetch address-free even though their registrations
-    /// depend on addresses (client-side filtering). Absent or empty means every
-    /// address-dependent contract is filtered server-side.
-    pub client_filtered_contracts: Option<Vec<String>>,
+    /// Contracts fetched address-free though their registrations depend on
+    /// addresses, gated against the store instead.
+    pub client_filtered: ClientFilteredContracts,
 }
 
 /// What a page covered. Its rows are in the `Page` returned beside it.

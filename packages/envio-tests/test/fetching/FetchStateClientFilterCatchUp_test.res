@@ -102,7 +102,6 @@ let collapseGravatar = async (sourceMock: MockSource.t, ~height=1000) => {
   sourceMock.resolveGetHeightOrThrow(height)
   await sourceMock.expectItemsQueries([
     {
-      partitionId: "0",
       fromBlock: 1,
       reply: upTo(~items=[registerAt(3, [address(1), address(2)])], 5),
     },
@@ -115,13 +114,12 @@ let collapseGravatar = async (sourceMock: MockSource.t, ~height=1000) => {
 let registerWhileAddressFreeQueryIsOpen = async (sourceMock: MockSource.t, ~registeredAt) => {
   await sourceMock->collapseGravatar
   await sourceMock.expectItemsQueries([
-    {partitionId: "2", fromBlock: 3, reply: upTo(50)},
-    {partitionId: "0", fromBlock: 6, reply: LeavePending},
+    {fromBlock: 3, reply: upTo(50)},
+    {fromBlock: 6, reply: LeavePending},
   ])
   await sourceMock.expectItemsQueries([
-    {partitionId: "2", fromBlock: 51, reply: LeavePending},
+    {fromBlock: 51, reply: LeavePending},
     {
-      partitionId: "0",
       fromBlock: 6,
       reply: upTo(~items=[registerAt(registeredAt, [address(3)])], 1000),
     },
@@ -139,26 +137,26 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       let handled = []
       await sourceMock->collapseGravatar
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 3, reply: upTo(~items=[registerAt(20, [address(3)])], 50)},
-        {partitionId: "0", fromBlock: 6, reply: LeavePending},
+        {fromBlock: 3, reply: upTo(~items=[registerAt(20, [address(3)])], 50)},
+        {fromBlock: 6, reply: LeavePending},
       ])
       // Partition 2's query from 51 goes out before the contractRegister run
       // registers address 3, so the catch-up stays open while it is.
       await indexer.waitUntilIdle()
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", reply: LeavePending},
-        {partitionId: "2", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       let withCatchUp = sourceMock->pendingQueries
 
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 20, reply: upTo(~items=[handled->eventAt(30)], 50)},
-        {partitionId: "0", fromBlock: 6, reply: upTo(1000)},
+        {fromBlock: 20, reply: upTo(~items=[handled->eventAt(30)], 50)},
+        {fromBlock: 6, reply: upTo(1000)},
       ])
       // Both reach 100 together, leaving the catch-up nothing to cover.
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 51, reply: upTo(100)},
-        {partitionId: "3", fromBlock: 51, reply: upTo(100)},
+        {fromBlock: 51, reply: upTo(100)},
+        {fromBlock: 51, reply: upTo(100)},
       ])
       await indexer.waitUntilIdle()
 
@@ -168,7 +166,6 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       ).toEqual((
         [
           {
-            partitionId: "0",
             fromBlock: 6,
             toBlock: Unbounded,
             addresses: [
@@ -195,20 +192,19 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       let sourceMock = source(1337)
       await sourceMock->collapseGravatar
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 3, reply: upTo(~items=[registerAt(20, [address(3)])], 50)},
-        {partitionId: "0", fromBlock: 6, reply: LeavePending},
+        {fromBlock: 3, reply: upTo(~items=[registerAt(20, [address(3)])], 50)},
+        {fromBlock: 6, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "3",
           fromBlock: 20,
           reply: upTo(~items=[registerAt(30, [address(4)])], 40),
         },
-        {partitionId: "2", fromBlock: 51, reply: LeavePending},
+        {fromBlock: 51, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 41, reply: LeavePending},
-        {partitionId: "4", reply: LeavePending},
+        {fromBlock: 41, reply: LeavePending},
+        {reply: LeavePending},
       ])
 
       t.expect(
@@ -231,18 +227,18 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       let sourceMock = source(1337)
       await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=20)
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 51, reply: LeavePending},
-        {partitionId: "3", fromBlock: 20, reply: LeavePending},
+        {fromBlock: 51, reply: LeavePending},
+        {fromBlock: 20, reply: LeavePending},
       ])
       let whileOpen = sourceMock->pendingQueries
 
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 51, reply: upTo(120)},
-        {partitionId: "3", fromBlock: 20, reply: upTo(40)},
+        {fromBlock: 51, reply: upTo(120)},
+        {fromBlock: 20, reply: upTo(40)},
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 121, reply: LeavePending},
-        {partitionId: "3", fromBlock: 41, reply: LeavePending},
+        {fromBlock: 121, reply: LeavePending},
+        {fromBlock: 41, reply: LeavePending},
       ])
 
       t.expect(
@@ -265,20 +261,18 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=20)
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "2",
           fromBlock: 51,
           reply: Respond({items: [], latestFetchedBlockNumber: 1100, knownHeight: 1500}),
         },
-        {partitionId: "3", fromBlock: 20, reply: upTo(40)},
+        {fromBlock: 20, reply: upTo(40)},
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 1101, reply: LeavePending},
-        {partitionId: "3", fromBlock: 41, reply: LeavePending},
-        {partitionId: "0", fromBlock: 1001, reply: LeavePending},
+        {fromBlock: 1101, reply: LeavePending},
+        {fromBlock: 41, reply: LeavePending},
+        {fromBlock: 1001, reply: LeavePending},
       ])
       t.expect(sourceMock->pendingQueries).toEqual([
         {
-          partitionId: "0",
           fromBlock: 1001,
           toBlock: Unbounded,
           addresses: ["0x00000000000000000000000000000000000000ff"],
@@ -300,12 +294,12 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       let handled = []
       await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=20)
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 51, reply: upTo(~items=[handled->eventAt(60)], 120)},
-        {partitionId: "3", fromBlock: 20, reply: LeavePending},
+        {fromBlock: 51, reply: upTo(~items=[handled->eventAt(60)], 120)},
+        {fromBlock: 20, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 20, reply: upTo(~items=[handled->eventAt(60)], 150)},
-        {partitionId: "2", reply: LeavePending},
+        {fromBlock: 20, reply: upTo(~items=[handled->eventAt(60)], 150)},
+        {reply: LeavePending},
       ])
       await indexer.waitUntilIdle()
 
@@ -326,29 +320,29 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       let handled = []
       await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=20)
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 20, reply: upTo(~items=[handled->eventAt(60)], 80)},
-        {partitionId: "2", fromBlock: 51, reply: LeavePending},
+        {fromBlock: 20, reply: upTo(~items=[handled->eventAt(60)], 80)},
+        {fromBlock: 51, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 81, reply: LeavePending},
-        {partitionId: "2", fromBlock: 51, reply: LeavePending},
+        {fromBlock: 81, reply: LeavePending},
+        {fromBlock: 51, reply: LeavePending},
       ])
       let aheadOfAddressFree = sourceMock->pendingQueries
 
       // Routed before address 3 existed, partition 2's query carries none of
       // its events.
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 51, reply: upTo(120)},
-        {partitionId: "3", fromBlock: 81, reply: upTo(100)},
+        {fromBlock: 51, reply: upTo(120)},
+        {fromBlock: 81, reply: upTo(100)},
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 101, reply: LeavePending},
-        {partitionId: "2", fromBlock: 121, reply: LeavePending},
+        {fromBlock: 101, reply: LeavePending},
+        {fromBlock: 121, reply: LeavePending},
       ])
       let bounded = sourceMock->pendingQueries
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 101, reply: upTo(120)},
-        {partitionId: "2", fromBlock: 121, reply: LeavePending},
+        {fromBlock: 101, reply: upTo(120)},
+        {fromBlock: 121, reply: LeavePending},
       ])
       await indexer.waitUntilIdle()
 
@@ -374,23 +368,23 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       let handled = []
       await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=20)
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 20, reply: upTo(80)},
-        {partitionId: "2", fromBlock: 51, reply: LeavePending},
+        {fromBlock: 20, reply: upTo(80)},
+        {fromBlock: 51, reply: LeavePending},
       ])
       // Partition 2 settles at 70, below the 80 the catch-up already passed,
       // while the catch-up's next query is still out.
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 81, reply: LeavePending},
-        {partitionId: "2", fromBlock: 51, reply: upTo(70)},
+        {fromBlock: 81, reply: LeavePending},
+        {fromBlock: 51, reply: upTo(70)},
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 81, reply: upTo(~items=[handled->eventAt(85)], 90)},
-        {partitionId: "2", fromBlock: 71, reply: LeavePending},
+        {fromBlock: 81, reply: upTo(~items=[handled->eventAt(85)], 90)},
+        {fromBlock: 71, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 71, reply: upTo(~items=[handled->eventAt(85)], 200)},
+        {fromBlock: 71, reply: upTo(~items=[handled->eventAt(85)], 200)},
       ])
-      await sourceMock.expectItemsQueries([{partitionId: "2", reply: LeavePending}])
+      await sourceMock.expectItemsQueries([{reply: LeavePending}])
       await indexer.waitUntilIdle()
 
       t.expect(
@@ -411,8 +405,8 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       // query from 51 went out before the address existed.
       await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=60)
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 51, reply: LeavePending},
-        {partitionId: "3", reply: LeavePending},
+        {fromBlock: 51, reply: LeavePending},
+        {reply: LeavePending},
       ])
 
       t.expect(sourceMock->pendingQueries).toEqual([
@@ -432,15 +426,14 @@ describe("FetchState client-side filtering catch-up partitions", () => {
       // Partition 2 fetches to the head it knows, 50, and waits there.
       await sourceMock->collapseGravatar(~height=50)
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 3, reply: upTo(50)},
-        {partitionId: "0", fromBlock: 6, reply: LeavePending},
+        {fromBlock: 3, reply: upTo(50)},
+        {fromBlock: 6, reply: LeavePending},
       ])
       // Partition 0's query comes back past that head, registering address 3
       // at 60. Partition 2's query from 51 goes out before the contractRegister
       // run registers it, so address 3 gets a catch-up of its own.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 6,
           reply: Respond({
             items: [registerAt(60, [address(3)])],
@@ -449,7 +442,7 @@ describe("FetchState client-side filtering catch-up partitions", () => {
           }),
         },
       ])
-      await sourceMock.expectItemsQueries([{partitionId: "2", fromBlock: 51, reply: LeavePending}])
+      await sourceMock.expectItemsQueries([{fromBlock: 51, reply: LeavePending}])
       await indexer.waitUntilIdle()
 
       t.expect(sourceMock->pendingQueries).toEqual([

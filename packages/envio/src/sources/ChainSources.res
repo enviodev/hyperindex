@@ -32,19 +32,6 @@ type heightSubscriptionTarget =
   | HyperSyncSse({url: string, apiToken: string})
   | RpcWs({url: string})
 
-type itemsQuery = {
-  fromBlock: int,
-  toBlock?: int,
-  partitionId: string,
-  onEventRegistrationIndexes: array<int>,
-  onBlockRegistrationIndexes: array<int>,
-  onTransactionRegistrationIndexes: array<int>,
-  clientFilteredContracts?: array<string>,
-  retry: int,
-  reorgableFrom?: int,
-  knownHeight: int,
-}
-
 @tag("kind")
 type heightAnswer =
   | Height({height: int, requestStats: array<Source.requestStat>})
@@ -73,7 +60,14 @@ type addonSource = {
   canReadBlockHashes: bool,
   heightSubscription: Null.t<heightSubscriptionTarget>,
   getHeight: unit => promise<heightAnswer>,
-  getItems: (itemsQuery, AddressSet.t, BufferPage.buffer) => promise<itemsAnswer>,
+  getItems: (
+    IndexingPlan.fetchRequest,
+    Null.t<int>,
+    int,
+    Null.t<int>,
+    int,
+    BufferPage.buffer,
+  ) => promise<itemsAnswer>,
   getBlockHashes: array<int> => promise<blockHashesAnswer>,
   onReorg: unit => unit,
 }
@@ -102,31 +96,15 @@ let fromAddonSource = (
     | Height({height, requestStats}) => {result: Ok(height), requestStats}
     | Failed({failure, requestStats}) => {result: Error(failure), requestStats}
     },
-  getItems: async (
-    ~fromBlock,
-    ~toBlock,
-    ~addressSet,
-    ~reorgableFrom,
-    ~knownHeight,
-    ~partitionId,
-    ~selection: FetchState.selection,
-    ~retry,
-  ) => {
-    let query = {
-      fromBlock,
-      toBlock: ?(selection->FetchState.sourceToBlock(~toBlock, ~knownHeight)),
-      partitionId,
-      onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
-      onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
-      onTransactionRegistrationIndexes: selection.onTransactionRegistrations->Array.map(reg =>
-        reg.index
-      ),
-      clientFilteredContracts: ?selection.clientFilteredContracts,
+  getItems: async (~request, ~toBlock, ~retry, ~reorgableFrom, ~knownHeight) => {
+    switch await addonSource.getItems(
+      request,
+      toBlock->Null.fromOption,
       retry,
-      ?reorgableFrom,
+      reorgableFrom->Null.fromOption,
       knownHeight,
-    }
-    switch await addonSource.getItems(query, addressSet, chainBuffer) {
+      chainBuffer,
+    ) {
     | Fetched({page, latestFetchedBlockNumber, ?knownHeight, requestStats}) => {
         result: Ok({page, latestFetchedBlockNumber, knownHeight}),
         requestStats,
@@ -175,6 +153,7 @@ let make = (
   ~chainBuffer: ChainBuffer.t,
   ~logger: Logger.t,
   ~maxAddressesPerRequest: int,
+  ~onBlockRegistrations: array<Internal.onBlockRegistration>=[],
 ): array<Source.t> => {
   let chainId = chainConfig.id
   let fromChainConfig = (~hyperSync=?, ~rpcs=[]) =>
@@ -215,6 +194,7 @@ let make = (
         ~addressStore,
         ~ecosystem=chainConfig.ecosystem,
         ~page,
+        ~onBlockRegistrations,
       ),
     ]
   // For tests: use ready-to-use sources directly

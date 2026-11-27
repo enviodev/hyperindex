@@ -95,9 +95,8 @@ let makeMockSourceRegistration = (
   ({
     index,
     eventConfig: ({
-      // Keep the synthetic registration in the same address-dependent fetch
-      // partition as the config's registrations. MockSource ignores the
-      // query selection, while ChainState still owns and resolves this slot.
+      // Keep the synthetic registration fetched by address with the config's
+      // registrations of its contract.
       contractName,
       name: "MockEvent",
       paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
@@ -138,12 +137,16 @@ type mockSourceRegistrations = {
 
 type mockSourceRegistrationRef = ref<option<mockSourceRegistrations>>
 // `isWildcard` decides whether the chain's mock registration depends on
-// addresses, and so whether its partition is an address partition or a wildcard
-// one — the two take different paths through a rollback.
+// addresses, and so whether it is fetched by address or without a filter —
+// the two take different paths through a rollback.
 type mockSourceState = {
   onEventRegistrationRef: mockSourceRegistrationRef,
   // The chain's own registrations, for items that name the event they are.
   chainRegistrationsRef: ref<array<Internal.onEventRegistration>>,
+  // The chain's block handlers, which a request names by index, with the
+  // block a handler without its own start counts its interval from.
+  chainBlockRegistrationsRef: ref<array<Internal.onBlockRegistration>>,
+  chainStartBlockRef: ref<int>,
   isWildcard: bool,
   mockEventContract: option<string>,
 }
@@ -219,6 +222,8 @@ let installMockSourceRegistrations = (
       sourceStates->Array.forEach(state => {
         state.onEventRegistrationRef := Some({plain, registering})
         state.chainRegistrationsRef := chainRegistrations
+        state.chainBlockRegistrationsRef := registrations.onBlockRegistrations
+        state.chainStartBlockRef := chainConfig->Config.startBlockOrZero
       })
     | _ => ()
     }
@@ -258,7 +263,6 @@ type startupHeight = Height(int) | HeightFailure(string)
 
 // What a test can tell one pending item query from another by.
 type pendingItemsQuery = {
-  partitionId: string,
   fromBlock: int,
   toBlock: toBlock,
   retryCount: int,
@@ -268,8 +272,8 @@ type pendingItemsQuery = {
 // pending queries doesn't have to spell them out.
 @get external addresses: pendingItemsQuery => array<Address.t> = "addresses"
 @get external reorgableFrom: pendingItemsQuery => option<int> = "reorgableFrom"
-// The registrations the query fetches for.
-@get external selection: pendingItemsQuery => FetchState.selection = "selection"
+// What the query fetches, at the block it asked up to.
+@get external selection: pendingItemsQuery => IndexingPlan.Request.selection = "selection"
 
 // A block the chain has, for the block handlers of the query's selection that
 // run on it. Its number, timestamp and hash are those of `itemMock`'s block.
@@ -316,7 +320,6 @@ type reply =
   | LeavePending
 
 type expectedItemsQuery = {
-  partitionId?: string,
   fromBlock?: int,
   toBlock?: toBlock,
   retryCount?: int,
@@ -461,7 +464,6 @@ module Ledger = {
   type startupHeight = {height?: int, failure?: string}
   type heightCall = {index: int, height: Nullable.t<int>, failure: Nullable.t<string>}
   type expected = {
-    partitionId?: string,
     fromBlock?: int,
     toBlock?: int,
     toBlockUnbounded?: bool,
@@ -509,7 +511,7 @@ module Ledger = {
   external unclaimedHeightCallsMessage: t => Nullable.t<string> = "unclaimedHeightCallsMessage"
   @send external unclaimedAnswersMessage: t => Nullable.t<string> = "unclaimedAnswersMessage"
   @send
-  external takeItemsQuery: (t, string, int, Null.t<int>, int, array<string>, int) => int =
+  external takeItemsQuery: (t, int, Null.t<int>, int, array<string>, int) => int =
     "takeItemsQuery"
   @send external settleItemsQuery: (t, int) => unit = "settleItemsQuery"
   @send external entryCandidates: (t, array<expected>) => array<array<int>> = "entryCandidates"
@@ -636,6 +638,8 @@ let make = (
   let state: mockSourceState = {
     onEventRegistrationRef: ref(None),
     chainRegistrationsRef: ref([]),
+    chainBlockRegistrationsRef: ref([]),
+    chainStartBlockRef: ref(0),
     isWildcard,
     mockEventContract,
   }
@@ -707,7 +711,6 @@ let make = (
     }
 
   let toLedgerExpected = (entry: expectedItemsQuery): Ledger.expected => {
-    partitionId: ?entry.partitionId,
     fromBlock: ?entry.fromBlock,
     toBlock: ?switch entry.toBlock {
     | Some(Bounded(toBlock)) => Some(toBlock)
@@ -796,32 +799,32 @@ let make = (
   let isFetchedFor = (
     item: itemMock,
     registration: Internal.onEventRegistration,
-    ~selection: FetchState.selection,
-    ~addressSet,
+    ~request,
+    ~selection: IndexingPlan.Request.selection,
   ) => {
     let contractName = registration.eventConfig.contractName
-    let isClientFiltered =
-      selection.clientFilteredContracts->Option.mapOr(false, names =>
-        names->Array.includes(contractName)
-      )
+    let isClientFiltered = selection.addressFreeContracts->Array.includes(contractName)
     switch item.srcAddress {
     | Some(srcAddress) if registration.dependsOnAddresses =>
       let address = srcAddress->Address.unsafeFromString
       isClientFiltered
         ? isIndexedAt.contents(address, ~contractName, ~blockNumber=item.blockNumber)
-        : addressSet->AddressSet.containsAt(address, contractName, item.blockNumber)
+        : request->IndexingPlan.Request.containsAddressAt(
+            address,
+            ~contractName,
+            ~blockNumber=item.blockNumber,
+          )
     | _ => true
     }
   }
 
   let makeItemsResponse = (
     response: itemsResponse,
-    ~partitionId,
+    ~request,
     ~fromBlock,
     ~toBlock,
     ~knownHeight,
-    ~selection: FetchState.selection,
-    ~addressSet: AddressSet.t,
+    ~selection: IndexingPlan.Request.selection,
   ): Source.itemsPage => {
     let items = response.items
     let blocks = response.blocks->Option.getOr([])
@@ -938,14 +941,14 @@ let make = (
               }
             }
             switch registrations->Array.filter(registration =>
-              item->isFetchedFor(registration, ~selection, ~addressSet)
+              item->isFetchedFor(registration, ~request, ~selection)
             ) {
             | [] =>
               droppedItems
               ->Array.push(
                 `block ${item.blockNumber->Int.toString} log ${item.logIndex->Int.toString} from ${item.srcAddress->Option.getOr(
                     "",
-                  )} by partition ${partitionId} at ${fromBlock->Int.toString}..${latestFetchedBlockNumber->Int.toString}`,
+                  )} by the query at ${fromBlock->Int.toString}..${latestFetchedBlockNumber->Int.toString}`,
               )
               ->ignore
               []
@@ -955,8 +958,14 @@ let make = (
           })
           ->Array.concat(
             blocks->Array.flatMap(({blockNumber, ?blockFields}) =>
-              selection.onBlockRegistrations
-              ->Array.filter(reg => reg->BlockItem.runsOn(~blockNumber, ~chainStartBlock=0))
+              state.chainBlockRegistrationsRef.contents
+              ->Array.filter(reg =>
+                selection.onBlockRegistrationIndexes->Array.includes(reg.index) &&
+                  reg->BlockItem.runsOn(
+                    ~blockNumber,
+                    ~chainStartBlock=state.chainStartBlockRef.contents,
+                  )
+              )
               ->Array.map(onBlockRegistration => Internal.Block({
                 onBlockRegistration,
                 blockNumber,
@@ -1321,19 +1330,17 @@ let make = (
           }
         }),
         getItems: implement(#getItemsOrThrow, (
-          ~fromBlock,
+          ~request,
           ~toBlock,
-          ~addressSet,
+          ~retry,
           ~reorgableFrom,
           ~knownHeight,
-          ~partitionId,
-          ~selection,
-          ~retry,
         ) => {
-          let addresses = addressSet->AddressSet.addresses
+          let fromBlock = request->IndexingPlan.Request.fromBlock
+          let selection = request->IndexingPlan.Request.selection(~toBlock)
+          let addresses = request->IndexingPlan.Request.addresses
           let id =
             ledger->Ledger.takeItemsQuery(
-              partitionId,
               fromBlock,
               toBlock->Null.fromOption,
               retry,
@@ -1343,11 +1350,10 @@ let make = (
           note(
             `items query ${fromBlock->Int.toString}..${toBlock->Option.mapOr("", toBlock =>
                 toBlock->Int.toString
-              )} (partition ${partitionId})`,
+              )}`,
           )
           let promise = Promise.make((resolve, reject) => {
             let query: pendingItemsQuery = {
-              partitionId,
               fromBlock,
               toBlock: switch toBlock {
               | Some(toBlock) => Bounded(toBlock)
@@ -1369,12 +1375,11 @@ let make = (
                 // Built first, so a reply that can't be built leaves the query pending.
                 let built = makeItemsResponse(
                   response,
-                  ~partitionId,
+                  ~request,
                   ~fromBlock,
                   ~toBlock,
                   ~knownHeight,
                   ~selection,
-                  ~addressSet,
                 )
                 settle()
                 resolve({

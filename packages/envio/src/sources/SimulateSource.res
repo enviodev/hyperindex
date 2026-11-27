@@ -68,6 +68,8 @@ let make = (
   // Rows the items read from the buffer rather than carry: SVM transactions,
   // their account activity, and slots. Handed over with the first response.
   ~page: option<BufferPage.t>=None,
+  // The chain's block handlers, which a request names by index.
+  ~onBlockRegistrations: array<Internal.onBlockRegistration>=[],
 ): Source.t => {
   let reportedHeight = max(endBlock, 1)
 
@@ -82,16 +84,9 @@ let make = (
     ),
     // At least height 1, so the engine doesn't treat 0 as "no blocks available".
     getHeight: () => Promise.resolve({Source.result: Ok(reportedHeight), requestStats: []}),
-    getItems: (
-      ~fromBlock,
-      ~toBlock,
-      ~addressSet,
-      ~reorgableFrom as _,
-      ~knownHeight as _,
-      ~partitionId as _,
-      ~selection: FetchState.selection,
-      ~retry as _,
-    ) => {
+    getItems: (~request, ~toBlock, ~retry as _, ~reorgableFrom as _, ~knownHeight as _) => {
+      let fromBlock = request->IndexingPlan.Request.fromBlock
+      let selection = request->IndexingPlan.Request.selection(~toBlock)
       // Mirror a real backend: return only the items this query would match —
       // in the block range, part of the selection, at or after the
       // registration's own start block, matching one of its `where.params`
@@ -103,22 +98,17 @@ let make = (
       | None => reportedHeight
       }
       // By registration index, not by event: two registrations of the same
-      // event are independent and may sit in different partitions, so matching
-      // on the shared event would let a sibling's items leak into this query.
-      let selectionRegistrationIndexes = Utils.Set.make()
-      selection.onEventRegistrations->Array.forEach(reg =>
-        selectionRegistrationIndexes->Utils.Set.add(reg.index)->ignore
-      )
+      // event are independent and may be in different requests, so matching on
+      // the shared event would let a sibling's items leak into this one.
+      let selectionRegistrationIndexes = Utils.Set.fromArray(selection.onEventRegistrationIndexes)
 
-      // A client-filtered contract is queried address-free, so this partition
-      // holds none of its addresses and only the chain-wide store can answer
-      // for it, as matching does for every source.
+      // A contract fetched address-free has none of its addresses in the
+      // request, so only the chain-wide store can answer for it, as matching
+      // does for every source.
       let isAddressAllowed = (address, ~contractName, ~blockNumber) =>
-        switch selection.clientFilteredContracts {
-        | Some(contractNames) if contractNames->Array.includes(contractName) =>
-          addressStore->AddressStore.isIndexedAt(address, contractName, blockNumber)
-        | _ => addressSet->AddressSet.containsAt(address, contractName, blockNumber)
-        }
+        selection.addressFreeContracts->Array.includes(contractName)
+          ? addressStore->AddressStore.isIndexedAt(address, contractName, blockNumber)
+          : request->IndexingPlan.Request.containsAddressAt(address, ~contractName, ~blockNumber)
 
       // The registration's own start block, which the contract-wide address gate
       // can't express. Matching applies it for every other source.
@@ -192,7 +182,11 @@ let make = (
 
       let responsePage = BufferPage.fromItems(
         parsedQueueItems->Array.concat(
-          selection.onBlockRegistrations->blockItems(
+          onBlockRegistrations
+          ->Array.filter(registration =>
+            selection.onBlockRegistrationIndexes->Array.includes(registration.index)
+          )
+          ->blockItems(
             ~fromBlock,
             ~toBlock=toBlockQueried,
             ~getBlock,

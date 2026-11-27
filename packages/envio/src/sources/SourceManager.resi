@@ -65,11 +65,11 @@ let onReorg: t => unit
 
 let dispatch: (
   t,
-  ~fetchState: FetchState.t,
-  ~executeQuery: FetchState.query => promise<unit>,
+  ~knownHeight: int,
+  ~executeQuery: IndexingPlan.fetchRequest => promise<unit>,
   ~waitForNewBlock: (~knownHeight: int) => promise<int>,
   ~onNewBlock: (~knownHeight: int) => unit,
-  ~action: FetchState.nextQuery,
+  ~work: IndexingPlan.chainFetchWork,
   ~stateId: int,
 ) => promise<unit>
 
@@ -82,7 +82,7 @@ let waitForNewBlock: (
 
 let executeQuery: (
   t,
-  ~query: FetchState.query,
+  ~request: IndexingPlan.fetchRequest,
   ~knownHeight: int,
   ~isRealtime: bool,
   ~reorgableFrom: option<int>,

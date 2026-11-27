@@ -57,7 +57,6 @@ let restartWithRegistered = async (
     [
       (
         {
-          partitionId: "0",
           fromBlock: 0,
           reply: Respond({
             items: addresses->Array.mapWithIndex((address, logIndex) =>
@@ -121,7 +120,7 @@ indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async () => {});
         ),
         ~message="the address without handlers is still counted as registered",
       ).toEqual((
-        [{partitionId: "0", fromBlock: 0, toBlock: Bounded(800), addresses: [gravatar]}],
+        [{fromBlock: 0, toBlock: Bounded(800), addresses: [gravatar]}],
         [(Some("Gravatar"), "1"), (Some("NftFactory"), "1")],
       ))
     },
@@ -193,7 +192,6 @@ indexer.contractRegister({ contract: "Gravatar", event: "Register" }, async ({ e
       )
       t.expect(queries).toEqual([
         {
-          partitionId: "0",
           fromBlock: 101,
           toBlock: Bounded(800),
           addresses: [dynamic1, gravatar],
@@ -287,7 +285,6 @@ indexer.onEvent({ contract: "ContractB", event: "TestEvent" }, async () => {});
     async (~t, ~indexer as _, ~source) => {
       t.expect(await source(1337)->pendingQueries).toEqual([
         {
-          partitionId: "0",
           fromBlock: 0,
           toBlock: Bounded(99_800),
           addresses: [contractA1, contractB],
@@ -303,14 +300,13 @@ indexer.onEvent({ contract: "ContractB", event: "TestEvent" }, async () => {});
       let sourceMock = source(1337)
       let beforeMerge = await sourceMock->pendingQueries
       await sourceMock.expectItemsQueries([
-        {partitionId: "0", reply: Respond({items: [], latestFetchedBlockNumber: 20_001})},
+        {reply: Respond({items: [], latestFetchedBlockNumber: 20_001})},
       ])
       let afterMerge = await sourceMock->pendingQueries
       t.expect((beforeMerge, afterMerge)).toEqual((
-        [{partitionId: "0", fromBlock: 0, toBlock: Bounded(20_001), addresses: [contractA1]}],
+        [{fromBlock: 0, toBlock: Bounded(20_001), addresses: [contractA1]}],
         [
           {
-            partitionId: "1",
             fromBlock: 20_002,
             toBlock: Bounded(99_800),
             addresses: [contractA1, contractB],

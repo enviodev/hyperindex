@@ -27,6 +27,7 @@ let makeFromDbState: (
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~logger: Logger.t,
   ~sourceTiming: SourceManager.timing=?,
+  ~indexingPlan: IndexingPlan.t,
 ) => t
 
 // Accessors.
@@ -36,7 +37,7 @@ let chainBuffer: t => ChainBuffer.t
 let itemContext: t => StoredItems.context
 // Where builds read from: the last block a batch has taken.
 let processingBlockNumber: t => int
-let fetchStateOf: t => FetchState.t
+let indexingPlan: t => IndexingPlan.t
 let addressStore: t => AddressStore.t
 let shouldChecksum: t => bool
 let entities: t => EntityTables.t
@@ -51,8 +52,8 @@ let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
 let committedProgressBlockNumber: t => int
 let committedProgressBlockTime: t => option<int>
 let numEventsProcessed: t => float
-let pendingBudget: t => float
-let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
+// Items per block that batches have measured, before the ready buffer's.
+let processedDensity: t => option<float>
 
 // Metric counters, rendered by Metrics at scrape time.
 let recordBlockRangeFetch: (
@@ -66,6 +67,8 @@ let setRollbackTargetBlock: (t, ~blockNumber: int) => unit
 
 // Fetch-frontier reads.
 let knownHeight: t => int
+let endBlock: t => option<int>
+let readyThroughBlock: t => int
 let contractAddresses: (t, ~contractName: string) => array<Address.t>
 let drainAddressesForWrite: (
   t,
@@ -74,21 +77,8 @@ let drainAddressesForWrite: (
 ) => array<AddressStore.drainedAddress>
 let hasAddressesToWrite: t => bool
 let bufferReadyCount: t => int
-let effectiveDensity: t => option<float>
 let hasReadyItem: t => bool
-
-// Fetch control.
-let blockAtProgress: (t, ~progress: float) => int
-let frontierProgress: t => float
-let getNextQuery: (t, ~chainTargetItems: float, ~maxTargetBlock: int=?) => FetchState.nextQuery
-let dispatch: (
-  t,
-  ~executeQuery: FetchState.query => promise<unit>,
-  ~waitForNewBlock: (~knownHeight: int) => promise<int>,
-  ~onNewBlock: (~knownHeight: int) => unit,
-  ~action: FetchState.nextQuery,
-  ~stateId: int,
-) => promise<unit>
+let progressPercentage: t => float
 
 // Views.
 let toMetrics: t => Metrics.chainMetrics
@@ -110,14 +100,14 @@ let isFetchingAtHead: t => bool
 let isAtHeadWithoutEndBlock: t => bool
 
 // State transitions. The chain state is mutated only through these.
-let handleQueryResult: (
+// Merges the response's page and moves the request's needs to the block the
+// source reached. None for a request a rollback dropped.
+let completeFetchRequest: (
   t,
-  ~query: FetchState.query,
-  ~itemsCount: int,
-  ~registeringBlockNumbers: array<int>,
-  ~latestFetchedBlock: int,
-  ~knownHeight: int,
-) => unit
+  ~request: IndexingPlan.fetchRequest,
+  ~response: Source.blockRangeFetchResponse,
+) => option<IndexingPlan.completion>
+let abandonFetchRequest: (t, ~request: IndexingPlan.fetchRequest) => unit
 let hasContractRegisterBacklog: t => bool
 let isRegisteringContracts: t => bool
 // Starts a contractRegister run, returning the backlog blocks it reads.
@@ -131,15 +121,8 @@ let registerContracts: (
   ~registrations: array<AddressStore.registration>,
   ~builtBlockNumbers: array<int>,
 ) => unit
-// Merges the response's page into the buffer unless a hash inside the reorg
-// threshold differs from the stored one (merged anyway in detect-only mode).
-let mergePage: (
-  t,
-  ~page: BufferPage.t,
-  ~knownHeight: int,
-) => (ReorgDetection.reorgResult, ChainBuffer.mergedPage)
 let prepareReorg: (t, ~eventsProcessedDiff: option<float>) => unit
-let resetPendingQueries: t => unit
+let abandonFetchRequestsInFlight: t => unit
 let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit

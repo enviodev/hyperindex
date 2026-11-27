@@ -105,7 +105,6 @@ let registerInFirstResponse = async (
 ) => {
   await sourceMock.expectItemsQueries([
     {
-      partitionId: "0",
       fromBlock: 0,
       reply: Respond({items, latestFetchedBlockNumber}),
     },
@@ -114,7 +113,7 @@ let registerInFirstResponse = async (
   // land once the contractRegister run over the response's blocks ends.
   await indexer.waitUntilIdle()
   await sourceMock.expectItemsQueries([
-    {partitionId: "0", fromBlock: latestFetchedBlockNumber + 1, reply: LeavePending},
+    {fromBlock: latestFetchedBlockNumber + 1, reply: LeavePending},
     {reply: LeavePending},
   ])
   sourceMock.pendingItemsQueries->summarize
@@ -129,7 +128,6 @@ let fetchPendingAndReadRows = async (sourceMock: MockSource.t, indexer: IndexerR
 }
 
 let staticPartitionQuery = (~fromBlock=101, ~toBlock=MockSource.Bounded(800), addresses) => {
-  partitionId: "0",
   fromBlock,
   toBlock,
   addresses: addresses->Array.concat([gravatar])->Array.toSorted(String.compare),
@@ -178,7 +176,6 @@ describe("Dynamic contract registration", () => {
         ~latestFetchedBlockNumber,
         item,
       ): MockSource.expectedItemsQuery => {
-        partitionId: "0",
         fromBlock,
         reply: Respond({items: [item], latestFetchedBlockNumber}),
       }
@@ -203,7 +200,7 @@ describe("Dynamic contract registration", () => {
           register(~blockNumber=850, "UnknownContract", address1),
         ),
       ])
-      await sourceMock.expectItemsQueries([{partitionId: "0", fromBlock: 901, reply: LeavePending}])
+      await sourceMock.expectItemsQueries([{fromBlock: 901, reply: LeavePending}])
       await indexer.waitUntilIdle()
       t.expect((
         sourceMock.pendingItemsQueries->summarize,
@@ -247,7 +244,7 @@ describe("Dynamic contract registration", () => {
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
         [
           staticPartitionQuery([]),
-          {partitionId: "1", fromBlock: 5, toBlock: Bounded(800), addresses: [address1]},
+          {fromBlock: 5, toBlock: Bounded(800), addresses: [address1]},
         ],
         [(address2, "UnknownContract", 5), (address1, "Gravatar", 5)],
       ))
@@ -270,8 +267,8 @@ describe("Dynamic contract registration", () => {
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
         [
           staticPartitionQuery([]),
-          {partitionId: "1", fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
-          {partitionId: "2", fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
+          {fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
+          {fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
         ],
         [(address1, "Gravatar", 10), (address1, "NftFactory", 10)],
       ))
@@ -294,7 +291,7 @@ describe("Dynamic contract registration", () => {
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
         [
           staticPartitionQuery([]),
-          {partitionId: "1", fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
+          {fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
         ],
         [(address1, "UnknownContract", 10), (address1, "Gravatar", 10)],
       ))
@@ -318,7 +315,6 @@ describe("Dynamic contract registration", () => {
         [
           staticPartitionQuery([]),
           {
-            partitionId: "1",
             fromBlock: 10,
             toBlock: Bounded(800),
             addresses: [address1, address2],
@@ -344,7 +340,7 @@ describe("Dynamic contract registration", () => {
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
         [
           staticPartitionQuery([]),
-          {partitionId: "1", fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
+          {fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
         ],
         [(address1, "Gravatar", 10)],
       ))
@@ -369,12 +365,11 @@ describe("Dynamic contract registration", () => {
       t.expect(queries).toEqual([
         staticPartitionQuery([]),
         {
-          partitionId: "1",
           fromBlock: 2,
           toBlock: Bounded(800),
           addresses: [address1, address2, address3],
         },
-        {partitionId: "2", fromBlock: 2, toBlock: Bounded(800), addresses: [address4]},
+        {fromBlock: 2, toBlock: Bounded(800), addresses: [address4]},
       ])
     },
   )
@@ -396,8 +391,8 @@ describe("Dynamic contract registration", () => {
       )
       t.expect(queries).toEqual([
         staticPartitionQuery([]),
-        {partitionId: "1", fromBlock: 2, toBlock: Bounded(800), addresses: [address1, address4]},
-        {partitionId: "2", fromBlock: 2, toBlock: Bounded(800), addresses: [address2, address3]},
+        {fromBlock: 2, toBlock: Bounded(800), addresses: [address1, address4]},
+        {fromBlock: 2, toBlock: Bounded(800), addresses: [address2, address3]},
       ])
     },
   )
@@ -409,7 +404,6 @@ describe("Dynamic contract registration", () => {
       let sourceMock = source(1337)
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 0,
           reply: Respond({
             items: [
@@ -425,7 +419,6 @@ describe("Dynamic contract registration", () => {
       let first = sourceMock.pendingItemsQueries->summarize
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "1",
           reply: Respond({items: [], latestFetchedBlockNumber: 100_000}),
         },
       ])
@@ -435,16 +428,15 @@ describe("Dynamic contract registration", () => {
         (first, sourceMock.pendingItemsQueries->summarize),
         ~message="the far registration waits in a partition of its own until the earlier ones catch up",
       ).toEqual((
-        [{partitionId: "1", fromBlock: 2, toBlock: Bounded(999_800), addresses: earlyAddresses}],
+        [{fromBlock: 2, toBlock: Bounded(999_800), addresses: earlyAddresses}],
         [
           staticPartitionQuery(~fromBlock=400_001, ~toBlock=Bounded(999_800), []),
           {
-            partitionId: "1",
             fromBlock: 100_001,
             toBlock: Bounded(999_800),
             addresses: earlyAddresses,
           },
-          {partitionId: "2", fromBlock: 300_000, toBlock: Bounded(999_800), addresses: [address3]},
+          {fromBlock: 300_000, toBlock: Bounded(999_800), addresses: [address3]},
         ],
       ))
     },
@@ -474,7 +466,6 @@ describe("Dynamic contract registration", () => {
         )
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "1",
           fromBlock: 3,
           reply: Respond({
             items: [
@@ -485,14 +476,14 @@ describe("Dynamic contract registration", () => {
             latestFetchedBlockNumber: 100,
           }),
         },
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "2", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       // The re-registrations are made by the contractRegister run that follows
       // the response.
       await indexer.waitUntilIdle()
       await sourceMock.expectItemsQueries([
-        {partitionId: "1", fromBlock: 101, reply: LeavePending},
+        {fromBlock: 101, reply: LeavePending},
         {reply: LeavePending},
       ])
       t.expect((
@@ -501,9 +492,9 @@ describe("Dynamic contract registration", () => {
       )).toEqual((
         [
           staticPartitionQuery([]),
-          {partitionId: "1", fromBlock: 101, toBlock: Bounded(800), addresses: [nftFactory]},
-          {partitionId: "2", fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
-          {partitionId: "3", fromBlock: 5, toBlock: Bounded(800), addresses: [address1]},
+          {fromBlock: 101, toBlock: Bounded(800), addresses: [nftFactory]},
+          {fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
+          {fromBlock: 5, toBlock: Bounded(800), addresses: [address1]},
         ],
         [],
       ))
@@ -529,7 +520,6 @@ describe("Dynamic contract start blocks", () => {
         [
           staticPartitionQuery(~fromBlock=401, []),
           {
-            partitionId: "1",
             fromBlock: 150,
             toBlock: Bounded(800),
             addresses: [address1, address2],

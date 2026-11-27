@@ -6,6 +6,7 @@
 //! cargo test --release --lib served_page_benchmark -- --ignored --nocapture --test-threads=1
 //! ```
 
+use crate::address_store::client_filtered_contracts::ClientFilteredContracts;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -197,7 +198,11 @@ fn items_query(scenario: &Scenario) -> ItemsQuery {
         on_event_registration_indexes: vec![0],
         on_block_registration_indexes: vec![],
         on_transaction_registration_indexes: vec![],
-        client_filtered_contracts: scenario.client_filtered.then(|| vec!["Token".to_string()]),
+        client_filtered: ClientFilteredContracts::from_vec(if scenario.client_filtered {
+            vec!["Token".to_string()]
+        } else {
+            vec![]
+        }),
         reorgable_from: None,
     }
 }

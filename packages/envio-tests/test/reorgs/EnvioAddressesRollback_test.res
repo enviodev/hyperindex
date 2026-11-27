@@ -85,7 +85,6 @@ describe("A rollback of an address registration", () => {
       source.resolveGetHeightOrThrow(300)
       await source.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           toBlock: Bounded(100),
           reply: Respond({
@@ -100,14 +99,12 @@ describe("A rollback of an address registration", () => {
         // the config partition passed block 100, so a catch-up reads it from
         // the registration block up to there.
         {
-          partitionId: "3",
           fromBlock: 50,
           toBlock: Bounded(100),
           reply: Respond({items: []}),
         },
         {
           // The partition the config's addresses are fetched in.
-          partitionId: "0",
           fromBlock: 101,
           reply: Respond({
             items: [
@@ -120,12 +117,10 @@ describe("A rollback of an address registration", () => {
       await indexer.getBatchWritePromise()
       await source.expectItemsQueries([
         {
-          partitionId: "3",
           fromBlock: 101,
           reply: Respond({items: [], latestFetchedBlockNumber: 300}),
         },
         {
-          partitionId: "4",
           fromBlock: 101,
           reply: Respond({items: [], latestFetchedBlockNumber: 300}),
         },
@@ -152,7 +147,6 @@ describe("An address registered again for the same contract", () => {
       source.resolveGetHeightOrThrow(300)
       await source.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           toBlock: Bounded(100),
           reply: Respond({
@@ -163,13 +157,11 @@ describe("An address registered again for the same contract", () => {
       await indexer.getBatchWritePromise()
       await source.expectItemsQueries([
         {
-          partitionId: "3",
           fromBlock: 50,
           toBlock: Bounded(100),
           reply: Respond({items: []}),
         },
         {
-          partitionId: "0",
           fromBlock: 101,
           reply: Respond({
             items: [registering(~blockNumber=200, ~event="Gravatar.TestEvent", [shared])],
@@ -180,7 +172,6 @@ describe("An address registered again for the same contract", () => {
       await indexer.getBatchWritePromise()
       await source.expectItemsQueries([
         {
-          partitionId: "3",
           fromBlock: 101,
           reply: Respond({items: [], latestFetchedBlockNumber: 300}),
         },

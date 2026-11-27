@@ -118,11 +118,11 @@ describe("Sibling-chain rollback with an in-flight query", () => {
 
     // Pre-threshold queries stop at 100 (head - maxReorgDepth).
     await victim.expectItemsQueries([
-      {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: []})},
-      {partitionId: "1", fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: []})},
+      {fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: []})},
+      {fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: []})},
     ])
     await sibling.expectItemsQueries([
-      {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: []})},
+      {fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: []})},
     ])
     await indexer.getBatchWritePromise()
 
@@ -134,19 +134,16 @@ describe("Sibling-chain rollback with an in-flight query", () => {
     let victimItems = [setCounter(~block=200, ~count=1n), registerPool(~block=250)]
     await victim.expectItemsQueries([
       {
-        partitionId: "0",
         fromBlock: 101,
         reply: Respond({items: victimItems, latestFetchedBlockNumber: 300}),
       },
       {
-        partitionId: "1",
         fromBlock: 101,
         reply: Respond({items: victimItems, latestFetchedBlockNumber: 300}),
       },
     ])
     await sibling.expectItemsQueries([
       {
-        partitionId: "0",
         fromBlock: 101,
         reply: Respond({
           items: [setCounter(~block=200, ~count=2n)],
@@ -159,7 +156,6 @@ describe("Sibling-chain rollback with an in-flight query", () => {
     // The dynamic partition catches up to the head.
     await victim.expectItemsQueries([
       {
-        partitionId: "2",
         fromBlock: 250,
         reply: Respond({items: [], latestFetchedBlockNumber: 300}),
       },
@@ -175,12 +171,11 @@ describe("Sibling-chain rollback with an in-flight query", () => {
     victim.setAutoHeight(301)
     await victim.expectItemsQueries([
       {
-        partitionId: "0",
         fromBlock: 301,
         reply: Respond({items: [], latestFetchedBlockNumber: 301}),
       },
     ])
-    await victim.expectItemsQueries([{partitionId: "1", fromBlock: 301, reply: LeavePending}])
+    await victim.expectItemsQueries([{fromBlock: 301, reply: LeavePending}])
 
     // Reorg on the sibling chain: block 300 comes back with a different hash.
     sibling.setAutoHeight(301)
@@ -203,12 +198,10 @@ describe("Sibling-chain rollback with an in-flight query", () => {
     // after the reorg was detected but before the rollback applied.
     await victim.expectItemsQueries([
       {
-        partitionId: "1",
         fromBlock: 301,
         reply: Respond({items: [], latestFetchedBlockNumber: 301}),
       },
       {
-        partitionId: "2",
         fromBlock: 301,
         reply: Respond({items: [], latestFetchedBlockNumber: 301}),
       },
@@ -246,34 +239,29 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       // pruned dynamic address when the block is re-delivered.
       await victim.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 250,
           reply: Respond({items: [registerPool(~block=250)], latestFetchedBlockNumber: 302}),
         },
       ])
       await sibling.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 201,
           reply: Respond({items: [], latestFetchedBlockNumber: 302}),
         },
       ])
       await victim.expectItemsQueries([
         {
-          partitionId: "1",
           fromBlock: 250,
           reply: Respond({items: [registerPool(~block=250)], latestFetchedBlockNumber: 302}),
         },
         // The address-free partition the Pool contract is fetched in.
         {
-          partitionId: "2",
           fromBlock: 250,
           reply: Respond({items: [], latestFetchedBlockNumber: 302}),
         },
         // The re-registered Pool address catches up on its own, since the
         // address-free partition's query went out before it was registered.
         {
-          partitionId: "3",
           fromBlock: 250,
           reply: Respond({items: [], latestFetchedBlockNumber: 302}),
         },
@@ -299,7 +287,6 @@ describe("Sibling-chain rollback with an in-flight query", () => {
 
       await sibling.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 201,
           reply: Respond({items: [], latestFetchedBlockNumber: 302}),
         },
@@ -307,19 +294,16 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       // Only the queries the rollback dropped are re-issued.
       await victim.expectItemsQueries([
         {
-          partitionId: "1",
           fromBlock: 301,
           reply: Respond({items: [], latestFetchedBlockNumber: 302}),
         },
         {
-          partitionId: "2",
           fromBlock: 301,
           reply: Respond({items: [], latestFetchedBlockNumber: 302}),
         },
       ])
       await victim.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 302,
           reply: Respond({items: [], latestFetchedBlockNumber: 302}),
         },

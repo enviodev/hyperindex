@@ -1,6 +1,7 @@
 //! `get_event_items` against a HyperFuel page served over HTTP, encoded the
 //! way HyperFuel encodes one.
 
+use crate::address_store::client_filtered_contracts::ClientFilteredContracts;
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, BinaryArray, Int64Array, RecordBatch, UInt64Array, UInt8Array};
@@ -195,7 +196,7 @@ async fn kept_receipts(fuel: Arc<Fuel>) -> usize {
                 from_block: 1,
                 to_block: Some(BLOCKS as i64),
                 registration_indexes: vec![0],
-                client_filtered_contracts: Some(vec!["C".to_string()]),
+                client_filtered: ClientFilteredContracts::from_vec(vec!["C".to_string()]),
             },
             &fuel.address_set,
         )

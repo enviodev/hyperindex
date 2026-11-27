@@ -71,7 +71,6 @@ describe("Wildcard contract with a far-ahead start block", () => {
       // it queries up to the block before "2" starts, where the two merge.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "1",
           fromBlock: 1,
           toBlock: Bounded(49_999),
           reply: Respond({
@@ -89,9 +88,9 @@ describe("Wildcard contract with a far-ahead start block", () => {
       // continues where its response ended, "0" and "2" start at their start
       // block.
       await sourceMock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 50_000, toBlock: Bounded(99_800), reply: LeavePending},
-        {partitionId: "1", fromBlock: 30_001, toBlock: Bounded(49_999), reply: LeavePending},
-        {partitionId: "2", fromBlock: 50_000, toBlock: Bounded(99_800), reply: LeavePending},
+        {fromBlock: 50_000, toBlock: Bounded(99_800), reply: LeavePending},
+        {fromBlock: 30_001, toBlock: Bounded(49_999), reply: LeavePending},
+        {fromBlock: 50_000, toBlock: Bounded(99_800), reply: LeavePending},
       ])
 
       await indexer.getBatchWritePromise()
@@ -114,7 +113,6 @@ describe("Wildcard contract with a far-ahead start block", () => {
       // response also carries a head past the later start blocks.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "1",
           fromBlock: 1,
           toBlock: Bounded(29_800),
           reply: Respond({items: [], knownHeight: 100_000}),
@@ -126,7 +124,6 @@ describe("Wildcard contract with a far-ahead start block", () => {
       // partition is in range. It continues up to where the later ones start.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "1",
           fromBlock: 29_801,
           toBlock: Bounded(49_999),
           reply: Respond({items: []}),
@@ -135,8 +132,8 @@ describe("Wildcard contract with a far-ahead start block", () => {
 
       // The later partitions start at their start block, not at the chain start.
       await sourceMock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 50_000, toBlock: Bounded(99_800), reply: LeavePending},
-        {partitionId: "2", fromBlock: 50_000, toBlock: Bounded(99_800), reply: LeavePending},
+        {fromBlock: 50_000, toBlock: Bounded(99_800), reply: LeavePending},
+        {fromBlock: 50_000, toBlock: Bounded(99_800), reply: LeavePending},
       ])
     },
   )

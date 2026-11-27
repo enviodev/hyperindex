@@ -89,7 +89,6 @@ let makeSource = (
   )
 
 // The Metaplex program, registered under the TokenMetadata program name.
-let programSet = addressStore->AddressStore.makeSet(~contractName="TokenMetadata")
 
 let fetch = async (
   source: Source.t,
@@ -100,19 +99,17 @@ let fetch = async (
 ) =>
   switch (
     await source.getItems(
-      ~reorgableFrom,
-      ~fromBlock,
+      ~request=TestSources.request(
+        ~fromBlock,
+        ~toBlock,
+        ~addressStore,
+        ~contractNames=["TokenMetadata"],
+        ~onEventRegistrations=[(reg :> Internal.onEventRegistration)],
+      ),
       ~toBlock=Some(toBlock),
-      ~addressSet=programSet,
-      ~knownHeight=toBlock + 1000,
-      ~partitionId="0",
-      ~selection={
-        onEventRegistrations: [(reg :> Internal.onEventRegistration)],
-        dependsOnAddresses: true,
-        onBlockRegistrations: [],
-        onTransactionRegistrations: [],
-      },
       ~retry=0,
+      ~reorgableFrom,
+      ~knownHeight=toBlock + 1000,
     )
   ).result {
   | Ok(itemsPage) => itemsPage

@@ -35,19 +35,16 @@ let verdictName = (verdict: AddressStore.verdict) =>
   }
 
 // What the store says about the address once every registration is in.
-let describeStore = (store, ~idCursor) => (
+let describeStore = store => (
   store->AddressStore.isIndexedAt(address, "Child", 9),
   store->AddressStore.isIndexedAt(address, "Child", 10),
   store->AddressStore.contractCount("Child"),
-  store
-  ->AddressStore.makeSet(~contractName="Child", ~options={minId: idCursor})
-  ->AddressSet.startBlockGroups,
   store
   ->AddressStore.drainForWrite(1000, blocks)
   ->Array.map(drained => drained.registrationBlock),
 )
 
-let indexedFromTheLowest = (false, true, 1, [{AddressSet.startBlock: 10, count: 1}], [10])
+let indexedFromTheLowest = (false, true, 1, [10])
 
 // https://github.com/enviodev/hyperindex/issues/1810
 describe("An address registered for one contract from several blocks", () => {
@@ -70,7 +67,7 @@ describe("An address registered for one contract from several blocks", () => {
                 ? "added"
                 : "duplicate",
           )
-        t.expect((verdicts, describeStore(store, ~idCursor=0))).toEqual((
+        t.expect((verdicts, describeStore(store))).toEqual((
           expectedVerdicts,
           indexedFromTheLowest,
         ))
@@ -81,23 +78,10 @@ describe("An address registered for one contract from several blocks", () => {
       `is indexed from the lowest when registered at ${name} in one batch`,
       t => {
         let store = makeStore()
-        let idCursor = store->AddressStore.nextId
         let _ = store->AddressStore.registerBatch(order->Array.map(registration))
-        t.expect(describeStore(store, ~idCursor)).toEqual(indexedFromTheLowest)
+        t.expect(describeStore(store)).toEqual(indexedFromTheLowest)
       },
     )
-  })
-
-  it("keeps a set taken before the earlier registration fetching the address from it", t => {
-    let store = makeStore()
-    let _ = store->AddressStore.registerBatch([registration(30)])
-    let before = store->AddressStore.makeSet(~contractName="Child")
-    let _ = store->AddressStore.registerBatch([registration(10)])
-    t.expect((
-      before->AddressSet.addresses,
-      before->AddressSet.containsAt(address, "Child", 10),
-      store->AddressStore.makeSet(~contractName="Child")->AddressSet.startBlockGroups,
-    )).toEqual(([address], true, [{AddressSet.startBlock: 10, count: 1}]))
   })
 
   // Below the contract's start block both registrations start at 200, so only
@@ -117,19 +101,5 @@ describe("An address registered for one contract from several blocks", () => {
       ->AddressStore.drainForWrite(1000, [110, 150])
       ->Array.map(drained => drained.registrationBlock),
     )).toEqual((["added", "added"], false, true, [110]))
-  })
-
-  it("keeps the live entry when merging sets across a same-start replacement", t => {
-    let store = makeStore(~startBlock=200)
-    let _ = store->AddressStore.registerBatch([registration(150)])
-    let retired = store->AddressStore.makeSet(~contractName="Child")
-    let idCursor = store->AddressStore.nextId
-    let _ = store->AddressStore.registerBatch([registration(110)])
-    let live = store->AddressStore.makeSet(~contractName="Child", ~options={minId: idCursor})
-    let afterRollback = set => set->AddressSet.filterByRegistrationBlock(130)->AddressSet.addresses
-    t.expect((
-      retired->AddressSet.merge(live)->afterRollback,
-      live->AddressSet.merge(retired)->afterRollback,
-    )).toEqual(([address], [address]))
   })
 })

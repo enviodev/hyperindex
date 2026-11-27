@@ -20,11 +20,11 @@ let start = (state: IndexerState.t) => {
     launch(state, () =>
       state
       ->IndexerState.crossChainState
-      ->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) =>
+      ->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~work) =>
         ChainFetching.fetchChain(
           state,
           chainId,
-          ~action,
+          ~work,
           ~stateId=state->IndexerState.epoch,
           ~scheduleFetch,
           ~scheduleProcessing,

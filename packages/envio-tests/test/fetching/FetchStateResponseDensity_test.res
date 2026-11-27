@@ -54,7 +54,6 @@ let newPartitionZeroQueries = (mock, ~seen) =>
   mock->takeNewQueries(~seen)->Array.filter(query => query.partitionId === "0")
 
 let chunk = (~fromBlock, ~toBlock) => {
-  partitionId: "0",
   fromBlock,
   toBlock: Bounded(toBlock),
 }
@@ -64,7 +63,6 @@ let chunk = (~fromBlock, ~toBlock) => {
 let respond = (mock: MockSource.t, ~fromBlock, ~count, ~latestFetchedBlockNumber) =>
   mock.expectItemsQueries([
     {
-      partitionId: "0",
       fromBlock,
       reply: RespondWith(
         query => {
@@ -81,8 +79,8 @@ let respond = (mock: MockSource.t, ~fromBlock, ~count, ~latestFetchedBlockNumber
 let startHoldingPartitionOne = async (mock: MockSource.t) => {
   mock.resolveGetHeightOrThrow(100_000)
   await mock.expectItemsQueries([
-    {partitionId: "0", fromBlock: 1, reply: LeavePending},
-    {partitionId: "1", fromBlock: 1, reply: LeavePending},
+    {fromBlock: 1, reply: LeavePending},
+    {fromBlock: 1, reply: LeavePending},
   ])
 }
 
@@ -93,8 +91,8 @@ let chunksAfterTwoResponses = async (mock: MockSource.t, ~firstCount, ~secondCou
   await mock->respond(~fromBlock=1, ~count=firstCount, ~latestFetchedBlockNumber=10)
   await mock->respond(~fromBlock=11, ~count=_ => secondCount, ~latestFetchedBlockNumber=20)
   await mock.expectItemsQueries([
-    {partitionId: "0", fromBlock: 21, reply: LeavePending},
-    {partitionId: "0", reply: LeavePending},
+    {fromBlock: 21, reply: LeavePending},
+    {reply: LeavePending},
   ])
   mock->newPartitionZeroQueries(~seen=[])
 }
@@ -116,8 +114,8 @@ describe("FetchState response density and source range capacity over the indexer
       await mock->respond(~fromBlock=1, ~count=_ => 1000, ~latestFetchedBlockNumber=300)
       await mock->respond(~fromBlock=301, ~count=_ => 10_000, ~latestFetchedBlockNumber=390)
       await mock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 391, reply: LeavePending},
-        {partitionId: "0", fromBlock: 553, reply: LeavePending},
+        {fromBlock: 391, reply: LeavePending},
+        {fromBlock: 553, reply: LeavePending},
       ])
       t.expect(mock->newPartitionZeroQueries(~seen=[])).toEqual([
         chunk(~fromBlock=391, ~toBlock=552),
@@ -137,15 +135,15 @@ describe("FetchState response density and source range capacity over the indexer
       await mock->respond(~fromBlock=1, ~count=_ => 1000, ~latestFetchedBlockNumber=10)
       await mock->respond(~fromBlock=11, ~count=_ => 1000, ~latestFetchedBlockNumber=20)
       await mock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 111, toBlock: Bounded(128), reply: LeavePending},
-        {partitionId: "0", reply: LeavePending},
+        {fromBlock: 111, toBlock: Bounded(128), reply: LeavePending},
+        {reply: LeavePending},
       ])
       let seen = mock.pendingItemsQueries->Array.copy
       await mock->respond(~fromBlock=21, ~count=_ => 500, ~latestFetchedBlockNumber=25)
       await mock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 26, reply: LeavePending},
-        {partitionId: "0", fromBlock: 174, reply: LeavePending},
-        {partitionId: "0", reply: LeavePending},
+        {fromBlock: 26, reply: LeavePending},
+        {fromBlock: 174, reply: LeavePending},
+        {reply: LeavePending},
       ])
       // Chunks send no item cap, so the 5 blocks it reached are the source's
       // capacity: the gap it left is fetched whole and new chunks shrink to

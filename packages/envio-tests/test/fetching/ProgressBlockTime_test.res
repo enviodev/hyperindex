@@ -207,12 +207,10 @@ describe("Progress block time", () => {
       mock.resolveGetHeightOrThrow(300)
       await mock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           reply: Respond({items: [], latestFetchedBlockNumber: 100}),
         },
         {
-          partitionId: "1",
           fromBlock: 1,
           reply: Respond({items: [], latestFetchedBlockNumber: 100}),
         },
@@ -230,12 +228,10 @@ describe("Progress block time", () => {
       // above the progress block and the rollback leaves progress at 100.
       await mock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 101,
           reply: Respond({items: [], latestFetchedBlockNumber: 300}),
         },
         {
-          partitionId: "1",
           fromBlock: 101,
           reply: Respond({
             items: [],

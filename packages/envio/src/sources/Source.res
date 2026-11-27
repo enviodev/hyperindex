@@ -68,6 +68,9 @@ type blockRangeFetchResponse = {
   latestFetchedBlockNumber: int,
   knownHeight: int,
   totalTimeElapsed: float,
+  // The manager's index of the source that answered, whose range capacity the
+  // plan learns from it.
+  sourceIndex: int,
 }
 
 type sourceFor = Sync | Fallback | Realtime
@@ -134,13 +137,14 @@ type t = {
   getBlockHashes: option<array<int> => promise<outcome<BufferPage.t>>>,
   getHeight: unit => promise<outcome<int>>,
   getItems: (
-    ~fromBlock: int,
-    // Inclusive. None asks for everything the backend has from `fromBlock` on.
+    // What to fetch from its `fromBlock`. The source hands it straight to its
+    // Rust client, which builds the query from it and gates every returned
+    // item against the chain-wide store.
+    ~request: IndexingPlan.fetchRequest,
+    // Inclusive: the request's own end, or the narrower one a refused attempt
+    // suggested. None asks for everything the backend has.
     ~toBlock: option<int>,
-    // The partition's slice of the chain's address index. The source hands it
-    // straight to its Rust client, which builds the query's address filter from
-    // it and gates every returned item against the chain-wide store.
-    ~addressSet: AddressSet.t,
+    ~retry: int,
     // Blocks at or above this one can still be reorged on the chain, so a page
     // reaching them must let reorg detection link it to the page before it:
     // its last block's header and its first block's parent hash, or every
@@ -149,9 +153,6 @@ type t = {
     // to provide it. None when every block of the range is final.
     ~reorgableFrom: option<int>,
     ~knownHeight: int,
-    ~partitionId: string,
-    ~selection: FetchState.selection,
-    ~retry: int,
   ) => promise<outcome<itemsPage>>,
   createHeightSubscription?: (
     // The stream's staleness and reconnect timers run on the clock of the

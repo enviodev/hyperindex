@@ -1,4 +1,5 @@
 use anyhow::Context;
+use crate::address_store::client_filtered_contracts::ClientFilteredContracts;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -130,10 +131,12 @@ impl MatchedLog {
 pub(crate) struct NextPageParams {
     pub from_block: u64,
     /// Upper bound on the query range; the actual `toBlock` is decided
-    /// internally from the partition's AIMD-suggested interval and returned
+    /// internally from the stream's AIMD-suggested interval and returned
     /// on `NextPageResult`.
     pub to_block_ceiling: u64,
-    pub partition_id: String,
+    /// Whose learned block interval sizes the page: a need's, or the head
+    /// stream's.
+    pub interval_key: u32,
     /// The event registrations selecting logs, by chain-scoped id. Log
     /// selections and the matching index are derived internally from the
     /// registrations passed at construction. Empty selects no logs.
@@ -142,10 +145,9 @@ pub(crate) struct NextPageParams {
     pub on_block_registration_indexes: Vec<i64>,
     /// The transaction handlers selecting transactions, by chain-scoped id.
     pub on_transaction_registration_indexes: Vec<i64>,
-    /// Contract names to fetch address-free even though their registrations
-    /// depend on addresses (client-side filtering). Absent or empty
-    /// means every address-dependent contract is filtered server-side.
-    pub client_filtered_contracts: Option<Vec<String>>,
+    /// Contracts fetched address-free though their registrations depend on
+    /// addresses, gated against the store instead.
+    pub client_filtered: ClientFilteredContracts,
     /// How many times this query has already been retried, which sets how long
     /// a transient miss waits before the next attempt.
     pub retry: i64,
@@ -258,7 +260,7 @@ pub(crate) struct EvmRpcClient {
     logger: BoundLogger,
     intervals: IntervalState,
     /// Coalesces block, transaction and receipt reads that overlap in time,
-    /// including across the partitions of one chain, which scan the same blocks
+    /// including across the requests of one chain, which scan the same blocks
     /// at the head.
     fetches: Fetches,
     /// The fields each registration selected, as table field masks. An item's block
@@ -293,7 +295,7 @@ const MAX_HANDLER_BLOCKS_PER_PAGE: usize = 100;
 /// over it, the chain buffer whose contents decide what still has to be fetched, and
 /// what a retry decision about it would need.
 struct PageQuery<'a> {
-    partition_id: &'a str,
+    interval_key: u32,
     from_block: u64,
     to_block: u64,
     reorgable_from: Option<u64>,
@@ -431,10 +433,10 @@ impl EvmRpcClient {
         )
     }
 
-    /// Reads one page: decides the actual `toBlock` from this partition's
+    /// Reads one page: decides the actual `toBlock` from this stream's
     /// AIMD-suggested interval, fans out one `eth_getLogs` per selection, then
     /// fills the page's blocks and transactions for the fields the matched
-    /// items selected. On success, grows the partition's interval when the full
+    /// items selected. On success, grows the stream's interval when the full
     /// suggested range was applied. Everything a caller is expected to handle
     /// — a narrower range to retry, a backoff, a selection the provider cannot
     /// serve — comes back as a value; the page returned alongside a non-"ok"
@@ -454,7 +456,7 @@ impl EvmRpcClient {
 
         let (suggested_interval, source_max) = self
             .intervals
-            .suggested_interval(&params.partition_id, &self.sync_config);
+            .suggested_interval(params.interval_key, &self.sync_config);
         let interval_end = (from_block + suggested_interval - 1).min(to_block_ceiling);
         let block_selection = self.chain.schedule.select(
             &params.on_block_registration_indexes,
@@ -510,18 +512,14 @@ impl EvmRpcClient {
         let block_read = (!block_selection.is_empty() || transaction_read.is_some())
             .then(|| BlockRead::for_chain(self.block_read.covering | handler_block_mask));
 
-        let client_filtered =
-            crate::address_store::client_filtered_contracts::ClientFilteredContracts::from_vec(
-                params.client_filtered_contracts.unwrap_or_default(),
-            );
         let built = self.evm.selection.build(
             &params.on_event_registration_indexes,
             address_set,
-            &client_filtered,
+            &params.client_filtered,
         )?;
 
         let query = PageQuery {
-            partition_id: &params.partition_id,
+            interval_key: params.interval_key,
             from_block,
             to_block,
             reorgable_from: params.reorgable_from,
@@ -542,13 +540,13 @@ impl EvmRpcClient {
         let (result, page) = match outcome {
             Ok(page) => {
                 let executed_interval = to_block - from_block + 1;
-                // Grow this partition's interval only when the full suggested range
+                // Grow this stream's interval only when the full suggested range
                 // was actually applied (not clamped by a hard toBlock ceiling). The
                 // clamp to `source_max` also stops growth once a structural cap
                 // tightened it.
                 if executed_interval >= suggested_interval {
                     self.intervals.grow(
-                        &params.partition_id,
+                        params.interval_key,
                         executed_interval,
                         &self.sync_config,
                         source_max,
@@ -790,7 +788,7 @@ impl EvmRpcClient {
         request_stats: Vec<RequestStat>,
     ) -> NextPageResult {
         let PageQuery {
-            partition_id,
+            interval_key,
             from_block,
             to_block,
             ..
@@ -807,9 +805,9 @@ impl EvmRpcClient {
                     .tighten_source_max(self.sync_config.interval_ceiling, suggested);
                 NextPageResult::suggested_to_block(from_block + capped - 1, to_block, request_stats)
             }
-            // A one-off suggested range ("retry with the range X-Y") — apply to this partition.
+            // A one-off suggested range ("retry with the range X-Y") — apply to this stream.
             Some((suggested, false)) => {
-                self.intervals.set_partition(partition_id, suggested);
+                self.intervals.set(interval_key, suggested);
                 NextPageResult::suggested_to_block(
                     from_block + suggested - 1,
                     to_block,
@@ -817,13 +815,13 @@ impl EvmRpcClient {
                 )
             }
             // Density cap with no suggested number (too many logs / response too large):
-            // shrink THIS partition and retry immediately (no wait); acceleration
+            // shrink THIS stream and retry immediately (no wait); acceleration
             // re-adapts on the next successful query. The interval>1 guard avoids a
             // no-progress tight loop on a single over-cap block.
             None if executed_interval > 1
                 && provider_message.is_some_and(is_response_too_large_message) =>
             {
-                self.intervals.set_partition(partition_id, shrunk_interval);
+                self.intervals.set(interval_key, shrunk_interval);
                 NextPageResult::suggested_to_block(
                     from_block + shrunk_interval - 1,
                     to_block,
@@ -831,9 +829,9 @@ impl EvmRpcClient {
                 )
             }
             // Anything else, including a timeout: the range may simply be too
-            // dense for the provider, so shrink this partition and back off.
+            // dense for the provider, so shrink this stream and back off.
             None => {
-                self.intervals.set_partition(partition_id, shrunk_interval);
+                self.intervals.set(interval_key, shrunk_interval);
                 NextPageResult::backoff(
                     "Failed getting data for the block range. Will try smaller block range \
                      for the next attempt."

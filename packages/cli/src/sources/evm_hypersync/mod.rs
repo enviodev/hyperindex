@@ -1,5 +1,6 @@
 use std::sync::{Arc, Once};
 
+use crate::address_store::client_filtered_contracts::ClientFilteredContracts;
 use anyhow::{Context, Result};
 use arrow::array::{BinaryArray, RecordBatch, UInt64Array};
 use hypersync_client::{
@@ -156,10 +157,6 @@ impl EvmHyperSyncClient {
         address_set: &AddressSet,
         buffer: &ChainBuffer,
     ) -> Result<(ItemsResponse, Page), ClientError> {
-        let client_filtered =
-            crate::address_store::client_filtered_contracts::ClientFilteredContracts::from_vec(
-                params.client_filtered_contracts.unwrap_or_default(),
-            );
         let selects_logs = !params.on_event_registration_indexes.is_empty();
         let transaction_registrations = if params.on_transaction_registration_indexes.is_empty() {
             Vec::new()
@@ -171,7 +168,7 @@ impl EvmHyperSyncClient {
         let built = self.evm.selection.build(
             &params.on_event_registration_indexes,
             address_set,
-            &client_filtered,
+            &params.client_filtered,
         )?;
         let block_query = self.chain.schedule.plan(
             &params.on_block_registration_indexes,
@@ -347,10 +344,9 @@ pub(crate) struct ItemsQuery {
     /// The transaction handlers selecting transactions. Empty selects none
     /// beyond the logs' own.
     pub on_transaction_registration_indexes: Vec<i64>,
-    /// Contract names to fetch address-free even though their registrations
-    /// depend on addresses (client-side filtering). Absent or empty
-    /// means every address-dependent contract is filtered server-side.
-    pub client_filtered_contracts: Option<Vec<String>>,
+    /// Contracts fetched address-free though their registrations depend on
+    /// addresses, gated against the store instead.
+    pub client_filtered: ClientFilteredContracts,
     /// Blocks at or above this number can still be reorged on the chain. A
     /// page reaching them must link to the page before it for reorg
     /// detection, so it reads every block of its range. Absent when the whole
@@ -1477,10 +1473,10 @@ mod tests {
                         on_event_registration_indexes: vec![],
                         on_block_registration_indexes: vec![0],
                         on_transaction_registration_indexes: vec![],
-                        client_filtered_contracts: None,
+                        client_filtered: Default::default(),
                         reorgable_from: None,
                     },
-                    &store.empty_set(),
+                    &store.set_of_contracts(&[]),
                     &buffer,
                 )
                 .await
@@ -1610,7 +1606,7 @@ mod tests {
                     on_event_registration_indexes: vec![0],
                     on_block_registration_indexes: vec![0],
                     on_transaction_registration_indexes: vec![0],
-                    client_filtered_contracts: None,
+                    client_filtered: Default::default(),
                     reorgable_from: None,
                 },
                 &crate::address_store::test_support::set_of(&store, &["Token"]),

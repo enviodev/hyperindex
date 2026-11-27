@@ -167,7 +167,7 @@ describe("Rollback diff checkpoint ids", () => {
           reply: Respond({items: [], prevRangeLastBlock: {blockNumber: 102, blockHash: "0x102a"}}),
         },
         // The chunks fetched ahead of it go unanswered: the rollback refetches from 102.
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await Scenario.waitUntil(
         () => source1337.reorgCallCount() > reorgsBefore,

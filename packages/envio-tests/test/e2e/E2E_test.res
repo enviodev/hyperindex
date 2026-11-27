@@ -147,7 +147,6 @@ describe("E2E tests", () => {
       // Items from start block to reorg threshold.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 100,
           toBlock: Bounded(200),
           retryCount: 0,
@@ -1236,7 +1235,6 @@ describe("E2E tests", () => {
       // Step 2: Query 1 — resolve at block 500 (range=501)
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           toBlock: Bounded(19800),
           retryCount: 0,
@@ -1248,7 +1246,6 @@ describe("E2E tests", () => {
       // Step 3: Query 2 — resolve at block 800 (range=300)
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 501,
           toBlock: Bounded(19800),
           retryCount: 0,
@@ -1265,27 +1262,24 @@ describe("E2E tests", () => {
       // to 540 so the next tail chunks grow to ceil(540*1.8)=972.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 801,
           toBlock: Bounded(1340),
           retryCount: 0,
           reply: Respond({items: [{blockNumber: 900, logIndex: 0}]}),
         },
         {
-          partitionId: "0",
           fromBlock: 1341,
           toBlock: Bounded(1880),
           retryCount: 0,
           reply: Respond({items: [{blockNumber: 1400, logIndex: 0}]}),
         },
         {
-          partitionId: "0",
           fromBlock: 1881,
           toBlock: Bounded(2420),
           retryCount: 0,
           reply: Respond({items: [{blockNumber: 1900, logIndex: 0}]}),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
       // Drain the in-flight 540-chunk backlog so the partition regenerates its
@@ -1303,7 +1297,7 @@ describe("E2E tests", () => {
       // Full-size responses grew the tail chunks beyond the initial 540.
       await sourceMock.expectItemsQueries([
         {where: query => chunkSize(query) > 540, reply: LeavePending},
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
 
       // Phase B — chunks shrink on partial response:
@@ -1318,7 +1312,7 @@ describe("E2E tests", () => {
             latestFetchedBlockNumber: firstPending.fromBlock + 99,
           }),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
 
@@ -1327,7 +1321,7 @@ describe("E2E tests", () => {
       // well below the grown 972-size tail.
       await sourceMock.expectItemsQueries([
         {where: query => chunkSize(query) === 180, reply: LeavePending},
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
     },
   )
@@ -1342,7 +1336,6 @@ describe("E2E tests", () => {
       sourceMock.resolveGetHeightOrThrow(10_000)
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           toBlock: Bounded(9800),
           retryCount: 0,
@@ -1352,7 +1345,6 @@ describe("E2E tests", () => {
       await indexer.getBatchWritePromise()
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 501,
           toBlock: Bounded(9800),
           retryCount: 0,
@@ -1367,21 +1359,18 @@ describe("E2E tests", () => {
       // at block 2000
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 801,
           toBlock: Bounded(1340),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 1341,
           toBlock: Bounded(1880),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 1881,
           toBlock: Bounded(2420),
           retryCount: 0,
@@ -1398,7 +1387,7 @@ describe("E2E tests", () => {
             ],
           }),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       // Wait for chunk3's response to be processed
       await Utils.delay(0)
@@ -1416,7 +1405,6 @@ describe("E2E tests", () => {
       // After chunk3 resolved, chunk1 should remain pending
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 801,
           toBlock: Bounded(1340),
           retryCount: 0,
@@ -1433,7 +1421,7 @@ describe("E2E tests", () => {
             ],
           }),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
 
@@ -1449,13 +1437,12 @@ describe("E2E tests", () => {
       // bufferBlockNumber advances to 2420 and the item at 2000 becomes ready.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1341,
           toBlock: Bounded(1880),
           retryCount: 0,
           reply: Respond({items: []}),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
 
@@ -1492,7 +1479,6 @@ describe("E2E tests", () => {
       // partitions this choreography relies on fetching in parallel.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           reply: Respond({
             items: [
@@ -1718,7 +1704,7 @@ describe("E2E tests", () => {
       // it stays the budget-draining leader). Each response re-runs the
       // cross-chain dispatch, so the follower is re-evaluated every tick.
       for _ in 0 to 4 {
-        await leaderSource.expectItemsQueries([{partitionId: "0", reply: LeavePending}])
+        await leaderSource.expectItemsQueries([{reply: LeavePending}])
         let fromBlock = (leaderSource.pendingItemsQueries->Array.getUnsafe(0)).fromBlock
         await leaderSource.expectItemsQueries([
           {

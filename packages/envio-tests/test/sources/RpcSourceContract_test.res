@@ -94,22 +94,18 @@ let invoke = (
   ~retry=0,
 ) => {
   source.getItems(
-    ~reorgableFrom=None,
-    ~fromBlock=100,
-    ~toBlock=Some(100),
-    ~addressSet=addressStore->AddressStore.makeSet(
-      ~contractName=registration.eventConfig.contractName,
+    ~request=TestSources.request(
+      ~fromBlock=100,
+      ~toBlock=100,
+      ~addressStore=addressStore,
+      ~contractNames=[registration.eventConfig.contractName],
+      ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
     ),
+    ~toBlock=Some(100),
+    ~retry=retry,
+    ~reorgableFrom=None,
     // Far below the head, where a page's blocks aren't checked one by one.
     ~knownHeight=1_100,
-    ~partitionId="pin-partition",
-    ~selection={
-      dependsOnAddresses: true,
-      onBlockRegistrations: [],
-      onTransactionRegistrations: [],
-      onEventRegistrations: [(registration :> Internal.onEventRegistration)],
-    },
-    ~retry,
   )
 }
 
@@ -599,21 +595,17 @@ describe("RPC source public contract", () => {
           RpcSourcePins.capture(
             () =>
               source.getItems(
-                ~reorgableFrom=None,
-                ~fromBlock=0,
-                ~toBlock=Some(1_000_000),
-                ~addressSet=addressStore->AddressStore.makeSet(
-                  ~contractName=registration.eventConfig.contractName,
+                ~request=TestSources.request(
+                  ~fromBlock=0,
+                  ~toBlock=1_000_000,
+                  ~addressStore=addressStore,
+                  ~contractNames=[registration.eventConfig.contractName],
+                  ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
                 ),
-                ~knownHeight=1_000_000,
-                ~partitionId="pin-partition",
-                ~selection={
-                  dependsOnAddresses: true,
-                  onBlockRegistrations: [],
-                  onTransactionRegistrations: [],
-                  onEventRegistrations: [(registration :> Internal.onEventRegistration)],
-                },
+                ~toBlock=Some(1_000_000),
                 ~retry=0,
+                ~reorgableFrom=None,
+                ~knownHeight=1_000_000,
               ),
             ~addressStore,
             ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
@@ -713,21 +705,18 @@ describe("RPC source public contract", () => {
         switch await RpcSourcePins.capture(
           () =>
             source.getItems(
-              ~reorgableFrom=None,
-              ~fromBlock=0,
+              ~request=TestSources.request(
+                ~fromBlock=0,
+                ~toBlock=100,
+                ~addressStore=addressStore,
+                ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
+              ),
               ~toBlock=Some(100),
-              ~addressSet=addressStore->AddressStore.emptySet,
+              ~retry=0,
+              ~reorgableFrom=None,
               // Far below the head, where a page's blocks aren't checked one
               // by one.
               ~knownHeight=1_100,
-              ~partitionId="skip-all",
-              ~selection={
-                dependsOnAddresses: false,
-                onBlockRegistrations: [],
-                onTransactionRegistrations: [],
-                onEventRegistrations: [(registration :> Internal.onEventRegistration)],
-              },
-              ~retry=0,
             ),
           ~addressStore,
           ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
@@ -839,24 +828,20 @@ describe("RPC source public contract", () => {
         switch await RpcSourcePins.capture(
           () =>
             source.getItems(
-              ~reorgableFrom=None,
-              ~fromBlock=100,
-              ~toBlock=Some(100),
-              ~addressSet=addressStore
-              ->AddressStore.makeSet(~contractName="ContractA")
-              ->AddressSet.merge(addressStore->AddressStore.makeSet(~contractName="ContractB")),
-              ~knownHeight=100,
-              ~partitionId="contract-scope",
-              ~selection={
-                dependsOnAddresses: true,
-                onBlockRegistrations: [],
-                onTransactionRegistrations: [],
-                onEventRegistrations: [
+              ~request=TestSources.request(
+                ~fromBlock=100,
+                ~toBlock=100,
+                ~addressStore=addressStore,
+                ~contractNames=["ContractA", "ContractB"],
+                ~onEventRegistrations=[
                   (eventA :> Internal.onEventRegistration),
                   (eventB :> Internal.onEventRegistration),
                 ],
-              },
+              ),
+              ~toBlock=Some(100),
               ~retry=0,
+              ~reorgableFrom=None,
+              ~knownHeight=100,
             ),
           ~addressStore,
           ~onEventRegistrations=[
@@ -942,25 +927,22 @@ describe("RPC source public contract", () => {
           await RpcSourcePins.capture(
             () =>
               source.getItems(
-                ~reorgableFrom=None,
-                ~fromBlock=100,
-                ~toBlock=Some(100),
-                ~addressSet=addressStore->AddressStore.emptySet,
-                // Far below the head, where a page's blocks aren't checked one
-                // by one.
-                ~knownHeight=1_100,
-                ~partitionId="address-free",
-                ~selection={
-                  dependsOnAddresses: false,
-                  onBlockRegistrations: [],
-                  onTransactionRegistrations: [],
-                  onEventRegistrations: [
+                ~request=TestSources.request(
+                  ~fromBlock=100,
+                  ~toBlock=100,
+                  ~addressStore=addressStore,
+                  ~onEventRegistrations=[
                     (clientFiltered :> Internal.onEventRegistration),
                     (wildcard :> Internal.onEventRegistration),
                   ],
-                  clientFilteredContracts: ["ERC20"],
-                },
+                  ~addressFreeContracts=["ERC20"],
+                ),
+                ~toBlock=Some(100),
                 ~retry=0,
+                ~reorgableFrom=None,
+                // Far below the head, where a page's blocks aren't checked one
+                // by one.
+                ~knownHeight=1_100,
               ),
             ~addressStore,
             ~onEventRegistrations=[

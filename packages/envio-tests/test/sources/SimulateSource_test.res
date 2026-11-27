@@ -2,7 +2,7 @@ open Vitest
 
 // The simulate source has no backend to filter for it, so it has to reproduce
 // the gates a real source applies natively while routing a response: the
-// partition's own address set decides ownership, the store decides whether the
+// request's own addresses decide ownership, the store decides whether the
 // address had started at the item's block, and a client-filtered contract —
 // queried address-free, so absent from every set — falls back to the store
 // alone.
@@ -30,7 +30,7 @@ let registration = (
   {...base, index}
 }
 
-let contract = (~address, ~contractName, ~registrationBlock=-1): Internal.indexingAddress => {
+let contract = (~address, ~contractName, ~registrationBlock=-1): TestAddresses.address => {
   address,
   contractName,
   registrationBlock,
@@ -56,8 +56,10 @@ let item = (
 let getItems = async (
   ~items,
   ~store,
-  ~addressSet,
-  ~selection: FetchState.selection,
+  // The addresses the request asks for, of contract A.
+  ~addresses,
+  ~registrations: array<Internal.onEventRegistration>,
+  ~addressFreeContracts=[],
   ~fromBlock=0,
   ~toBlock=1000,
 ) => {
@@ -70,13 +72,18 @@ let getItems = async (
   )
   let response = switch (
     await source.getItems(
+      ~request=TestSources.request(
+        ~fromBlock,
+        ~toBlock,
+        ~addressStore=store,
+        ~contractNames=addresses->Utils.Array.isEmpty ? [] : ["A"],
+        ~addresses,
+        ~onEventRegistrations=registrations,
+        ~addressFreeContracts,
+      ),
       ~reorgableFrom=None,
-      ~fromBlock,
       ~toBlock=Some(toBlock),
-      ~addressSet,
       ~knownHeight=1000,
-      ~partitionId="0",
-      ~selection,
       ~retry=0,
     )
   ).result {
@@ -84,7 +91,7 @@ let getItems = async (
   | Error(failure) => JsError.throwWithMessage(failure->Source.failureMessage)
   }
   let onEventRegistrations = []
-  selection.onEventRegistrations->Array.forEach(registration =>
+  registrations->Array.forEach(registration =>
     onEventRegistrations->Array.setUnsafe(registration.index, registration)
   )
 
@@ -110,7 +117,7 @@ let getItems = async (
 }
 
 describe("SimulateSource routing", () => {
-  Async.it("keeps each partition to the addresses it holds", async t => {
+  Async.it("keeps each request to the addresses it asks for", async t => {
     let regA = registration(~index=0, ~contractName="A")
     let store = TestAddresses.makeStore(
       ~onEventRegistrations=[regA],
@@ -119,12 +126,7 @@ describe("SimulateSource routing", () => {
         contract(~address=addr(1), ~contractName="A"),
       ],
     )
-    let selection: FetchState.selection = {
-      dependsOnAddresses: true,
-      onEventRegistrations: [regA],
-      onBlockRegistrations: [],
-      onTransactionRegistrations: [],
-    }
+    let registrations = [regA]
     let items = [
       item(~registration=regA, ~blockNumber=10, ~srcAddress=addr(0)),
       item(~registration=regA, ~blockNumber=10, ~srcAddress=addr(1)),
@@ -133,14 +135,14 @@ describe("SimulateSource routing", () => {
     let first = await getItems(
       ~items,
       ~store,
-      ~addressSet=TestAddresses.setOf(~store, [addr(0)]),
-      ~selection,
+      ~addresses=[addr(0)],
+      ~registrations,
     )
     let second = await getItems(
       ~items,
       ~store,
-      ~addressSet=TestAddresses.setOf(~store, [addr(1)]),
-      ~selection,
+      ~addresses=[addr(1)],
+      ~registrations,
     )
 
     t.expect({"first": first, "second": second}).toEqual({
@@ -149,18 +151,13 @@ describe("SimulateSource routing", () => {
     })
   })
 
-  Async.it("drops an address the partition holds but that hasn't started yet", async t => {
+  Async.it("drops an address the request asks for that hasn't started yet", async t => {
     let regA = registration(~index=0, ~contractName="A")
     let store = TestAddresses.makeStore(
       ~onEventRegistrations=[regA],
       ~addresses=[contract(~address=addr(0), ~contractName="A", ~registrationBlock=50)],
     )
-    let selection: FetchState.selection = {
-      dependsOnAddresses: true,
-      onEventRegistrations: [regA],
-      onBlockRegistrations: [],
-      onTransactionRegistrations: [],
-    }
+    let registrations = [regA]
 
     let routed = await getItems(
       ~store,
@@ -168,8 +165,8 @@ describe("SimulateSource routing", () => {
         item(~registration=regA, ~blockNumber=49, ~srcAddress=addr(0)),
         item(~registration=regA, ~blockNumber=50, ~srcAddress=addr(0)),
       ],
-      ~addressSet=TestAddresses.setOf(~store, [addr(0)]),
-      ~selection,
+      ~addresses=[addr(0)],
+      ~registrations,
     )
 
     t.expect(routed).toEqual([(0, 50, addr(0))])
@@ -181,9 +178,9 @@ describe("SimulateSource routing", () => {
       ~onEventRegistrations=[regA],
       ~addresses=[contract(~address=addr(0), ~contractName="A", ~registrationBlock=50)],
     )
-    // The query carries none of A's addresses, which is what makes the
-    // partition's set unable to answer ownership for it.
-    let addressSet = store->AddressStore.emptySet
+    // The request carries none of A's addresses, which is what makes it
+    // unable to answer ownership for it.
+    let addresses = []
     let items = [
       item(~registration=regA, ~blockNumber=49, ~srcAddress=addr(0)),
       item(~registration=regA, ~blockNumber=50, ~srcAddress=addr(0)),
@@ -193,27 +190,17 @@ describe("SimulateSource routing", () => {
     let clientFiltered = await getItems(
       ~items,
       ~store,
-      ~addressSet,
-      ~selection={
-        dependsOnAddresses: true,
-        onEventRegistrations: [regA],
-        onBlockRegistrations: [],
-        onTransactionRegistrations: [],
-        clientFilteredContracts: ["A"],
-      },
+      ~addresses,
+      ~registrations=[regA],
+      ~addressFreeContracts=["A"],
     )
-    // Without the client-filter marker the same query is a normal partition
-    // that simply holds no addresses, so it routes nothing.
+    // Without the address-free marker the same request simply asks for no
+    // addresses, so it routes nothing.
     let normal = await getItems(
       ~items,
       ~store,
-      ~addressSet,
-      ~selection={
-        dependsOnAddresses: true,
-        onBlockRegistrations: [],
-        onTransactionRegistrations: [],
-        onEventRegistrations: [regA],
-      },
+      ~addresses,
+      ~registrations=[regA],
     )
 
     t.expect({"clientFiltered": clientFiltered, "normal": normal}).toEqual({
@@ -244,12 +231,7 @@ describe("SimulateSource routing", () => {
         contract(~address=addr(1), ~contractName="A"),
       ],
     )
-    let selection: FetchState.selection = {
-      dependsOnAddresses: true,
-      onEventRegistrations: [regWildcard],
-      onBlockRegistrations: [],
-      onTransactionRegistrations: [],
-    }
+    let registrations = [regWildcard]
     let items = [
       item(
         ~registration=regWildcard,
@@ -268,21 +250,22 @@ describe("SimulateSource routing", () => {
       ),
     ]
 
-    let partitionScoped = await getItems(
+    let requestScoped = await getItems(
       ~items,
       ~store,
-      ~addressSet=TestAddresses.setOf(~store, [addr(0)]),
-      ~selection,
+      ~addresses=[addr(0)],
+      ~registrations,
     )
     let clientFiltered = await getItems(
       ~items,
       ~store,
-      ~addressSet=TestAddresses.setOf(~store, [addr(0)]),
-      ~selection={...selection, clientFilteredContracts: ["A"]},
+      ~addresses=[addr(0)],
+      ~registrations,
+      ~addressFreeContracts=["A"],
     )
 
-    t.expect({"partitionScoped": partitionScoped, "clientFiltered": clientFiltered}).toEqual({
-      "partitionScoped": [(0, 10, addr(9))],
+    t.expect({"requestScoped": requestScoped, "clientFiltered": clientFiltered}).toEqual({
+      "requestScoped": [(0, 10, addr(9))],
       // Chain-wide, so addr(1) passes too even though the set lacks it.
       "clientFiltered": [(0, 10, addr(9)), (0, 10, addr(9))],
     })
@@ -307,28 +290,23 @@ describe("SimulateSource routing", () => {
         item(~registration=regOpen, ~blockNumber=100, ~srcAddress=addr(0)),
         item(~registration=regRestricted, ~blockNumber=100, ~srcAddress=addr(0)),
       ],
-      ~addressSet=TestAddresses.setOf(~store, [addr(0)]),
-      ~selection={
-        dependsOnAddresses: true,
-        onBlockRegistrations: [],
-        onTransactionRegistrations: [],
-        onEventRegistrations: [regOpen, regRestricted],
-      },
+      ~addresses=[addr(0)],
+      ~registrations=[regOpen, regRestricted],
     )
 
     t.expect(routed).toEqual([(0, 99, addr(0)), (0, 100, addr(0)), (1, 100, addr(0))])
   })
 
-  Async.it("keeps registrations of the same event in their own partitions", async t => {
+  Async.it("keeps registrations of the same event in their own requests", async t => {
     // Same event id, two registrations — matching a selection on the event id
-    // would hand each partition both registrations' items.
+    // would hand each request both registrations' items.
     let regFirst = registration(~index=0, ~contractName="A")
     let regSecond = {...regFirst, index: 1}
     let store = TestAddresses.makeStore(
       ~onEventRegistrations=[regFirst, regSecond],
       ~addresses=[contract(~address=addr(0), ~contractName="A")],
     )
-    let addressSet = TestAddresses.setOf(~store, [addr(0)])
+    let addresses = [addr(0)]
     let items = [
       item(~registration=regFirst, ~blockNumber=10, ~srcAddress=addr(0)),
       item(~registration=regSecond, ~blockNumber=10, ~srcAddress=addr(0)),
@@ -337,24 +315,14 @@ describe("SimulateSource routing", () => {
     let first = await getItems(
       ~items,
       ~store,
-      ~addressSet,
-      ~selection={
-        dependsOnAddresses: true,
-        onBlockRegistrations: [],
-        onTransactionRegistrations: [],
-        onEventRegistrations: [regFirst],
-      },
+      ~addresses,
+      ~registrations=[regFirst],
     )
     let both = await getItems(
       ~items,
       ~store,
-      ~addressSet,
-      ~selection={
-        dependsOnAddresses: true,
-        onBlockRegistrations: [],
-        onTransactionRegistrations: [],
-        onEventRegistrations: [regFirst, regSecond],
-      },
+      ~addresses,
+      ~registrations=[regFirst, regSecond],
     )
 
     t.expect({"first": first, "both": both}).toEqual({

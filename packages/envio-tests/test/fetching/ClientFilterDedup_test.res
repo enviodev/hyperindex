@@ -63,7 +63,6 @@ describe("Client-side address filtering item dedup", () => {
       // partitions into a single address-free partition mid-response.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           reply: Respond({
             items: [{event: "Gravatar.TestEvent", blockNumber: 10, logIndex: 0}],
@@ -79,7 +78,6 @@ describe("Client-side address filtering item dedup", () => {
       // becomes processable. The re-delivered copy must be deduped.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "1",
           fromBlock: 10,
           toBlock: Bounded(800),
           reply: Respond({
@@ -88,7 +86,6 @@ describe("Client-side address filtering item dedup", () => {
           }),
         },
         {
-          partitionId: "0",
           fromBlock: 11,
           reply: Respond({items: [], latestFetchedBlockNumber: 200}),
         },

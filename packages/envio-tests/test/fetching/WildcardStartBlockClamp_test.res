@@ -69,7 +69,6 @@ describe("Wildcard contract with a far-ahead start block on one chain of many", 
       // pinned at 0% would put on it.
       await wildcardChain.expectItemsQueries([
         {
-          partitionId: "1",
           fromBlock: 1,
           toBlock: Bounded(99_800),
           reply: Respond({
@@ -80,7 +79,6 @@ describe("Wildcard contract with a far-ahead start block on one chain of many", 
       ])
       await plainChain.expectItemsQueries([
         {
-          partitionId: "1",
           fromBlock: 1,
           toBlock: Bounded(99_800),
           reply: Respond({
@@ -95,7 +93,6 @@ describe("Wildcard contract with a far-ahead start block on one chain of many", 
           }),
         },
         {
-          partitionId: "0",
           fromBlock: 1,
           toBlock: Bounded(99_800),
           reply: Respond({items: [], latestFetchedBlockNumber: 20_000}),
@@ -106,11 +103,11 @@ describe("Wildcard contract with a far-ahead start block on one chain of many", 
       // The plain chain keeps fetching past the first alignment margin, and the
       // wildcard chain from its frontier too.
       await plainChain.expectItemsQueries([
-        {partitionId: "0", fromBlock: 20_001, reply: LeavePending},
-        {partitionId: "1", fromBlock: 20_001, reply: LeavePending},
+        {fromBlock: 20_001, reply: LeavePending},
+        {fromBlock: 20_001, reply: LeavePending},
       ])
       await wildcardChain.expectItemsQueries([
-        {partitionId: "1", fromBlock: 30_001, toBlock: Bounded(99_800), reply: LeavePending},
+        {fromBlock: 30_001, toBlock: Bounded(99_800), reply: LeavePending},
       ])
     },
   )

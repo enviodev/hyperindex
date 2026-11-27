@@ -71,13 +71,13 @@ describe("Rate-limit time", () => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(100)
       await mock.expectItemsQueries([
-        {partitionId: "0", retryCount: 0, reply: rateLimited(300)},
-        {partitionId: "1", retryCount: 0, reply: rateLimited(300)},
+        {retryCount: 0, reply: rateLimited(300)},
+        {retryCount: 0, reply: rateLimited(300)},
       ])
       await indexer.advanceTime(300)
       await mock.expectItemsQueries([
-        {partitionId: "0", retryCount: 1, reply: LeavePending},
-        {partitionId: "1", retryCount: 1, reply: LeavePending},
+        {retryCount: 1, reply: LeavePending},
+        {retryCount: 1, reply: LeavePending},
       ])
       // Two 300ms waits side by side are 300ms of the chain being throttled.
       t.expect(await indexer->rateLimitedSeconds).toEqual([(Some("1"), Some(0.3))])

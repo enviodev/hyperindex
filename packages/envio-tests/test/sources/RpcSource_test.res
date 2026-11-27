@@ -179,21 +179,17 @@ describe("RpcSource - field selection end to end", () => {
       ~chainBuffer,
     )
     let {result, requestStats} = await source.getItems(
-      ~reorgableFrom=None,
-      ~fromBlock=100,
-      ~toBlock=Some(100),
-      ~addressSet=addressStore->AddressStore.makeSet(
-        ~contractName=registration.eventConfig.contractName,
+      ~request=TestSources.request(
+        ~fromBlock=100,
+        ~toBlock=100,
+        ~addressStore=addressStore,
+        ~contractNames=[registration.eventConfig.contractName],
+        ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
       ),
-      ~knownHeight=100,
-      ~partitionId="0",
-      ~selection={
-        dependsOnAddresses: true,
-        onBlockRegistrations: [],
-        onTransactionRegistrations: [],
-        onEventRegistrations: [(registration :> Internal.onEventRegistration)],
-      },
+      ~toBlock=Some(100),
       ~retry=0,
+      ~reorgableFrom=None,
+      ~knownHeight=100,
     )
     let result = switch result {
     | Ok({page}) =>
@@ -713,21 +709,17 @@ describe("RpcSource - getItems on response-too-large", () => {
 
       let call = async () => {
         let _ = await source.getItems(
-          ~reorgableFrom=None,
-          ~fromBlock=0,
-          ~toBlock=Some(1_000_000),
-          ~addressSet=addressStore->AddressStore.makeSet(
-            ~contractName=eventConfig.eventConfig.contractName,
+          ~request=TestSources.request(
+            ~fromBlock=0,
+            ~toBlock=1_000_000,
+            ~addressStore=addressStore,
+            ~contractNames=[eventConfig.eventConfig.contractName],
+            ~onEventRegistrations=[(eventConfig :> Internal.onEventRegistration)],
           ),
-          ~knownHeight=1_000_000,
-          ~partitionId="0",
-          ~selection={
-            dependsOnAddresses: true,
-            onBlockRegistrations: [],
-            onTransactionRegistrations: [],
-            onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
-          },
+          ~toBlock=Some(1_000_000),
           ~retry=0,
+          ~reorgableFrom=None,
+          ~knownHeight=1_000_000,
         )
       }
 
@@ -837,21 +829,17 @@ describe("RpcSource - getItems classifies real provider block-range errors", () 
     let retry = try {
       let result = switch (
         await source.getItems(
-          ~reorgableFrom=None,
-          ~fromBlock=0,
-          ~toBlock=Some(1_000_000),
-          ~addressSet=addressStore->AddressStore.makeSet(
-            ~contractName=eventConfig.eventConfig.contractName,
+          ~request=TestSources.request(
+            ~fromBlock=0,
+            ~toBlock=1_000_000,
+            ~addressStore=addressStore,
+            ~contractNames=[eventConfig.eventConfig.contractName],
+            ~onEventRegistrations=[(eventConfig :> Internal.onEventRegistration)],
           ),
-          ~knownHeight=1_000_000,
-          ~partitionId="0",
-          ~selection={
-            dependsOnAddresses: true,
-            onBlockRegistrations: [],
-            onTransactionRegistrations: [],
-            onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
-          },
+          ~toBlock=Some(1_000_000),
           ~retry=0,
+          ~reorgableFrom=None,
+          ~knownHeight=1_000_000,
         )
       ).result {
       | Error(failure) => Some(failure)
@@ -959,24 +947,20 @@ describe("RpcSource - builds partition log selections end to end", () => {
 
     let (page, filters) = try {
       let {result} = await source.getItems(
-        ~reorgableFrom=None,
-        ~fromBlock=0,
-        ~toBlock=Some(100),
-        ~addressSet=addressStore->AddressStore.makeSet(
-          ~contractName=addressBound.eventConfig.contractName,
-        ),
-        // Far below the head, where a page's blocks aren't checked one by one.
-        ~knownHeight=1_100,
-        ~partitionId="selection-e2e",
-        ~selection={
-          dependsOnAddresses: true,
-          onBlockRegistrations: [],
-          onTransactionRegistrations: [],
-          onEventRegistrations: selectedRegistrations->Array.map(
+        ~request=TestSources.request(
+          ~fromBlock=0,
+          ~toBlock=100,
+          ~addressStore=addressStore,
+          ~contractNames=[addressBound.eventConfig.contractName],
+          ~onEventRegistrations=selectedRegistrations->Array.map(
             reg => (reg :> Internal.onEventRegistration),
           ),
-        },
+        ),
+        ~toBlock=Some(100),
         ~retry=0,
+        ~reorgableFrom=None,
+        // Far below the head, where a page's blocks aren't checked one by one.
+        ~knownHeight=1_100,
       )
       let page = switch result {
       | Ok(page) => page

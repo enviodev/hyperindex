@@ -694,8 +694,8 @@ let isPlainObject = (value: unknown) =>
 
 // `where` is evaluated once per configured chain at registration time.
 // Decoded ranges/stride feed directly into the per-chain registration store
-// so the fetcher's `(blockNumber - handlerStartBlock) % interval === 0`
-// math in `FetchState` stays untouched. Deferred via `withRegistration` so
+// so the schedule's `(blockNumber - handlerStartBlock) % interval === 0`
+// math stays untouched. Deferred via `withRegistration` so
 // the per-chain loop sees the registration's config, which may be a narrowed
 // version of the generated one (TestIndexer runs with a per-test chain
 // subset). `where` arrives unvalidated (`unknown`) straight from the user's

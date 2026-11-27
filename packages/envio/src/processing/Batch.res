@@ -27,7 +27,11 @@ type reorgHashSnapshot = {
 }
 
 type chainBeforeBatch = {
-  fetchState: FetchState.t,
+  chainId: ChainId.t,
+  // The latest block whose items are all in the buffer.
+  readyThroughBlock: int,
+  // How far through its range the chain is, the furthest behind first.
+  progressPercentage: float,
   // The chain's own buffer, which the batch builds its items from.
   buffer: ChainBuffer.t,
   // Builds the chain's items of `[fromBlock, maxBlock]`, up to about
@@ -88,7 +92,7 @@ let getProgressedChainsById = {
       Some(
         (
           {
-            chainId: chainBeforeBatch.fetchState.chainId,
+            chainId: chainBeforeBatch.chainId,
             batchSize: counts.size,
             progressBlockNumber: progressBlockNumberAfterBatch,
             progressBlockTime: chainBeforeBatch.blockTimeAt(progressBlockNumberAfterBatch),
@@ -115,10 +119,8 @@ let getProgressedChainsById = {
     chainsBeforeBatch
     ->Dict.valuesToArray
     ->Array.forEach(chainBeforeBatch => {
-      let fetchState = chainBeforeBatch.fetchState
-
       let progressBlockNumberAfterBatch = switch progressBlockNumberPerChain->Utils.Dict.dangerouslyGetNonOption(
-        fetchState.chainId->ChainId.toString,
+        chainBeforeBatch.chainId->ChainId.toString,
       ) {
       | Some(progressBlockNumber) => progressBlockNumber
       | None => chainBeforeBatch.progressBlockNumber
@@ -127,12 +129,12 @@ let getProgressedChainsById = {
       switch getChainAfterBatchIfProgressed(
         ~chainBeforeBatch,
         ~counts=countsPerChain
-        ->Utils.Dict.dangerouslyGetNonOption(fetchState.chainId->ChainId.toString)
+        ->Utils.Dict.dangerouslyGetNonOption(chainBeforeBatch.chainId->ChainId.toString)
         ->Option.getOr({size: 0, eventsProcessed: 0}),
         ~progressBlockNumberAfterBatch,
       ) {
       | Some(progressedChain) =>
-        progressedChainsById->ChainId.Dict.set(chainBeforeBatch.fetchState.chainId, progressedChain)
+        progressedChainsById->ChainId.Dict.set(chainBeforeBatch.chainId, progressedChain)
       | None => ()
       }
     })
@@ -203,6 +205,56 @@ let addReorgCheckpoints = (
 // deleting the chain's ids above its target before any higher one is allocated.
 // Every rollback deletes by `id > target`, which is only the stale suffix while
 // ids and blocks agree on order within each chain.
+%%private(
+  let pathsEqual = (a: array<int>, b: array<int>) =>
+    a->Array.length === b->Array.length &&
+      a->Array.everyWithIndex((step, index) => step === b->Array.getUnsafe(index))
+)
+
+// Whether two adjacent built items came from one log matching two
+// registrations: everything a build orders on except the registration index is
+// equal. Only meaningful on neighbours in build order, where such items sit
+// next to each other.
+let isSameLog = (a: Internal.item, b: Internal.item): bool =>
+  a->Internal.getItemKind === 0 &&
+  b->Internal.getItemKind === 0 &&
+  a->Internal.getItemBlockNumber === b->Internal.getItemBlockNumber &&
+  a->Internal.getItemLogIndex === b->Internal.getItemLogIndex &&
+  switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
+  | (Value(pa), Value(pb)) => pathsEqual(pa, pb)
+  | _ => true
+  }
+
+// Orders a batch's chains: those with a full batch ready first, then the
+// furthest behind.
+let sortForBatch = (
+  chains: array<'chain>,
+  ~bufferOf: 'chain => ChainBuffer.t,
+  ~readyThroughBlockOf: 'chain => int,
+  ~processingBlockNumberOf: 'chain => int,
+  ~progressPercentageOf: 'chain => float,
+  ~batchSizeTarget: int,
+) => {
+  let hasFullBatch = chain =>
+    switch chain
+    ->bufferOf
+    ->ChainBuffer.getBlockNumberOfRowAt(
+      ~fromBlock=chain->processingBlockNumberOf + 1,
+      ~rowOffset=batchSizeTarget - 1,
+    )
+    ->Null.toOption {
+    | Some(blockNumber) => blockNumber <= chain->readyThroughBlockOf
+    | None => false
+    }
+  chains->Array.toSorted((a, b) =>
+    switch (a->hasFullBatch, b->hasFullBatch) {
+    | (true, false) => Ordering.less
+    | (false, true) => Ordering.greater
+    | (true, true) | (false, false) => Float.compare(a->progressPercentageOf, b->progressPercentageOf)
+    }
+  )
+}
+
 let make = async (
   ~sequence: CheckpointSequence.t,
   ~frontier: Frontier.t,
@@ -213,10 +265,11 @@ let make = async (
   let preparedChains =
     chainsBeforeBatch
     ->Dict.valuesToArray
-    ->FetchState.sortForBatch(
-      ~fetchStateOf=chain => chain.fetchState,
+    ->sortForBatch(
       ~bufferOf=chain => chain.buffer,
+      ~readyThroughBlockOf=chain => chain.readyThroughBlock,
       ~processingBlockNumberOf=chain => chain.progressBlockNumber,
+      ~progressPercentageOf=chain => chain.progressPercentage,
       ~batchSizeTarget,
     )
 
@@ -240,9 +293,9 @@ let make = async (
   // see as many items of one chain together as possible.
   while totalBatchSize.contents < batchSizeTarget && chainIdx.contents < preparedNumber {
     let chainBeforeBatch = preparedChains->Array.getUnsafe(chainIdx.contents)
-    let {fetchState, buffer} = chainBeforeBatch
+    let {buffer} = chainBeforeBatch
     let fromBlock = chainBeforeBatch.progressBlockNumber + 1
-    let maxBlock = fetchState->FetchState.bufferBlockNumber
+    let maxBlock = chainBeforeBatch.readyThroughBlock
 
     let (chainItems, progressBlockNumberAfterBatch) = if maxBlock < fromBlock {
       ([], chainBeforeBatch.progressBlockNumber)
@@ -270,7 +323,7 @@ let make = async (
         // Items are built in order, so a log's items are consecutive: the first
         // of them is the only one that counts as an event.
         let isNewEvent =
-          idx === 0 || !(chainItems->Array.getUnsafe(idx - 1)->FetchState.isSameLog(item))
+          idx === 0 || !(chainItems->Array.getUnsafe(idx - 1)->isSameLog(item))
         if isNewEvent {
           chainEventsProcessed := chainEventsProcessed.contents + 1
         }
@@ -278,7 +331,7 @@ let make = async (
         // Every new block we should create a new checkpoint
         if blockNumber !== prevBlockNumber.contents {
           addReorgCheckpoints(
-            ~chainId=fetchState.chainId,
+            ~chainId=chainBeforeBatch.chainId,
             ~scannedHashes=chainBeforeBatch.scannedHashes,
             ~shouldRollbackOnReorg=chainBeforeBatch.shouldRollbackOnReorg,
             ~cursor,
@@ -292,10 +345,10 @@ let make = async (
             ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
           )
 
-          let checkpointId = cursor->CheckpointSequence.next(~chainId=fetchState.chainId)
+          let checkpointId = cursor->CheckpointSequence.next(~chainId=chainBeforeBatch.chainId)
 
           checkpointIds->Array.push(checkpointId)->ignore
-          checkpointChainIds->Array.push(fetchState.chainId)->ignore
+          checkpointChainIds->Array.push(chainBeforeBatch.chainId)->ignore
           checkpointBlockNumbers->Array.push(blockNumber)->ignore
           checkpointBlockHashes
           ->Array.push(
@@ -328,13 +381,13 @@ let make = async (
 
       totalBatchSize := totalBatchSize.contents + chainBatchSize
       mutCountsPerChain->ChainId.Dict.set(
-        fetchState.chainId,
+        chainBeforeBatch.chainId,
         {size: chainBatchSize, eventsProcessed: chainEventsProcessed.contents},
       )
     }
 
     addReorgCheckpoints(
-      ~chainId=fetchState.chainId,
+      ~chainId=chainBeforeBatch.chainId,
       ~scannedHashes=chainBeforeBatch.scannedHashes,
       ~shouldRollbackOnReorg=chainBeforeBatch.shouldRollbackOnReorg,
       ~cursor,
@@ -349,7 +402,7 @@ let make = async (
     )
 
     mutProgressBlockNumberPerChain->ChainId.Dict.set(
-      fetchState.chainId,
+      chainBeforeBatch.chainId,
       progressBlockNumberAfterBatch,
     )
 

@@ -141,7 +141,6 @@ describe("E2E rollback tests", () => {
     // Entered the reorg threshold, so the query runs to the latest block.
     await sourceMock.expectItemsQueries([
       {
-        partitionId: "0",
         fromBlock: 101,
         toBlock: Unbounded,
         retryCount: 0,
@@ -307,7 +306,6 @@ describe("E2E rollback tests", () => {
     // Should trigger rollback
     await sourceMock.expectItemsQueries([
       {
-        partitionId: "0",
         fromBlock: 103,
         toBlock: Unbounded,
         retryCount: 0,
@@ -350,7 +348,6 @@ describe("E2E rollback tests", () => {
     await sourceMock.expectItemsQueries([
       {
         // IDs reset on rollback, recreated partition starts at 0
-        partitionId: "0",
         fromBlock: 101,
         toBlock: Unbounded,
         retryCount: 0,
@@ -443,7 +440,6 @@ describe("E2E rollback tests", () => {
       // budget releases and chain 1337 gets its own follow-up.
       await sourceMock100.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 101,
           toBlock: Unbounded,
           retryCount: 0,
@@ -455,7 +451,6 @@ describe("E2E rollback tests", () => {
       // Chain 1337 follows once the leader's budget releases.
       await sourceMock1337.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 101,
           toBlock: Unbounded,
           retryCount: 0,
@@ -487,7 +482,6 @@ describe("E2E rollback tests", () => {
       // where it left off.
       await sourceMock1337.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 111,
           toBlock: Unbounded,
           retryCount: 0,
@@ -500,7 +494,6 @@ describe("E2E rollback tests", () => {
       // Continues normally inside of the reorg threshold.
       await sourceMock1337.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 201,
           toBlock: Unbounded,
           retryCount: 0,
@@ -662,7 +655,7 @@ describe("E2E rollback tests", () => {
           }),
         },
         // The chunks above, voided by the rollback.
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
 
       // The rollback queries the scanned blocks below the reorg.
@@ -789,7 +782,6 @@ describe("E2E rollback tests", () => {
       // valid block.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 101,
           toBlock: Unbounded,
           retryCount: 0,
@@ -1133,7 +1125,6 @@ describe("E2E rollback tests", () => {
       await sourceMock.expectItemsQueries([
         {
           // IDs reset on rollback, recreated partition starts at 0
-          partitionId: "0",
           fromBlock: 101,
           toBlock: Unbounded,
           retryCount: 0,
@@ -1270,7 +1261,6 @@ describe("E2E rollback tests", () => {
       await sourceMock.expectItemsQueries([
         {
           // New partition for DCs
-          partitionId: "1",
           fromBlock: 102,
           toBlock: Unbounded,
           retryCount: 0,
@@ -1288,7 +1278,6 @@ describe("E2E rollback tests", () => {
         {
           // Continue fetching original partition
           // without blocking
-          partitionId: "0",
           fromBlock: 105,
           toBlock: Unbounded,
           retryCount: 0,
@@ -1314,14 +1303,12 @@ describe("E2E rollback tests", () => {
 
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "1",
           fromBlock: 103,
           toBlock: Unbounded,
           retryCount: 0,
           reply: Respond({items: [], latestFetchedBlockNumber: 103}),
         },
         {
-          partitionId: "0",
           fromBlock: 105,
           toBlock: Unbounded,
           retryCount: 0,
@@ -1337,7 +1324,6 @@ describe("E2E rollback tests", () => {
       // Should trigger rollback
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "1",
           coversBlock: 104,
           reply: Respond({
             items: [],
@@ -1348,7 +1334,7 @@ describe("E2E rollback tests", () => {
           }),
         },
         // The DC partition's chunks above, voided by the rollback.
-        {partitionId: "1", reply: LeavePending},
+        {reply: LeavePending},
       ])
 
       await sourceMock.expectBlockHashLookup({
@@ -1362,7 +1348,6 @@ describe("E2E rollback tests", () => {
 
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 105,
           toBlock: Unbounded,
           retryCount: 0,
@@ -1386,7 +1371,6 @@ describe("E2E rollback tests", () => {
       await sourceMock.expectItemsQueries([
         {
           // Normal partition, re-requested in the chunks its history sizes.
-          partitionId: "0",
           fromBlock: 103,
           toBlock: Bounded(104),
           retryCount: 0,
@@ -1404,7 +1388,6 @@ describe("E2E rollback tests", () => {
         {
           // The address-free partition the dynamic contracts are fetched in
           // near the head.
-          partitionId: "1",
           fromBlock: 103,
           toBlock: Unbounded,
           retryCount: 0,
@@ -1412,8 +1395,8 @@ describe("E2E rollback tests", () => {
         },
         // The base partition's later chunks, and the address-free partition's
         // chunks voided by the rollback.
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
 
       await indexer.getBatchWritePromise()
@@ -1431,9 +1414,9 @@ describe("E2E rollback tests", () => {
       ])
       // After the db rollback, the address-free partition continues from block 105.
       await sourceMock.expectItemsQueries([
-        {partitionId: "1", fromBlock: 105, reply: LeavePending},
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
+        {fromBlock: 105, reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
     },
   )
@@ -1553,7 +1536,7 @@ describe("E2E rollback tests", () => {
           }),
         },
         // The chunks above, drained once the rollback starts.
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
 
@@ -1765,7 +1748,7 @@ describe("E2E rollback tests", () => {
       // Chain 1337: partition DELETED (lfb > target), recreated fresh from
       // just above the fork block.
       await sourceMock1337.expectItemsQueries([
-        {partitionId: "0", fromBlock: 104, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
+        {fromBlock: 104, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
       ])
       // Chain 100: partition KEPT (lfb <= target), chunk history preserved.
       // chunkRange=3 -> chunkSize=ceil(3*1.8)=6, tiled uniformly from 106 and
@@ -1773,7 +1756,6 @@ describe("E2E rollback tests", () => {
       // CrossChainState.alignmentMargin of chain 100's range).
       await sourceMock100.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 106,
           toBlock: Bounded(111),
           retryCount: 0,
@@ -1806,63 +1788,54 @@ describe("E2E rollback tests", () => {
           }),
         },
         {
-          partitionId: "0",
           fromBlock: 112,
           toBlock: Bounded(117),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 118,
           toBlock: Bounded(123),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 124,
           toBlock: Bounded(129),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 130,
           toBlock: Bounded(135),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 136,
           toBlock: Bounded(141),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 142,
           toBlock: Bounded(147),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 148,
           toBlock: Bounded(153),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 154,
           toBlock: Bounded(159),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 160,
           toBlock: Bounded(163),
           retryCount: 0,
@@ -2077,7 +2050,7 @@ describe("E2E rollback tests", () => {
           }),
         },
         // The chunks above, drained once the rollback starts.
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
 
@@ -2246,13 +2219,12 @@ describe("E2E rollback tests", () => {
       // Chain 1337: partition DELETED, recreated fresh (no chunking) from
       // just above the fork block at 103.
       await sourceMock1337.expectItemsQueries([
-        {partitionId: "0", fromBlock: 104, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
+        {fromBlock: 104, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
       ])
       // Chain 100: partition KEPT, chunk history preserved.
       // chunkRange=3 -> chunkSize=6, first uniform chunk is 106-111.
       await sourceMock100.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 106,
           toBlock: Bounded(111),
           retryCount: 0,
@@ -2284,7 +2256,7 @@ describe("E2E rollback tests", () => {
             ],
           }),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
 
       await indexer.getBatchWritePromise()
@@ -2432,7 +2404,6 @@ describe("E2E rollback tests", () => {
       // has fetched the block that registered it.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "1",
           coversBlock: 102,
           reply: Respond({
             items: [{blockNumber: 102, logIndex: 1, handler: async _ => ()}],
@@ -2440,7 +2411,7 @@ describe("E2E rollback tests", () => {
           }),
         },
         // The base partition's chunks above, voided by the rollback.
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
       t.expect(
@@ -2452,7 +2423,6 @@ describe("E2E rollback tests", () => {
       // registration and hands its row over for deletion.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "1",
           reply: Respond({
             items: [],
             prevRangeLastBlock: {blockNumber: 102, blockHash: "0x102a"},
@@ -2471,14 +2441,13 @@ describe("E2E rollback tests", () => {
       let reorgsBefore = sourceMock.reorgCallCount()
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           coversBlock: 102,
           reply: Respond({
             items: [],
             prevRangeLastBlock: {blockNumber: 101, blockHash: "0x101a"},
           }),
         },
-        {partitionId: "1", reply: LeavePending},
+        {reply: LeavePending},
       ])
       // Nothing scanned is left below block 101, so the depth search asks for no
       // hash and rolls back to the threshold's lower edge.
@@ -2489,8 +2458,8 @@ describe("E2E rollback tests", () => {
       await indexer.getRollbackReadyPromise()
 
       await sourceMock.expectItemsQueries([
-        {partitionId: "0", coversBlock: 101, reply: Respond({items: []})},
-        {partitionId: "1", coversBlock: 101, reply: Respond({items: []})},
+        {coversBlock: 101, reply: Respond({items: []})},
+        {coversBlock: 101, reply: Respond({items: []})},
       ])
       await indexer.getBatchWritePromise()
 
@@ -2553,7 +2522,7 @@ describe("E2E rollback tests", () => {
           }),
         },
         // The chunks above, voided by the rollback.
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
 
       // Block 101 comes back on the same hash, so the rollback lands on it and
@@ -3097,21 +3066,20 @@ describe("E2E rollback tests", () => {
           toBlock: Bounded(112),
           reply: Respond({items: [], latestFetchedBlockNumber: 112}),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
 
       await indexer.getBatchWritePromise()
 
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 116,
           toBlock: Bounded(118),
           retryCount: 0,
           reply: LeavePending,
         },
         // The tail chunk tiled on once 107-115 is consumed.
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       let pending = sourceMock.pendingItemsQueries
       t.expect(
@@ -3120,7 +3088,7 @@ describe("E2E rollback tests", () => {
           pending->Array.every(query => query.partitionId == "0"),
         ),
         ~message="Should create exactly one gap-fill query for the partial chunk range in the same partition, with no duplicate partition",
-      ).toEqual(([{partitionId: "0", fromBlock: 116, toBlock: Bounded(118), retryCount: 0}], true))
+      ).toEqual(([{fromBlock: 116, toBlock: Bounded(118), retryCount: 0}], true))
 
       // 8. Trigger rollback via reorg detection to block 116
       await sourceMock.expectItemsQueries([
@@ -3158,7 +3126,7 @@ describe("E2E rollback tests", () => {
         // Partition recreated fresh (no chunk history), single unchunked query.
         // Block 112 is the deepest hash the search confirmed, so 113-115 are
         // re-fetched with it even though only 115 had a checkpoint.
-        {partitionId: "0", fromBlock: 113, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
+        {fromBlock: 113, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
       ])
     },
   )
@@ -3198,14 +3166,12 @@ describe("E2E rollback tests", () => {
       // (to 115). The partition consumes up to 115 and detects the 116-118 gap.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 107,
           toBlock: Bounded(112),
           retryCount: 0,
           reply: Respond({items: [], latestFetchedBlockNumber: 112}),
         },
         {
-          partitionId: "0",
           fromBlock: 113,
           toBlock: Bounded(118),
           retryCount: 0,
@@ -3213,13 +3179,12 @@ describe("E2E rollback tests", () => {
           reply: Respond({items: [], latestFetchedBlockNumber: 115}),
         },
         {
-          partitionId: "0",
           fromBlock: 119,
           toBlock: Bounded(124),
           retryCount: 0,
           reply: LeavePending,
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
       // lfb=115
@@ -3227,7 +3192,7 @@ describe("E2E rollback tests", () => {
       // Resolve the 116-118 continuation, storing a reorg checkpoint at block 118.
       await sourceMock.expectItemsQueries([
         {fromBlock: 116, reply: Respond({items: [], latestFetchedBlockNumber: 118})},
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
 
@@ -3244,7 +3209,7 @@ describe("E2E rollback tests", () => {
             },
           }),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
 
       // Stored checkpoints below reorgBlockNumber(118): [103, 106, 112, 115]
@@ -3271,7 +3236,7 @@ describe("E2E rollback tests", () => {
       // vouch for them either. The partition refetches only from 116 onward and
       // never re-fetches the confirmed 107-115.
       await sourceMock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 116, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
+        {fromBlock: 116, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
       ])
     },
   )
@@ -3379,7 +3344,6 @@ describe("E2E rollback tests", () => {
 
       // The reorg chain's fetch state rolls back even with no events processed.
       let refetch: MockSource.expectedItemsQuery = {
-        partitionId: "0",
         fromBlock: 101,
         toBlock: Unbounded,
         retryCount: 0,
@@ -3594,7 +3558,7 @@ describe("E2E rollback tests", () => {
           }),
         },
         // The chunks above, drained once the rollback starts.
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
 
       await sourceMock1337.expectBlockHashLookup({
@@ -3625,7 +3589,7 @@ describe("E2E rollback tests", () => {
       // Chain 1337: partition deleted (lfb > target), recreated fresh from
       // just above the fork block at 103.
       await sourceMock1337.expectItemsQueries([
-        {partitionId: "0", fromBlock: 104, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
+        {fromBlock: 104, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
       ])
       // Chain 100 refetches from block 106 after rollback: its in-flight
       // checkpoint was flushed and included in the progress diff.
@@ -3635,7 +3599,6 @@ describe("E2E rollback tests", () => {
       // CrossChainState.alignmentMargin of chain 100's range).
       await sourceMock100.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 106,
           toBlock: Bounded(111),
           retryCount: 0,
@@ -3657,63 +3620,54 @@ describe("E2E rollback tests", () => {
           }),
         },
         {
-          partitionId: "0",
           fromBlock: 112,
           toBlock: Bounded(117),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 118,
           toBlock: Bounded(123),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 124,
           toBlock: Bounded(129),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 130,
           toBlock: Bounded(135),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 136,
           toBlock: Bounded(141),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 142,
           toBlock: Bounded(147),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 148,
           toBlock: Bounded(153),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 154,
           toBlock: Bounded(159),
           retryCount: 0,
           reply: LeavePending,
         },
         {
-          partitionId: "0",
           fromBlock: 160,
           toBlock: Bounded(163),
           retryCount: 0,

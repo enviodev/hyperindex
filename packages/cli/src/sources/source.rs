@@ -16,7 +16,7 @@ use super::failure::{block_u32, ClientError, SourceFailure};
 use super::fuel_hypersync::{self, FuelHyperSyncClient};
 use super::request_stats::RequestStat;
 use super::svm_hypersync::{self, SvmHyperSyncClient};
-use crate::address_store::AddressSet;
+use crate::indexing_plan::FetchRequest;
 use crate::chain_buffer::page::Page;
 use crate::chain_buffer::{ChainBuffer, Ecosystem};
 use crate::logger::{BoundLogger, Level, Logger};
@@ -94,24 +94,6 @@ pub enum HeightSubscriptionTarget {
     RpcWs { url: String },
 }
 
-#[napi(object)]
-pub struct ItemsQuery {
-    pub from_block: u32,
-    /// Inclusive. Absent asks for everything the backend has from
-    /// `from_block` on.
-    pub to_block: Option<u32>,
-    pub partition_id: String,
-    pub on_event_registration_indexes: Vec<u32>,
-    pub on_block_registration_indexes: Vec<u32>,
-    pub on_transaction_registration_indexes: Vec<u32>,
-    /// Contract names fetched address-free though their registrations depend
-    /// on addresses.
-    pub client_filtered_contracts: Option<Vec<String>>,
-    pub retry: u32,
-    pub reorgable_from: Option<u32>,
-    pub known_height: u32,
-}
-
 #[napi(discriminant = "kind")]
 pub enum HeightAnswer {
     Height {
@@ -172,10 +154,6 @@ pub struct Source {
     /// A rejected token is said once per source, not on every retry for the
     /// life of the process.
     warned_unauthorized: AtomicBool,
-}
-
-fn indexes(indexes: &[u32]) -> Vec<i64> {
-    indexes.iter().copied().map(i64::from).collect()
 }
 
 /// The host of an http(s) url, which names an RPC source without leaking a
@@ -274,22 +252,35 @@ impl Source {
         }
     }
 
+    /// One attempt at a request, ending at `to_block`: the request's own, or
+    /// the narrower one a refused attempt suggested.
     #[napi]
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_items(
         &self,
-        query: ItemsQuery,
-        address_set: &AddressSet,
+        request: &FetchRequest,
+        to_block: Option<u32>,
+        retry: u32,
+        reorgable_from: Option<u32>,
+        known_height: u32,
         buffer: &ChainBuffer,
     ) -> napi::Result<ItemsAnswer> {
         let started = Instant::now();
-        let from_block = i64::from(query.from_block);
+        let from_block = request.requested_from_block();
+        let to_block = if request.reads_blocks_alone() {
+            Some(to_block.map_or(known_height, |to_block| to_block.min(known_height)))
+        } else {
+            to_block
+        };
+        let selection = request.selection(to_block.map(i64::from));
+        let address_set = request.address_set();
         // A page that ends where it began came from a replica that hasn't
         // reached the range.
         let behind_head_unless_advanced = |next_block: i64, page: Page, known_height, stats| {
             if next_block <= from_block {
                 ItemsAnswer::Failed {
                     failure: SourceFailure::BehindHead {
-                        block_number: query.from_block,
+                        block_number: block_u32(from_block),
                     },
                     request_stats: stats,
                 }
@@ -317,14 +308,13 @@ impl Source {
             SourceClient::EvmHyperSync(client) => {
                 let params = evm_hypersync::ItemsQuery {
                     from_block,
-                    to_block: query.to_block.map(i64::from),
-                    on_event_registration_indexes: indexes(&query.on_event_registration_indexes),
-                    on_block_registration_indexes: indexes(&query.on_block_registration_indexes),
-                    on_transaction_registration_indexes: indexes(
-                        &query.on_transaction_registration_indexes,
-                    ),
-                    client_filtered_contracts: query.client_filtered_contracts,
-                    reorgable_from: query.reorgable_from.map(i64::from),
+                    to_block: to_block.map(i64::from),
+                    on_event_registration_indexes: selection.on_event_registration_indexes,
+                    on_block_registration_indexes: selection.on_block_registration_indexes,
+                    on_transaction_registration_indexes: selection
+                        .on_transaction_registration_indexes,
+                    client_filtered: selection.client_filtered,
+                    reorgable_from: reorgable_from.map(i64::from),
                 };
                 match client.get_items(params, address_set, buffer).await {
                     Ok((response, page)) => {
@@ -348,9 +338,9 @@ impl Source {
             SourceClient::FuelHyperSync(client) => {
                 let params = fuel_hypersync::EventItemsQuery {
                     from_block,
-                    to_block: query.to_block.map(i64::from),
-                    registration_indexes: indexes(&query.on_event_registration_indexes),
-                    client_filtered_contracts: query.client_filtered_contracts,
+                    to_block: to_block.map(i64::from),
+                    registration_indexes: selection.on_event_registration_indexes,
+                    client_filtered: selection.client_filtered,
                 };
                 match client.get_event_items(params, address_set).await {
                     Ok((response, page)) => behind_head_unless_advanced(
@@ -368,10 +358,10 @@ impl Source {
             SourceClient::SvmHyperSync(client) => {
                 let params = svm_hypersync::ItemsQuery {
                     from_slot: from_block,
-                    to_slot: query.to_block.map(i64::from),
-                    on_event_registration_indexes: indexes(&query.on_event_registration_indexes),
-                    on_block_registration_indexes: indexes(&query.on_block_registration_indexes),
-                    reorgable_from: query.reorgable_from.map(i64::from),
+                    to_slot: to_block.map(i64::from),
+                    on_event_registration_indexes: selection.on_event_registration_indexes,
+                    on_block_registration_indexes: selection.on_block_registration_indexes,
+                    reorgable_from: reorgable_from.map(i64::from),
                 };
                 match client.get_items(params).await {
                     Ok((response, page)) => ItemsAnswer::Fetched {
@@ -393,22 +383,21 @@ impl Source {
                 }
             }
             SourceClient::EvmRpc(client) => {
-                let known_height = u64::from(query.known_height);
+                let known_height = u64::from(known_height);
                 let params = NextPageParams {
-                    from_block: u64::from(query.from_block),
+                    from_block: from_block.max(0) as u64,
                     // An RPC page always has an end, and none past the head.
-                    to_block_ceiling: query.to_block.map_or(known_height, |to_block| {
+                    to_block_ceiling: to_block.map_or(known_height, |to_block| {
                         u64::from(to_block).min(known_height)
                     }),
-                    partition_id: query.partition_id,
-                    on_event_registration_indexes: indexes(&query.on_event_registration_indexes),
-                    on_block_registration_indexes: indexes(&query.on_block_registration_indexes),
-                    on_transaction_registration_indexes: indexes(
-                        &query.on_transaction_registration_indexes,
-                    ),
-                    client_filtered_contracts: query.client_filtered_contracts,
-                    retry: i64::from(query.retry),
-                    reorgable_from: query.reorgable_from.map(u64::from),
+                    interval_key: request.interval_key(),
+                    on_event_registration_indexes: selection.on_event_registration_indexes,
+                    on_block_registration_indexes: selection.on_block_registration_indexes,
+                    on_transaction_registration_indexes: selection
+                        .on_transaction_registration_indexes,
+                    client_filtered: selection.client_filtered,
+                    retry: i64::from(retry),
+                    reorgable_from: reorgable_from.map(u64::from),
                     known_height,
                 };
                 let (result, page) = client

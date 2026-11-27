@@ -55,7 +55,6 @@ describe("E2E blockLag tests", () => {
       // and gets items up to there.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 101,
           toBlock: Bounded(299),
           retryCount: 0,
@@ -78,7 +77,6 @@ describe("E2E blockLag tests", () => {
       sourceMock.setAutoHeight(301)
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 300,
           toBlock: Bounded(300),
           retryCount: 0,

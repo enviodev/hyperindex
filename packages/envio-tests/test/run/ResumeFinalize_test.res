@@ -189,7 +189,7 @@ describe("Resuming a backfill that never finalized", () => {
       t.expect(
         source.pendingItemsQueries,
         ~message="Finalizing on resume re-parks the fetch waiter on the realtime source",
-      ).toEqual([{partitionId: "0", fromBlock: 101, toBlock: Unbounded, retryCount: 0}])
+      ).toEqual([{fromBlock: 101, toBlock: Unbounded, retryCount: 0}])
     },
   )
 
@@ -644,7 +644,7 @@ describe("Resuming a backfill that never finalized", () => {
       t.expect(
         (finalizeCalls.contents, source.pendingItemsQueries),
         ~message="A catch-up query is in flight while finalization is still open",
-      ).toEqual((2, [{partitionId: "0", fromBlock: 101, toBlock: Unbounded, retryCount: 0}]))
+      ).toEqual((2, [{fromBlock: 101, toBlock: Unbounded, retryCount: 0}]))
 
       // Hold the query itself: the handoff replaces it with one carrying an
       // identical payload, and only this one's response is the discarded one.
@@ -666,7 +666,7 @@ describe("Resuming a backfill that never finalized", () => {
       t.expect(
         source.pendingItemsQueries,
         ~message="A discarded response must not leave the partition holding a pending query",
-      ).toEqual([{partitionId: "0", fromBlock: 101, toBlock: Unbounded, retryCount: 0}])
+      ).toEqual([{fromBlock: 101, toBlock: Unbounded, retryCount: 0}])
     },
   )
 

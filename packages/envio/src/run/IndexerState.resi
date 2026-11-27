@@ -15,6 +15,7 @@ let make: (
   ~logger: Logger.t,
   ~storage: Persistence.storage,
   ~chainStates: dict<ChainState.t>,
+  ~indexingPlan: IndexingPlan.t=?,
   ~isRealtime: bool,
   ~targetBufferSize: int=?,
   ~inMemoryObjectsTarget: float=?,

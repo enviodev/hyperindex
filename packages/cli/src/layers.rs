@@ -16,6 +16,7 @@ const FORBIDDEN_IMPORTS: &[(&str, &[&str])] = &[
     ),
     ("chain_buffer/", &["crate::sources", "crate::env"]),
     ("address_store/", &["crate::sources", "crate::env"]),
+    ("indexing_plan/", &["crate::sources", "crate::env"]),
     ("sources/", &["crate::env"]),
 ];
 

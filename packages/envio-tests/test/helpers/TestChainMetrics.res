@@ -11,7 +11,7 @@ let registrationsByChainId: HandlerRegister.registrationsByChainId = {
     (
       {
         onEventRegistrations: [],
-        // FetchState needs something to index; an onBlock registration is the
+        // The plan needs something to index; an onBlock registration is the
         // cheapest thing that doesn't require real event configs.
         onBlockRegistrations: [
           {
@@ -66,6 +66,7 @@ let makeChainState = (
     ~config,
     ~contractMapping=TestConfig.default.contractMapping,
     ~registrationsByChainId,
+    ~indexingPlan=IndexingPlan.make(Core.getAddon().indexingPlan),
   )
 
 let make = (

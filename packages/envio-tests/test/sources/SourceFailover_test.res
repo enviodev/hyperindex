@@ -295,14 +295,13 @@ describe("Source failover", () => {
       await indexer.advanceTime(10)
       // Sync stopped at 100. Partition 1's first range stays in flight on it.
       await sync.expectItemsQueries([
-        {partitionId: "0", fromBlock: 1, reply: upTo(100)},
-        {partitionId: "1", fromBlock: 1, reply: LeavePending},
+        {fromBlock: 1, reply: upTo(100)},
+        {fromBlock: 1, reply: LeavePending},
       ])
       let waits = [100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 50]
       for retryCount in 0 to waits->Array.length - 1 {
         await sync.expectItemsQueries([
           {
-            partitionId: "0",
             retryCount,
             reply: Fail(Source.BehindHead({blockNumber: 101})),
           },
@@ -310,13 +309,13 @@ describe("Source failover", () => {
         await indexer.advanceTime(waits->Array.getUnsafe(retryCount))
       }
       await fallback.expectItemsQueries([
-        {partitionId: "0", fromBlock: 101, retryCount: 13, reply: upTo(200)},
+        {fromBlock: 101, retryCount: 13, reply: upTo(200)},
       ])
 
       // The range it was sent before the hold is one it can serve, which shows
       // nothing about the head.
-      await sync.expectItemsQueries([{partitionId: "1", fromBlock: 1, reply: upTo(100)}])
-      await fallback.expectItemsQueries([{partitionId: "1", fromBlock: 101, reply: LeavePending}])
+      await sync.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
+      await fallback.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
       t.expect(sync.pendingItemsQueries).toEqual([])
     },
   )
@@ -335,8 +334,8 @@ describe("Source failover", () => {
       sync.resolveGetHeightOrThrow(100)
       await sync.expectNewHeightCalls(1)
       await sync.expectItemsQueries([
-        {partitionId: "0", fromBlock: 1, reply: LeavePending},
-        {partitionId: "1", fromBlock: 1, reply: LeavePending},
+        {fromBlock: 1, reply: LeavePending},
+        {fromBlock: 1, reply: LeavePending},
       ])
       let behindHead = MockSource.Fail(Source.BehindHead({blockNumber: 1}))
       let waits = [100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000]
@@ -346,23 +345,22 @@ describe("Source failover", () => {
       )
       await indexer.advanceTime(waits->Array.getUnsafe(0))
       for retryCount in 1 to waits->Array.length - 1 {
-        await sync.expectItemsQueries([{partitionId: "0", retryCount, reply: behindHead}])
+        await sync.expectItemsQueries([{retryCount, reply: behindHead}])
         await indexer.advanceTime(waits->Array.getUnsafe(retryCount))
       }
       // The attempt that fails the source over is in flight when partition 1's
       // query benches the source.
-      await sync.expectItemsQueries([{partitionId: "0", retryCount: 12, reply: LeavePending}])
+      await sync.expectItemsQueries([{retryCount: 12, reply: LeavePending}])
       await sync.expectItemsQueries([
         {
-          partitionId: "1",
           fromBlock: 1,
           reply: Fail(Source.Unusable({message: "test disable"})),
         },
       ])
-      await fallback.expectItemsQueries([{partitionId: "1", fromBlock: 1, reply: LeavePending}])
-      await sync.expectItemsQueries([{partitionId: "0", retryCount: 12, reply: behindHead}])
+      await fallback.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
+      await sync.expectItemsQueries([{retryCount: 12, reply: behindHead}])
       await indexer.advanceTime(50)
-      await fallback.expectItemsQueries([{partitionId: "0", retryCount: 13, reply: LeavePending}])
+      await fallback.expectItemsQueries([{retryCount: 13, reply: LeavePending}])
 
       // Nothing waits on a benched source, so nothing polls it.
       await indexer.advanceTime(500)

@@ -338,16 +338,6 @@ type rec paramMeta = {
   components?: array<paramMeta>,
 }
 
-// Fetch-state registry value for an indexed contract address.
-// `effectiveStartBlock` is derived from the registration block and the
-// contract's configured start block (see `FetchState.deriveEffectiveStartBlock`).
-type indexingContract = {
-  address: Address.t,
-  contractName: string,
-  registrationBlock: int,
-  effectiveStartBlock: int,
-}
-
 // What a single registration fetches and materialises. Field names are strings
 // so every ecosystem shares one type — the typed field variants are strings at
 // runtime. Always built through `makeFieldSelection`/`unionFieldSelection`
@@ -729,7 +719,7 @@ external itemBlockHolder: item => blockHolder = "%identity"
 @get
 external getItemBlockNumber: item => int = "blockNumber"
 // Only meaningful on an `Event`: other items have no log index, and
-// `FetchState.isSameLog` reads this only after checking the kind.
+// `Batch.isSameLog` reads this only after checking the kind.
 @get
 external getItemLogIndex: item => int = "logIndex"
 @get

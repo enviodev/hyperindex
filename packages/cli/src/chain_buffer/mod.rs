@@ -356,10 +356,13 @@ pub struct HashedBlocks {
     pub hashes: Vec<String>,
 }
 
+/// A handle: clones share the chain's tables, so the indexing plan merges
+/// into the same buffer the loop builds from.
 #[napi]
+#[derive(Clone)]
 pub struct ChainBuffer {
     shared: Arc<Shared>,
-    tables: Mutex<Tables>,
+    tables: Arc<Mutex<Tables>>,
 }
 
 pub(crate) fn to_napi(error: anyhow::Error) -> napi::Error {
@@ -497,12 +500,12 @@ impl ChainBuffer {
                 event_block_masks: config.event_block_masks.iter().map(|m| *m as u64).collect(),
                 contract_registers,
             }),
-            tables: Mutex::new(Tables {
+            tables: Arc::new(Mutex::new(Tables {
                 events: Table::new(events),
                 transactions: Table::new(transactions),
                 blocks: Table::new(blocks),
                 decoded: DecodedEvents::default(),
-            }),
+            })),
         })
     }
 

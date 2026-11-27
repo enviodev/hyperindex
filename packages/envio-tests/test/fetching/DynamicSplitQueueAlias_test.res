@@ -145,7 +145,6 @@ describe("Dynamic-registration partition split queue aliasing", () => {
       // delivers the NftFactory registration.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           toBlock: Bounded(99_800),
           retryCount: 0,
@@ -174,7 +173,6 @@ describe("Dynamic-registration partition split queue aliasing", () => {
 
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "2",
           fromBlock: 10,
           reply: Respond({items: [], latestFetchedBlockNumber: 20_000}),
         },
@@ -187,7 +185,6 @@ describe("Dynamic-registration partition split queue aliasing", () => {
       // address up to the split's frontier.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "2",
           fromBlock: 20_001,
           reply: Respond({
             items: [
@@ -211,12 +208,11 @@ describe("Dynamic-registration partition split queue aliasing", () => {
       // A new head sets both split halves querying past 99,800.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "2",
           fromBlock: 45_001,
           reply: Respond({items: [], latestFetchedBlockNumber: 80_984, knownHeight: 200_000}),
         },
-        {partitionId: "2", fromBlock: 80_985, reply: LeavePending},
-        {partitionId: "4", fromBlock: 20_050, reply: LeavePending},
+        {fromBlock: 80_985, reply: LeavePending},
+        {fromBlock: 20_050, reply: LeavePending},
       ])
       await indexer.waitUntilIdle()
       let afterSplit =
@@ -234,14 +230,14 @@ describe("Dynamic-registration partition split queue aliasing", () => {
       // frontiers: Gravatar at 140,000, NftFactory at 120,000.
       await sourceMock.expectItemsQueries([
         respondTo("0", ~fromBlock=99_801, ~toBlock=140_000),
-        {partitionId: "2", fromBlock: 99_801, reply: LeavePending},
-        {partitionId: "3", fromBlock: 99_801, reply: LeavePending},
+        {fromBlock: 99_801, reply: LeavePending},
+        {fromBlock: 99_801, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
         respondTo("3", ~fromBlock=99_801, ~toBlock=120_000),
-        {partitionId: "2", fromBlock: 144_801, reply: LeavePending},
-        {partitionId: "2", fromBlock: 189_801, reply: LeavePending},
-        {partitionId: "0", fromBlock: 140_001, reply: LeavePending},
+        {fromBlock: 144_801, reply: LeavePending},
+        {fromBlock: 189_801, reply: LeavePending},
+        {fromBlock: 140_001, reply: LeavePending},
       ])
 
       // Gravatar's next query (140,001..) resolves first — for Gravatar's
@@ -252,14 +248,14 @@ describe("Dynamic-registration partition split queue aliasing", () => {
       // NftFactory addresses, so its block-150,000 event is lost.
       await sourceMock.expectItemsQueries([
         respondTo("0", ~fromBlock=140_001, ~toBlock=160_000),
-        {partitionId: "3", fromBlock: 120_001, reply: LeavePending},
+        {fromBlock: 120_001, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
         respondTo("3", ~fromBlock=120_001, ~toBlock=140_000),
-        {partitionId: "0", fromBlock: 160_001, reply: LeavePending},
+        {fromBlock: 160_001, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 140_001, reply: LeavePending},
+        {fromBlock: 140_001, reply: LeavePending},
       ])
 
       // Resolve every remaining query to its full range, delivering whatever

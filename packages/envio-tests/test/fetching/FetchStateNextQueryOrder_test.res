@@ -113,29 +113,26 @@ describe("FetchState next query order", () => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(10)
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
-        {partitionId: "2", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       // The chain has no density yet, so each probe reserves a 5000-item page
       // whatever its start, and the default pool's cold budget holds all three.
       t.expect(sync->pendingShapes(~indexer)).toEqual([
         {
-          partitionId: "0",
           fromBlock: 0,
           toBlock: Unbounded,
           reservedItems: Some(5000),
           addresses: ["0x0000000000000000000000000000000000000003"],
         },
         {
-          partitionId: "1",
           fromBlock: 5,
           toBlock: Unbounded,
           reservedItems: Some(5000),
           addresses: ["0x0000000000000000000000000000000000000001"],
         },
         {
-          partitionId: "2",
           fromBlock: 6,
           toBlock: Unbounded,
           reservedItems: Some(5000),
@@ -156,43 +153,43 @@ describe("FetchState next query order", () => {
       await sync.expectNewHeightCalls(1)
       sync.resolveGetHeightOrThrow(10)
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: upTo(10)},
-        {partitionId: "1", reply: upTo(10)},
-        {partitionId: "2", reply: upTo(6)},
-        {partitionId: "3", reply: upTo(4)},
+        {reply: upTo(10)},
+        {reply: upTo(10)},
+        {reply: upTo(6)},
+        {reply: upTo(4)},
       ])
       await sync.expectItemsQueries([
-        {partitionId: "2", reply: LeavePending},
-        {partitionId: "3", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.advanceTime(1000)
       await sync.expectNewHeightCalls(0)
       let behindHead = sync->pendingShapes(~indexer)
 
       await sync.expectItemsQueries([
-        {partitionId: "2", reply: upTo(10)},
-        {partitionId: "3", reply: upTo(10)},
+        {reply: upTo(10)},
+        {reply: upTo(10)},
       ])
       await sync.expectNewHeightCalls(1)
       let atHead = sync->pendingShapes(~indexer)
 
       sync.resolveGetHeightOrThrow(20)
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
-        {partitionId: "2", reply: LeavePending},
-        {partitionId: "3", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       let toEndBlock = sync->pendingShapes(~indexer)
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: upTo(11)},
-        {partitionId: "1", reply: upTo(11)},
-        {partitionId: "2", reply: upTo(11)},
-        {partitionId: "3", reply: LeavePending},
+        {reply: upTo(11)},
+        {reply: upTo(11)},
+        {reply: upTo(11)},
+        {reply: LeavePending},
       ])
       await indexer.waitUntilIdle()
       let exitedBeforeLastPartition = exited.contents
-      await sync.expectItemsQueries([{partitionId: "3", reply: upTo(11)}])
+      await sync.expectItemsQueries([{reply: upTo(11)}])
       await indexer.getBatchWritePromise()
       await indexer.advanceTime(100_000)
       await sync.expectNewHeightCalls(0)
@@ -207,14 +204,12 @@ describe("FetchState next query order", () => {
       )).toEqual((
         [
           {
-            partitionId: "2",
             fromBlock: 7,
             toBlock: Bounded(11),
             reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000003"],
           },
           {
-            partitionId: "3",
             fromBlock: 5,
             toBlock: Bounded(11),
             reservedItems: None,
@@ -224,28 +219,24 @@ describe("FetchState next query order", () => {
         [],
         [
           {
-            partitionId: "3",
             fromBlock: 11,
             toBlock: Bounded(11),
             reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000004"],
           },
           {
-            partitionId: "2",
             fromBlock: 11,
             toBlock: Bounded(11),
             reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000003"],
           },
           {
-            partitionId: "1",
             fromBlock: 11,
             toBlock: Bounded(11),
             reservedItems: None,
             addresses: ["0x0000000000000000000000000000000000000002"],
           },
           {
-            partitionId: "0",
             fromBlock: 11,
             toBlock: Bounded(11),
             reservedItems: None,

@@ -57,3 +57,36 @@ let rpc = (
     ~chainBuffer,
     ~logger,
   )
+
+// A request built without a plan, for a source driven on its own: the
+// addresses the store holds for `contractNames`, or only `addresses` of them.
+let request = (
+  ~fromBlock,
+  ~toBlock=?,
+  ~addressStore,
+  ~contractNames=[],
+  ~addresses=?,
+  ~onEventRegistrations: array<Internal.onEventRegistration>=[],
+  ~onBlockRegistrations: array<Internal.onBlockRegistration>=[],
+  ~onTransactionRegistrations: array<Internal.onTransactionRegistration>=[],
+  ~addressFreeContracts=[],
+) =>
+  IndexingPlan.Request.standalone(
+    {
+      fromBlock,
+      ?toBlock,
+      onEventRegistrationIndexes: onEventRegistrations->Array.map(registration =>
+        registration.index
+      ),
+      onBlockRegistrationIndexes: onBlockRegistrations->Array.map(registration =>
+        registration.index
+      ),
+      onTransactionRegistrationIndexes: onTransactionRegistrations->Array.map(registration =>
+        registration.index
+      ),
+      addressFreeContracts,
+      ?addresses,
+    },
+    ~addressStore,
+    ~contractNames,
+  )

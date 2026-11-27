@@ -166,6 +166,7 @@ let make = (
   ~logger: Logger.t,
   ~storage: Persistence.storage,
   ~chainStates: dict<ChainState.t>,
+  ~indexingPlan=IndexingPlan.make(Core.getAddon().indexingPlan),
   ~isRealtime: bool,
   ~targetBufferSize=config.env.indexingMaxBufferSize,
   ~inMemoryObjectsTarget=config.env.inMemoryObjectsTarget->Int.toFloat,
@@ -218,6 +219,7 @@ let make = (
     isProcessingRequested: false,
     crossChainState: CrossChainState.make(
       ~chainStates,
+      ~indexingPlan,
       ~isRealtime,
       ~targetBufferSize,
       ~holdRealtime,
@@ -301,6 +303,7 @@ let makeFromDbState = (
     initialState.chains->Array.length > 0 &&
       initialState.chains->Array.every(c => c.timestampCaughtUpToHeadOrEndblock->Option.isSome)
 
+  let indexingPlan = IndexingPlan.make(Core.getAddon().indexingPlan)
   let chainStates = Dict.make()
   initialState.chains->Array.forEach((resumedChainState: Persistence.initialChainState) => {
     let chainId = Config.getChain(config, ~chainId=resumedChainState.id)
@@ -317,6 +320,7 @@ let makeFromDbState = (
         ~registrationsByChainId,
         ~logger,
         ~sourceTiming?,
+        ~indexingPlan,
       ),
     )
   })
@@ -326,6 +330,7 @@ let makeFromDbState = (
     ~logger,
     ~storage,
     ~chainStates,
+    ~indexingPlan,
     ~isRealtime,
     ~targetBufferSize,
     ~inMemoryObjectsTarget?,
@@ -468,14 +473,14 @@ let clearRollback = (state: t) => state.rollbackState = NoRollback
 
 // Invalidate in-flight fetches/waiters without starting a rollback, eg on the
 // realtime transition where the parked waiter is bound to the pre-realtime source.
-// Drops the pending queries with it, the way the reorg path does: a response
-// carrying the old epoch is discarded before handleQueryResult can retire its
-// query, and a partition that still holds one never asks for another range.
+// Drops the requests out with it, the way the reorg path does: their responses
+// carry the old epoch and are discarded, and the plan asks for their blocks
+// again.
 let invalidateInflight = (state: t) => {
   state.epoch = state.epoch + 1
   state.crossChainState
   ->CrossChainState.chainStates
-  ->Utils.Dict.forEach(ChainState.resetPendingQueries)
+  ->Utils.Dict.forEach(ChainState.abandonFetchRequestsInFlight)
 }
 
 let applyBatchProgress = (state: t, ~batch: Batch.t) =>

@@ -249,8 +249,8 @@ impl SvmHyperSyncClient {
             // Selections of different tables intersect: beside instruction
             // selections, one matching every transaction would return only the
             // transactions those instructions are in and undercount the slot.
-            // The fetch state keeps slot handlers in a partition of their own,
-            // so no query selects both.
+            // The indexing plan keeps slot handlers in a request stream of
+            // their own on SVM, so no query selects both.
             if selects_instructions {
                 return Err(anyhow::anyhow!(
                     "A query counting the transactions of its slots can't also select instructions"

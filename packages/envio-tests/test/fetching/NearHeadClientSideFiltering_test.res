@@ -345,11 +345,11 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
       // The query budget lets two partitions out at first, the third once one
       // of them is answered.
       await sourceMock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 301, where: isAddressBound, reply: respondUpTo600},
-        {partitionId: "1", fromBlock: 301, where: isAddressBound, reply: respondUpTo600},
+        {fromBlock: 301, where: isAddressBound, reply: respondUpTo600},
+        {fromBlock: 301, where: isAddressBound, reply: respondUpTo600},
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 301, where: isAddressBound, reply: respondUpTo600},
+        {fromBlock: 301, where: isAddressBound, reply: respondUpTo600},
       ])
 
       sourceMock.resolveGetHeightOrThrow(601)

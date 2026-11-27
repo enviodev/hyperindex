@@ -39,7 +39,6 @@ pub struct MockHeightCall {
 #[derive(Clone, Debug, PartialEq)]
 pub struct MockItemsQuery {
     pub id: u32,
-    pub partition_id: String,
     pub from_block: i64,
     /// Absent for a query that runs to the head.
     pub to_block: Option<i64>,
@@ -56,7 +55,6 @@ pub struct MockItemsQuery {
 #[napi(object)]
 #[derive(Clone, Default)]
 pub struct MockExpectedQuery {
-    pub partition_id: Option<String>,
     pub from_block: Option<i64>,
     pub to_block: Option<i64>,
     pub to_block_unbounded: Option<bool>,
@@ -122,7 +120,7 @@ struct DeferredHeight {
     height: i64,
 }
 
-const QUERY_FIELDS: [&str; 4] = ["partitionId", "fromBlock", "toBlock", "retryCount"];
+const QUERY_FIELDS: [&str; 3] = ["fromBlock", "toBlock", "retryCount"];
 
 #[derive(Default)]
 struct Ledger {
@@ -156,7 +154,6 @@ fn describe_to_block(to_block: Option<i64>) -> String {
 
 fn query_field(query: &MockItemsQuery, name: &str) -> String {
     match name {
-        "partitionId" => format!("\"{}\"", query.partition_id),
         "fromBlock" => query.from_block.to_string(),
         "toBlock" => describe_to_block(query.to_block),
         _ => query.retry_count.to_string(),
@@ -175,10 +172,23 @@ fn describe_query(query: &MockItemsQuery, fields: &[&str], reply: Option<&str>) 
     format!("{{{}}}", parts.join(", "))
 }
 
+// With what it asks for by address, which tells most queries of a block apart.
+fn describe_pending_query(query: &MockItemsQuery) -> String {
+    let described = describe_query(query, &QUERY_FIELDS, None);
+    match query.addresses.as_slice() {
+        [] => described,
+        addresses => format!(
+            "{} addresses: [{}]}}",
+            described.trim_end_matches('}').to_string() + ",",
+            addresses.join(", ")
+        ),
+    }
+}
+
 fn describe_queries<'a>(queries: impl IntoIterator<Item = &'a MockItemsQuery>) -> String {
     let lines: Vec<String> = queries
         .into_iter()
-        .map(|query| format!("  {}", describe_query(query, &QUERY_FIELDS, None)))
+        .map(|query| format!("  {}", describe_pending_query(query)))
         .collect();
     if lines.is_empty() {
         "  none".to_string()
@@ -198,9 +208,6 @@ fn is_replying(entry: &MockExpectedQuery) -> bool {
 
 fn describe_expected(entry: &MockExpectedQuery) -> String {
     let mut parts = Vec::new();
-    if let Some(partition_id) = &entry.partition_id {
-        parts.push(format!("partitionId: \"{partition_id}\""));
-    }
     if let Some(from_block) = entry.from_block {
         parts.push(format!("fromBlock: {from_block}"));
     }
@@ -242,11 +249,7 @@ fn covers_block(query: &MockItemsQuery, block_number: i64) -> bool {
 
 // Everything but `where`, which only the shim can run.
 fn fields_match(entry: &MockExpectedQuery, query: &MockItemsQuery) -> bool {
-    entry
-        .partition_id
-        .as_ref()
-        .is_none_or(|id| *id == query.partition_id)
-        && entry.from_block.is_none_or(|from| from == query.from_block)
+    entry.from_block.is_none_or(|from| from == query.from_block)
         && expected_to_block(entry).is_none_or(|to| to == query.to_block)
         && entry
             .retry_count
@@ -486,7 +489,6 @@ impl Ledger {
 
     fn take_items_query(
         &mut self,
-        partition_id: String,
         from_block: i64,
         to_block: Option<i64>,
         retry_count: u32,
@@ -496,7 +498,6 @@ impl Ledger {
         let id = self.next_id();
         self.pending_queries.push(MockItemsQuery {
             id,
-            partition_id,
             from_block,
             to_block,
             retry_count,
@@ -594,8 +595,21 @@ impl Ledger {
                 format!("entry #{index} {}", describe_expected(&entries[index]))
             })
             .collect();
-        let suggestion = match distinguishing {
-            Some(name) => format!(
+        // An address only one of them asks for names each.
+        let own_addresses: Option<Vec<&String>> = queries
+            .iter()
+            .map(|query| {
+                query.addresses.iter().find(|address| {
+                    queries
+                        .iter()
+                        .filter(|other| other.addresses.contains(address))
+                        .count()
+                        == 1
+                })
+            })
+            .collect();
+        let suggestion = match (distinguishing, own_addresses) {
+            (Some(name), _) => format!(
                 "\nGive each query its own entry, told apart by {name}:\n{}",
                 queries
                     .iter()
@@ -603,7 +617,15 @@ impl Ledger {
                     .collect::<Vec<_>>()
                     .join("\n")
             ),
-            None => "\nNo query field tells them apart; tell them apart with `where`, e.g. by addresses.".to_string(),
+            (None, Some(addresses)) => format!(
+                "\nGive each query its own entry, told apart by address:\n{}",
+                addresses
+                    .iter()
+                    .map(|address| format!("  {{address: \"{address}\", reply: …}}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+            (None, None) => "\nNo query field tells them apart; tell them apart with `where`.".to_string(),
         };
         format!(
             "expectItemsQueries can reply to more than one pending query with {}:\n{}{suggestion}",
@@ -856,18 +878,18 @@ impl Ledger {
 }
 
 fn unlisted_message(unlisted: &[&MockItemsQuery]) -> String {
-    let mut partition_ids: Vec<&str> = Vec::new();
+    let mut from_blocks: Vec<i64> = Vec::new();
     for query in unlisted {
-        if !partition_ids.contains(&query.partition_id.as_str()) {
-            partition_ids.push(&query.partition_id);
+        if !from_blocks.contains(&query.from_block) {
+            from_blocks.push(query.from_block);
         }
     }
     format!(
         "expectItemsQueries matched every entry, but these pending queries are in none:\n{}\nReply to them in this list, or keep them pending:\n{}",
         describe_queries(unlisted.iter().copied()),
-        partition_ids
+        from_blocks
             .iter()
-            .map(|id| format!("  {{partitionId: \"{id}\", reply: LeavePending}}"))
+            .map(|from_block| format!("  {{fromBlock: {from_block}, reply: LeavePending}}"))
             .collect::<Vec<_>>()
             .join("\n")
     )
@@ -960,7 +982,6 @@ impl MockSource {
     #[napi]
     pub fn take_items_query(
         &mut self,
-        partition_id: String,
         from_block: i64,
         to_block: Option<i64>,
         retry_count: u32,
@@ -968,7 +989,6 @@ impl MockSource {
         known_height: i64,
     ) -> u32 {
         self.ledger.take_items_query(
-            partition_id,
             from_block,
             to_block,
             retry_count,
@@ -1074,14 +1094,12 @@ mod tests {
         }
     }
 
-    fn take(
-        ledger: &mut Ledger,
-        partition_id: String,
-        from_block: i64,
-        to_block: Option<i64>,
-        retry_count: u32,
-    ) -> u32 {
-        ledger.take_items_query(partition_id, from_block, to_block, retry_count, vec![], 0)
+    fn take(ledger: &mut Ledger, from_block: i64, to_block: Option<i64>, retry_count: u32) -> u32 {
+        ledger.take_items_query(from_block, to_block, retry_count, vec![], 0)
+    }
+
+    fn take_for(ledger: &mut Ledger, from_block: i64, address: &str) -> u32 {
+        ledger.take_items_query(from_block, None, 0, vec![address.to_string()], 0)
     }
 
     fn reply(name: &str) -> MockExpectedQuery {
@@ -1213,14 +1231,14 @@ mod tests {
     #[test]
     fn refuses_a_reply_two_queries_could_take() {
         let mut ledger = ledger();
-        take(&mut ledger, "0".to_string(), 0, None, 0);
-        take(&mut ledger, "1".to_string(), 0, None, 0);
+        take_for(&mut ledger, 0, "0xaa");
+        take_for(&mut ledger, 0, "0xbb");
         let outcome = ledger.match_items_queries(&[reply("Respond")]);
         assert_eq!(
             (outcome.status.as_str(), outcome.message.as_deref()),
             (
                 "error",
-                Some("expectItemsQueries can reply to more than one pending query with entry #0 {reply: Respond(…)}:\n  {partitionId: \"0\", fromBlock: 0, toBlock: Unbounded, retryCount: 0}\n  {partitionId: \"1\", fromBlock: 0, toBlock: Unbounded, retryCount: 0}\nGive each query its own entry, told apart by partitionId:\n  {partitionId: \"0\", reply: …}\n  {partitionId: \"1\", reply: …}")
+                Some("expectItemsQueries can reply to more than one pending query with entry #0 {reply: Respond(…)}:\n  {fromBlock: 0, toBlock: Unbounded, retryCount: 0, addresses: [0xaa]}\n  {fromBlock: 0, toBlock: Unbounded, retryCount: 0, addresses: [0xbb]}\nGive each query its own entry, told apart by address:\n  {address: \"0xaa\", reply: …}\n  {address: \"0xbb\", reply: …}")
             )
         );
     }
@@ -1228,11 +1246,11 @@ mod tests {
     #[test]
     fn leaves_pending_every_query_an_entry_accounts_for() {
         let mut ledger = ledger();
-        let a = take(&mut ledger, "0".to_string(), 1, Some(10), 0);
-        let b = take(&mut ledger, "1".to_string(), 1, Some(10), 0);
+        let a = take_for(&mut ledger, 1, "0xaa");
+        let b = take_for(&mut ledger, 1, "0xbb");
         let outcome = ledger.match_items_queries(&[
             MockExpectedQuery {
-                partition_id: Some("0".to_string()),
+                address: Some("0xaa".to_string()),
                 ..reply("Respond")
             },
             reply("LeavePending"),
@@ -1250,22 +1268,22 @@ mod tests {
     #[test]
     fn names_queries_no_entry_accounts_for() {
         let mut ledger = ledger();
-        take(&mut ledger, "0".to_string(), 1, None, 0);
-        take(&mut ledger, "1".to_string(), 5, None, 0);
+        take(&mut ledger, 1, None, 0);
+        take(&mut ledger, 5, None, 0);
         let outcome = ledger.match_items_queries(&[MockExpectedQuery {
             from_block: Some(1),
             ..reply("Respond")
         }]);
         assert_eq!(
             outcome.message.as_deref(),
-            Some("expectItemsQueries matched every entry, but these pending queries are in none:\n  {partitionId: \"1\", fromBlock: 5, toBlock: Unbounded, retryCount: 0}\nReply to them in this list, or keep them pending:\n  {partitionId: \"1\", reply: LeavePending}")
+            Some("expectItemsQueries matched every entry, but these pending queries are in none:\n  {fromBlock: 5, toBlock: Unbounded, retryCount: 0}\nReply to them in this list, or keep them pending:\n  {fromBlock: 5, reply: LeavePending}")
         );
     }
 
     #[test]
     fn waits_with_the_reason_each_entry_is_unmatched() {
         let mut ledger = ledger();
-        take(&mut ledger, "0".to_string(), 1, Some(100), 0);
+        take(&mut ledger, 1, Some(100), 0);
         let outcome = ledger.match_items_queries(&[MockExpectedQuery {
             from_block: Some(101),
             to_block_unbounded: Some(true),
@@ -1275,7 +1293,7 @@ mod tests {
             (outcome.status.as_str(), outcome.message.as_deref()),
             (
                 "wait",
-                Some("expectItemsQueries timed out. Expected:\n  #0 {fromBlock: 101, toBlock: Unbounded, reply: LeavePending} (matches no pending query)\nPending:\n  {partitionId: \"0\", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}")
+                Some("expectItemsQueries timed out. Expected:\n  #0 {fromBlock: 101, toBlock: Unbounded, reply: LeavePending} (matches no pending query)\nPending:\n  {fromBlock: 1, toBlock: Bounded(100), retryCount: 0}")
             )
         );
     }
@@ -1284,7 +1302,6 @@ mod tests {
     fn matches_an_address_in_any_letter_case() {
         let mut ledger = ledger();
         ledger.take_items_query(
-            "0".to_string(),
             1,
             None,
             0,
@@ -1292,7 +1309,6 @@ mod tests {
             0,
         );
         let b = ledger.take_items_query(
-            "1".to_string(),
             1,
             None,
             0,
@@ -1315,28 +1331,27 @@ mod tests {
     #[test]
     fn hints_that_an_unmatched_entry_may_be_a_follow_up() {
         let mut ledger = ledger();
-        take(&mut ledger, "0".to_string(), 1, None, 0);
+        take(&mut ledger, 1, None, 0);
         let outcome = ledger.match_items_queries(&[
             MockExpectedQuery {
-                partition_id: Some("0".to_string()),
+                from_block: Some(1),
                 ..reply("Respond")
             },
             MockExpectedQuery {
-                partition_id: Some("1".to_string()),
                 address: Some("0xAb".to_string()),
                 ..reply("Respond")
             },
         ]);
         assert_eq!(
             outcome.message.as_deref(),
-            Some("expectItemsQueries timed out. Expected:\n  #0 {partitionId: \"0\", reply: Respond(…)}\n  #1 {partitionId: \"1\", address: \"0xAb\", reply: Respond(…)} (matches no pending query)\nPending:\n  {partitionId: \"0\", fromBlock: 1, toBlock: Unbounded, retryCount: 0}\nThe list replies only once every entry matches, but the indexer may send a query only after an earlier one is answered. If an unmatched entry is such a follow-up, expect it in a later expectItemsQueries call.")
+            Some("expectItemsQueries timed out. Expected:\n  #0 {fromBlock: 1, reply: Respond(…)}\n  #1 {address: \"0xAb\", reply: Respond(…)} (matches no pending query)\nPending:\n  {fromBlock: 1, toBlock: Unbounded, retryCount: 0}\nThe list replies only once every entry matches, but the indexer may send a query only after an earlier one is answered. If an unmatched entry is such a follow-up, expect it in a later expectItemsQueries call.")
         );
     }
 
     #[test]
     fn names_the_known_height_for_an_unbounded_reply_cut_short() {
         let mut ledger = ledger();
-        let id = ledger.take_items_query("0".to_string(), 101, None, 0, vec![], 300);
+        let id = ledger.take_items_query(101, None, 0, vec![], 300);
         assert_eq!(
             ledger
                 .check_replies(&[MockItemsReply {
@@ -1347,14 +1362,14 @@ mod tests {
                     item_block_numbers: vec![200],
                 }])
                 .as_deref(),
-            Some("expectItemsQueries can't reply an item at block 200 to {partitionId: \"0\", fromBlock: 101, toBlock: Unbounded, retryCount: 0}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (101). The query is unbounded, so a reply without latestFetchedBlockNumber stops at its fromBlock. To fetch up to the height the indexer knew, reply latestFetchedBlockNumber: 300")
+            Some("expectItemsQueries can't reply an item at block 200 to {fromBlock: 101, toBlock: Unbounded, retryCount: 0}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (101). The query is unbounded, so a reply without latestFetchedBlockNumber stops at its fromBlock. To fetch up to the height the indexer knew, reply latestFetchedBlockNumber: 300")
         );
     }
 
     #[test]
     fn refuses_a_reply_past_the_query_range() {
         let mut ledger = ledger();
-        let id = take(&mut ledger, "0".to_string(), 1, Some(100), 0);
+        let id = take(&mut ledger, 1, Some(100), 0);
         let past_to_block = MockItemsReply {
             id,
             checked: true,
@@ -1374,7 +1389,7 @@ mod tests {
             ),
             (
                 true,
-                Some("expectItemsQueries can't reply an item at block 60 to {partitionId: \"0\", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (50)")
+                Some("expectItemsQueries can't reply an item at block 60 to {fromBlock: 1, toBlock: Bounded(100), retryCount: 0}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (50)")
             )
         );
     }
@@ -1399,7 +1414,7 @@ mod tests {
     fn voids_everything_in_flight() {
         let mut ledger = ledger();
         ledger.take_height_call();
-        take(&mut ledger, "0".to_string(), 1, None, 0);
+        take(&mut ledger, 1, None, 0);
         ledger.take_lookup(vec![1]);
         assert_eq!(
             (ledger.drop_pending(), ledger.describe_state()),

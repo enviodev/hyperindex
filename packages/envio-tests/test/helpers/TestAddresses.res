@@ -17,10 +17,18 @@ let contractMapping = (
     ->Array.concat(configContractNames),
   )
 
+// An address a chain indexes, as its store's seed rows hold it. -1 is a config
+// address.
+type address = {
+  address: Address.t,
+  contractName: string,
+  registrationBlock: int,
+}
+
 // Registrations in the columnar form the store seeds from: keys encoded by the
 // Rust codec, contract ids resolved by `contractId`.
 let rowsOf = (
-  ~addresses: array<Internal.indexingAddress>,
+  ~addresses: array<address>,
   ~contractId: string => int,
   ~ecosystem: Ecosystem.name,
 ): AddressRows.seedRows => {
@@ -44,7 +52,7 @@ let rowsOf = (
 // database already holds.
 let storeOf = (
   ~contracts: array<AddressStore.contract>,
-  ~addresses: array<Internal.indexingAddress>=[],
+  ~addresses: array<address>=[],
   ~ecosystem: Ecosystem.name=Evm,
 ) => {
   let store = AddressStore.make(~ecosystem, ~contracts)
@@ -65,11 +73,10 @@ let storeOf = (
 }
 
 // A store built from a chain's registrations, the way `ChainState.makeInternal`
-// does. A test that builds a fetch state over the store leaves `addresses`
-// empty and lets `FetchState.make` do the seeding.
+// does.
 let makeStore = (
   ~onEventRegistrations: array<Internal.onEventRegistration>=[],
-  ~addresses: array<Internal.indexingAddress>=[],
+  ~addresses: array<address>=[],
   ~ecosystem: Ecosystem.name=Evm,
   ~configContractNames: array<string>=[],
 ) =>
@@ -87,112 +94,3 @@ let makeStore = (
 // read goes through here.
 let canonical = (addresses: array<Address.t>) =>
   addresses->Array.map(a => a->Address.toString->String.toLowerCase->Address.unsafeFromString)
-
-// A real `AddressSet` is a Rust handle: it carries no own properties, so two of
-// them always compare equal. Expected-value fixtures need something `toEqual`
-// compares by contents instead, so `setOf` hands back a double whose addresses
-// live in an own enumerable property and whose methods are non-enumerable.
-//
-// A fixture that stands in for state the fetch state will go on to *operate* on
-// (merge, split, roll back) must pass `~store` instead: those operations resolve
-// each address against the store that owns it, so only a real set of that store
-// behaves like production.
-//
-// The owning contract name isn't cosmetic either — the fetch state groups and
-// splits partitions by it (`countFor`, `contractNames`), so a fixture whose
-// addresses belong to another contract than it claims takes a different path.
-let fakeSetOf: (~contractName: string=?, array<Address.t>) => AddressSet.t = %raw(`
-function (contractName, addresses) {
-  var owner = contractName === undefined ? "Gravatar" : contractName;
-  return makeFakeSet(
-    addresses.map(function (address) { return {address: address, contractName: owner} })
-  );
-}`)
-
-// A real set over exactly these addresses, composed from the operations
-// production narrows a set with: the chain's contract sets merged, then sliced
-// down to the addresses asked for. An address several contracts index appears
-// once per owner, as it does in a partition that holds all of them.
-let realSetOf = (store: AddressStore.t, wanted: array<Address.t>) => {
-  let wanted = canonical(wanted)
-  let all =
-    store
-    ->AddressStore.contractCounts
-    ->Array.reduce(store->AddressStore.emptySet, (acc, {contractName}) =>
-      acc->AddressSet.merge(store->AddressStore.makeSet(~contractName))
-    )
-  all
-  ->AddressSet.addresses
-  ->Array.reduceWithIndex(store->AddressStore.emptySet, (acc, address, idx) =>
-    wanted->Array.includes(address)
-      ? acc->AddressSet.merge(all->AddressSet.slice(~offset=idx, ~limit=Some(1)))
-      : acc
-  )
-}
-
-let setOf = (~store: option<AddressStore.t>=?, ~contractName=?, addresses) =>
-  switch store {
-  | Some(store) => store->realSetOf(addresses)
-  | None => fakeSetOf(~contractName?, addresses)
-  }
-
-%%raw(`
-function makeFakeSet(unordered) {
-  // The store spells an address canonically (lowercase hex); fixtures are
-  // written with the checksummed mock addresses, so normalise here and both
-  // sides of a comparison meet.
-  unordered = unordered.map(function (e) {
-    return {address: e.address.toLowerCase(), contractName: e.contractName};
-  });
-  // Set order: fixtures are all config addresses, so they share an effective
-  // start block and order by address alone. Applied to both sides of an
-  // assertion, so a partition's contents compare regardless of how the fixture
-  // listed them; the ordering rule itself is asserted in address_store.rs.
-  var entries = unordered.slice().sort(function (a, b) {
-    return a.address < b.address ? -1 : 1;
-  });
-  // Enumerable, so vitest compares two of these by the addresses they hold.
-  var set = {addressList: entries.map(function (e) { return e.address })};
-  var methods = {
-    addresses: function () { return set.addressList },
-    size: function () { return entries.length },
-    contractNames: function () {
-      var names = [];
-      entries.forEach(function (e) {
-        if (!names.includes(e.contractName)) names.push(e.contractName);
-      });
-      return names;
-    },
-    countFor: function (name) {
-      return entries.filter(function (e) { return e.contractName === name }).length;
-    },
-    filterByContracts: function (names) {
-      return makeFakeSet(entries.filter(function (e) { return names.includes(e.contractName) }));
-    },
-    filterByRegistrationBlock: function () {
-      throw new Error(
-        "A fixture set doesn't know its registration blocks. Build it with ~store so rollback prunes it like production does."
-      );
-    },
-    slice: function (offset, limit) {
-      return makeFakeSet(entries.slice(offset, limit === undefined ? undefined : offset + limit));
-    },
-    merge: function (other) {
-      if (other.__entries === undefined) {
-        throw new Error(
-          "Can't merge a fixture set with a real one. Build the fixture with ~store so both belong to the same address store."
-        );
-      }
-      var merged = entries.slice();
-      other.__entries.forEach(function (e) {
-        if (!merged.some(function (m) { return m.address === e.address })) merged.push(e);
-      });
-      return makeFakeSet(merged);
-    },
-    startBlockGroups: function () { return [{startBlock: 0, count: entries.length}] },
-  };
-  var descriptors = {__entries: {value: entries}};
-  Object.keys(methods).forEach(function (key) { descriptors[key] = {value: methods[key]} });
-  Object.defineProperties(set, descriptors);
-  return set;
-}`)

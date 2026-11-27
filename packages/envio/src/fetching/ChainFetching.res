@@ -2,129 +2,119 @@
 // through the injected schedule* effects; everything else points at IndexerState
 // (state + transitions) and leaf effect modules.
 
-type partitionQueryResponse = {
-  chainId: ChainId.t,
-  response: Source.blockRangeFetchResponse,
-  query: FetchState.query,
-}
-
-// Applies a response the moment its source returns it: the page joins the
-// buffer, the partition advances, and the blocks holding a registering event
-// join the contractRegister backlog. No user code runs here.
-let onQueryResponse = (
+// Hands a response to the plan the moment its source returns it: the page
+// joins the buffer, the request's needs move to the block the source reached,
+// and the blocks holding a registering event join the contractRegister
+// backlog. No user code runs here.
+let onRequestResponse = (
   state: IndexerState.t,
-  {chainId, response, query}: partitionQueryResponse,
+  ~chainId,
+  ~request,
+  ~response: Source.blockRangeFetchResponse,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
   ~scheduleRollback,
   ~scheduleContractRegister,
-) =>
-  if !(state->IndexerState.isStale(~stateId)) {
-    let chainState = state->IndexerState.getChainState(~chainId)
-    let {page, latestFetchedBlockNumber, totalTimeElapsed, knownHeight} = response
+) => {
+  let chainState = state->IndexerState.getChainState(~chainId)
+  if state->IndexerState.isStale(~stateId) {
+    chainState->ChainState.abandonFetchRequest(~request)
+  } else {
+    let {page, latestFetchedBlockNumber, totalTimeElapsed} = response
+    let fromBlock = request->IndexingPlan.Request.fromBlock
     // Read before the merge, which moves the page's rows out.
     let firstEventBlockNumber =
       state->IndexerState.exitAfterFirstEventBlock
         ? page->BufferPage.firstRowBlockNumber->Null.toOption
         : None
 
-    let (reorgResult, merged) = chainState->ChainState.mergePage(~page, ~knownHeight)
+    switch chainState->ChainState.completeFetchRequest(~request, ~response) {
+    | None => ()
+    | Some(completion) =>
+      chainState->ChainState.recordBlockRangeFetch(
+        ~totalTimeElapsed,
+        ~numEvents=completion.rowsKept,
+        ~blockRangeSize=latestFetchedBlockNumber - fromBlock + 1,
+      )
+      chainState
+      ->ChainState.logger
+      ->Logger.trace(
+        "Finished querying",
+        ~params={
+          "fromBlock": fromBlock,
+          "toBlock": latestFetchedBlockNumber,
+          "numEvents": completion.rowsKept,
+          "numContractRegisterBlocks": completion.registeringBlockCount,
+        },
+      )
 
-    chainState->ChainState.recordBlockRangeFetch(
-      ~totalTimeElapsed,
-      ~numEvents=merged.rowsKept,
-      ~blockRangeSize=latestFetchedBlockNumber - query.fromBlock + 1,
-    )
-    chainState
-    ->ChainState.logger
-    ->Logger.trace(
-      "Finished querying",
-      ~params={
-        "partitionId": query.partitionId,
-        "fromBlock": query.fromBlock,
-        "toBlock": latestFetchedBlockNumber,
-        "numEvents": merged.rowsKept,
-        "numContractRegisterBlocks": merged.registeringBlockNumbers->Array.length,
-      },
-    )
+      let rollbackWithReorgDetectedBlockNumber = switch completion.mismatch {
+      | Some({blockNumber, storedHash, receivedHash}) => {
+          chainState
+          ->ChainState.logger
+          ->Logger.info(
+            `Blockchain reorg detected. ${chainState->ChainState.shouldRollbackOnReorg
+                ? "Initiating indexer rollback"
+                : "NOT initiating indexer rollback due to configuration"}.`,
+            ~params={
+              "blockNumber": blockNumber,
+              "indexedBlockHash": storedHash,
+              "receivedBlockHash": receivedHash,
+            },
+          )
+          chainState->ChainState.recordReorgDetected(~blockNumber)
 
-    let rollbackWithReorgDetectedBlockNumber = switch reorgResult {
-    | ReorgDetected({scannedBlock, receivedBlock}) => {
-        chainState
-        ->ChainState.logger
-        ->Logger.info(
-          `Blockchain reorg detected. ${chainState->ChainState.shouldRollbackOnReorg
-              ? "Initiating indexer rollback"
-              : "NOT initiating indexer rollback due to configuration"}.`,
-          ~params={
-            "blockNumber": scannedBlock.blockNumber,
-            "indexedBlockHash": scannedBlock.blockHash,
-            "receivedBlockHash": receivedBlock.blockHash,
-          },
-        )
-        chainState->ChainState.recordReorgDetected(~blockNumber=scannedBlock.blockNumber)
-
-        // Must agree with the `reportOnly` flag the merge was given: a page
-        // left out (rollback mode) needs the rollback to actually happen, or
-        // the stale stored hash re-reports forever.
-        if chainState->ChainState.shouldRollbackOnReorg {
-          Some(scannedBlock.blockNumber)
-        } else {
-          None
+          // With rollback on nothing of the page merged, so the rollback has
+          // to happen, or the stale stored hash re-reports forever.
+          chainState->ChainState.shouldRollbackOnReorg ? Some(blockNumber) : None
         }
+      | None => None
       }
-    | NoReorg => None
-    }
 
-    switch rollbackWithReorgDetectedBlockNumber {
-    | Some(reorgDetectedBlockNumber) =>
-      // Prepare every chain for the rollback: restore each events-processed
-      // counter (the previous, uncommitted rollback subtracted from all chains,
-      // so undo that before the new rollback subtracts again) and drop pending
-      // queries requested against the about-to-be-invalidated chain state.
-      let eventsProcessedDiffByChain = switch state->IndexerState.rollbackState {
-      | RollbackReady({eventsProcessedDiffByChain}) => Some(eventsProcessedDiffByChain)
-      | _ => None
-      }
-      state
-      ->IndexerState.chainStates
-      ->Utils.Dict.forEach(cs =>
-        cs->ChainState.prepareReorg(
-          ~eventsProcessedDiff=switch eventsProcessedDiffByChain {
-          | Some(byChain) =>
-            byChain->ChainId.Dict.dangerouslyGetNonOption((cs->ChainState.chainConfig).id)
-          | None => None
-          },
+      switch rollbackWithReorgDetectedBlockNumber {
+      | Some(reorgDetectedBlockNumber) =>
+        // Prepare every chain for the rollback: restore each events-processed
+        // counter (the previous, uncommitted rollback subtracted from all chains,
+        // so undo that before the new rollback subtracts again) and drop the
+        // requests asked against the about-to-be-invalidated chain state.
+        let eventsProcessedDiffByChain = switch state->IndexerState.rollbackState {
+        | RollbackReady({eventsProcessedDiffByChain}) => Some(eventsProcessedDiffByChain)
+        | _ => None
+        }
+        state
+        ->IndexerState.chainStates
+        ->Utils.Dict.forEach(cs =>
+          cs->ChainState.prepareReorg(
+            ~eventsProcessedDiff=switch eventsProcessedDiffByChain {
+            | Some(byChain) =>
+              byChain->ChainId.Dict.dangerouslyGetNonOption((cs->ChainState.chainConfig).id)
+            | None => None
+            },
+          )
         )
-      )
-      state->IndexerState.beginReorg(~chainId, ~blockNumber=reorgDetectedBlockNumber)
-      // Advances synchronously to FindingReorgDepth, so a concurrent rollback
-      // kick (eg from the processing loop quiescing) collapses into this one.
-      scheduleRollback()
-    // No rollback: either no reorg, or one this chain only reports. Either way
-    // the page has merged.
-    | None =>
-      chainState->ChainState.handleQueryResult(
-        ~query,
-        ~itemsCount=merged.rowsKept,
-        ~registeringBlockNumbers=merged.registeringBlockNumbers,
-        ~latestFetchedBlock=latestFetchedBlockNumber,
-        ~knownHeight,
-      )
-      // In auto-exit mode, set endBlock to the first event's block when events arrive.
-      switch firstEventBlockNumber {
-      | Some(blockNumber) => chainState->ChainState.setEndBlockToFirstEvent(~blockNumber)
-      | None => ()
+        state->IndexerState.beginReorg(~chainId, ~blockNumber=reorgDetectedBlockNumber)
+        // Advances synchronously to FindingReorgDepth, so a concurrent rollback
+        // kick (eg from the processing loop quiescing) collapses into this one.
+        scheduleRollback()
+      // No rollback: either no reorg, or one this chain only reports. Either way
+      // the page has merged.
+      | None =>
+        // In auto-exit mode, set endBlock to the first event's block when events arrive.
+        switch firstEventBlockNumber {
+        | Some(blockNumber) => chainState->ChainState.setEndBlockToFirstEvent(~blockNumber)
+        | None => ()
+        }
+        ChainMetadata.stage(state)
+        scheduleFetch()
+        if completion.registeringBlockCount > 0 {
+          scheduleContractRegister(chainId)
+        }
+        scheduleProcessing()
       }
-      ChainMetadata.stage(state)
-      scheduleFetch()
-      if merged.registeringBlockNumbers->Utils.Array.notEmpty {
-        scheduleContractRegister(chainId)
-      }
-      scheduleProcessing()
     }
   }
+}
 
 let finishWaitingForNewBlock = (
   state: IndexerState.t,
@@ -149,7 +139,7 @@ let finishWaitingForNewBlock = (
 let fetchChain = async (
   state: IndexerState.t,
   chainId,
-  ~action,
+  ~work,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
@@ -172,7 +162,8 @@ let fetchChain = async (
     // Owns its error boundary: launch doesn't catch, so any failure here (the
     // query, response handling, or dispatch itself) must stop the indexer.
     try {
-      await chainState->ChainState.dispatch(
+      await sourceManager->SourceManager.dispatch(
+        ~knownHeight=chainState->ChainState.knownHeight,
         ~waitForNewBlock=(~knownHeight) =>
           sourceManager->SourceManager.waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling),
         ~onNewBlock=(~knownHeight) =>
@@ -184,29 +175,31 @@ let fetchChain = async (
             ~scheduleFetch,
             ~scheduleProcessing,
           ),
-        ~executeQuery=async query => {
+        ~executeQuery=async request => {
           // Caught here (not just by the outer try) so the query promise never
           // rejects: dispatch spins a side-chain off it that would otherwise
           // become an unhandled rejection.
           try {
             switch await sourceManager->SourceManager.executeQuery(
-              ~query,
+              ~request,
               ~knownHeight=chainState->ChainState.knownHeight,
               ~isRealtime,
               ~reorgableFrom=chainState->ChainState.reorgableFrom(~isRealtime),
               ~isStale=() => state->IndexerState.isStale(~stateId),
             ) {
             | Some(response) =>
-              onQueryResponse(
+              onRequestResponse(
                 state,
-                {chainId, response, query},
+                ~chainId,
+                ~request,
+                ~response,
                 ~stateId,
                 ~scheduleFetch,
                 ~scheduleProcessing,
                 ~scheduleRollback,
                 ~scheduleContractRegister,
               )
-            | None => ()
+            | None => chainState->ChainState.abandonFetchRequest(~request)
             }
           } catch {
           | exn =>
@@ -216,7 +209,7 @@ let fetchChain = async (
             )
           }
         },
-        ~action,
+        ~work,
         ~stateId,
       )
     } catch {

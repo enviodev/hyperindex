@@ -14,20 +14,19 @@ pub struct SyncConfig {
     pub backoff_millis: u64,
 }
 
-/// Per-partition adaptive block interval (AIMD), keyed by partition id. The
-/// `source_max` ceiling only ever tightens, set by structural provider limits
-/// ("limited to N blocks"). A partition's own entry can go stale when
-/// partitions merge/split — acceptable, it re-adapts.
+/// Adaptive block interval (AIMD) per request stream: a need's index, or the
+/// head stream's key. The `source_max` ceiling only ever tightens, set by
+/// structural provider limits ("limited to N blocks").
 /// See: <https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease>
 pub struct IntervalState {
-    partitions: Mutex<HashMap<String, u64>>,
+    by_stream: Mutex<HashMap<u32, u64>>,
     source_max: Mutex<Option<u64>>,
 }
 
 impl IntervalState {
     pub fn new() -> Self {
         Self {
-            partitions: Mutex::new(HashMap::new()),
+            by_stream: Mutex::new(HashMap::new()),
             source_max: Mutex::new(None),
         }
     }
@@ -36,45 +35,42 @@ impl IntervalState {
         self.source_max.lock().unwrap().unwrap_or(ceiling)
     }
 
-    /// Reads this partition's suggested interval, clamped to the source-wide
+    /// Reads this stream's suggested interval, clamped to the source-wide
     /// ceiling. Returns the clamped interval alongside the ceiling it was
     /// clamped to, so callers can reuse the ceiling without a second lock.
-    pub fn suggested_interval(&self, partition_id: &str, cfg: &SyncConfig) -> (u64, u64) {
+    pub fn suggested_interval(&self, stream: u32, cfg: &SyncConfig) -> (u64, u64) {
         let source_max = self.source_max_interval(cfg.interval_ceiling);
-        let partition = self
-            .partitions
+        let interval = self
+            .by_stream
             .lock()
             .unwrap()
-            .get(partition_id)
+            .get(&stream)
             .copied()
             .unwrap_or(cfg.initial_block_interval);
-        (partition.min(source_max), source_max)
+        (interval.min(source_max), source_max)
     }
 
-    /// Additive increase: grows this partition's interval, capped at `source_max`.
+    /// Additive increase: grows this stream's interval, capped at `source_max`.
     pub fn grow(
         &self,
-        partition_id: &str,
+        stream: u32,
         executed_interval: u64,
         cfg: &SyncConfig,
         source_max: u64,
     ) {
-        self.partitions.lock().unwrap().insert(
-            partition_id.to_string(),
+        self.by_stream.lock().unwrap().insert(
+            stream,
             (executed_interval + cfg.acceleration_additive).min(source_max),
         );
     }
 
-    pub fn set_partition(&self, partition_id: &str, interval: u64) {
-        self.partitions
-            .lock()
-            .unwrap()
-            .insert(partition_id.to_string(), interval);
+    pub fn set(&self, stream: u32, interval: u64) {
+        self.by_stream.lock().unwrap().insert(stream, interval);
     }
 
     /// A provider reported a structural, source-wide cap — tighten (never
     /// loosen) the ceiling and return the resulting value. The current ceiling
-    /// is read under the same lock that writes it: partitions fail
+    /// is read under the same lock that writes it: streams fail
     /// concurrently, and one holding a copy read before another's write would
     /// otherwise raise a cap that was just lowered. `ceiling` is only the
     /// configured default, for when nothing has capped the source yet.
@@ -120,18 +116,18 @@ mod tests {
             interval_ceiling: 5_000,
             ..test_config()
         };
-        assert_eq!(state.suggested_interval("0", &cfg), (5_000, 5_000));
+        assert_eq!(state.suggested_interval(0, &cfg), (5_000, 5_000));
     }
 
     #[test]
     fn grow_caps_at_source_max() {
         let state = IntervalState::new();
         let cfg = test_config();
-        state.grow("0", 9_800, &cfg, 10_000);
-        let capped = state.suggested_interval("0", &cfg).0;
-        state.grow("0", 9_400, &cfg, 10_000);
+        state.grow(0, 9_800, &cfg, 10_000);
+        let capped = state.suggested_interval(0, &cfg).0;
+        state.grow(0, 9_400, &cfg, 10_000);
         assert_eq!(
-            (capped, state.suggested_interval("0", &cfg).0),
+            (capped, state.suggested_interval(0, &cfg).0),
             (10_000, 9_900)
         );
     }
@@ -143,13 +139,13 @@ mod tests {
         // one already lowered — the caller's copy is stale by then.
         let state = IntervalState::new();
         let cfg = test_config();
-        let (_, first_read) = state.suggested_interval("a", &cfg);
-        let (_, second_read) = state.suggested_interval("b", &cfg);
+        let (_, first_read) = state.suggested_interval(0, &cfg);
+        let (_, second_read) = state.suggested_interval(1, &cfg);
         state.tighten_source_max(first_read, 1_000);
         assert_eq!(
             (
                 state.tighten_source_max(second_read, 5_000),
-                state.suggested_interval("a", &cfg).1
+                state.suggested_interval(0, &cfg).1
             ),
             (1_000, 1_000)
         );
@@ -164,16 +160,14 @@ mod tests {
     }
 
     #[test]
-    fn partitions_are_independent() {
+    fn streams_are_independent() {
         let state = IntervalState::new();
         let cfg = test_config();
-        state.set_partition("a", 2_000);
-        state.set_partition("b", 3_000);
-        assert_eq!(state.suggested_interval("a", &cfg).0, 2_000);
-        assert_eq!(state.suggested_interval("b", &cfg).0, 3_000);
+        state.set(0, 2_000);
+        state.set(1, 3_000);
         assert_eq!(
-            state.suggested_interval("c", &cfg).0,
-            cfg.initial_block_interval
+            [0, 1, 2].map(|stream| state.suggested_interval(stream, &cfg).0),
+            [2_000, 3_000, cfg.initial_block_interval]
         );
     }
 }

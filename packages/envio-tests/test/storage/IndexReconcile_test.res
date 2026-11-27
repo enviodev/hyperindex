@@ -96,7 +96,6 @@ let describeIndex = (index: PgCatalog.index) => (
 )
 
 let fetchToHead: MockSource.expectedItemsQuery = {
-  partitionId: "0",
   fromBlock: 1,
   reply: Respond({items: [], latestFetchedBlockNumber: 100}),
 }
@@ -275,7 +274,6 @@ describe("Indexes on a database that already holds some", () => {
       source.resolveGetHeightOrThrow(100)
       await source.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           reply: Respond({
             items: [{event: "Gravatar.TestEvent", blockNumber: 10, logIndex: 0}],

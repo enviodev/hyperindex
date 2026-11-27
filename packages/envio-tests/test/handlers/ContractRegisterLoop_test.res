@@ -55,7 +55,6 @@ describe("contractRegister loop", () => {
       sourceMock.resolveGetHeightOrThrow(2000)
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           reply: Respond({
             items: [heldRegister(~blockNumber=3, ~gate, [address(1)])],
@@ -81,14 +80,12 @@ describe("contractRegister loop", () => {
       sourceMock.resolveGetHeightOrThrow(2000)
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           reply: Respond({items: [], latestFetchedBlockNumber: 499}),
         },
       ])
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 500,
           reply: Respond({
             items: [heldRegister(~blockNumber=620, ~gate, [address(1)])],
@@ -100,7 +97,6 @@ describe("contractRegister loop", () => {
       await Scenario.waitUntil(() => gate.entered.contents > 0, ~message="the contractRegister")
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 651,
           reply: Respond({
             items: [],
@@ -130,7 +126,6 @@ describe("contractRegister loop", () => {
       sourceMock.resolveGetHeightOrThrow(2000)
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           reply: Respond({items: [], latestFetchedBlockNumber: 499}),
         },
@@ -138,7 +133,6 @@ describe("contractRegister loop", () => {
       // One run reads both blocks; the rollback keeps 550 and drops 620.
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 500,
           reply: Respond({
             items: [
@@ -153,7 +147,6 @@ describe("contractRegister loop", () => {
       await Scenario.waitUntil(() => gate.entered.contents > 1, ~message="the contractRegister")
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 651,
           reply: Respond({
             items: [],
@@ -180,8 +173,8 @@ describe("contractRegister loop", () => {
       await indexer.getRollbackReadyPromise()
       sourceMock.drainPendingItemsQueries()
       await sourceMock.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       t.expect(
         sourceMock.pendingItemsQueries

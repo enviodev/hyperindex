@@ -22,6 +22,7 @@ pub mod executor;
 mod hex;
 mod hypersync_http;
 mod indexer_env;
+mod indexing_plan;
 mod js_value;
 #[cfg(test)]
 mod layers;

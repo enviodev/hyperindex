@@ -84,7 +84,7 @@ describe("A failing scenario body", () => {
 
 Mock source for chain 1 at the failure:
   pending item queries:
-    {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}
+    {fromBlock: 1, toBlock: Bounded(100), retryCount: 0}
   pending block-hash lookups: none
   height calls taken: 1`),
       ),
@@ -111,7 +111,7 @@ Mock source for chain 1 at the failure:
 
 Mock source for chain 1 at the failure:
   pending item queries:
-    {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}
+    {fromBlock: 1, toBlock: Bounded(100), retryCount: 0}
   pending block-hash lookups: none
   height calls taken: 1`),
       ),

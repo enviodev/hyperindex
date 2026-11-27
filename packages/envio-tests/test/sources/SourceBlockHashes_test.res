@@ -84,14 +84,6 @@ let addressStore = TestAddresses.makeStore(
     {address: uniswapV2FactoryAddress, contractName: "UniswapV2Factory", registrationBlock: -1},
   ],
 )
-let factorySet = addressStore->AddressStore.makeSet(~contractName="UniswapV2Factory")
-
-let makeSelection = (): FetchState.selection => {
-  onEventRegistrations: [(pairCreatedRegistration :> Internal.onEventRegistration)],
-  onBlockRegistrations: [],
-  onTransactionRegistrations: [],
-  dependsOnAddresses: true,
-}
 
 let makeHyperSyncSource = () =>
   TestSources.hyperSync(
@@ -116,14 +108,17 @@ let makeRpcSource = () =>
 let invoke = async (source: Source.t, ~fromBlock, ~toBlock) =>
   switch (
     await source.getItems(
-      ~reorgableFrom=None,
-      ~fromBlock,
+      ~request=TestSources.request(
+        ~fromBlock,
+        ~toBlock,
+        ~addressStore,
+        ~contractNames=["UniswapV2Factory"],
+        ~onEventRegistrations=[(pairCreatedRegistration :> Internal.onEventRegistration)],
+      ),
       ~toBlock=Some(toBlock),
-      ~addressSet=factorySet,
-      ~knownHeight=toBlock + 1000,
-      ~partitionId="0",
-      ~selection=makeSelection(),
       ~retry=0,
+      ~reorgableFrom=None,
+      ~knownHeight=toBlock + 1000,
     )
   ).result {
   | Ok(itemsPage) => itemsPage

@@ -124,18 +124,16 @@ describe("Wildcard and address-filtered partitions", () => {
         sourceMock.pendingItemsQueries->summarizeSelections,
       )).toEqual((
         [
-          {partitionId: "0", fromBlock: 0, toBlock: Bounded(800), addresses: []},
-          {partitionId: "1", fromBlock: 0, toBlock: Bounded(800), addresses: [factory0, factory1]},
+          {fromBlock: 0, toBlock: Bounded(800), addresses: []},
+          {fromBlock: 0, toBlock: Bounded(800), addresses: [factory0, factory1]},
         ],
         [
           {
-            partitionId: "0",
             dependsOnAddresses: false,
             events: ["Gravatar.TestEvent", "Gravatar.TestEvent"],
           },
           // A wildcard event filtered by addresses goes with the address queries.
           {
-            partitionId: "1",
             dependsOnAddresses: true,
             events: [
               "Factory.Register",
@@ -156,9 +154,8 @@ describe("Wildcard and address-filtered partitions", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       await sourceMock.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
         {
-          partitionId: "1",
           reply: Respond({
             items: [
               register(~blockNumber=3, "Gravatar", gravatar4),
@@ -175,28 +172,26 @@ describe("Wildcard and address-filtered partitions", () => {
       // registrations land once the contractRegister run that follows ends.
       await indexer.waitUntilIdle()
       await sourceMock.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", fromBlock: 101, reply: LeavePending},
+        {reply: LeavePending},
+        {fromBlock: 101, reply: LeavePending},
         {reply: LeavePending},
       ])
       t.expect(
         sourceMock.pendingItemsQueries->summarize,
         ~message="the Gravatar registration is fetched nowhere: its only events are wildcard",
       ).toEqual([
-        {partitionId: "0", fromBlock: 0, toBlock: Bounded(800), addresses: []},
+        {fromBlock: 0, toBlock: Bounded(800), addresses: []},
         {
-          partitionId: "1",
           fromBlock: 101,
           toBlock: Bounded(800),
           addresses: [factory0, factory1],
         },
         {
-          partitionId: "2",
           fromBlock: 3,
           toBlock: Bounded(800),
           addresses: [simpleNft1, simpleNft2, simpleNft3],
         },
-        {partitionId: "3", fromBlock: 6, toBlock: Bounded(800), addresses: [factory5]},
+        {fromBlock: 6, toBlock: Bounded(800), addresses: [factory5]},
       ])
     },
   )
@@ -253,7 +248,6 @@ indexer.onEvent(
       )).toEqual((
         [
           {
-            partitionId: "0",
             fromBlock: 0,
             toBlock: Bounded(800),
             addresses: [contractA, contractB],
@@ -261,7 +255,6 @@ indexer.onEvent(
         ],
         [
           {
-            partitionId: "0",
             dependsOnAddresses: true,
             events: [
               "ContractA.Transfer",

@@ -99,7 +99,6 @@ let registerInReorgWindow = async (sourceMock: MockSource.t) => {
   sourceMock.resolveGetHeightOrThrow(2000)
   await sourceMock.expectItemsQueries([
     {
-      partitionId: "0",
       fromBlock: 1,
       reply: Respond({
         items: [registerAt(3, [address(1), address(2)])],
@@ -108,12 +107,11 @@ let registerInReorgWindow = async (sourceMock: MockSource.t) => {
     },
   ])
   await sourceMock.expectItemsQueries([
-    {partitionId: "2", fromBlock: 3, toBlock: Bounded(499), reply: Respond({items: []})},
-    {partitionId: "0", fromBlock: 6, toBlock: Bounded(499), reply: Respond({items: []})},
+    {fromBlock: 3, toBlock: Bounded(499), reply: Respond({items: []})},
+    {fromBlock: 6, toBlock: Bounded(499), reply: Respond({items: []})},
   ])
   await sourceMock.expectItemsQueries([
     {
-      partitionId: "2",
       fromBlock: 500,
       reply: Respond({
         items: [registerAt(620, [address(3)])],
@@ -121,7 +119,7 @@ let registerInReorgWindow = async (sourceMock: MockSource.t) => {
         latestFetchedBlockNumber: 650,
       }),
     },
-    {partitionId: "0", fromBlock: 500, reply: LeavePending},
+    {fromBlock: 500, reply: LeavePending},
   ])
 }
 
@@ -142,8 +140,8 @@ describe("FetchState client-side filtering across a rollback", () => {
       let sourceMock = source(1337)
       await sourceMock->registerInReorgWindow
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 620, reply: LeavePending},
-        {partitionId: "2", fromBlock: 651, reply: reorgAbove650},
+        {fromBlock: 620, reply: LeavePending},
+        {fromBlock: 651, reply: reorgAbove650},
       ])
       await sourceMock.expectBlockHashLookup({
         blockNumbers: [620, 630],
@@ -151,9 +149,9 @@ describe("FetchState client-side filtering across a rollback", () => {
       })
       await indexer.getRollbackReadyPromise()
       await sourceMock.expectItemsQueries([
-        {partitionId: "2", fromBlock: 620, reply: LeavePending},
-        {partitionId: "1", fromBlock: 631, reply: LeavePending},
-        {partitionId: "0", fromBlock: 500, reply: LeavePending},
+        {fromBlock: 620, reply: LeavePending},
+        {fromBlock: 631, reply: LeavePending},
+        {fromBlock: 500, reply: LeavePending},
       ])
 
       t.expect(
@@ -180,15 +178,14 @@ describe("FetchState client-side filtering across a rollback", () => {
       await sourceMock->registerInReorgWindow
       await sourceMock.expectItemsQueries([
         {
-          partitionId: "3",
           fromBlock: 620,
           reply: Respond({items: [], blocks: [{blockNumber: 640}], latestFetchedBlockNumber: 645}),
         },
-        {partitionId: "2", fromBlock: 651, reply: LeavePending},
+        {fromBlock: 651, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
-        {partitionId: "3", fromBlock: 646, reply: LeavePending},
-        {partitionId: "2", fromBlock: 651, reply: reorgAbove650},
+        {fromBlock: 646, reply: LeavePending},
+        {fromBlock: 651, reply: reorgAbove650},
       ])
       await sourceMock.expectBlockHashLookup({
         blockNumbers: [619, 620, 630, 640, 645],
@@ -196,8 +193,8 @@ describe("FetchState client-side filtering across a rollback", () => {
       })
       await indexer.getRollbackReadyPromise()
       await sourceMock.expectItemsQueries([
-        {partitionId: "1", fromBlock: 641, reply: LeavePending},
-        {partitionId: "0", fromBlock: 500, reply: LeavePending},
+        {fromBlock: 641, reply: LeavePending},
+        {fromBlock: 500, reply: LeavePending},
       ])
 
       t.expect(

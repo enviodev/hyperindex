@@ -244,7 +244,7 @@ let reorgAt = async (
     }),
   }
   await source.expectItemsQueries(
-    chunksAbove ? [reorg, {partitionId: "0", reply: LeavePending}] : [reorg],
+    chunksAbove ? [reorg, {reply: LeavePending}] : [reorg],
   )
   // The depth search drops the source's orphaned-chain state before it reads
   // any hash, so this is the one point both shapes of the search pass through —
@@ -293,7 +293,7 @@ let reindexBlock102 = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~
 // A chain fans the range it re-fetches out into chunks, issued over several
 // ticks, lowest first. Where it picks back up is the lowest block it asks for.
 let firstBlockAskedFor = async (source: MockSource.t) => {
-  await source.expectItemsQueries([{partitionId: "0", reply: LeavePending}])
+  await source.expectItemsQueries([{reply: LeavePending}])
   source.pendingItemsQueries
   ->Array.map(query => query.fromBlock)
   ->Array.toSorted(Int.compare)
@@ -779,7 +779,7 @@ describe("Isolated multichain rollback", () => {
       // Only chain 100 progresses, so its batch is what carries the diff.
       await source100.expectItemsQueries([
         {coversBlock: 103, reply: Respond({items: [], latestFetchedBlockNumber: 104})},
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
 
@@ -1065,7 +1065,7 @@ describe("Isolated multichain rollback", () => {
       // and it carries on past the id the diff gave chain 1337.
       await source100.expectItemsQueries([
         {coversBlock: 103, reply: Respond({items: [], latestFetchedBlockNumber: 104})},
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
       await source100.expectItemsQueries([
@@ -1076,7 +1076,7 @@ describe("Isolated multichain rollback", () => {
             latestFetchedBlockNumber: 105,
           }),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
@@ -1152,7 +1152,7 @@ describe("Isolated multichain rollback", () => {
             latestFetchedBlockNumber: 103,
           }),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
 
@@ -1168,7 +1168,7 @@ describe("Isolated multichain rollback", () => {
       // its own ids never reach the one the diff carries.
       await source100.expectItemsQueries([
         {coversBlock: 103, reply: Respond({items: [], latestFetchedBlockNumber: 104})},
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()

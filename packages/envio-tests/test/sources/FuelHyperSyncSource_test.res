@@ -3,21 +3,18 @@ open Vitest
 // A HyperFuel source against a local server answering at the HTTP level: what
 // the source manager gets for the statuses the server answers with.
 
-let fetch = (source: Source.t, ~addressSet) =>
+let fetch = (source: Source.t, ~addressing) =>
   source.getItems(
-    ~fromBlock=10,
+    ~request=TestSources.request(
+      ~fromBlock=10,
+      ~toBlock=11,
+      ~addressStore=addressing->Pair.first,
+      ~contractNames=addressing->Pair.second,
+    ),
     ~toBlock=Some(11),
-    ~addressSet,
+    ~retry=0,
     ~reorgableFrom=None,
     ~knownHeight=100,
-    ~partitionId="mock-partition",
-    ~selection={
-      dependsOnAddresses: false,
-      onEventRegistrations: [],
-      onBlockRegistrations: [],
-      onTransactionRegistrations: [],
-    },
-    ~retry=0,
   )
 
 describe("HyperFuel source responses", () => {
@@ -40,7 +37,7 @@ describe("HyperFuel source responses", () => {
           headers: dict{"x-ratelimit-reset": "3", "x-ratelimit-remaining": "0"},
           body: "slow down",
         })
-        (await source->fetch(~addressSet=addressStore->AddressStore.emptySet)).result->Result.map(
+        (await source->fetch(~addressing=(addressStore, []))).result->Result.map(
           ({latestFetchedBlockNumber}) => latestFetchedBlockNumber,
         )
       },

@@ -5,6 +5,7 @@ type t
 
 let make: (
   ~chainStates: dict<ChainState.t>,
+  ~indexingPlan: IndexingPlan.t,
   ~isRealtime: bool,
   ~targetBufferSize: int,
   ~holdRealtime: bool,
@@ -48,5 +49,5 @@ let reportFinished: t => unit
 // Fetch control.
 let checkAndFetch: (
   t,
-  ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
+  ~dispatchChain: (~chainId: ChainId.t, ~work: IndexingPlan.chainFetchWork) => promise<unit>,
 ) => promise<unit>

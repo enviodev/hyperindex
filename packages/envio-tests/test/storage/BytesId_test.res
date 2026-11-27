@@ -171,7 +171,7 @@ let rollback = async (
         prevRangeLastBlock: {blockNumber: 102, blockHash: "0x102a"},
       }),
     },
-    {partitionId: "0", reply: LeavePending},
+    {reply: LeavePending},
   ])
   await source.expectBlockHashLookup({
     blockNumbers: [101],

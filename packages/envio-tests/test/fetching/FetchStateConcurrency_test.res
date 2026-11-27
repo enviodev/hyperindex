@@ -98,7 +98,7 @@ describe("FetchState per-chain concurrency over the indexer loop", () => {
         ),
       )
       await mock.expectItemsQueries([
-        {partitionId: "29", fromBlock: 11, reply: LeavePending},
+        {fromBlock: 11, reply: LeavePending},
         {reply: LeavePending},
       ])
       let afterThirtyResponses = mock->takeNewQueries(~indexer, ~seen)
@@ -149,18 +149,16 @@ describe("FetchState per-chain concurrency over the indexer loop", () => {
       mock.resolveGetHeightOrThrow(100_000)
       await mock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           reply: Respond({
             items: itemsAt(~blockNumber=10, ~count=1000),
             latestFetchedBlockNumber: 10,
           }),
         },
-        {partitionId: "1", fromBlock: 1, reply: LeavePending},
+        {fromBlock: 1, reply: LeavePending},
       ])
       await mock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 11,
           reply: Respond({
             items: itemsAt(~blockNumber=15, ~count=1000),
@@ -169,8 +167,8 @@ describe("FetchState per-chain concurrency over the indexer loop", () => {
         },
       ])
       await mock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 21, reply: LeavePending},
-        {partitionId: "0", reply: LeavePending},
+        {fromBlock: 21, reply: LeavePending},
+        {reply: LeavePending},
       ])
       let seen = []
       let pipeline =
@@ -179,13 +177,12 @@ describe("FetchState per-chain concurrency over the indexer loop", () => {
         Array.fromInitializer(
           ~length=11,
           index => {
-            MockSource.partitionId: "0",
-            fromBlock: 39 + index * 18,
+            MockSource.fromBlock: 39 + index * 18,
             reply: Respond({items: []}),
           },
         ),
       )
-      await mock.expectItemsQueries([{partitionId: "0", reply: LeavePending}])
+      await mock.expectItemsQueries([{reply: LeavePending}])
       t.expect((pipeline, mock->takeNewQueries(~indexer, ~seen))).toEqual((
         // The budget affords 17 chunks of 1800 items; the pipeline stops at 12.
         Array.fromInitializer(
@@ -222,21 +219,20 @@ describe("FetchState per-chain concurrency over the indexer loop", () => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(100_000)
       await mock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 1, reply: LeavePending},
-        {partitionId: "1", fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 50})},
+        {fromBlock: 1, reply: LeavePending},
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 50})},
       ])
       await mock.expectItemsQueries([
         {
-          partitionId: "0",
           fromBlock: 1,
           reply: Respond({
             items: itemsAt(~blockNumber=80, ~count=1),
             latestFetchedBlockNumber: 100,
           }),
         },
-        {partitionId: "1", fromBlock: 51, reply: LeavePending},
+        {fromBlock: 51, reply: LeavePending},
       ])
-      await mock.expectItemsQueries([{partitionId: "0", fromBlock: 101, reply: LeavePending}])
+      await mock.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
       await indexer.getBatchWritePromise()
       t.expect(await indexer.metric("envio_progress_block")).toEqual([
         {value: "50", labels: dict{"chainId": "1"}},

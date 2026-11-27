@@ -77,11 +77,10 @@ let upTo = latestFetchedBlockNumber => MockSource.Respond({items: [], latestFetc
 // holds address 3, registered at block 9802 and fetched to it.
 let reachTwoPartitions = async (~indexer: IndexerRunner.t, ~sync: MockSource.t) => {
   sync.resolveGetHeightOrThrow(10_000)
-  await sync.expectItemsQueries([{partitionId: "0", toBlock: Bounded(9800), reply: upTo(9800)}])
+  await sync.expectItemsQueries([{toBlock: Bounded(9800), reply: upTo(9800)}])
   await indexer.getBatchWritePromise()
   await sync.expectItemsQueries([
     {
-      partitionId: "0",
       reply: Respond({
         items: [
           registering(~blockNumber=9801, [address1]),
@@ -94,32 +93,30 @@ let reachTwoPartitions = async (~indexer: IndexerRunner.t, ~sync: MockSource.t) 
   await indexer.waitUntilIdle()
   await sync.expectItemsQueries([
     {
-      partitionId: "1",
       reply: Respond({
         items: [registering(~blockNumber=9802, ~logIndex=1, ~srcAddress=address1, [address3])],
         latestFetchedBlockNumber: 9810,
       }),
     },
-    {partitionId: "0", reply: LeavePending},
+    {reply: LeavePending},
   ])
   await indexer.waitUntilIdle()
   await sync.expectItemsQueries([
-    {partitionId: "2", reply: upTo(9802)},
-    {partitionId: "0", reply: LeavePending},
-    {partitionId: "1", reply: LeavePending},
+    {reply: upTo(9802)},
+    {reply: LeavePending},
+    {reply: LeavePending},
   ])
   await indexer.getBatchWritePromise()
   await sync.expectItemsQueries([
     {
-      partitionId: "0",
       reply: Respond({
         items: [],
         latestFetchedBlockNumber: 9820,
         prevRangeLastBlock: {blockNumber: 9810, blockHash: "0x9810a"},
       }),
     },
-    {partitionId: "1", reply: LeavePending},
-    {partitionId: "2", reply: LeavePending},
+    {reply: LeavePending},
+    {reply: LeavePending},
   ])
 }
 
@@ -162,12 +159,11 @@ describe("FetchState partitions across a rollback", () => {
     async (~t, ~indexer, ~source) => {
       t.expect(await queriesAfterRollback(~indexer, ~sync=source(1337), ~validUpTo=9802)).toEqual([
         {
-          partitionId: "1",
           fromBlock: 9803,
           toBlock: Unbounded,
           addresses: [staticAddress, address1, address2],
         },
-        {partitionId: "0", fromBlock: 9803, toBlock: Unbounded, addresses: [address3]},
+        {fromBlock: 9803, toBlock: Unbounded, addresses: [address3]},
       ])
     },
   )
@@ -179,7 +175,6 @@ describe("FetchState partitions across a rollback", () => {
     async (~t, ~indexer, ~source) => {
       t.expect(await queriesAfterRollback(~indexer, ~sync=source(1337), ~validUpTo=9801)).toEqual([
         {
-          partitionId: "0",
           fromBlock: 9802,
           toBlock: Unbounded,
           addresses: [staticAddress, address1],
@@ -194,7 +189,7 @@ describe("FetchState partitions across a rollback", () => {
     ~maxAddrInPartition=3,
     async (~t, ~indexer, ~source) => {
       t.expect(await queriesAfterRollback(~indexer, ~sync=source(1337), ~validUpTo=9800)).toEqual([
-        {partitionId: "0", fromBlock: 9801, toBlock: Unbounded, addresses: [staticAddress]},
+        {fromBlock: 9801, toBlock: Unbounded, addresses: [staticAddress]},
       ])
     },
   )
@@ -247,11 +242,10 @@ indexer.contractRegister(
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(10_000)
-      await sync.expectItemsQueries([{partitionId: "0", toBlock: Bounded(9800), reply: upTo(9800)}])
+      await sync.expectItemsQueries([{toBlock: Bounded(9800), reply: upTo(9800)}])
       await indexer.getBatchWritePromise()
       await sync.expectItemsQueries([
         {
-          partitionId: "0",
           reply: Respond({
             items: [
               {
@@ -266,21 +260,20 @@ indexer.contractRegister(
         },
       ])
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       let beforeReorg = sync->pendingShapes
       await indexer.getBatchWritePromise()
       await sync.expectItemsQueries([
         {
-          partitionId: "0",
           reply: Respond({
             items: [],
             latestFetchedBlockNumber: 9820,
             prevRangeLastBlock: {blockNumber: 9810, blockHash: "0x9810a"},
           }),
         },
-        {partitionId: "1", reply: LeavePending},
+        {reply: LeavePending},
       ])
       let inFlightBeforeReorg = sync.pendingItemsQueries->Array.copy
       await sync.expectBlockHashLookup({
@@ -303,10 +296,10 @@ indexer.contractRegister(
         )
       t.expect((beforeReorg, afterRollback)).toEqual((
         [
-          {partitionId: "0", fromBlock: 9811, toBlock: Unbounded, addresses: []},
-          {partitionId: "1", fromBlock: 9802, toBlock: Unbounded, addresses: [address2]},
+          {fromBlock: 9811, toBlock: Unbounded, addresses: []},
+          {fromBlock: 9802, toBlock: Unbounded, addresses: [address2]},
         ],
-        [{partitionId: "0", fromBlock: 9801, toBlock: Unbounded, addresses: []}],
+        [{fromBlock: 9801, toBlock: Unbounded, addresses: []}],
       ))
     },
   )

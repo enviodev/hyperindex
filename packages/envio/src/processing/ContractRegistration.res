@@ -70,7 +70,6 @@ let runChain = async (state: IndexerState.t, ~chainId, ~runtime, ~stateId) => {
       "items": items->Array.length,
       "registrations": registrations->Array.length,
       "stale": state->IndexerState.isStale(~stateId),
-      "backlog": (chainState->ChainState.fetchStateOf).contractRegisterBacklog,
     },
   )
   if !(state->IndexerState.isStale(~stateId)) {

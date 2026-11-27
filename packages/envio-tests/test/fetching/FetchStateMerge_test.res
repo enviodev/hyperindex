@@ -83,7 +83,6 @@ describe("FetchState partition merging over the indexer loop", () => {
       sync.resolveGetHeightOrThrow(10_000)
       await sync.expectItemsQueries([
         {
-          partitionId: "0",
           reply: Respond({
             items: [
               registering(~blockNumber=1, [address1]),
@@ -95,39 +94,36 @@ describe("FetchState partition merging over the indexer loop", () => {
       ])
       await indexer.waitUntilIdle()
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       let afterFirstRegistrations = sync->pendingShapes
 
       await sync.expectItemsQueries([
         {
-          partitionId: "1",
           reply: Respond({
             items: [registering(~blockNumber=2, ~logIndex=1, ~srcAddress=address1, [address3])],
             latestFetchedBlockNumber: 10,
           }),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.waitUntilIdle()
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
-        {partitionId: "2", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.advanceTime(1000)
 
       t.expect((afterFirstRegistrations, sync->pendingShapes)).toEqual((
         [
           {
-            partitionId: "0",
             fromBlock: 11,
             toBlock: Unbounded,
             addresses: [staticAddress],
           },
           {
-            partitionId: "1",
             fromBlock: 1,
             toBlock: Unbounded,
             addresses: [address1, address2],
@@ -135,19 +131,16 @@ describe("FetchState partition merging over the indexer loop", () => {
         ],
         [
           {
-            partitionId: "0",
             fromBlock: 11,
             toBlock: Unbounded,
             addresses: [staticAddress],
           },
           {
-            partitionId: "1",
             fromBlock: 11,
             toBlock: Unbounded,
             addresses: [address1, address2],
           },
           {
-            partitionId: "2",
             fromBlock: 2,
             toBlock: Unbounded,
             addresses: [address3],
@@ -166,7 +159,6 @@ describe("FetchState partition merging over the indexer loop", () => {
       sync.resolveGetHeightOrThrow(10_000)
       await sync.expectItemsQueries([
         {
-          partitionId: "0",
           reply: Respond({
             items: [registering(~blockNumber=100, [address1])],
             latestFetchedBlockNumber: 500,
@@ -178,38 +170,35 @@ describe("FetchState partition merging over the indexer loop", () => {
       // while that query is.
       await indexer.waitUntilIdle()
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       let afterFirstRegistration = sync->pendingShapes
 
       await sync.expectItemsQueries([
         {
-          partitionId: "1",
           reply: Respond({
             items: [registering(~blockNumber=200, ~srcAddress=address1, [address2])],
             latestFetchedBlockNumber: 400,
           }),
         },
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
       ])
       await indexer.waitUntilIdle()
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
-        {partitionId: "2", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
 
       t.expect((afterFirstRegistration, sync->pendingShapes)).toEqual((
         [
           {
-            partitionId: "0",
             fromBlock: 501,
             toBlock: Unbounded,
             addresses: [staticAddress],
           },
           {
-            partitionId: "1",
             fromBlock: 100,
             toBlock: Unbounded,
             addresses: [address1],
@@ -217,19 +206,16 @@ describe("FetchState partition merging over the indexer loop", () => {
         ],
         [
           {
-            partitionId: "0",
             fromBlock: 501,
             toBlock: Unbounded,
             addresses: [staticAddress],
           },
           {
-            partitionId: "1",
             fromBlock: 401,
             toBlock: Unbounded,
             addresses: [address1],
           },
           {
-            partitionId: "2",
             fromBlock: 200,
             toBlock: Unbounded,
             addresses: [address2],
@@ -291,14 +277,13 @@ indexer.contractRegister({ contract: "ContractA", event: "Registered" }, async (
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(10_000)
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       let initial = sync->pendingShapes
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
+        {reply: LeavePending},
         {
-          partitionId: "1",
           reply: Respond({
             items: [
               {
@@ -314,19 +299,19 @@ indexer.contractRegister({ contract: "ContractA", event: "Registered" }, async (
         },
       ])
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: LeavePending},
-        {partitionId: "1", reply: LeavePending},
-        {partitionId: "2", reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
+        {reply: LeavePending},
       ])
       t.expect((initial, sync->pendingShapes)).toEqual((
         [
-          {partitionId: "0", fromBlock: 0, toBlock: Unbounded, addresses: []},
-          {partitionId: "1", fromBlock: 0, toBlock: Unbounded, addresses: [contractAAddress]},
+          {fromBlock: 0, toBlock: Unbounded, addresses: []},
+          {fromBlock: 0, toBlock: Unbounded, addresses: [contractAAddress]},
         ],
         [
-          {partitionId: "0", fromBlock: 0, toBlock: Unbounded, addresses: []},
-          {partitionId: "1", fromBlock: 11, toBlock: Unbounded, addresses: [contractAAddress]},
-          {partitionId: "2", fromBlock: 2, toBlock: Unbounded, addresses: [address1]},
+          {fromBlock: 0, toBlock: Unbounded, addresses: []},
+          {fromBlock: 11, toBlock: Unbounded, addresses: [contractAAddress]},
+          {fromBlock: 2, toBlock: Unbounded, addresses: [address1]},
         ],
       ))
     },
@@ -340,14 +325,14 @@ indexer.contractRegister({ contract: "ContractA", event: "Registered" }, async (
       await sync.expectNewHeightCalls(1)
       sync.resolveGetHeightOrThrow(2)
       await sync.expectItemsQueries([
-        {partitionId: "0", reply: Respond({items: [], latestFetchedBlockNumber: 1})},
-        {partitionId: "1", reply: Respond({items: [], latestFetchedBlockNumber: 2})},
+        {reply: Respond({items: [], latestFetchedBlockNumber: 1})},
+        {reply: Respond({items: [], latestFetchedBlockNumber: 2})},
       ])
-      await sync.expectItemsQueries([{partitionId: "0", reply: LeavePending}])
+      await sync.expectItemsQueries([{reply: LeavePending}])
       await indexer.advanceTime(1000)
       await sync.expectNewHeightCalls(0)
       t.expect(sync->pendingShapes).toEqual([
-        {partitionId: "0", fromBlock: 2, toBlock: Unbounded, addresses: []},
+        {fromBlock: 2, toBlock: Unbounded, addresses: []},
       ])
     },
   )
