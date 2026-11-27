@@ -96,7 +96,7 @@ describe("A rollback of an address registration", () => {
       await source.expectItemsQueries([
         // The chain starts within 200 blocks of the head it can fetch, so the
         // registered contract is read address-free. Its address registers after
-        // the config partition passed block 100, so a catch-up reads it from
+        // the chain was asked through block 100, so a catch-up reads it from
         // the registration block up to there.
         {
           fromBlock: 50,
@@ -104,7 +104,7 @@ describe("A rollback of an address registration", () => {
           reply: Respond({items: []}),
         },
         {
-          // The partition the config's addresses are fetched in.
+          // The one request the chain asks each range at the head with.
           fromBlock: 101,
           reply: Respond({
             items: [
@@ -115,14 +115,13 @@ describe("A rollback of an address registration", () => {
         },
       ])
       await indexer.getBatchWritePromise()
+      // Registered below the block the chain was asked through, the addresses
+      // owe that range, by address.
       await source.expectItemsQueries([
         {
-          fromBlock: 101,
-          reply: Respond({items: [], latestFetchedBlockNumber: 300}),
-        },
-        {
-          fromBlock: 101,
-          reply: Respond({items: [], latestFetchedBlockNumber: 300}),
+          fromBlock: 200,
+          toBlock: Bounded(300),
+          reply: Respond({items: []}),
         },
       ])
       await indexer.waitUntilIdle()
@@ -170,15 +169,12 @@ describe("An address registered again for the same contract", () => {
         },
       ])
       await indexer.getBatchWritePromise()
-      await source.expectItemsQueries([
-        {
-          fromBlock: 101,
-          reply: Respond({items: [], latestFetchedBlockNumber: 300}),
-        },
-      ])
       await indexer.waitUntilIdle()
 
-      t.expect(await registered(indexer)).toEqual([(shared, "Gravatar", 50)])
+      t.expect((source.pendingItemsQueries, await registered(indexer))).toEqual((
+        [],
+        [(shared, "Gravatar", 50)],
+      ))
     },
   )
 })

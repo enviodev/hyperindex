@@ -1247,6 +1247,20 @@ impl ChainPlan {
             if !self.needs.live[need] {
                 continue;
             }
+            // A need fetched by address starts over from what it measured, as
+            // a partition rebuilt from its surviving addresses did.
+            let by_address = !matches!(
+                self.needs.what[need],
+                What::Logs {
+                    addresses: Addresses::Free,
+                    ..
+                } | What::Blocks
+                    | What::Transactions
+            );
+            if by_address && self.needs.coverage[need].highest() > target_block {
+                self.needs.learned[need] = Learned::default();
+                self.head_learned = Learned::default();
+            }
             self.needs.coverage[need].clip(target_block, self.needs.floor[need]);
             if let (Some(to_block), Some(joins)) =
                 (self.needs.to_block[need], self.needs.joins[need])
