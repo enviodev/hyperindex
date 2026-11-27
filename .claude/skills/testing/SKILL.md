@@ -8,7 +8,7 @@ description: >-
 
 # Testing
 
-Reproduce from outside in: real `config.yaml`, `schema.graphql` and handler source, never a call into an internal module. Pick the highest rung that reproduces.
+Reproduce from outside in: real `config.yaml`, `schema.graphql` and handler source, never a call into an internal module. Pick the highest rung that reproduces. Run it and watch it fail before touching the source: a test that passes has reproduced nothing yet.
 
 ## Rungs
 

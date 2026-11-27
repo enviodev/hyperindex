@@ -400,7 +400,7 @@ test("logging in a test", () => {
 
 test("a doc naming a path that isn't there", () => {
   const fix =
-    "Name where it lives now, or drop the sentence if it is gone. A path the build generates takes a placeholder, as in `<project>/.envio/types.d.ts`.";
+    "Name where it lives now, or drop the sentence if it is gone. A path the build generates takes a placeholder, as in `<project>/.envio/types.d.ts`, and a span that is no path at all loses its backticks.";
   const tracked = [
     fileOf("packages/cli/src/lib.rs", ""),
     fileOf("packages/cli/src/config_parsing/human_config.rs", ""),
@@ -429,6 +429,9 @@ test("a doc naming a path that isn't there", () => {
       "```",
       "cd packages/nowhere",
       "```",
+      "~~~",
+      "`packages/nowhere/Gone.res`",
+      "~~~",
     ),
     fileOf("README.md", "Not a contributor doc: `packages/nowhere/Gone.res`."),
   ];

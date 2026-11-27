@@ -36,7 +36,7 @@ export const findMissingDocPaths = (files: file[]): violation[] => {
     .flatMap(({ path, text }) => {
       let inFence = false;
       return text.split("\n").flatMap((line, index) => {
-        if (/^\s*```/.test(line)) {
+        if (/^\s*(?:```|~~~)/.test(line)) {
           inFence = !inFence;
           return [];
         }
@@ -52,7 +52,8 @@ export const findMissingDocPaths = (files: file[]): violation[] => {
                   title: `\`${span}\` is not a path in the repo`,
                   fix:
                     "Name where it lives now, or drop the sentence if it is gone. A path the build " +
-                    "generates takes a placeholder, as in `<project>/.envio/types.d.ts`.",
+                    "generates takes a placeholder, as in `<project>/.envio/types.d.ts`, and a span that " +
+                    "is no path at all loses its backticks.",
                 },
               ];
         });
