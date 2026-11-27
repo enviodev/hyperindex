@@ -23,7 +23,7 @@ use crate::chain_buffer::{ChainBuffer, Ecosystem, EvmRegistrations, Shared};
 use crate::ecosystems::evm::fields::BlockField;
 use crate::ecosystems::evm::rpc_fields::{self, parse_hex_u64};
 use crate::logger::{BoundLogger, Level, Logger};
-use crate::sources::failure::{ClientError, SourceFailure};
+use crate::sources::failure::{block_u32, ClientError, SourceFailure};
 use crate::sources::request_stats::RequestStat;
 use classify::{
     is_response_too_large_message, is_unsupported_request, suggested_block_interval_from_message,
@@ -38,15 +38,15 @@ pub(crate) struct EvmRpcClientConfig {
     pub url: String,
     pub headers: Option<HashMap<String, String>>,
     // Sync-tuning knobs for the paging AIMD state (see `interval::SyncConfig`).
-    pub initial_block_interval: i64,
+    pub initial_block_interval: u32,
     pub backoff_multiplicative: f64,
-    pub acceleration_additive: i64,
-    pub interval_ceiling: i64,
-    pub backoff_millis: i64,
-    pub query_timeout_millis: i64,
+    pub acceleration_additive: u32,
+    pub interval_ceiling: u32,
+    pub backoff_millis: u32,
+    pub query_timeout_millis: u32,
     /// How many addresses one `eth_getLogs` may carry when an address-free read
     /// is asked again by address.
-    pub max_addresses_per_request: i64,
+    pub max_addresses_per_request: u32,
 }
 
 /// Raw `eth_getLogs` entry as the provider serialises it: integer fields are
@@ -249,12 +249,6 @@ impl NextPageResult {
     }
 }
 
-/// Block numbers cross napi as u32, which the chain buffer's 32-bit block key
-/// already bounds them to.
-fn block_u32(block: u64) -> u32 {
-    u32::try_from(block).unwrap_or(u32::MAX)
-}
-
 pub(crate) struct EvmRpcClient {
     inner: Arc<JsonRpcClient>,
     chain: Arc<Shared>,
@@ -323,11 +317,9 @@ impl EvmRpcClient {
     ) -> anyhow::Result<EvmRpcClient> {
         // A zero value would make `fromBlock + interval - 1` underflow, and a
         // zero timeout would cancel every request before it left.
-        let positive_u64 = |value: i64, name: &str| {
-            u64::try_from(value)
-                .ok()
-                .filter(|v| *v > 0)
-                .ok_or_else(|| anyhow::anyhow!("{name} must be positive, got {value}"))
+        let positive_u64 = |value: u32, name: &str| {
+            anyhow::ensure!(value > 0, "{name} must be positive, got {value}");
+            Ok(u64::from(value))
         };
         // `queryTimeoutMillis` is documented as how long to wait before
         // cancelling an RPC request, so it bounds each one. Bounding the page
@@ -359,11 +351,9 @@ impl EvmRpcClient {
                 "initialBlockInterval",
             )?,
             backoff_multiplicative: cfg.backoff_multiplicative,
-            acceleration_additive: u64::try_from(cfg.acceleration_additive)
-                .context("accelerationAdditive must be non-negative")?,
+            acceleration_additive: u64::from(cfg.acceleration_additive),
             interval_ceiling: positive_u64(cfg.interval_ceiling, "intervalCeiling")?,
-            backoff_millis: u64::try_from(cfg.backoff_millis)
-                .context("backoffMillis must be non-negative")?,
+            backoff_millis: u64::from(cfg.backoff_millis),
         };
         let registration_fields: HashMap<i64, SelectedFields> = event_registrations
             .iter()
@@ -604,7 +594,6 @@ impl EvmRpcClient {
                     SourceFailure::Unusable {
                         message: format!("{error:#}"),
                         block_number: Some(block_u32(block_number)),
-                        cause: None,
                     },
                     to_block,
                     request_stats,

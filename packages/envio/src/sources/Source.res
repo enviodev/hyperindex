@@ -31,10 +31,10 @@ type failure =
   | Backoff({message: string, backoffMillis?: int, cause?: string})
   // This source cannot answer this query, though it is not broken: the caller
   // tries another source for it.
-  | WrongSourceForQuery({message: string, cause?: string})
+  | WrongSourceForQuery({message: string})
   // This source can never serve the chain's selection, so the caller stops
   // using it.
-  | Unusable({message: string, blockNumber?: int, cause?: string})
+  | Unusable({message: string, blockNumber?: int})
 
 let failureMessage = (failure: failure) =>
   switch failure {

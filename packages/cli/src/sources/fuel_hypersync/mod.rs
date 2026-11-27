@@ -17,7 +17,7 @@ pub(crate) use config::ClientConfig;
 use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
 use selection::{BuiltSelection, RegistrationKind};
-use types::{convert_response, Block, ConvertError, RawReceipt};
+use types::{convert_response, Block, RawReceipt};
 
 pub(crate) struct FuelHyperSyncClient {
     inner: hyperfuel_client::Client,
@@ -54,15 +54,13 @@ impl FuelHyperSyncClient {
             crate::address_store::client_filtered_contracts::ClientFilteredContracts::from_vec(
                 params.client_filtered_contracts.clone().unwrap_or_default(),
             );
-        let built = self
-            .fuel
-            .selection
-            .build(&params.registration_indexes, address_set, &client_filtered)
-            .map_err(map_err)?;
+        let built = self.fuel.selection.build(
+            &params.registration_indexes,
+            address_set,
+            &client_filtered,
+        )?;
 
-        let query = build_query(&params, &built)
-            .context("build query")
-            .map_err(map_err)?;
+        let query = build_query(&params, &built).context("build query")?;
         let res = self
             .inner
             .get_arrow(&query)
@@ -221,7 +219,7 @@ fn build_page(
     blocks: &[Block],
     matcher: &FuelMatcher,
     store: &StoreInner,
-) -> Result<PageData, ConvertError> {
+) -> Result<PageData, ClientError> {
     let mut page = PageData::new(Ecosystem::Fuel);
     let heights: std::collections::HashSet<i64> = blocks.iter().map(|block| block.height).collect();
     let mut rows = page.blocks.builder();
@@ -280,7 +278,7 @@ fn build_page(
         )?;
     }
     if !missing.is_empty() {
-        return Err(ConvertError::MissingFields(missing));
+        return Err(ClientError::MissingFields(missing));
     }
     page.add_events(rows.finish());
     page.add_registering_blocks(registering_blocks);
@@ -295,19 +293,6 @@ fn request_err(prefix: &str, e: anyhow::Error) -> ClientError {
     ClientError::Other(anyhow::anyhow!("{prefix}: {summary}"))
 }
 
-impl From<ConvertError> for ClientError {
-    fn from(error: ConvertError) -> Self {
-        match error {
-            ConvertError::MissingFields(fields) => ClientError::MissingFields(fields),
-            ConvertError::Other(error) => ClientError::Other(error),
-        }
-    }
-}
-
-fn map_err(e: anyhow::Error) -> ClientError {
-    ClientError::Other(e)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,18 +302,6 @@ mod tests {
     use crate::chain_buffer::selection::fuel::FuelEventKind;
     use crate::js_value::test_value::JsValue;
     use selection::FuelOnEventRegistrationInput;
-
-    #[test]
-    fn missing_fields_reach_the_caller_by_name() {
-        let error: ClientError =
-            ConvertError::MissingFields(vec!["receipt.txId".to_string(), "block.time".to_string()])
-                .into();
-        assert!(matches!(
-            error,
-            ClientError::MissingFields(fields)
-                if fields == vec!["receipt.txId".to_string(), "block.time".to_string()]
-        ));
-    }
 
     const ADDR: &str = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1";
 
@@ -402,7 +375,7 @@ mod tests {
     fn route(
         matcher: &FuelMatcher,
         receipts: Vec<RawReceipt>,
-    ) -> Result<Vec<Matched>, ConvertError> {
+    ) -> Result<Vec<Matched>, ClientError> {
         let store = matcher.read_store();
         let page = build_page(&receipts, &[block_42()], matcher, &store)?;
         let mut items = Vec::new();
@@ -560,10 +533,10 @@ mod tests {
         let mut receipt = raw_receipt(11);
         receipt.val = None;
         match route(&matcher, vec![receipt]) {
-            Err(ConvertError::MissingFields(fields)) => {
+            Err(ClientError::MissingFields(fields)) => {
                 assert_eq!(fields, vec!["receipt.val".to_string()])
             }
-            Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
+            Err(other) => panic!("unexpected error: {other:?}"),
             Ok(_) => panic!("expected MissingFields, got Ok"),
         }
     }
@@ -579,7 +552,7 @@ mod tests {
         receipt.asset_id = None;
         receipt.to = None;
         match route(&matcher, vec![receipt]) {
-            Err(ConvertError::MissingFields(fields)) => assert_eq!(
+            Err(ClientError::MissingFields(fields)) => assert_eq!(
                 fields,
                 vec![
                     "receipt.amount".to_string(),
@@ -587,7 +560,7 @@ mod tests {
                     "receipt.to".to_string(),
                 ]
             ),
-            Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
+            Err(other) => panic!("unexpected error: {other:?}"),
             Ok(_) => panic!("expected MissingFields, got Ok"),
         }
     }
@@ -600,10 +573,10 @@ mod tests {
         );
         let store = matcher.read_store();
         match build_page(&[raw_receipt(11)], &[], &matcher, &store) {
-            Err(ConvertError::MissingFields(fields)) => {
+            Err(ClientError::MissingFields(fields)) => {
                 assert_eq!(fields, vec!["block".to_string()])
             }
-            Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
+            Err(other) => panic!("unexpected error: {other:?}"),
             Ok(_) => panic!("expected MissingFields, got Ok"),
         }
     }

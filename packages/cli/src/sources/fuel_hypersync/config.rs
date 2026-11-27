@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 
 /// The HyperFuel client options the indexer sets.
-#[derive(Clone)]
 pub(crate) struct ClientConfig {
     pub url: String,
     pub api_token: String,

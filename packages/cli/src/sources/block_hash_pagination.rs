@@ -8,10 +8,10 @@ use crate::sources::request_stats::{RequestStat, QUERY_BLOCK_HASHES_METHOD};
 /// One page of a block-hash query.
 pub(crate) struct HashPage {
     /// Where the backend stopped: the first block it has not processed.
-    pub next: i64,
+    pub next: u64,
     /// The last block the page actually returned, if any. Not always
     /// `next - 1`: SVM slots can be skipped, and a page can return nothing.
-    pub last_returned: Option<i64>,
+    pub last_returned: Option<u64>,
     pub page: PageData,
 }
 
@@ -34,7 +34,7 @@ pub(crate) async fn paginate_block_hashes<Fetch, Fut>(
     mut fetch_page: Fetch,
 ) -> (Result<(), ClientError>, Vec<RequestStat>)
 where
-    Fetch: FnMut(i64, i64) -> Fut,
+    Fetch: FnMut(u64, u64) -> Fut,
     Fut: Future<Output = Result<HashPage, ClientError>>,
 {
     let mut request_stats = Vec::new();
@@ -42,8 +42,8 @@ where
     else {
         return (Ok(()), request_stats);
     };
-    let from = i64::from(from);
-    let to_exclusive = i64::from(last) + 1;
+    let from = u64::from(from);
+    let to_exclusive = u64::from(last) + 1;
 
     let mut cursor = from;
     let mut overlap = None;
@@ -78,7 +78,7 @@ where
             // cursor, which would only repeat the same answer.
             return (
                 Err(ClientError::BehindHead {
-                    block_number: cursor as u64,
+                    block_number: cursor,
                 }),
                 request_stats,
             );
@@ -108,7 +108,7 @@ mod tests {
 
     /// One canned backend response: the blocks it returns and where it stopped.
     struct Canned {
-        next: i64,
+        next: u64,
         blocks: Vec<u64>,
     }
 
@@ -116,8 +116,8 @@ mod tests {
     /// asked to start from, recording every request it received.
     async fn run(
         block_numbers: &[u32],
-        responses: Vec<(i64, Canned)>,
-    ) -> (Result<(), ClientError>, Vec<i64>, Vec<i64>) {
+        responses: Vec<(u64, Canned)>,
+    ) -> (Result<(), ClientError>, Vec<u64>, Vec<u64>) {
         let aggregate = Page::from_data(PageData::new(crate::chain_buffer::Ecosystem::Evm));
         let requested = RefCell::new(Vec::new());
         let result =
@@ -138,7 +138,7 @@ mod tests {
                 data.add_blocks(rows.finish());
                 let page = HashPage {
                     next: canned.next,
-                    last_returned: canned.blocks.last().map(|b| *b as i64),
+                    last_returned: canned.blocks.last().copied(),
                     page: data,
                 };
                 async move { Ok(page) }
@@ -152,7 +152,7 @@ mod tests {
             .unwrap()
             .blocks
             .rows_in_block_range(0, 1 << 30)
-            .map(|row| row.block_number() as i64)
+            .map(|row| row.block_number())
             .collect();
         (result, requested, collected)
     }

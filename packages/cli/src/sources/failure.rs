@@ -25,15 +25,11 @@ pub enum SourceFailure {
         cause: Option<String>,
     },
     /// This source can't answer this query, though it isn't broken.
-    WrongSourceForQuery {
-        message: String,
-        cause: Option<String>,
-    },
+    WrongSourceForQuery { message: String },
     /// This source can never serve the chain's selection.
     Unusable {
         message: String,
         block_number: Option<u32>,
-        cause: Option<String>,
     },
 }
 
@@ -56,4 +52,10 @@ impl From<anyhow::Error> for ClientError {
     fn from(error: anyhow::Error) -> Self {
         ClientError::Other(error)
     }
+}
+
+/// Block numbers cross napi as u32, which the chain buffer's 32-bit block key
+/// already bounds them to.
+pub(super) fn block_u32(block: impl TryInto<u32>) -> u32 {
+    block.try_into().unwrap_or(u32::MAX)
 }

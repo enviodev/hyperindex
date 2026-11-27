@@ -178,10 +178,6 @@ impl Reader<'_> {
         }
     }
 
-    fn string(&self, name: &str) -> Option<String> {
-        self.raw(name)
-    }
-
     fn u32(&mut self, name: &str) -> Option<u32> {
         self.parsed(name, |value| {
             javascript_integer(value)
@@ -326,7 +322,7 @@ impl IndexerEnv {
                 let level = env
                     .one_of("ENVIO_HYPERSYNC_LOG_LEVEL", &HYPERSYNC_LOG_LEVELS)
                     .unwrap_or("info");
-                env.string("RUST_LOG").unwrap_or_else(|| level.to_string())
+                env.raw("RUST_LOG").unwrap_or_else(|| level.to_string())
             },
         };
 
@@ -340,20 +336,20 @@ impl IndexerEnv {
         let logger = LoggerEnv {
             // Checked by the Rust logger, which knows what each value means.
             strategy: env
-                .string("LOG_STRATEGY")
+                .raw("LOG_STRATEGY")
                 .unwrap_or_else(|| "console-pretty".to_string()),
             file: env
-                .string("LOG_FILE")
+                .raw("LOG_FILE")
                 .unwrap_or_else(|| "logs/envio.log".to_string()),
             level: env.one_of("LOG_LEVEL", &LOG_LEVELS),
             file_level: env.one_of("FILE_LOG_LEVEL", &LOG_LEVELS).unwrap_or("trace"),
         };
 
         let db = {
-            let host = env.string("ENVIO_PG_HOST");
+            let host = env.raw("ENVIO_PG_HOST");
             let port = env.port("ENVIO_PG_PORT");
-            let user = env.string("ENVIO_PG_USER");
-            let database = env.string("ENVIO_PG_DATABASE");
+            let user = env.raw("ENVIO_PG_USER");
+            let database = env.raw("ENVIO_PG_DATABASE");
             let ssl_mode = env.parsed("ENVIO_PG_SSL_MODE", |value| match parse_bool(value) {
                 Some(true) => Ok("true"),
                 Some(false) => Ok("false"),
@@ -368,13 +364,13 @@ impl IndexerEnv {
                 port: env.dev_default("ENVIO_PG_PORT", port, 5433),
                 user: env.dev_default("ENVIO_PG_USER", user, "postgres".to_string()),
                 password: env
-                    .string("ENVIO_PG_PASSWORD")
-                    .or_else(|| env.string("ENVIO_POSTGRES_PASSWORD"))
+                    .raw("ENVIO_PG_PASSWORD")
+                    .or_else(|| env.raw("ENVIO_POSTGRES_PASSWORD"))
                     .unwrap_or_else(|| "testing".to_string()),
                 database: env.dev_default("ENVIO_PG_DATABASE", database, "envio-dev".to_string()),
                 schema: env
-                    .string("ENVIO_PG_SCHEMA")
-                    .or_else(|| env.string("ENVIO_PG_PUBLIC_SCHEMA"))
+                    .raw("ENVIO_PG_SCHEMA")
+                    .or_else(|| env.raw("ENVIO_PG_PUBLIC_SCHEMA"))
                     .unwrap_or_else(|| "public".to_string()),
                 ssl_mode: env.dev_default("ENVIO_PG_SSL_MODE", ssl_mode, "false"),
                 max_connections: env.u32("ENVIO_PG_MAX_CONNECTIONS").unwrap_or(2),
@@ -382,9 +378,9 @@ impl IndexerEnv {
         };
 
         let click_house = ClickHouseEnv {
-            host: env.string("ENVIO_CLICKHOUSE_HOST"),
-            database: env.string("ENVIO_CLICKHOUSE_DATABASE"),
-            username: env.string("ENVIO_CLICKHOUSE_USERNAME"),
+            host: env.raw("ENVIO_CLICKHOUSE_HOST"),
+            database: env.raw("ENVIO_CLICKHOUSE_DATABASE"),
+            username: env.raw("ENVIO_CLICKHOUSE_USERNAME"),
             password: lookup("ENVIO_CLICKHOUSE_PASSWORD"),
             replicated: env
                 .parsed("ENVIO_CLICKHOUSE_REPLICATED", |value| match value {
@@ -392,7 +388,7 @@ impl IndexerEnv {
                     _ => Err("\"true\", the only accepted value".to_string()),
                 })
                 .unwrap_or(false),
-            database_engine: env.string("ENVIO_CLICKHOUSE_DATABASE_ENGINE"),
+            database_engine: env.raw("ENVIO_CLICKHOUSE_DATABASE_ENGINE"),
         };
 
         let hasura = {
@@ -403,14 +399,14 @@ impl IndexerEnv {
                 Some(limit) => Some(limit),
                 None => env.u32("HASURA_RESPONSE_LIMIT"),
             };
-            let graphql_endpoint = env.string("HASURA_GRAPHQL_ENDPOINT");
+            let graphql_endpoint = env.raw("HASURA_GRAPHQL_ENDPOINT");
             let graphql_endpoint = env.dev_default(
                 "HASURA_GRAPHQL_ENDPOINT",
                 graphql_endpoint,
                 "http://localhost:8080/v1/metadata".to_string(),
             );
-            let role = env.string("HASURA_GRAPHQL_ROLE");
-            let secret = env.string("HASURA_GRAPHQL_ADMIN_SECRET");
+            let role = env.raw("HASURA_GRAPHQL_ROLE");
+            let secret = env.raw("HASURA_GRAPHQL_ADMIN_SECRET");
             HasuraEnv {
                 enabled,
                 response_limit,
@@ -456,9 +452,9 @@ impl IndexerEnv {
             server_port,
             tui,
             envio_app_url: env
-                .string("ENVIO_APP")
+                .raw("ENVIO_APP")
                 .unwrap_or_else(|| "https://envio.dev".to_string()),
-            envio_api_token: env.string("ENVIO_API_TOKEN"),
+            envio_api_token: env.raw("ENVIO_API_TOKEN"),
             hyper_sync,
             rpc_sync,
             logger,
@@ -466,7 +462,7 @@ impl IndexerEnv {
             click_house,
             hasura,
             throttle,
-            internal_worker: env.string("ENVIO_INTERNAL_WORKER"),
+            internal_worker: env.raw("ENVIO_INTERNAL_WORKER"),
         };
         env.finish(value)
     }

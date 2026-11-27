@@ -1246,15 +1246,12 @@ let executeQuery = async (
       )
       retryRef := retryRef.contents + 1
 
-    | Error(Unusable({message, ?blockNumber, ?cause})) =>
+    | Error(Unusable({message, ?blockNumber})) =>
       // Several partitions can fail on the same source at once; only the one
       // that disables it reports why.
       if sourceManager->disableSource(sourceState) {
         sourceManager.disableReason = Some(message)
-        logger->Logger.error(
-          message,
-          ~params={"err": cause->Option.map(causeError), "blockNumber": blockNumber},
-        )
+        logger->Logger.error(message, ~params={"blockNumber": blockNumber})
       }
       retryRef := 0
 
@@ -1286,7 +1283,7 @@ let executeQuery = async (
       // fresh schedule rather than continuing this one.
       retryRef := 0
 
-    | Error(WrongSourceForQuery({message, ?cause})) =>
+    | Error(WrongSourceForQuery({message})) =>
       // Not marked failed: the source isn't broken, the query just can't work
       // on it.
       let excludedSources = switch excludedSourcesRef.contents {
@@ -1297,10 +1294,7 @@ let executeQuery = async (
         s
       }
       excludedSources->Utils.Set.add(sourceState)->ignore
-      logger->Logger.warn(
-        message ++ " - Attempting another source",
-        ~params={"err": cause->Option.map(causeError)},
-      )
+      logger->Logger.warn(message ++ " - Attempting another source")
       retryRef := 0
 
     | Error(Backoff({message, ?backoffMillis, ?cause})) =>

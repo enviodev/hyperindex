@@ -38,8 +38,8 @@ ReScript variant's own shape:
 | `BehindHead({blockNumber})` | backs off quietly, fails over after 12 tries |
 | `NarrowRange({toBlock, attemptedToBlock})` | asks again for the narrower range at once |
 | `Backoff({message, backoffMillis?, cause?})` | waits `backoffMillis`, or its own schedule, and asks again |
-| `WrongSourceForQuery({message, cause?})` | tries another source for this query |
-| `Unusable({message, blockNumber?, cause?})` | stops using the source |
+| `WrongSourceForQuery({message})` | tries another source for this query |
+| `Unusable({message, blockNumber?})` | stops using the source |
 
 An exception escaping a source is a bug, and stops the indexer.
 

@@ -37,7 +37,7 @@ const RATE_LIMITED_MARKER: &str = "rate limited by server";
 /// the client's state, which it refreshed from the same response's headers.
 fn map_query_error(error: anyhow::Error, rate_limit: Option<RateLimitInfo>) -> ClientError {
     if !format!("{error:?}").contains(RATE_LIMITED_MARKER) {
-        return map_err(error);
+        return error.into();
     }
     // A 429 without a reset header still has to back off, or the source would
     // spin straight back into the closed window.
@@ -74,15 +74,13 @@ impl SvmHyperSyncClient {
             .get("blocks")
             .map(blocks_from_arrow)
             .transpose()
-            .context("decode blocks")
-            .map_err(map_err)?
+            .context("decode blocks")?
             .unwrap_or_default();
         let counts = tables
             .get("transactions")
             .map(transaction_counts::count_by_slot)
             .transpose()
-            .context("count transactions")
-            .map_err(map_err)?
+            .context("count transactions")?
             .unwrap_or_default();
         Ok(CountedPage {
             next_slot: response.next_slot,
@@ -118,7 +116,7 @@ impl SvmHyperSyncClient {
     }
 
     pub(crate) async fn get_height(&self) -> Result<u64, ClientError> {
-        self.inner.get_height().await.map_err(map_err)
+        Ok(self.inner.get_height().await?)
     }
 
     /// Fetch the inclusive range spanning `block_numbers` into one page. Each
@@ -134,19 +132,16 @@ impl SvmHyperSyncClient {
             &aggregate,
             |request_from, to_slot_exclusive| {
                 async move {
-                    let query = block_hash_query(request_from, to_slot_exclusive)
-                        .context("parse solana query")
-                        .map_err(map_err)?;
+                    let query = block_hash_query(request_from, to_slot_exclusive);
                     let response = self.run_query(&query).await?;
-                    let (next, last_returned, mut page) =
-                        block_hash_page(response).map_err(map_err)?;
+                    let (next, last_returned, mut page) = block_hash_page(response)?;
                     // Each advancing cursor proves its half-open range was
                     // processed; block rows missing inside it are skipped slots.
                     // A cursor that didn't advance proves nothing — leave it to
                     // the paginator, which reports it as a source behind the
                     // head rather than a malformed coverage range.
                     if next > request_from {
-                        page.add_covered(request_from as u64, next.min(to_slot_exclusive) as u64);
+                        page.add_covered(request_from, next.min(to_slot_exclusive));
                     }
                     Ok(HashPage {
                         next,
@@ -167,21 +162,16 @@ impl SvmHyperSyncClient {
         let built = self
             .svm
             .selection
-            .build(&params.on_event_registration_indexes)
-            .map_err(map_err)?;
+            .build(&params.on_event_registration_indexes)?;
         let selects_instructions = !params.on_event_registration_indexes.is_empty();
-        let block_query = self
-            .chain
-            .schedule
-            .plan(
-                &params.on_block_registration_indexes,
-                params.from_slot,
-                params.to_slot,
-                !selects_instructions,
-                params.reorgable_from,
-                |_, _| false,
-            )
-            .map_err(map_err)?;
+        let block_query = self.chain.schedule.plan(
+            &params.on_block_registration_indexes,
+            params.from_slot,
+            params.to_slot,
+            !selects_instructions,
+            params.reorgable_from,
+            |_, _| false,
+        )?;
         let block_selection = &block_query.selection;
         if let Some(next_slot) = block_query.unread_until() {
             return Ok((
@@ -193,15 +183,15 @@ impl SvmHyperSyncClient {
         }
         let from_slot = block_query.from_block;
         let mut block_columns = built.block_columns.clone();
-        for column in fields::block_mask_columns(block_selection.mask()).map_err(map_err)? {
+        for column in fields::block_mask_columns(block_selection.mask())? {
             fields::push_unique(&mut block_columns, column);
         }
 
         let mut field_selection = SolanaFieldSelection {
-            block: parse_columns(&block_columns).map_err(map_err)?,
+            block: parse_columns(&block_columns)?,
             // Instructions are exempt from merge-mode "empty = no rows", so an
             // empty list would fetch every column. Spell the matching set.
-            instruction_call: parse_columns(&built.instruction_columns).map_err(map_err)?,
+            instruction_call: parse_columns(&built.instruction_columns)?,
             ..Default::default()
         };
         // Under the server's default merge mode, requesting a table's columns
@@ -209,15 +199,13 @@ impl SvmHyperSyncClient {
         // empty field list returns no rows (instructions and blocks are
         // exempt), so each opted-into table needs its columns spelled out.
         if !built.transaction_columns.is_empty() {
-            field_selection.transaction =
-                parse_columns(&built.transaction_columns).map_err(map_err)?;
+            field_selection.transaction = parse_columns(&built.transaction_columns)?;
         }
         if !built.log_columns.is_empty() {
-            field_selection.log = parse_columns(&built.log_columns).map_err(map_err)?;
+            field_selection.log = parse_columns(&built.log_columns)?;
         }
         if !built.account_activity_columns.is_empty() {
-            field_selection.account_activity =
-                parse_columns(&built.account_activity_columns).map_err(map_err)?;
+            field_selection.account_activity = parse_columns(&built.account_activity_columns)?;
         }
 
         let query = SolanaQuery {
@@ -226,8 +214,7 @@ impl SvmHyperSyncClient {
             to_slot: block_query
                 .to_block
                 .map(|b| b.checked_add(1).context("to_slot overflow"))
-                .transpose()
-                .map_err(map_err)?,
+                .transpose()?,
             instruction_calls: built.instruction_selections.clone(),
             field_selection,
             include_all_blocks: block_query.include_all_blocks(),
@@ -243,9 +230,10 @@ impl SvmHyperSyncClient {
             // The fetch state keeps slot handlers in a partition of their own,
             // so no query selects both.
             if selects_instructions {
-                return Err(map_err(anyhow::anyhow!(
+                return Err(anyhow::anyhow!(
                     "A query counting the transactions of its slots can't also select instructions"
-                )));
+                )
+                .into());
             }
             let counted = self
                 .run_counting_query(&transaction_counts::query(
@@ -283,12 +271,10 @@ impl SvmHyperSyncClient {
                 &handler_slots,
                 transaction_counts.as_ref(),
             )
-        })
-        .map_err(map_err)?;
+        })?;
         let response = ItemsResponse {
             next_slot: i64::try_from(block_query.fetched_until(resp.next_slot))
-                .context("next_slot overflow")
-                .map_err(map_err)?,
+                .context("next_slot overflow")?,
         };
         Ok((response, Page::from_data(page)))
     }
@@ -301,30 +287,30 @@ struct CountedPage {
     counts: HashMap<u64, SvmTransactionCounts>,
 }
 
-fn block_hash_query(from_slot: i64, to_slot_exclusive: i64) -> Result<SolanaQuery> {
-    Ok(SolanaQuery {
-        from_slot: u64::try_from(from_slot).context("from_slot must be non-negative")?,
-        to_slot: Some(u64::try_from(to_slot_exclusive).context("to_slot must be non-negative")?),
+fn block_hash_query(from_slot: u64, to_slot_exclusive: u64) -> SolanaQuery {
+    SolanaQuery {
+        from_slot,
+        to_slot: Some(to_slot_exclusive),
         include_all_blocks: true,
         field_selection: SolanaFieldSelection {
             block: vec![BlockField::Slot, BlockField::Blockhash],
             ..Default::default()
         },
         ..Default::default()
-    })
+    }
 }
 
 /// Convert only the values needed by the block-hash paginator: the advancing
 /// cursor, the highest returned slot (the next page's overlap anchor), and the
 /// page.
-fn block_hash_page(response: simple::SolanaResponse) -> Result<(i64, Option<i64>, PageData)> {
-    let next_slot = i64::try_from(response.next_slot).context("convert next_slot")?;
+fn block_hash_page(response: simple::SolanaResponse) -> Result<(u64, Option<u64>, PageData)> {
+    let next_slot = response.next_slot;
     let last_slot = response
         .blocks
         .iter()
-        .map(|b| i64::try_from(types::required(b.slot, "block.slot")?).context("convert slot"))
-        .try_fold(None, |acc: Option<i64>, slot| {
-            slot.map(|s| Some(acc.map_or(s, |a: i64| a.max(s))))
+        .map(|b| types::required(b.slot, "block.slot"))
+        .try_fold(None, |acc: Option<u64>, slot| {
+            slot.map(|s| Some(acc.map_or(s, |a: u64| a.max(s))))
         })?;
     let mut page = PageData::new(Ecosystem::Svm);
     let mut rows = page.blocks.builder();
@@ -540,10 +526,6 @@ where
         .collect()
 }
 
-fn map_err(e: anyhow::Error) -> ClientError {
-    ClientError::Other(e)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -626,7 +608,7 @@ mod tests {
     #[test]
     fn a_block_hash_query_selects_every_slot_of_its_range() {
         assert_eq!(
-            serde_json::to_value(block_hash_query(5, 8).unwrap()).unwrap(),
+            serde_json::to_value(block_hash_query(5, 8)).unwrap(),
             serde_json::json!({
                 "from_slot": 5,
                 "to_slot": 8,

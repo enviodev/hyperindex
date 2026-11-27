@@ -12,7 +12,7 @@ use serde_json::json;
 
 use super::evm_hypersync::{self, config::SerializationFormat, EvmHyperSyncClient};
 use super::evm_rpc::{EvmRpcClient, EvmRpcClientConfig, NextPageParams};
-use super::failure::{ClientError, SourceFailure};
+use super::failure::{block_u32, ClientError, SourceFailure};
 use super::fuel_hypersync::{self, FuelHyperSyncClient};
 use super::request_stats::RequestStat;
 use super::svm_hypersync::{self, SvmHyperSyncClient};
@@ -172,10 +172,6 @@ pub struct NativeSource {
     /// A rejected token is said once per source, not on every retry for the
     /// life of the process.
     warned_unauthorized: AtomicBool,
-}
-
-fn block_u32(block: impl TryInto<u32>) -> u32 {
-    block.try_into().unwrap_or(u32::MAX)
 }
 
 fn indexes(indexes: &[u32]) -> Vec<i64> {
@@ -511,7 +507,6 @@ fn describe(error: ClientError, other: impl FnOnce(String) -> SourceFailure) -> 
                 "Source returned invalid data with missing required fields: {}",
                 fields.join(", ")
             ),
-            cause: None,
         },
         ClientError::Other(error) => other(format!("{error:#}")),
     }
@@ -607,15 +602,13 @@ fn make_chain_sources(
                 EvmRpcClientConfig {
                     url: rpc.url,
                     headers: rpc.headers,
-                    initial_block_interval: i64::from(
-                        sync.initial_block_interval.unwrap_or(10_000),
-                    ),
+                    initial_block_interval: sync.initial_block_interval.unwrap_or(10_000),
                     backoff_multiplicative: sync.backoff_multiplicative.unwrap_or(0.8),
-                    acceleration_additive: i64::from(sync.acceleration_additive.unwrap_or(500)),
-                    interval_ceiling: i64::from(sync.interval_ceiling.unwrap_or(10_000)),
-                    backoff_millis: i64::from(sync.backoff_millis.unwrap_or(2_000)),
-                    query_timeout_millis: i64::from(sync.query_timeout_millis.unwrap_or(20_000)),
-                    max_addresses_per_request: i64::from(config.max_addresses_per_request),
+                    acceleration_additive: sync.acceleration_additive.unwrap_or(500),
+                    interval_ceiling: sync.interval_ceiling.unwrap_or(10_000),
+                    backoff_millis: sync.backoff_millis.unwrap_or(2_000),
+                    query_timeout_millis: sync.query_timeout_millis.unwrap_or(20_000),
+                    max_addresses_per_request: config.max_addresses_per_request,
                 },
                 buffer,
                 logger,
@@ -677,7 +670,6 @@ mod tests {
                     message: "Source returned invalid data with missing required fields: \
                               block.timestamp"
                         .to_string(),
-                    cause: None,
                 },
                 SourceFailure::Backoff {
                     message: "boom".to_string(),

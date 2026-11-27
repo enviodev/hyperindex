@@ -3,6 +3,8 @@ use hyperfuel_client::{ArrowBatch, ArrowResponse};
 use napi_derive::napi;
 use polars_arrow::array::{BinaryArray, Int64Array, StaticArray, UInt64Array, UInt8Array};
 
+use crate::sources::failure::ClientError;
+
 #[napi(object)]
 #[derive(Clone)]
 pub struct Block {
@@ -37,21 +39,6 @@ pub(crate) struct RawResponse {
     pub blocks: Vec<Block>,
 }
 
-/// `MissingFields` is the shape the JS side recognizes (via the JSON payload
-/// protocol shared with hypersync_source) and converts to
-/// `UnexpectedMissingParams`; `Other` falls through to the generic napi error.
-#[derive(Debug)]
-pub(crate) enum ConvertError {
-    MissingFields(Vec<String>),
-    Other(anyhow::Error),
-}
-
-impl From<anyhow::Error> for ConvertError {
-    fn from(e: anyhow::Error) -> Self {
-        Self::Other(e)
-    }
-}
-
 fn encode_hex(bytes: &[u8]) -> String {
     format!("0x{}", faster_hex::hex_string(bytes))
 }
@@ -70,7 +57,7 @@ fn i64_field(arr: &Option<&UInt64Array>, idx: usize, name: &str) -> Result<Optio
         .transpose()
 }
 
-pub(crate) fn receipts_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<RawReceipt>, ConvertError> {
+pub(crate) fn receipts_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<RawReceipt>, ClientError> {
     let mut out = Vec::new();
     for batch in batches {
         let receipt_index = batch.column::<UInt64Array>("receipt_index").ok();
@@ -108,7 +95,7 @@ pub(crate) fn receipts_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<RawRecei
                 None
             });
             if !missing.is_empty() {
-                return Err(ConvertError::MissingFields(missing));
+                return Err(ClientError::MissingFields(missing));
             }
 
             out.push(RawReceipt {
@@ -131,7 +118,7 @@ pub(crate) fn receipts_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<RawRecei
     Ok(out)
 }
 
-pub(crate) fn blocks_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<Block>, ConvertError> {
+pub(crate) fn blocks_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<Block>, ClientError> {
     let mut out = Vec::new();
     for batch in batches {
         let id = batch.column::<BinaryArray<i32>>("id").ok();
@@ -153,7 +140,7 @@ pub(crate) fn blocks_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<Block>, Co
                 None
             });
             if !missing.is_empty() {
-                return Err(ConvertError::MissingFields(missing));
+                return Err(ClientError::MissingFields(missing));
             }
 
             out.push(Block {
@@ -166,19 +153,14 @@ pub(crate) fn blocks_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<Block>, Co
     Ok(out)
 }
 
-pub(crate) fn convert_response(res: ArrowResponse) -> Result<RawResponse, ConvertError> {
+pub(crate) fn convert_response(res: ArrowResponse) -> Result<RawResponse, ClientError> {
     Ok(RawResponse {
         archive_height: res
             .archive_height
             .map(i64::try_from)
             .transpose()
-            .context("convert archive_height")
-            .map_err(ConvertError::Other)?,
-        next_block: res
-            .next_block
-            .try_into()
-            .context("convert next_block")
-            .map_err(ConvertError::Other)?,
+            .context("convert archive_height")?,
+        next_block: res.next_block.try_into().context("convert next_block")?,
         receipts: receipts_from_arrow(&res.data.receipts)?,
         blocks: blocks_from_arrow(&res.data.blocks)?,
     })
@@ -278,10 +260,10 @@ mod tests {
             u8_field("receipt_type", vec![Some(6)]),
         ]);
         match receipts_from_arrow(&[batch]) {
-            Err(ConvertError::MissingFields(fields)) => {
+            Err(ClientError::MissingFields(fields)) => {
                 assert_eq!(fields, vec!["receipt.txId".to_string()])
             }
-            Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
+            Err(other) => panic!("unexpected error: {other:?}"),
             Ok(_) => panic!("expected MissingFields, got Ok"),
         }
     }
@@ -295,14 +277,14 @@ mod tests {
             u8_field("receipt_type", vec![Some(6)]),
         ]);
         match receipts_from_arrow(&[batch]) {
-            Err(ConvertError::MissingFields(fields)) => assert_eq!(
+            Err(ClientError::MissingFields(fields)) => assert_eq!(
                 fields,
                 vec![
                     "receipt.receiptIndex".to_string(),
                     "receipt.txId".to_string()
                 ]
             ),
-            Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
+            Err(other) => panic!("unexpected error: {other:?}"),
             Ok(_) => panic!("expected MissingFields, got Ok"),
         }
     }
@@ -314,10 +296,10 @@ mod tests {
             u64_field("height", vec![Some(42)]),
         ]);
         match blocks_from_arrow(&[batch]) {
-            Err(ConvertError::MissingFields(fields)) => {
+            Err(ClientError::MissingFields(fields)) => {
                 assert_eq!(fields, vec!["block.time".to_string()])
             }
-            Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
+            Err(other) => panic!("unexpected error: {other:?}"),
             Ok(_) => panic!("expected MissingFields, got Ok"),
         }
     }

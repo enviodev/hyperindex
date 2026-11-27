@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 /// The Solana HyperSync client options the indexer sets.
-#[derive(Clone)]
 pub(crate) struct SvmClientConfig {
     pub url: String,
     pub api_token: String,

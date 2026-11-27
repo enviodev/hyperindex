@@ -28,12 +28,10 @@ use crate::sources::request_stats::RequestStat;
 pub(crate) mod config;
 mod field_selection;
 mod transaction_selection;
-mod types;
 
 pub(crate) use config::ClientConfig;
 use field_selection::field_selection;
 use net_types::LogField;
-use types::RollbackGuard;
 
 static LOGGER_INIT: Once = Once::new();
 
@@ -121,10 +119,8 @@ impl EvmHyperSyncClient {
             &aggregate,
             |request_from, to_block_exclusive| async move {
                 let query = net_types::Query {
-                    from_block: u64::try_from(request_from).context("from_block must be >= 0")?,
-                    to_block: Some(
-                        u64::try_from(to_block_exclusive).context("to_block must be >= 0")?,
-                    ),
+                    from_block: request_from,
+                    to_block: Some(to_block_exclusive),
                     include_all_blocks: true,
                     field_selection: field_selection(
                         &[BlockField::Number, BlockField::Hash],
@@ -134,12 +130,12 @@ impl EvmHyperSyncClient {
                     ..Default::default()
                 };
                 let response = self.get_raw(query).await?;
-                let (next, page) = block_hash_page(response)?;
+                let (next, page) = block_hash_page(response);
                 // `include_all_blocks` leaves no gaps, so the last block the
                 // page covered is the one before where it stopped.
                 Ok(HashPage {
                     next,
-                    last_returned: Some(next - 1),
+                    last_returned: next.checked_sub(1),
                     page,
                 })
             },
@@ -166,27 +162,19 @@ impl EvmHyperSyncClient {
         };
         let selects_transactions = !transaction_registrations.is_empty();
         let built_transactions = transaction_selection::build(&transaction_registrations);
-        let built = self
-            .evm
-            .selection
-            .build(
-                &params.on_event_registration_indexes,
-                address_set,
-                &client_filtered,
-            )
-            .map_err(map_err)?;
-        let block_query = self
-            .chain
-            .schedule
-            .plan(
-                &params.on_block_registration_indexes,
-                params.from_block,
-                params.to_block,
-                !selects_logs && !selects_transactions,
-                params.reorgable_from,
-                |block, mask| buffer.has_block_fields(block, mask),
-            )
-            .map_err(map_err)?;
+        let built = self.evm.selection.build(
+            &params.on_event_registration_indexes,
+            address_set,
+            &client_filtered,
+        )?;
+        let block_query = self.chain.schedule.plan(
+            &params.on_block_registration_indexes,
+            params.from_block,
+            params.to_block,
+            !selects_logs && !selects_transactions,
+            params.reorgable_from,
+            |block, mask| buffer.has_block_fields(block, mask),
+        )?;
         let block_selection = &block_query.selection;
         if let Some(next_block) = block_query.unread_until() {
             let next_block = next_block as i64;
@@ -243,8 +231,7 @@ impl EvmHyperSyncClient {
                 .iter()
                 .map(log_selection_from_built)
                 .collect::<Result<Vec<_>>>()
-                .context("parse query")
-                .map_err(map_err)?
+                .context("parse query")?
         } else {
             Vec::new()
         };
@@ -292,8 +279,7 @@ impl EvmHyperSyncClient {
         let next_block: i64 = response
             .next_block
             .try_into()
-            .context("convert next_block")
-            .map_err(map_err)?;
+            .context("convert next_block")?;
         // The range the page covered: `include_all_blocks` leaves no gaps in it.
         let handler_blocks =
             block_selection.blocks_run_on(block_query.from_block..(next_block as u64));
@@ -312,18 +298,11 @@ impl EvmHyperSyncClient {
             )
         })?;
 
-        let rollback_guard = response
-            .rollback_guard
-            .map(RollbackGuard::try_from)
-            .transpose()
-            .context("convert rollback guard")
-            .map_err(map_err)?;
-
         // The rollback guard's blocks are reorg-detection inputs like any
         // other: the guard's head block covers the tip of the scanned range,
         // and the parent of the first in-memory block the seam right below it.
-        if let Some(guard) = &rollback_guard {
-            add_rollback_guard_blocks(&mut page, guard).map_err(map_err)?;
+        if let Some(guard) = &response.rollback_guard {
+            add_rollback_guard_blocks(&mut page, guard);
         }
 
         let items = ItemsResponse {
@@ -331,8 +310,7 @@ impl EvmHyperSyncClient {
                 .archive_height
                 .map(|h| h.try_into())
                 .transpose()
-                .context("convert archive_height")
-                .map_err(map_err)?,
+                .context("convert archive_height")?,
             next_block: block_query.fetched_until(next_block as u64) as i64,
             response_blocks,
         };
@@ -407,42 +385,35 @@ pub(crate) struct ItemsResponse {
 
 /// Convert only the two values needed by the block-hash paginator. Raw blocks
 /// move directly into the response store without constructing napi block DTOs.
-fn block_hash_page(mut response: hypersync_client::QueryResponse) -> Result<(i64, PageData)> {
-    let next_block = response
-        .next_block
-        .try_into()
-        .context("convert next_block")?;
+fn block_hash_page(mut response: hypersync_client::QueryResponse) -> (u64, PageData) {
     let mut page = PageData::new(Ecosystem::Evm);
     let mut rows = page.blocks.builder();
     for block in std::mem::take(&mut response.data.blocks).iter().flatten() {
         chain_buffer::tables::evm::push_block(&mut rows, block, 0);
     }
     page.add_blocks(rows.finish());
-    Ok((next_block, page))
+    (response.next_block, page)
 }
 
 /// The guard's head block, with its time, and the parent of the first block
 /// the server holds in memory.
-fn add_rollback_guard_blocks(page: &mut PageData, guard: &RollbackGuard) -> Result<()> {
+fn add_rollback_guard_blocks(page: &mut PageData, guard: &net_types::RollbackGuard) {
     let mut rows = page.blocks.builder();
     chain_buffer::tables::evm::push_observed_block(
         &mut rows,
-        u64::try_from(guard.block_number).context("guard block_number negative")?,
-        Some(&chain_buffer::tables::evm::hash_bytes(&guard.hash)?),
+        guard.block_number,
+        Some(guard.hash.as_slice()),
         u64::try_from(guard.timestamp).ok(),
     );
     if guard.first_block_number > 0 {
         chain_buffer::tables::evm::push_observed_block(
             &mut rows,
-            (guard.first_block_number - 1) as u64,
-            Some(&chain_buffer::tables::evm::hash_bytes(
-                &guard.first_parent_hash,
-            )?),
+            guard.first_block_number - 1,
+            Some(guard.first_parent_hash.as_slice()),
             None,
         );
     }
     page.add_blocks(rows.finish());
-    Ok(())
 }
 
 pub(super) fn push_unique<T: PartialEq>(values: &mut Vec<T>, value: T) {
@@ -463,7 +434,7 @@ fn sorted_set<T: Ord>(mut keys: Vec<T>) -> Vec<T> {
 /// blocks of the range, each validated for the fields the query asked for. A
 /// block a kept row or a block handler reads keeps every field fetched; any
 /// other keeps its number, hash and time for reorg detection and progress.
-/// Returns `ConvertError::MissingFields` when the source omitted a requested
+/// Returns `ClientError::MissingFields` when the source omitted a requested
 /// non-nullable field or a joined row.
 #[allow(clippy::too_many_arguments)]
 fn process_response(
@@ -475,7 +446,7 @@ fn process_response(
     validated_block_fields: &[BlockField],
     requested_transaction_fields: &[TransactionField],
     handler_blocks: &[u64],
-) -> std::result::Result<PageData, ConvertError> {
+) -> std::result::Result<PageData, ClientError> {
     let mut missing: Vec<String> = Vec::new();
     let mut page = PageData::new(Ecosystem::Evm);
 
@@ -596,7 +567,7 @@ fn process_response(
         }
     }
     if !missing.is_empty() {
-        return Err(ConvertError::MissingFields(missing));
+        return Err(ClientError::MissingFields(missing));
     }
 
     let fetched = BlockField::store_mask(validated_block_fields);
@@ -621,38 +592,12 @@ fn process_response(
     Ok(page)
 }
 
-/// How converting a response into a page fails.
-#[derive(Debug)]
-pub(crate) enum ConvertError {
-    MissingFields(Vec<String>),
-    Other(anyhow::Error),
-}
-
-impl From<anyhow::Error> for ConvertError {
-    fn from(e: anyhow::Error) -> Self {
-        Self::Other(e)
-    }
-}
-
-impl From<ConvertError> for ClientError {
-    fn from(error: ConvertError) -> Self {
-        match error {
-            ConvertError::MissingFields(fields) => ClientError::MissingFields(fields),
-            ConvertError::Other(error) => ClientError::Other(error),
-        }
-    }
-}
-
 /// Block fields the indexer always needs: `number` keys the page's blocks and
 /// lets items reference them; the consumer reads `timestamp` and `hash` off
 /// every block unconditionally. Force-added to the query and validated for
 /// presence regardless of the user's selection.
 const REQUIRED_BLOCK_FIELDS: &[BlockField] =
     &[BlockField::Number, BlockField::Timestamp, BlockField::Hash];
-
-fn map_err(e: anyhow::Error) -> ClientError {
-    ClientError::Other(e)
-}
 
 #[cfg(test)]
 mod tests {
@@ -749,8 +694,8 @@ mod tests {
         .expect("expected MissingFields error");
 
         match err {
-            ConvertError::MissingFields(fields) => assert_eq!(fields, vec!["block".to_string()]),
-            ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
+            ClientError::MissingFields(fields) => assert_eq!(fields, vec!["block".to_string()]),
+            other => panic!("unexpected error: {other:?}"),
         }
     }
 
@@ -776,10 +721,10 @@ mod tests {
         .expect("expected MissingFields error");
 
         match err {
-            ConvertError::MissingFields(fields) => {
+            ClientError::MissingFields(fields) => {
                 assert_eq!(fields, vec!["block.timestamp".to_string()])
             }
-            ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
+            other => panic!("unexpected error: {other:?}"),
         }
     }
 
@@ -808,10 +753,10 @@ mod tests {
         .expect("expected MissingFields error");
 
         match err {
-            ConvertError::MissingFields(fields) => {
+            ClientError::MissingFields(fields) => {
                 assert_eq!(fields, vec!["block.timestamp".to_string()])
             }
-            ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
+            other => panic!("unexpected error: {other:?}"),
         }
     }
 
@@ -874,10 +819,10 @@ mod tests {
         .expect("expected MissingFields error");
 
         match err {
-            ConvertError::MissingFields(fields) => {
+            ClientError::MissingFields(fields) => {
                 assert_eq!(fields, vec!["transaction.hash".to_string()])
             }
-            ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
+            other => panic!("unexpected error: {other:?}"),
         }
     }
 
@@ -905,10 +850,10 @@ mod tests {
         .expect("expected MissingFields error");
 
         match err {
-            ConvertError::MissingFields(fields) => {
+            ClientError::MissingFields(fields) => {
                 assert_eq!(fields, vec!["transaction".to_string()])
             }
-            ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
+            other => panic!("unexpected error: {other:?}"),
         }
     }
 
@@ -1094,20 +1039,6 @@ mod tests {
         .expect("a keyless transaction's absent field is not a missing field");
 
         assert_eq!(page.events.len(), 1);
-    }
-
-    #[test]
-    fn missing_fields_reach_the_caller_by_name() {
-        let error: ClientError = ConvertError::MissingFields(vec![
-            "block.timestamp".to_string(),
-            "transaction.hash".to_string(),
-        ])
-        .into();
-        assert!(matches!(
-            error,
-            ClientError::MissingFields(fields)
-                if fields == vec!["block.timestamp".to_string(), "transaction.hash".to_string()]
-        ));
     }
 
     #[test]
