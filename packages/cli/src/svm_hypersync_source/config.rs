@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use napi_derive::napi;
 
-use crate::hypersync_http::HttpClient;
+use crate::hypersync_http::{HttpClient, HttpVersion};
 
 /// Configuration for the Solana HyperSync client.
 ///
@@ -28,6 +28,12 @@ impl SvmClientConfig {
             .map_or(DEFAULT_HTTP_REQ_TIMEOUT, |millis| {
                 Duration::from_millis(millis as u64)
             });
-        HttpClient::new(&self.url, self.api_token, user_agent, timeout)
+        HttpClient::new(
+            &self.url,
+            self.api_token,
+            user_agent,
+            HttpVersion::Http1,
+            timeout,
+        )
     }
 }

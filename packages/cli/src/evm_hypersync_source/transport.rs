@@ -13,7 +13,8 @@ use hypersync_net_types::{ArchiveHeight, Query, RollbackGuard};
 use reqwest::Method;
 
 use crate::hypersync_http::{
-    classify_reply, locate_file, read_files_in_message, read_packed_message, HttpClient, Reply,
+    classify_reply, locate_file, read_files_in_message, read_packed_message, HttpClient,
+    HttpVersion, Reply,
 };
 
 #[derive(Clone, Copy)]
@@ -58,7 +59,13 @@ impl Transport {
         format: Format,
     ) -> Result<Self> {
         Ok(Transport {
-            http: HttpClient::new(url, Some(api_token), user_agent, timeout)?,
+            http: HttpClient::new(
+                url,
+                Some(api_token),
+                user_agent,
+                HttpVersion::Http2,
+                timeout,
+            )?,
             format,
         })
     }

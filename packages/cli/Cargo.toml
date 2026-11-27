@@ -27,10 +27,11 @@ serde_yaml = "0.9.19"
 regex = "1.12"
 # rustls trusting the OS store and the bundled webpki roots, like the Postgres
 # client: custom CAs (corporate proxies) verify, and so do public ones in an
-# image without ca-certificates. reqwest's defaults otherwise, minus native-tls and http2.
+# image without ca-certificates. reqwest's defaults otherwise, minus native-tls.
 reqwest = { version = "0.12", default-features = false, features = [
   "json",
   "charset",
+  "http2",
   "macos-system-configuration",
   "rustls-tls-native-roots",
   "rustls-tls-webpki-roots",

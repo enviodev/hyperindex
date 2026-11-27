@@ -23,10 +23,23 @@ const MAX_CONNECTION_AGE: Duration = Duration::from_secs(60);
 
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Which protocol a source speaks. Over HTTP/2 every query in flight shares
+/// one TCP connection: across eight paired runs of the open indexer benchmark
+/// from a direct route, that gained EVM's small pages under 2% and cost
+/// Solana's multi-megabyte pages 23% of their events/s, stalling some
+/// downloads for over 20s. Larger flow control windows won back only part.
+#[derive(Clone, Copy)]
+pub(crate) enum HttpVersion {
+    Http1,
+    /// Offered through ALPN; a server without it answers over HTTP/1.1.
+    Http2,
+}
+
 pub(crate) struct HttpClient {
     url: Url,
     api_token: Option<String>,
     user_agent: String,
+    version: HttpVersion,
     timeout: Duration,
     connections: Mutex<AgedClient>,
 }
@@ -37,9 +50,9 @@ struct AgedClient {
 }
 
 impl AgedClient {
-    fn build(user_agent: &str) -> Result<Self> {
+    fn build(user_agent: &str, version: HttpVersion) -> Result<Self> {
         Ok(AgedClient {
-            client: build_http_client(user_agent)?,
+            client: build_http_client(user_agent, version)?,
             built_at: Instant::now(),
         })
     }
@@ -50,6 +63,7 @@ impl HttpClient {
         url: &str,
         api_token: Option<String>,
         user_agent: String,
+        version: HttpVersion,
         timeout: Duration,
     ) -> Result<Self> {
         let url = Url::parse(url).context("url is malformed")?;
@@ -57,8 +71,9 @@ impl HttpClient {
         Ok(HttpClient {
             url,
             api_token,
-            connections: Mutex::new(AgedClient::build(&user_agent)?),
+            connections: Mutex::new(AgedClient::build(&user_agent, version)?),
             user_agent,
+            version,
             timeout,
         })
     }
@@ -68,7 +83,7 @@ impl HttpClient {
         // Real time on purpose: this ages TCP connections to the real server,
         // it isn't a timer the indexer waits on.
         if connections.built_at.elapsed() > MAX_CONNECTION_AGE {
-            *connections = AgedClient::build(&self.user_agent)?;
+            *connections = AgedClient::build(&self.user_agent, self.version)?;
         }
         Ok(connections.client.clone())
     }
@@ -104,25 +119,23 @@ impl HttpClient {
     }
 }
 
-fn build_http_client(user_agent: &str) -> Result<reqwest::Client> {
-    http_client_builder(user_agent)
+fn build_http_client(user_agent: &str, version: HttpVersion) -> Result<reqwest::Client> {
+    http_client_builder(user_agent, version)
         .build()
         .context("build http client")
 }
 
-fn http_client_builder(user_agent: &str) -> reqwest::ClientBuilder {
-    reqwest::Client::builder()
+fn http_client_builder(user_agent: &str, version: HttpVersion) -> reqwest::ClientBuilder {
+    let builder = reqwest::Client::builder()
         .user_agent(user_agent)
         // Without it a dead address holds the connection in SYN_SENT until the
         // request timeout. Hyper splits it across the resolved addresses and
         // moves on to the next.
-        .connect_timeout(CONNECT_TIMEOUT)
-        // Over HTTP/2 every query in flight shares one TCP connection, and
-        // Solana's multi-megabyte pages stall on it: across eight paired runs
-        // of the open indexer benchmark from a direct route, HTTP/2 cost Solana
-        // 23% of its events/s and gained EVM's small pages under 2%. Larger
-        // flow control windows won back only part of it.
-        .http1_only()
+        .connect_timeout(CONNECT_TIMEOUT);
+    match version {
+        HttpVersion::Http1 => builder.http1_only(),
+        HttpVersion::Http2 => builder,
+    }
 }
 
 /// What a query's response status means.
@@ -536,6 +549,7 @@ mod tests {
             &format!("http://{address}"),
             None,
             "test".to_string(),
+            HttpVersion::Http1,
             Duration::from_secs(5),
         )
         .unwrap();
@@ -549,9 +563,14 @@ mod tests {
         let urls: Vec<String> = ["http://host/sub", "http://host/sub/"]
             .into_iter()
             .map(|base| {
-                let client =
-                    HttpClient::new(base, None, "test".to_string(), Duration::from_secs(5))
-                        .unwrap();
+                let client = HttpClient::new(
+                    base,
+                    None,
+                    "test".to_string(),
+                    HttpVersion::Http1,
+                    Duration::from_secs(5),
+                )
+                .unwrap();
                 let request = client.request(Method::GET, &["height"]).unwrap();
                 request.build().unwrap().url().to_string()
             })
@@ -566,6 +585,7 @@ mod tests {
             &format!("{}/", server.url()),
             None,
             "test".to_string(),
+            HttpVersion::Http1,
             Duration::from_secs(5),
         )
         .unwrap();
@@ -581,13 +601,9 @@ mod tests {
         assert_eq!(body.unwrap(), r#"{"height":7}"#);
     }
 
-    /// Offered both, as HyperSync's servers are, the client picks HTTP/1.1: a
-    /// connection per query in flight rather than every query multiplexed
-    /// onto one.
-    #[tokio::test]
-    async fn a_server_offering_http2_is_spoken_to_over_http1() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
+    /// The protocol a client of `version` settles on with a server offering
+    /// both, as HyperSync's servers do.
+    async fn protocol_negotiated_by(version: HttpVersion) -> Option<Vec<u8>> {
         let (ca_pem, mut config) = crate::test_tls::localhost_server_config();
         config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
@@ -595,35 +611,31 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let negotiated = tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
-            let mut stream = acceptor.accept(socket).await.unwrap();
-            let protocol = stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec);
-            if protocol.as_deref() == Some(b"http/1.1") {
-                let mut request = Vec::new();
-                while !request.ends_with(b"\r\n\r\n") {
-                    request.push(stream.read_u8().await.unwrap());
-                }
-                stream
-                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-                    .await
-                    .unwrap();
-            }
-            protocol
+            let stream = acceptor.accept(socket).await.unwrap();
+            stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec)
         });
 
-        let client = http_client_builder("test")
+        let client = http_client_builder("test", version)
             .add_root_certificate(reqwest::Certificate::from_pem(ca_pem.as_bytes()).unwrap())
+            .timeout(Duration::from_secs(1))
             .build()
             .unwrap();
-        let version = client
+        // The server hangs up once the handshake has settled the protocol.
+        let _ = client
             .get(format!("https://localhost:{port}/height"))
             .send()
-            .await
-            .map(|response| response.version())
-            .ok();
+            .await;
+        negotiated.await.unwrap()
+    }
 
+    #[tokio::test]
+    async fn each_http_version_negotiates_its_protocol() {
         assert_eq!(
-            (negotiated.await.unwrap(), version),
-            (Some(b"http/1.1".to_vec()), Some(reqwest::Version::HTTP_11))
+            [
+                protocol_negotiated_by(HttpVersion::Http1).await,
+                protocol_negotiated_by(HttpVersion::Http2).await,
+            ],
+            [Some(b"http/1.1".to_vec()), Some(b"h2".to_vec())]
         );
     }
 
@@ -636,6 +648,7 @@ mod tests {
             &blackhole.url(),
             None,
             "test".to_string(),
+            HttpVersion::Http1,
             Duration::from_secs(60),
         )
         .unwrap();

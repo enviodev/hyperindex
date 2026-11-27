@@ -19,7 +19,8 @@ use crate::chain_buffer::matching_fuel::{FuelMatcher, ReceiptMatchFields};
 use crate::chain_buffer::page::{Page, PageData};
 use crate::chain_buffer::{ChainBuffer, Ecosystem, FuelRegistrations};
 use crate::hypersync_http::{
-    classify_reply, locate_file, read_files_in_message, read_packed_message, HttpClient, Reply,
+    classify_reply, locate_file, read_files_in_message, read_packed_message, HttpClient,
+    HttpVersion, Reply,
 };
 use crate::request_stats::rate_limited_err;
 use config::ClientConfig;
@@ -124,9 +125,15 @@ impl FuelHyperSyncClient {
         buffer: &ChainBuffer,
     ) -> napi::Result<FuelHyperSyncClient> {
         let fuel = buffer.shared().fuel().map_err(map_err)?;
-        let http = HttpClient::new(&cfg.url, Some(cfg.api_token), user_agent, HTTP_REQ_TIMEOUT)
-            .context("build client")
-            .map_err(map_err)?;
+        let http = HttpClient::new(
+            &cfg.url,
+            Some(cfg.api_token),
+            user_agent,
+            HttpVersion::Http2,
+            HTTP_REQ_TIMEOUT,
+        )
+        .context("build client")
+        .map_err(map_err)?;
         Ok(FuelHyperSyncClient { http, fuel })
     }
 
