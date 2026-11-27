@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 #[derive(Default)]
 #[napi_derive::napi(object)]
-pub struct FromUserApiOptions {
+pub(crate) struct FromUserApiOptions {
     pub schema: Option<String>,
     pub env: Option<HashMap<String, String>>,
     pub files: Option<HashMap<String, String>>,
@@ -19,7 +19,7 @@ pub struct FromUserApiOptions {
 }
 
 #[napi_derive::napi(object)]
-pub struct FromUserApiResult {
+pub(crate) struct FromUserApiResult {
     /// The public config JSON, the same shape `get_config_json` returns.
     pub config: String,
     /// The generated `.envio/types.d.ts`, present only when
@@ -39,7 +39,7 @@ fn serialize_config_result(config: anyhow::Result<SystemConfig>) -> napi::Result
 }
 
 #[napi_derive::napi]
-pub fn get_config_json(
+pub(crate) fn get_config_json(
     config_path: Option<String>,
     directory: Option<String>,
 ) -> napi::Result<String> {
@@ -60,7 +60,7 @@ pub fn get_config_json(
 /// — from the single parse, so a caller can type-check handlers against the
 /// config's `indexer` surface without re-parsing.
 #[napi_derive::napi]
-pub fn from_user_api(
+pub(crate) fn from_user_api(
     yaml: String,
     options: Option<FromUserApiOptions>,
 ) -> napi::Result<FromUserApiResult> {
@@ -96,7 +96,7 @@ pub fn from_user_api(
 /// Every environment variable the indexer runtime uses, read and validated
 /// once, as JSON in the shape of `IndexerEnv.t`.
 #[napi_derive::napi]
-pub fn read_indexer_env() -> napi::Result<String> {
+pub(crate) fn read_indexer_env() -> napi::Result<String> {
     use std::io::IsTerminal;
     let env = crate::indexer_env::IndexerEnv::read(
         &crate::env::var,
@@ -110,23 +110,27 @@ pub fn read_indexer_env() -> napi::Result<String> {
 }
 
 #[napi_derive::napi]
-pub fn load_ts(path: String) -> napi::Result<String> {
+pub(crate) fn load_ts(path: String) -> napi::Result<String> {
     crate::ts_loader::load(std::path::Path::new(&path)).map_err(napi::Error::from_reason)
 }
 
 #[napi_derive::napi]
-pub fn ts_check_handler_format(path: String) -> napi::Result<()> {
+pub(crate) fn ts_check_handler_format(path: String) -> napi::Result<()> {
     crate::ts_loader::check_handler_format(std::path::Path::new(&path))
         .map_err(napi::Error::from_reason)
 }
 
 #[napi_derive::napi]
-pub fn ts_resolve_candidates(specifier: String, parent_url: Option<String>) -> Vec<String> {
+pub(crate) fn ts_resolve_candidates(specifier: String, parent_url: Option<String>) -> Vec<String> {
     crate::ts_loader::resolve_candidates(&specifier, parent_url.as_deref())
 }
 
 #[napi_derive::napi]
-pub fn ts_not_found_candidates(code: String, url: Option<String>, message: String) -> Vec<String> {
+pub(crate) fn ts_not_found_candidates(
+    code: String,
+    url: Option<String>,
+    message: String,
+) -> Vec<String> {
     crate::ts_loader::not_found_candidates(&code, url.as_deref(), &message)
 }
 
@@ -134,7 +138,7 @@ pub fn ts_not_found_candidates(code: String, url: Option<String>, message: Strin
 /// Rust has handled the command end-to-end (help/version, codegen, init,
 /// stop, docker up/down). The Node process then exits with code 0.
 #[napi_derive::napi]
-pub async fn run_cli(
+pub(crate) async fn run_cli(
     args: Vec<String>,
     envio_package_dir: Option<String>,
 ) -> napi::Result<Option<String>> {

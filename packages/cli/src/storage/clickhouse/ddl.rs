@@ -13,23 +13,23 @@ use crate::storage::types::{
     CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN, DELETE, INFO_TABLE, SET,
 };
 
-pub const ID_COLUMN: &str = "id";
-pub const CHAIN_ID_COLUMN: &str = "chain_id";
+pub(crate) const ID_COLUMN: &str = "id";
+pub(crate) const CHAIN_ID_COLUMN: &str = "chain_id";
 const BLOCK_NUMBER_COLUMN: &str = "block_number";
 /// What a chains row is ordered by among the rows written for the same chain.
 /// The latest one written is the chain's state.
-pub const VERSION_COLUMN: &str = "version";
+pub(crate) const VERSION_COLUMN: &str = "version";
 const FRONTIER_COLUMN: &str = "checkpoint_id";
 
 /// An entity's field with the ClickHouse type it is stored as.
 #[derive(Debug, Clone)]
-pub struct Column {
+pub(crate) struct Column {
     pub field: Field,
     pub ch_type: ChType,
 }
 
 #[derive(Debug, Clone)]
-pub struct EntitySpec {
+pub(crate) struct EntitySpec {
     pub name: String,
     pub history_table: String,
     pub columns: Vec<Column>,
@@ -41,7 +41,7 @@ pub struct EntitySpec {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Topology {
+pub(crate) struct Topology {
     pub replicated: bool,
     /// Whether table-level DDL carries its own `ON CLUSTER`. A `Replicated`
     /// database engine propagates DDL through its own log, and combining the two
@@ -67,7 +67,7 @@ impl Topology {
         }
     }
 
-    pub fn on_cluster(&self) -> &'static str {
+    pub(crate) fn on_cluster(&self) -> &'static str {
         on_cluster_clause(self.ddl_on_cluster)
     }
 
@@ -95,7 +95,7 @@ impl Topology {
 /// flag. Without a Replicated database engine, every CREATE must carry its own
 /// ON CLUSTER to reach all replicas, otherwise it runs only on the connected
 /// node. The '{cluster}' macro resolves to each node's configured cluster name.
-pub fn on_cluster_clause(on_cluster: bool) -> &'static str {
+pub(crate) fn on_cluster_clause(on_cluster: bool) -> &'static str {
     if on_cluster {
         " ON CLUSTER '{cluster}'"
     } else {
@@ -103,7 +103,7 @@ pub fn on_cluster_clause(on_cluster: bool) -> &'static str {
     }
 }
 
-pub fn database_engine_name(engine_spec: &str) -> &str {
+pub(crate) fn database_engine_name(engine_spec: &str) -> &str {
     engine_spec
         .trim()
         .split('(')
@@ -115,27 +115,27 @@ pub fn database_engine_name(engine_spec: &str) -> &str {
         .trim()
 }
 
-pub fn change_type() -> ChType {
+pub(crate) fn change_type() -> ChType {
     ChType::Enum {
         variants: vec![SET.to_string(), DELETE.to_string()],
     }
 }
 
 impl Column {
-    pub fn new(field: Field, chain_id_mode: ChainIdMode, context: &str) -> Result<Self> {
+    pub(crate) fn new(field: Field, chain_id_mode: ChainIdMode, context: &str) -> Result<Self> {
         let ch_type = field
             .ch_type(chain_id_mode)
             .map_err(|error| error.context(format!("Column `{}` of {context}", field.ch_column)))?;
         Ok(Self { field, ch_type })
     }
 
-    pub fn ch_column(&self) -> &str {
+    pub(crate) fn ch_column(&self) -> &str {
         &self.field.ch_column
     }
 
     /// What a read names the column: its Postgres name, so a row reads the
     /// same whichever store answered.
-    pub fn row_name(&self) -> &str {
+    pub(crate) fn row_name(&self) -> &str {
         &self.field.pg_column
     }
 }
@@ -143,7 +143,7 @@ impl Column {
 impl EntitySpec {
     /// What a history row carries: the entity's columns, then the checkpoint
     /// it was written at and whether it set or deleted the entity.
-    pub fn history_columns(&self) -> Vec<(String, ChType)> {
+    pub(crate) fn history_columns(&self) -> Vec<(String, ChType)> {
         self.columns
             .iter()
             .map(|column| (column.ch_column().to_string(), column.ch_type.clone()))
@@ -156,7 +156,7 @@ impl EntitySpec {
 
     /// The columns naming one entity: its id, and the chain a per-chain one
     /// belongs to.
-    pub fn key(&self) -> Vec<String> {
+    pub(crate) fn key(&self) -> Vec<String> {
         let mut key = vec![ID_COLUMN.to_string()];
         if let Some(chain_id_column) = &self.chain_id_column {
             key.push(chain_id_column.clone());
@@ -209,7 +209,7 @@ fn definitions(columns: &[(String, ChType)]) -> String {
         .join(",\n  ")
 }
 
-pub fn create_history_table(
+pub(crate) fn create_history_table(
     entity: &EntitySpec,
     database: &str,
     topology: Topology,
@@ -301,7 +301,7 @@ pub fn create_history_table(
     ))
 }
 
-pub fn checkpoint_columns(chain_id_type: &ChType) -> Vec<(String, ChType)> {
+pub(crate) fn checkpoint_columns(chain_id_type: &ChType) -> Vec<(String, ChType)> {
     vec![
         (CHAIN_ID_COLUMN.to_string(), chain_id_type.clone()),
         (ID_COLUMN.to_string(), ChType::UInt64),
@@ -322,7 +322,7 @@ pub fn checkpoint_columns(chain_id_type: &ChType) -> Vec<(String, ChType)> {
 /// The chain leads the key: every read of the table names one, and a resume
 /// trims a chain's rows as one range. Within a chain ids grow with the block, so
 /// a block range is narrowed by the min-max index rather than read in full.
-pub fn create_checkpoints_table(
+pub(crate) fn create_checkpoints_table(
     chain_id_type: &ChType,
     database: &str,
     topology: Topology,
@@ -340,7 +340,7 @@ pub fn create_checkpoints_table(
     )
 }
 
-pub fn chain_columns(chain_id_type: &ChType) -> Vec<(String, ChType)> {
+pub(crate) fn chain_columns(chain_id_type: &ChType) -> Vec<(String, ChType)> {
     vec![
         (CHAIN_ID_COLUMN.to_string(), chain_id_type.clone()),
         (FRONTIER_COLUMN.to_string(), ChType::UInt64),
@@ -356,7 +356,11 @@ pub fn chain_columns(chain_id_type: &ChType) -> Vec<(String, ChType)> {
 /// The dedup window is off for the same reason as on the other tables: a row
 /// identical to one already written would otherwise be dropped while the insert
 /// reports success.
-pub fn create_chains_table(chain_id_type: &ChType, database: &str, topology: Topology) -> String {
+pub(crate) fn create_chains_table(
+    chain_id_type: &ChType,
+    database: &str,
+    topology: Topology,
+) -> String {
     format!(
         "CREATE TABLE IF NOT EXISTS {}{} (\n  {}\n)\nENGINE = {}\nORDER BY ({}){}",
         table_ref(database, CHAINS_TABLE),
@@ -368,7 +372,7 @@ pub fn create_chains_table(chain_id_type: &ChType, database: &str, topology: Top
     )
 }
 
-pub fn info_columns() -> Vec<(String, ChType)> {
+pub(crate) fn info_columns() -> Vec<(String, ChType)> {
     vec![
         (ID_COLUMN.to_string(), ChType::Int32),
         ("instance".to_string(), ChType::String),
@@ -377,7 +381,7 @@ pub fn info_columns() -> Vec<(String, ChType)> {
 
 /// A singleton naming the initialize that built the database, which pairs it
 /// with the Postgres schema built alongside it.
-pub fn create_info_table(database: &str, topology: Topology) -> String {
+pub(crate) fn create_info_table(database: &str, topology: Topology) -> String {
     format!(
         "CREATE TABLE IF NOT EXISTS {}{} (\n  {}\n)\nENGINE = {}\nORDER BY ({}){}",
         table_ref(database, INFO_TABLE),
@@ -400,7 +404,7 @@ pub fn create_info_table(database: &str, topology: Topology) -> String {
 /// The frontier is read once per query as a scalar and looked up per row, which
 /// costs one comparison and leaves the predicate free to run as PREWHERE. A
 /// chain the frontier doesn't name reads as 0, so its rows stay hidden.
-pub fn create_view(entity: &EntitySpec, database: &str, topology: Topology) -> String {
+pub(crate) fn create_view(entity: &EntitySpec, database: &str, topology: Topology) -> String {
     let dedup_key = quoted_list(entity.key());
     let entity_fields = quoted_list(entity.columns.iter().map(Column::ch_column));
 
@@ -440,7 +444,7 @@ pub fn create_view(entity: &EntitySpec, database: &str, topology: Topology) -> S
     )
 }
 
-pub fn insert_query(
+pub(crate) fn insert_query(
     database: &str,
     table: &str,
     columns: impl IntoIterator<Item = impl AsRef<str>>,
@@ -463,7 +467,10 @@ pub fn insert_query(
 /// the table's own scope and carry a prefix no entity field can, since `exists`
 /// loses its alias under the old analyzer and a user may have named a column
 /// `name`.
-pub fn holds_rows_above_checkpoint(database: &str, above_by_table: &[(String, String)]) -> String {
+pub(crate) fn holds_rows_above_checkpoint(
+    database: &str,
+    above_by_table: &[(String, String)],
+) -> String {
     let branches: Vec<String> = above_by_table
         .iter()
         .map(|(table, above)| {
@@ -489,7 +496,7 @@ pub fn holds_rows_above_checkpoint(database: &str, above_by_table: &[(String, St
 /// (`1`) is what makes the storage actually be at the checkpoint by the time
 /// the indexer starts writing again; the indexer reads and writes this node
 /// alone, and the replicas behind it catch up on their own.
-pub fn trim_table(database: &str, table: &str, above: &str) -> String {
+pub(crate) fn trim_table(database: &str, table: &str, above: &str) -> String {
     format!(
         "ALTER TABLE {} DELETE WHERE {above} SETTINGS mutations_sync = 1",
         table_ref(database, table),

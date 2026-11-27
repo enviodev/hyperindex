@@ -21,7 +21,7 @@ use crate::address_store::normalize_evm_address;
 use crate::storage::clickhouse::ch_type;
 use crate::utils::project_env::ProjectEnv;
 use crate::{
-    constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
+    constants::links,
     ecosystems::evm::abi::AbiOrNestedAbi,
     ecosystems::fuel::abi::{
         FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME,
@@ -52,13 +52,9 @@ use super::svm_idl::{self, ProgramIdl};
 
 type ContractNameKey = String;
 type NetworkIdKey = u64;
-type EntityKey = String;
-type GraphqlEnumKey = String;
 // Keeps config.yaml order: the run splits chains across workers in that order.
 type ChainMap = IndexMap<NetworkIdKey, Chain>;
 type ContractMap = HashMap<ContractNameKey, Contract>;
-pub type EntityMap = HashMap<EntityKey, Entity>;
-pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
 
 // Chains are inserted in the order config.yaml lists them, so map positions are
 // the YAML item positions.
@@ -80,7 +76,7 @@ fn insert_unique_chain(chains: &mut ChainMap, chain: Chain) -> Result<()> {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Ecosystem {
+pub(crate) enum Ecosystem {
     Evm,
     Fuel,
     Svm,
@@ -262,7 +258,7 @@ fn is_valid_release_version_number(version: &str) -> bool {
 
 /// Version baked into the binary at compile time from Cargo.toml.
 /// CI patches Cargo.toml with the release version before building.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Returns the envio npm package specifier for codegen.
 /// - Release builds (valid semver `VERSION`) → that version, for npm.
@@ -271,7 +267,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// A dev build without an `envio_package_dir` is a configuration error —
 /// there's no reliable way to locate the JS package from inside Rust alone.
-pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
+pub(crate) fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
     if is_valid_release_version_number(VERSION) {
         return Ok(VERSION.to_string());
     }
@@ -311,7 +307,7 @@ pub enum ChainIdMode {
 
 /// Chain ids cross the Rust → JSON → JS boundary as plain numbers, so an id
 /// above `Number.MAX_SAFE_INTEGER` can't round-trip losslessly.
-pub const MAX_SAFE_CHAIN_ID: u64 = 9_007_199_254_740_991;
+pub(crate) const MAX_SAFE_CHAIN_ID: u64 = 9_007_199_254_740_991;
 
 impl ChainIdMode {
     /// Skipped chains count: codegen emits a `chainId` case for every chain in
@@ -343,9 +339,8 @@ impl ChainIdMode {
 }
 
 #[derive(Debug)]
-pub struct SystemConfig {
+pub(crate) struct SystemConfig {
     pub name: String,
-    pub schema_path: String,
     pub parsed_project_paths: ParsedProjectPaths,
     pub chains: ChainMap,
     pub chain_id_mode: ChainIdMode,
@@ -368,7 +363,7 @@ pub struct SystemConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StorageBackend {
+pub(crate) struct StorageBackend {
     // Whether entities without an @storage directive are stored in the
     // backend. Postgres is, unless ClickHouse is made the default; ClickHouse
     // only with `default: true`.
@@ -377,13 +372,13 @@ pub struct StorageBackend {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Storage {
+pub(crate) struct Storage {
     pub postgres: StorageBackend,
     pub clickhouse: Option<StorageBackend>,
 }
 
 impl Storage {
-    pub fn resolve(config: Option<&human_config::StorageConfig>) -> Result<Self> {
+    pub(crate) fn resolve(config: Option<&human_config::StorageConfig>) -> Result<Self> {
         let (postgres_config, clickhouse_config) = match config {
             None => (None, None),
             Some(s) => (s.postgres.as_ref(), s.clickhouse.as_ref()),
@@ -422,7 +417,7 @@ impl Storage {
 
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
-pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
+pub(crate) fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
     let entities = schema.entities_by_name();
 
     // Entities without @storage fall back to the backends marked `default`
@@ -496,7 +491,10 @@ fn is_stored_in_postgres(entity: &Entity, storage: &Storage) -> bool {
 /// that entity isn't in Postgres there is no table to join or index, so catch
 /// it here rather than letting table creation (or the end-of-backfill index
 /// pass) fail on an entity it can't resolve.
-pub fn validate_relationship_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
+pub(crate) fn validate_relationship_storage(
+    storage: &Storage,
+    schema: &Schema,
+) -> anyhow::Result<()> {
     let mut invalid: Vec<String> = Vec::new();
     for entity in schema.entities_by_name() {
         if !is_stored_in_postgres(entity, storage) {
@@ -538,7 +536,7 @@ pub fn validate_relationship_storage(storage: &Storage, schema: &Schema) -> anyh
 /// the reserved `envio_*` columns added to entity history tables, or exceed
 /// Postgres's identifier length limit. Catch all of these at codegen time
 /// instead of failing on table creation.
-pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
+pub(crate) fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
     let mut formats: Vec<human_config::ColumnNameFormat> = vec![];
     for backend in std::iter::once(&storage.postgres).chain(&storage.clickhouse) {
         if !formats.contains(&backend.column_name_format) {
@@ -680,7 +678,7 @@ fn precision_fix(stored: &GqlScalar) -> String {
 /// without it the sorting key is `id`, with it the listed columns replace `id`.
 /// Runs on the resolved schema, so a relation in the sorting key resolves to
 /// the id it actually stores.
-pub fn validate_clickhouse_sorting_key_scalars(
+pub(crate) fn validate_clickhouse_sorting_key_scalars(
     storage: &Storage,
     schema: &Schema,
 ) -> anyhow::Result<()> {
@@ -757,7 +755,7 @@ pub fn validate_clickhouse_sorting_key_scalars(
 /// `@crossChain` only means something when entities are per-chain by default.
 /// Left silently accepted it would read as "this entity is special" while
 /// changing nothing, so reject it instead of ignoring it.
-pub fn validate_cross_chain_directives(
+pub(crate) fn validate_cross_chain_directives(
     default_scope: DefaultChainScope,
     schema: &Schema,
 ) -> anyhow::Result<()> {
@@ -788,7 +786,7 @@ pub fn validate_cross_chain_directives(
 /// reference within its own chain, and a cross-chain id is global. A
 /// `@derivedFrom` is the mirror of a reference on the other entity, so checking
 /// the references alone covers both.
-pub fn validate_cross_chain_relationships(
+pub(crate) fn validate_cross_chain_relationships(
     schema: &Schema,
     default_scope: DefaultChainScope,
 ) -> anyhow::Result<()> {
@@ -827,7 +825,7 @@ pub fn validate_cross_chain_relationships(
 /// @derivedFrom field would silently vanish from the API. Reject both at
 /// codegen. References from @internal entities are fine — nothing is exposed
 /// on their side.
-pub fn validate_internal_relationships(schema: &Schema) -> anyhow::Result<()> {
+pub(crate) fn validate_internal_relationships(schema: &Schema) -> anyhow::Result<()> {
     let mut invalid: Vec<String> = vec![];
     for entity in schema.entities_by_name() {
         if entity.internal {
@@ -861,7 +859,7 @@ pub fn validate_internal_relationships(schema: &Schema) -> anyhow::Result<()> {
 /// `column_name_format` are, so the name a user may give a field never depends
 /// on where the entity happens to be stored. Cross-chain entities get nothing
 /// appended and keep both names free.
-pub fn validate_chain_id_field_names(
+pub(crate) fn validate_chain_id_field_names(
     schema: &Schema,
     default_scope: DefaultChainScope,
 ) -> anyhow::Result<()> {
@@ -889,7 +887,7 @@ pub fn validate_chain_id_field_names(
 // ClickHouse has no `Nullable(Array(T))` type, so a nullable array column on a
 // ClickHouse-backed entity is rejected when its history table is created.
 // Catch it during validation with an actionable message instead.
-pub fn validate_clickhouse_nullable_arrays(
+pub(crate) fn validate_clickhouse_nullable_arrays(
     storage: &Storage,
     schema: &Schema,
 ) -> anyhow::Result<()> {
@@ -927,13 +925,13 @@ pub fn validate_clickhouse_nullable_arrays(
 
 //Getter methods for system config
 impl SystemConfig {
-    pub fn get_contracts(&self) -> Vec<&Contract> {
+    pub(crate) fn get_contracts(&self) -> Vec<&Contract> {
         let mut contracts: Vec<&Contract> = self.contracts.values().collect();
         contracts.sort_by_key(|c| c.name.clone());
         contracts
     }
 
-    pub fn get_ecosystem(&self) -> Ecosystem {
+    pub(crate) fn get_ecosystem(&self) -> Ecosystem {
         match &self.human_config {
             HumanConfig::Evm(_) => Ecosystem::Evm,
             HumanConfig::Fuel(_) => Ecosystem::Fuel,
@@ -941,25 +939,25 @@ impl SystemConfig {
         }
     }
 
-    pub fn get_contract(&self, name: &ContractNameKey) -> Option<&Contract> {
+    pub(crate) fn get_contract(&self, name: &ContractNameKey) -> Option<&Contract> {
         self.contracts.get(name)
     }
 
-    pub fn get_entities(&self) -> Vec<&Entity> {
+    pub(crate) fn get_entities(&self) -> Vec<&Entity> {
         let mut entities: Vec<&Entity> = self.schema.entities.values().collect();
         //For consistent templating in alphabetical order
         entities.sort_by_key(|e| e.name.clone());
         entities
     }
 
-    pub fn get_gql_enums(&self) -> Vec<&GraphQLEnum> {
+    pub(crate) fn get_gql_enums(&self) -> Vec<&GraphQLEnum> {
         let mut enums: Vec<&GraphQLEnum> = self.schema.enums.values().collect();
         //For consistent templating in alphabetical order
         enums.sort_by_key(|e| e.name.clone());
         enums
     }
 
-    pub fn from_human_config(
+    pub(crate) fn from_human_config(
         human_config: HumanConfig,
         schema: Schema,
         project_paths: &ParsedProjectPaths,
@@ -1142,10 +1140,6 @@ impl SystemConfig {
                 Ok(SystemConfig {
                     name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
-                    schema_path: base_config
-                        .schema
-                        .clone()
-                        .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
                     chain_id_mode,
                     contracts,
@@ -1291,10 +1285,6 @@ impl SystemConfig {
                 Ok(SystemConfig {
                     name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
-                    schema_path: base_config
-                        .schema
-                        .clone()
-                        .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
                     chain_id_mode,
                     contracts,
@@ -1404,11 +1394,6 @@ impl SystemConfig {
                 Ok(SystemConfig {
                     name: svm_config.base.name.clone(),
                     parsed_project_paths: final_project_paths,
-                    schema_path: svm_config
-                        .base
-                        .schema
-                        .clone()
-                        .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
                     chain_id_mode,
                     contracts,
@@ -1428,7 +1413,7 @@ impl SystemConfig {
         }
     }
 
-    pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
+    pub(crate) fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
         let human_config_string =
             std::fs::read_to_string(&project_paths.config).context(format!(
                 "Failed to resolve config path {0} (--config {1} resolved relative to --directory \
@@ -1526,13 +1511,13 @@ type ServerUrl = String;
 /// This data structure mainly needed to conviniently prepare data
 /// for ConfigYAML, so we don't break backward compatibility
 #[derive(Debug, Clone, PartialEq)]
-pub enum MainEvmDataSource {
+pub(crate) enum MainEvmDataSource {
     HyperSync { hypersync_endpoint_url: ServerUrl },
     Rpc(Rpc),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum DataSource {
+pub(crate) enum DataSource {
     Evm {
         main: MainEvmDataSource,
         rpcs: Vec<Rpc>,
@@ -1675,7 +1660,7 @@ impl DataSource {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Chain {
+pub(crate) struct Chain {
     pub id: u64,
     pub skip: bool,
     pub sync_source: DataSource,
@@ -1688,14 +1673,14 @@ pub struct Chain {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ChainContract {
+pub(crate) struct ChainContract {
     pub name: ContractNameKey,
     pub addresses: Vec<String>,
     pub start_block: Option<u64>,
 }
 
 impl ChainContract {
-    pub fn get_contract<'a>(&self, config: &'a SystemConfig) -> Result<&'a Contract> {
+    pub(crate) fn get_contract<'a>(&self, config: &'a SystemConfig) -> Result<&'a Contract> {
         config.get_contract(&self.name).ok_or_else(|| {
             anyhow!(
                 "Unexpected, network contract {} should have a contract in mapping",
@@ -1706,15 +1691,13 @@ impl ChainContract {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct EvmAbi {
-    // The path is not always present since we allow to get ABI from events
-    pub path: Option<PathBuf>,
+pub(crate) struct EvmAbi {
     pub raw: String,
     typed: JsonAbi,
 }
 
 impl EvmAbi {
-    pub fn event_signature_from_abi_event(abi_event: &AlloyEvent) -> String {
+    pub(crate) fn event_signature_from_abi_event(abi_event: &AlloyEvent) -> String {
         format!(
             "{}({}){}",
             abi_event.name,
@@ -1748,7 +1731,6 @@ impl EvmAbi {
                 let resolved = source
                     .read_config_relative_file(abi_file_path)
                     .context("Failed to get ABI relative to the config")?;
-                let path = resolved.path;
                 let mut raw = resolved.raw;
 
                 let source = path_utils::normalize_path(PathBuf::from(abi_file_path))
@@ -1764,11 +1746,7 @@ impl EvmAbi {
                         abi
                     }
                 };
-                Ok(Some(Self {
-                    path: Some(path),
-                    raw,
-                    typed,
-                }))
+                Ok(Some(Self { raw, typed }))
             }
         }
     }
@@ -1918,7 +1896,7 @@ pub(crate) fn yaml_arg_to_named_field(arg: &human_config::svm::ArgDef) -> Result
 /// Convert an upstream `FieldType` into the YAML/wire-format `ArgType`. Used
 /// when serializing `SvmEventKind.args` / `SvmAbi.defined_types` into
 /// `internal_config.json` for the runtime to consume.
-pub fn field_type_to_arg_type(ty: &SvmFieldType) -> human_config::svm::ArgType {
+pub(crate) fn field_type_to_arg_type(ty: &SvmFieldType) -> human_config::svm::ArgType {
     use human_config::svm::{ArgComposite as C, ArgPrimitive as P, ArgType as T};
     match ty {
         SvmFieldType::Bool => T::Primitive(P::Bool),
@@ -1963,7 +1941,7 @@ pub fn field_type_to_arg_type(ty: &SvmFieldType) -> human_config::svm::ArgType {
     }
 }
 
-pub fn named_field_to_arg_def(nf: &SvmNamedField) -> human_config::svm::ArgDef {
+pub(crate) fn named_field_to_arg_def(nf: &SvmNamedField) -> human_config::svm::ArgDef {
     human_config::svm::ArgDef {
         name: nf.name.clone(),
         ty: field_type_to_arg_type(&nf.ty),
@@ -1973,7 +1951,7 @@ pub fn named_field_to_arg_def(nf: &SvmNamedField) -> human_config::svm::ArgDef {
 /// The YAML/wire-format `ArgType` read back into the runtime's `FieldType`.
 /// Config parsing and the Borsh decoder read it the same way: a type one of
 /// them maps and the other does not passes codegen and then fails to decode.
-pub fn arg_type_to_field_type(ty: &human_config::svm::ArgType) -> Result<SvmFieldType> {
+pub(crate) fn arg_type_to_field_type(ty: &human_config::svm::ArgType) -> Result<SvmFieldType> {
     use human_config::svm::{ArgComposite as C, ArgPrimitive as P, ArgType as T};
     Ok(match ty {
         T::Primitive(p) => match p {
@@ -2033,7 +2011,7 @@ pub fn arg_type_to_field_type(ty: &human_config::svm::ArgType) -> Result<SvmFiel
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Abi {
+pub(crate) enum Abi {
     Evm(EvmAbi),
     Fuel(Box<FuelAbi>),
     /// Solana programs ship no on-chain ABI artifact. The `SvmAbi` payload
@@ -2044,7 +2022,7 @@ pub enum Abi {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SvmAbi {
+pub(crate) struct SvmAbi {
     /// Every instruction the program declares, by name, with the reason for
     /// each one this runtime cannot dispatch or decode. Read from the user's
     /// `idl:` file, and empty for a program whose instructions carry their
@@ -2054,7 +2032,7 @@ pub struct SvmAbi {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum SvmSchemaSource {
+pub(crate) enum SvmSchemaSource {
     /// User-supplied `idl: <path>` parsed at codegen time.
     AnchorIdl { path: String },
     /// Hand-written per-instruction `accounts`/`args` in YAML.
@@ -2068,7 +2046,7 @@ impl Abi {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Contract {
+pub(crate) struct Contract {
     pub name: ContractNameKey,
     pub handler_path: Option<String>,
     pub abi: Abi,
@@ -2076,7 +2054,7 @@ pub struct Contract {
 }
 
 impl Contract {
-    pub fn new(
+    pub(crate) fn new(
         name: String,
         handler_path: Option<String>,
         events: Vec<Event>,
@@ -2206,24 +2184,10 @@ impl Contract {
             abi,
         })
     }
-
-    pub fn get_chain_ids(&self, system_config: &SystemConfig) -> Vec<u64> {
-        system_config
-            .chains
-            .values()
-            .filter_map(|network| {
-                if network.contracts.iter().any(|c| c.name == self.name) {
-                    Some(network.id)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum FuelEventKind {
+pub(crate) enum FuelEventKind {
     LogData(TypeIdent),
     Mint,
     Burn,
@@ -2232,7 +2196,7 @@ pub enum FuelEventKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SvmEventKind {
+pub(crate) struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
     /// instruction in the program.
     pub discriminator: Option<String>,
@@ -2248,14 +2212,14 @@ pub struct SvmEventKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum EventKind {
+pub(crate) enum EventKind {
     Params(Vec<EventParam>),
     Fuel(FuelEventKind),
     Svm(SvmEventKind),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Event {
+pub(crate) struct Event {
     pub kind: EventKind,
     pub name: String,
     /// `None` only for an anonymous EVM event: its logs carry no signature
@@ -2414,10 +2378,6 @@ impl Event {
         Ok((
             events,
             EvmAbi {
-                path: match abi_from_file {
-                    Some(abi) => abi.path.clone(),
-                    None => None,
-                },
                 raw: events_abi_raw,
                 typed: events_abi,
             },
@@ -2525,7 +2485,7 @@ impl Event {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SelectedField {
+pub(crate) struct SelectedField {
     pub name: String,
     pub data_type: TypeIdent,
 }
@@ -2543,7 +2503,7 @@ impl Ord for SelectedField {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FieldSelection {
+pub(crate) struct FieldSelection {
     pub transaction_fields: Vec<SelectedField>,
     pub block_fields: Vec<SelectedField>,
 }
@@ -2556,11 +2516,7 @@ impl FieldSelection {
         }
     }
 
-    pub fn empty() -> Self {
-        Self::new(vec![], vec![])
-    }
-
-    pub fn fuel() -> Self {
+    pub(crate) fn fuel() -> Self {
         Self::new(
             vec![SelectedField {
                 name: "id".to_string(),
@@ -2583,7 +2539,7 @@ impl FieldSelection {
         )
     }
 
-    pub fn svm() -> Self {
+    pub(crate) fn svm() -> Self {
         Self::new(
             vec![SelectedField {
                 name: "id".to_string(),
@@ -2608,7 +2564,7 @@ impl FieldSelection {
 
     /// Returns a FieldSelection containing ALL available EVM block and transaction fields.
     /// Used for generating complete TypeScript types where unselected fields are typed as `never`.
-    pub fn all_evm() -> Self {
+    pub(crate) fn all_evm() -> Self {
         use human_config::evm::{BlockField, TransactionField};
         use strum::IntoEnumIterator;
 
@@ -2700,7 +2656,7 @@ impl FieldSelection {
         }
     }
 
-    pub fn try_from_config_field_selection(
+    pub(crate) fn try_from_config_field_selection(
         field_selection_cfg: human_config::evm::FieldSelection,
     ) -> Result<Self> {
         let transaction_fields = field_selection_cfg.transaction_fields.unwrap_or_default();

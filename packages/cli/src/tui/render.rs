@@ -9,10 +9,10 @@ use ratatui::{
 use unicode_width::UnicodeWidthChar;
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-pub const SPINNER_INTERVAL_MS: u64 = 80;
+pub(super) const SPINNER_INTERVAL_MS: u64 = 80;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ColorLevel {
+pub(super) enum ColorLevel {
     None,
     Basic,
     Ansi256,
@@ -23,7 +23,7 @@ impl ColorLevel {
     /// What the terminal supports, read from the environment the way chalk
     /// read it: `FORCE_COLOR` sets a minimum, and `NO_COLOR` or
     /// `FORCE_COLOR=0` turn colour off.
-    pub fn detect(var: impl Fn(&str) -> Option<String>) -> Self {
+    pub(super) fn detect(var: impl Fn(&str) -> Option<String>) -> Self {
         let forced = var("FORCE_COLOR").map(|value| match value.as_str() {
             "0" | "false" => ColorLevel::None,
             "2" => ColorLevel::Ansi256,
@@ -53,12 +53,12 @@ impl ColorLevel {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Palette {
+pub(super) struct Palette {
     pub level: ColorLevel,
 }
 
 impl Palette {
-    pub fn rgb(self, (r, g, b): (u8, u8, u8)) -> Color {
+    pub(super) fn rgb(self, (r, g, b): (u8, u8, u8)) -> Color {
         match self.level {
             ColorLevel::TrueColor => Color::Rgb(r, g, b),
             ColorLevel::Ansi256 => Color::Indexed(ansi256(r, g, b)),
@@ -69,7 +69,7 @@ impl Palette {
     /// The brand's coral to gold. The 16 colours have no orange, so a basic
     /// terminal gets the 256-colour codes, which practically every terminal
     /// reporting as basic understands anyway.
-    pub fn brand(self, rgb: (u8, u8, u8)) -> Color {
+    pub(super) fn brand(self, rgb: (u8, u8, u8)) -> Color {
         match self.level {
             ColorLevel::Basic => Color::Indexed(ansi256(rgb.0, rgb.1, rgb.2)),
             _ => self.rgb(rgb),
@@ -757,7 +757,7 @@ fn wrap_words(spans: Spans, width: usize, first: usize, indent: usize) -> Vec<Li
 
 /// The frame at most `height` rows tall: when it doesn't fit, the logo goes
 /// first, then the blank lines between sections, and only then content.
-pub fn frame(
+pub(super) fn frame(
     state: &State,
     now: f64,
     tick: usize,

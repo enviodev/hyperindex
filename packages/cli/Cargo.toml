@@ -89,6 +89,9 @@ libc = "0.2"
 # locally and in CI agree on what is fatal.
 [lints.rust]
 warnings = "deny"
+# `pub` is kept to what another crate can reach, so the word marks exactly the
+# items `dead_code` cannot check.
+unreachable_pub = "deny"
 
 [lints.clippy]
 # These take a long, flat argument list by nature; splitting them into structs

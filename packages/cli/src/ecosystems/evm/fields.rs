@@ -6,7 +6,7 @@ use strum::VariantArray;
 /// mask and its column in the blocks table.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, VariantArray)]
 #[repr(i32)]
-pub enum EvmBlockField {
+pub(crate) enum EvmBlockField {
     Number = 0,
     Timestamp = 1,
     Hash = 2,
@@ -37,7 +37,7 @@ pub enum EvmBlockField {
 }
 
 impl EvmBlockField {
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         use EvmBlockField::*;
         match self {
             Number => "number",
@@ -76,7 +76,7 @@ impl EvmBlockField {
 /// selection mask and its column in the transactions table.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, VariantArray)]
 #[repr(i32)]
-pub enum EvmTxField {
+pub(crate) enum EvmTxField {
     TransactionIndex = 0,
     Hash = 1,
     From = 2,
@@ -112,7 +112,7 @@ pub enum EvmTxField {
 }
 
 impl EvmTxField {
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         use EvmTxField::*;
         match self {
             TransactionIndex => "transactionIndex",

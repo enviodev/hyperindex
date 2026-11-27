@@ -129,7 +129,7 @@ impl<F: FnMut(&str) -> Option<String>> Interpolator<F> {
     }
 }
 
-pub fn interpolate_config_variables(
+pub(crate) fn interpolate_config_variables(
     config_string: String,
     get_env: impl FnMut(&str) -> Option<String>,
 ) -> Result<String> {

@@ -7,7 +7,7 @@
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-pub struct Request {
+pub(crate) struct Request {
     /// The request line and headers verbatim, for a test that asserts on what
     /// was sent rather than on what it meant.
     #[cfg_attr(not(test), allow(dead_code))]
@@ -21,7 +21,7 @@ pub struct Request {
 /// Reads one request off `stream`. Whatever arrived past it stays in `buffered`
 /// for the next call, since a pooled connection carries many. `None` when the
 /// peer closed instead of sending another.
-pub async fn read_request(
+pub(crate) async fn read_request(
     stream: &mut TcpStream,
     buffered: &mut Vec<u8>,
 ) -> std::io::Result<Option<Request>> {
@@ -70,7 +70,7 @@ fn parse(buffer: &[u8]) -> Option<(usize, Request)> {
     ))
 }
 
-pub async fn write_response(
+pub(crate) async fn write_response(
     stream: &mut TcpStream,
     status: u16,
     headers: &[(&str, &str)],

@@ -1,3 +1,3 @@
-pub mod abi;
-pub mod address;
-pub mod log_decoder;
+pub(crate) mod abi;
+pub(crate) mod address;
+pub(crate) mod log_decoder;

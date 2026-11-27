@@ -15,17 +15,17 @@
     reason = "real time outside the source layer: retries against the database"
 )]
 
-pub mod batch;
-pub mod changes;
-pub mod clickhouse;
-pub mod columnar;
-pub mod effect_cache;
-pub mod handoff;
-pub mod postgres;
-pub mod rows;
-pub mod schema;
-pub mod service;
-pub mod types;
+pub(crate) mod batch;
+pub(crate) mod changes;
+pub(crate) mod clickhouse;
+pub(crate) mod columnar;
+pub(crate) mod effect_cache;
+pub(crate) mod handoff;
+pub(crate) mod postgres;
+pub(crate) mod rows;
+pub(crate) mod schema;
+pub(crate) mod service;
+pub(crate) mod types;
 
 // The addon registers these; a test build has no registration and would see
 // every export as dead.
@@ -34,9 +34,9 @@ mod js;
 #[cfg(test)]
 mod live_tests;
 
-pub use batch::{Batch, RollbackWrite};
-pub use handoff::{Failure, Handoff, WriteError};
-pub use service::Storage;
+pub(crate) use batch::{Batch, RollbackWrite};
+pub(crate) use handoff::{Failure, Handoff, WriteError};
+pub(crate) use service::Storage;
 
 use rows::ResultSet;
 use types::{Addresses, ChainConfig, ResumedChain};
@@ -64,14 +64,14 @@ pub enum Holding {
 }
 
 /// What a new storage starts out with besides the schema's tables.
-pub struct Initialize {
+pub(crate) struct Initialize {
     pub chains: Vec<ChainConfig>,
     pub envio_info: String,
     pub contract_names: Vec<String>,
     pub addresses: Addresses,
 }
 
-pub struct AddChain {
+pub(crate) struct AddChain {
     pub chain: ChainConfig,
     pub addresses: Addresses,
 }
@@ -79,11 +79,11 @@ pub struct AddChain {
 /// What ClickHouse resumes to: what Postgres committed for the chains this run
 /// drives. Only their rows are trimmed: a sibling process driving another
 /// chain may be mid-write above its frontier.
-pub struct Resume {
+pub(crate) struct Resume {
     pub committed: types::Frontier,
 }
 
-pub struct Resumed {
+pub(crate) struct Resumed {
     pub chains: Vec<ResumedChain>,
     pub addresses: ResultSet,
     pub reorg_checkpoints: Vec<types::ReorgCheckpoint>,

@@ -1,3 +1,3 @@
-pub mod evm;
-pub mod fuel;
-pub mod svm;
+pub(crate) mod evm;
+pub(crate) mod fuel;
+pub(crate) mod svm;

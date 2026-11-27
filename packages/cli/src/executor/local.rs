@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 
-pub async fn run_local(
+pub(super) async fn run_local(
     local_commands: &LocalCommandTypes,
     project_paths: &ParsedProjectPaths,
 ) -> Result<Option<Command>> {

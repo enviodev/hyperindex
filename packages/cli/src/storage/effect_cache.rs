@@ -15,13 +15,13 @@ use crate::logger::{BoundLogger, Level};
 const MAX_CHAIN_ID: u64 = 9_007_199_254_740_991;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Scope {
+pub(crate) enum Scope {
     CrossChain,
     Chain(u64),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct EffectCache {
+pub(crate) struct EffectCache {
     pub effect_name: String,
     pub scope: Scope,
 }
@@ -39,7 +39,7 @@ fn parse_chain_id(text: &str) -> Option<u64> {
 }
 
 impl EffectCache {
-    pub fn table_name(&self) -> String {
+    pub(crate) fn table_name(&self) -> String {
         match self.scope {
             Scope::CrossChain => format!("envio_effect_{}", self.effect_name),
             Scope::Chain(chain_id) => format!("envio_{chain_id}_effect_{}", self.effect_name),
@@ -49,7 +49,7 @@ impl EffectCache {
     /// The cache a table holds, if it holds one. A chain's is tried first:
     /// `_effect_` after the id keeps an effect whose name starts with digits
     /// apart from it.
-    pub fn from_table_name(table_name: &str) -> Option<Self> {
+    pub(crate) fn from_table_name(table_name: &str) -> Option<Self> {
         let rest = table_name.strip_prefix("envio_")?;
         let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
         if digits > 0 {
@@ -73,14 +73,14 @@ impl EffectCache {
     }
 
     /// A cross-chain cache serves every chain; a chain's, that chain alone.
-    pub fn serves(&self, chain_ids: &[i64]) -> bool {
+    pub(crate) fn serves(&self, chain_ids: &[i64]) -> bool {
         match self.scope {
             Scope::CrossChain => true,
             Scope::Chain(chain_id) => chain_ids.iter().any(|id| *id as u64 == chain_id),
         }
     }
 
-    pub fn file(&self, cache_dir: &Path) -> PathBuf {
+    pub(crate) fn file(&self, cache_dir: &Path) -> PathBuf {
         let file_name = format!("{}.tsv", self.effect_name);
         match self.scope {
             Scope::CrossChain => cache_dir.join(file_name),
@@ -115,7 +115,7 @@ async fn entries(directory: &Path) -> Result<Vec<(String, PathBuf, bool)>> {
 /// is that chain's. A directory of files named by anything else is refused
 /// rather than skipped, since its caches would silently go unused. No
 /// directory is no cache.
-pub async fn saved(cache_dir: &Path) -> Result<Vec<(EffectCache, PathBuf)>> {
+pub(crate) async fn saved(cache_dir: &Path) -> Result<Vec<(EffectCache, PathBuf)>> {
     if !tokio::fs::try_exists(cache_dir).await.unwrap_or(false) {
         return Ok(Vec::new());
     }
@@ -165,14 +165,14 @@ pub async fn saved(cache_dir: &Path) -> Result<Vec<(EffectCache, PathBuf)>> {
 
 /// A cache the store holds, and how many outputs it has.
 #[derive(Debug, PartialEq, Eq)]
-pub struct StoredCache {
+pub(crate) struct StoredCache {
     pub cache: EffectCache,
     pub rows: i32,
 }
 
 /// What restoring or dumping the caches did, which the run reports.
 #[derive(Debug)]
-pub enum CacheEvent {
+pub(crate) enum CacheEvent {
     NothingSaved,
     Uploaded,
     /// The run goes on without the saved caches, recomputing their outputs.
@@ -183,7 +183,7 @@ pub enum CacheEvent {
 }
 
 impl CacheEvent {
-    pub fn log(&self, logger: &BoundLogger, cache_dir: &Path) {
+    pub(crate) fn log(&self, logger: &BoundLogger, cache_dir: &Path) {
         let (level, msg, params) = match self {
             CacheEvent::NothingSaved => (
                 Level::INFO,
@@ -232,7 +232,7 @@ impl CacheEvent {
 }
 
 /// A cache table and the file it is uploaded from or dumped to.
-pub struct CacheFile {
+pub(crate) struct CacheFile {
     pub table: String,
     pub path: String,
 }
@@ -243,7 +243,7 @@ impl CacheFile {
     /// part way would otherwise leave a file holding its first rows, and the
     /// next start would load that as the cache. The name is unique per call, so
     /// two dumps of the same table cannot write into each other's.
-    pub async fn replace_with(
+    pub(crate) async fn replace_with(
         &self,
         write: impl AsyncFnOnce(&mut tokio::fs::File) -> Result<()>,
     ) -> Result<()> {

@@ -2,7 +2,10 @@ use crate::{
     clap_definitions::{ConfigSubcommand, JsonSchema, MetricsSubcommand, Script, SkillsSubcommand},
     cli_args::clap_definitions::{CommandLineArgs, CommandType, ProjectPaths},
     commands,
-    config_parsing::{human_config, system_config::SystemConfig},
+    config_parsing::{
+        human_config,
+        system_config::{SystemConfig, VERSION},
+    },
     constants::project_paths::DEFAULT_CONFIG_PATH,
     docker_env,
     project_paths::ParsedProjectPaths,
@@ -12,13 +15,14 @@ use crate::{
 mod codegen;
 mod config;
 mod dev;
-pub mod init;
+pub(crate) mod init;
 mod local;
 mod metrics;
 mod skills;
 mod tools;
 
 use anyhow::{Context, Result};
+use clap::{CommandFactory, FromArgMatches};
 use schemars::schema_for;
 
 /// A deferred work item the executor asks its host to run after Rust returns.
@@ -28,7 +32,7 @@ use schemars::schema_for;
 /// Wire format: serde-tagged JSON on the `kind` field.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum Command {
+pub(crate) enum Command {
     /// `reset: true` wipes the schema before the indexer's first init call;
     /// the runtime always runs `Persistence.prepare` either way (DB compat and
     /// migration decisions live in ReScript now).
@@ -55,13 +59,36 @@ pub enum Command {
 ///
 /// Returns `None` for commands that finish entirely in Rust. The NAPI shim
 /// forwards that to JS as `null` so the host exits cleanly.
-pub async fn execute(
+pub(crate) async fn execute(
     command_line_args: CommandLineArgs,
     envio_package_dir: Option<&str>,
 ) -> Result<Option<Command>> {
     let project_flags = project_flags(&command_line_args.project_paths);
     let command = execute_command(command_line_args, envio_package_dir).await?;
     Ok(command.map(|command| command.with_project_flags(project_flags)))
+}
+
+/// Runs a `script` subcommand named by the process arguments. Those finish in
+/// Rust, so they need no Node host; every other command hands work to the
+/// host's JS dispatch and is refused.
+pub async fn run_script_from_process_args() -> Result<()> {
+    let command_line_args = CommandLineArgs::from_arg_matches(
+        &CommandLineArgs::command().version(VERSION).get_matches(),
+    )
+    .context("Failed parsing command line arguments")?;
+
+    if !matches!(command_line_args.command, CommandType::Script(_)) {
+        anyhow::bail!(
+            "This example only supports `script` subcommands. Run envio via the NAPI host \
+             (packages/envio/bin.mjs) for init/codegen/dev/start/etc."
+        );
+    }
+
+    execute(command_line_args, None)
+        .await
+        .context("Failed cli execution")?;
+
+    Ok(())
 }
 
 /// The flags the operator gave to find the project, which every command the
@@ -216,7 +243,7 @@ async fn execute_command(
 ///
 /// `ENVIO_CONFIG` is root-relative: consumers resolve it against
 /// `cwd` / `--directory`, so a cwd-joined value would double the prefix.
-pub fn build_start_command(
+pub(crate) fn build_start_command(
     config: &SystemConfig,
     reset: bool,
     is_dev: bool,
@@ -324,7 +351,10 @@ fn validate_chain_selection(config: &SystemConfig, chains: &[u64], restart: bool
 
 /// Returns a `Value` (not a string) so the serde payload embeds the config
 /// as a nested JSON object — the JS side then skips the extra `JSON.parse`.
-pub fn public_config_value(config: &SystemConfig, is_dev: bool) -> Result<serde_json::Value> {
+pub(crate) fn public_config_value(
+    config: &SystemConfig,
+    is_dev: bool,
+) -> Result<serde_json::Value> {
     serde_json::from_str(&config.to_public_config_json(is_dev)?)
         .context("Failed parsing public config JSON")
 }

@@ -34,7 +34,7 @@ use crate::storage::types::{
 };
 use crate::storage::{Batch, Failure, Handoff, Initialize, Resume, WriteError};
 
-pub struct Settings {
+pub(crate) struct Settings {
     pub replicated: bool,
     pub database_engine: Option<String>,
 }
@@ -63,7 +63,7 @@ struct Chains {
     version: u64,
 }
 
-pub struct Storage {
+pub(crate) struct Storage {
     client: Client,
     settings: Settings,
     schema: Arc<Schema>,
@@ -85,7 +85,7 @@ impl Settings {
 }
 
 impl Storage {
-    pub fn new(
+    pub(crate) fn new(
         connection: Connection,
         tuning: Tuning,
         warn: Warn,
@@ -115,7 +115,7 @@ impl Storage {
         })
     }
 
-    pub fn table(&self, entity: &Entity) -> Result<&Arc<Table>> {
+    pub(crate) fn table(&self, entity: &Entity) -> Result<&Arc<Table>> {
         self.tables
             .get(entity.index)
             .and_then(Option::as_ref)
@@ -289,7 +289,7 @@ impl Storage {
 
     /// What initializing would have to destroy or could not change, refused
     /// before anything is touched.
-    pub async fn check_for_initialize(&self) -> Result<()> {
+    pub(crate) async fn check_for_initialize(&self) -> Result<()> {
         if let Some(engine_spec) = self.settings.database_engine.as_deref() {
             let expected = ddl::database_engine_name(engine_spec);
             match self.existing_database_engine().await?.as_deref() {
@@ -416,7 +416,7 @@ impl Storage {
     }
 
     /// Builds every table, but leaves the database unpaired: see [`Self::seal`].
-    pub async fn build(&self, input: &Initialize) -> Result<()> {
+    pub(crate) async fn build(&self, input: &Initialize) -> Result<()> {
         self.initialize_inner(input)
             .await
             .context("Failed to initialize ClickHouse storage")
@@ -425,7 +425,7 @@ impl Storage {
     /// Pairs a built database with the initialize that built it. The record
     /// is what says the storage exists, so it only does once both stores are
     /// in place: one built for a Postgres that then failed is set up again.
-    pub async fn seal(&self, instance: &str) -> Result<()> {
+    pub(crate) async fn seal(&self, instance: &str) -> Result<()> {
         self.insert_values(
             INFO_TABLE,
             &ddl::info_columns(),
@@ -436,7 +436,7 @@ impl Storage {
     }
 
     #[cfg(test)]
-    pub async fn initialize(&self, input: &Initialize) -> Result<()> {
+    pub(crate) async fn initialize(&self, input: &Initialize) -> Result<()> {
         self.build(input).await?;
         self.seal("instance").await
     }
@@ -456,7 +456,7 @@ impl Storage {
 
     /// Whether a batch that reached an event landed here: every one writes the
     /// checkpoints it covers, which nothing prunes.
-    pub async fn holds_batches(&self) -> Result<bool> {
+    pub(crate) async fn holds_batches(&self) -> Result<bool> {
         if !self.has_table(CHECKPOINTS_TABLE).await? {
             return Ok(false);
         }
@@ -472,7 +472,7 @@ impl Storage {
 
     /// The instance of the initialize that built the database, if one finished
     /// building it.
-    pub async fn instance(&self) -> Result<Option<String>> {
+    pub(crate) async fn instance(&self) -> Result<Option<String>> {
         if !self.has_table(INFO_TABLE).await? {
             return Ok(None);
         }
@@ -662,7 +662,7 @@ impl Storage {
     /// The last checkpoint below `below`, of the one chain if one is named.
     /// One a rollback reverted is never it while that rollback's own
     /// checkpoint, above it, is below `below` too.
-    pub async fn last_checkpoint_below(
+    pub(crate) async fn last_checkpoint_below(
         &self,
         chain_id: Option<i64>,
         below: Option<i64>,
@@ -755,13 +755,13 @@ impl Storage {
             .await
     }
 
-    pub async fn resume(&self, input: &Resume) -> Result<()> {
+    pub(crate) async fn resume(&self, input: &Resume) -> Result<()> {
         self.resume_inner(input)
             .await
             .context("Failed to resume ClickHouse storage")
     }
 
-    pub async fn load_where(
+    pub(crate) async fn load_where(
         &self,
         entity: &Entity,
         conditions: Vec<Condition>,
@@ -773,7 +773,7 @@ impl Storage {
         rows::lay_out(&row_binary::decode(&body, &types)?, reads)
     }
 
-    pub async fn history(&self, entity: &Entity) -> Result<ResultSet> {
+    pub(crate) async fn history(&self, entity: &Entity) -> Result<ResultSet> {
         let table = self.table(entity)?;
         let body = self
             .client
@@ -786,7 +786,7 @@ impl Storage {
     }
 
     /// The keys a rollback removes, and the rows it restores the rest from.
-    pub async fn rollback_data(
+    pub(crate) async fn rollback_data(
         &self,
         entity: &Entity,
         bounds: &Bounds,
@@ -865,7 +865,7 @@ impl Storage {
         self.write_chains(moved).await.map(|()| true)
     }
 
-    pub async fn write_batch(
+    pub(crate) async fn write_batch(
         &self,
         batch: &Batch,
         handoff: Handoff,
@@ -881,7 +881,7 @@ impl Storage {
     }
 
     /// Refuses a database it may not empty, as initializing would.
-    pub async fn reset(&self) -> Result<()> {
+    pub(crate) async fn reset(&self) -> Result<()> {
         self.check_for_initialize().await?;
         self.reset_database().await?;
         *self.chains.lock().unwrap() = Chains::default();

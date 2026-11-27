@@ -22,7 +22,7 @@ use super::shared_prompts::{
     prompt_template, prompt_to_continue_adding, Contract, SelectItem,
 };
 
-pub fn prompt_template_init_flow(args: TemplateArgs) -> Result<InitFlow> {
+pub(super) fn prompt_template_init_flow(args: TemplateArgs) -> Result<InitFlow> {
     let chosen_template = match args.template {
         Some(template) => template,
         None => {
@@ -201,7 +201,7 @@ async fn prompt_selected_contracts(mut args: ContractImportArgs) -> Result<Vec<S
     Ok(contracts)
 }
 
-pub async fn prompt_contract_import_init_flow(args: ContractImportArgs) -> Result<InitFlow> {
+pub(super) async fn prompt_contract_import_init_flow(args: ContractImportArgs) -> Result<InitFlow> {
     Ok(InitFlow::ContractImport(ContractImportSelection {
         contracts: prompt_selected_contracts(args)
             .await

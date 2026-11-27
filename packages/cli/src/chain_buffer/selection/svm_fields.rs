@@ -11,12 +11,12 @@
 
 use anyhow::{Context, Result};
 
-pub struct HandlerField {
+pub(crate) struct HandlerField {
     pub js_name: &'static str,
     pub columns: &'static [&'static str],
 }
 
-pub const TRANSACTION: &[HandlerField] = &[
+pub(crate) const TRANSACTION: &[HandlerField] = &[
     HandlerField {
         js_name: "transactionIndex",
         columns: &[],
@@ -71,7 +71,7 @@ pub const TRANSACTION: &[HandlerField] = &[
     },
 ];
 
-pub const BLOCK: &[HandlerField] = &[
+pub(crate) const BLOCK: &[HandlerField] = &[
     HandlerField {
         js_name: "slot",
         columns: &[],
@@ -98,7 +98,7 @@ pub const BLOCK: &[HandlerField] = &[
     },
 ];
 
-pub const ACCOUNT_ACTIVITY: &[HandlerField] = &[
+pub(crate) const ACCOUNT_ACTIVITY: &[HandlerField] = &[
     HandlerField {
         js_name: "address",
         columns: &[],
@@ -145,7 +145,7 @@ pub const ACCOUNT_ACTIVITY: &[HandlerField] = &[
     },
 ];
 
-pub const LOG: &[HandlerField] = &[
+pub(crate) const LOG: &[HandlerField] = &[
     HandlerField {
         js_name: "kind",
         columns: &["kind"],
@@ -160,7 +160,7 @@ pub const LOG: &[HandlerField] = &[
 /// Matching uses [`INSTRUCTION_REQUIRED`]; `accounts` / `accountArguments`
 /// add `account_arguments` when selected. `programId` / `data` / `path` /
 /// `isInner` are payload-only — already covered by the required query set.
-pub const INSTRUCTION: &[HandlerField] = &[
+pub(crate) const INSTRUCTION: &[HandlerField] = &[
     HandlerField {
         js_name: "args",
         columns: &[],
@@ -191,10 +191,10 @@ pub const INSTRUCTION: &[HandlerField] = &[
     },
 ];
 
-pub const BLOCK_KEYS: &[&str] = &["slot", "blockhash", "block_time"];
-pub const TX_KEYS: &[&str] = &["slot", "transaction_index"];
-pub const ACTIVITY_KEYS: &[&str] = &["slot", "transaction_index", "account"];
-pub const LOG_KEYS: &[&str] = &["slot", "transaction_index", "instruction_address"];
+pub(crate) const BLOCK_KEYS: &[&str] = &["slot", "blockhash", "block_time"];
+pub(crate) const TX_KEYS: &[&str] = &["slot", "transaction_index"];
+pub(crate) const ACTIVITY_KEYS: &[&str] = &["slot", "transaction_index", "account"];
+pub(crate) const LOG_KEYS: &[&str] = &["slot", "transaction_index", "instruction_address"];
 
 /// Always fetched for matching and join keys. Handler `fields.instruction`
 /// then decides which of `programId` / `data` / `path` / `isInner` land on
@@ -202,7 +202,7 @@ pub const LOG_KEYS: &[&str] = &["slot", "transaction_index", "instruction_addres
 ///
 /// `d1`–`d8` and `a0`–`a9` are not listed — prefixes are derived from `data`,
 /// and account filters ride the query selection, not the response columns.
-pub const INSTRUCTION_REQUIRED: &[&str] = &[
+pub(crate) const INSTRUCTION_REQUIRED: &[&str] = &[
     "slot",
     "transaction_index",
     "instruction_address",
@@ -212,7 +212,7 @@ pub const INSTRUCTION_REQUIRED: &[&str] = &[
     "tx_success",
 ];
 
-pub fn push_unique(columns: &mut Vec<&'static str>, column: &'static str) {
+pub(crate) fn push_unique(columns: &mut Vec<&'static str>, column: &'static str) {
     if !columns.contains(&column) {
         columns.push(column);
     }
@@ -241,7 +241,7 @@ fn with_keys(keys: &[&'static str], extras: &[&'static str]) -> Vec<&'static str
 }
 
 /// Transaction table columns, or empty when nothing on the stored row is read.
-pub fn transaction_query_columns(selected: &[String]) -> Result<Vec<&'static str>> {
+pub(crate) fn transaction_query_columns(selected: &[String]) -> Result<Vec<&'static str>> {
     let extras = extra_columns(TRANSACTION, selected)?;
     if extras.is_empty() {
         Ok(Vec::new())
@@ -252,7 +252,7 @@ pub fn transaction_query_columns(selected: &[String]) -> Result<Vec<&'static str
 
 /// Account-activity columns including join keys. Empty iff no activity field
 /// was selected — including `address`, which is the companion-table key.
-pub fn account_activity_query_columns(selected: &[String]) -> Result<Vec<&'static str>> {
+pub(crate) fn account_activity_query_columns(selected: &[String]) -> Result<Vec<&'static str>> {
     if selected.is_empty() {
         Ok(Vec::new())
     } else {
@@ -263,7 +263,7 @@ pub fn account_activity_query_columns(selected: &[String]) -> Result<Vec<&'stati
     }
 }
 
-pub fn log_query_columns(selected: &[String]) -> Result<Vec<&'static str>> {
+pub(crate) fn log_query_columns(selected: &[String]) -> Result<Vec<&'static str>> {
     if selected.is_empty() {
         Ok(Vec::new())
     } else {
@@ -272,14 +272,14 @@ pub fn log_query_columns(selected: &[String]) -> Result<Vec<&'static str>> {
 }
 
 /// Extra block columns on top of the always-fetched slot/hash/time trio.
-pub fn block_extra_columns(selected: &[String]) -> Result<Vec<&'static str>> {
+pub(crate) fn block_extra_columns(selected: &[String]) -> Result<Vec<&'static str>> {
     extra_columns(BLOCK, selected)
 }
 
 /// The block columns filling the block fields set in `mask`. The
 /// transaction counts are tallied from the transaction table, so they name no
 /// block column.
-pub fn block_mask_columns(mask: u64) -> Result<Vec<&'static str>> {
+pub(crate) fn block_mask_columns(mask: u64) -> Result<Vec<&'static str>> {
     use crate::chain_buffer::tables::svm::SvmBlockField;
     use strum::VariantArray;
     let mask = mask & !SvmBlockField::TRANSACTION_COUNTS_MASK;
@@ -291,7 +291,7 @@ pub fn block_mask_columns(mask: u64) -> Result<Vec<&'static str>> {
     block_extra_columns(&selected)
 }
 
-pub fn instruction_query_columns(
+pub(crate) fn instruction_query_columns(
     selected: &[String],
     has_account_filters: bool,
 ) -> Result<Vec<&'static str>> {
@@ -307,7 +307,7 @@ pub fn instruction_query_columns(
     Ok(columns)
 }
 
-pub fn selects(selected: &[String], name: &str) -> bool {
+pub(crate) fn selects(selected: &[String], name: &str) -> bool {
     selected.iter().any(|field| field == name)
 }
 

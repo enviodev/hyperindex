@@ -17,7 +17,7 @@ use std::{
 
 /// A map of environment variables parsed from a `.env` file.
 #[derive(Default, Clone, Debug)]
-pub struct EnvMap(HashMap<String, String>);
+pub(crate) struct EnvMap(HashMap<String, String>);
 
 impl Deref for EnvMap {
     type Target = HashMap<String, String>;
@@ -35,11 +35,11 @@ impl DerefMut for EnvMap {
 
 impl EnvMap {
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(HashMap::new())
     }
 
-    pub fn var(&self, key: &str) -> Result<String, Error> {
+    pub(crate) fn var(&self, key: &str) -> Result<String, Error> {
         self.get(key)
             .cloned()
             .ok_or_else(|| Error::NotPresent(key.to_owned()))
@@ -47,7 +47,7 @@ impl EnvMap {
 }
 
 #[derive(Debug)]
-pub enum Error {
+pub(crate) enum Error {
     LineParse(String, usize),
     /// An IO error encountered when opening or reading the file.
     Io(io::Error, Option<PathBuf>),
@@ -95,7 +95,7 @@ impl From<(ParseBufError, Option<PathBuf>)> for Error {
 /// result nor modified (equivalent to dotenvy's `EnvSequence::InputOnly`).
 /// `$VAR` / `${VAR}` substitutions still resolve against the process
 /// environment and earlier entries in the same file.
-pub fn from_path(path: impl AsRef<Path>) -> Result<EnvMap, Error> {
+pub(crate) fn from_path(path: impl AsRef<Path>) -> Result<EnvMap, Error> {
     let path = path.as_ref();
     let file = File::open(path).map_err(|e| Error::Io(e, Some(path.to_owned())))?;
     Iter::new(BufReader::new(file))

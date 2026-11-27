@@ -6,7 +6,7 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct IndexerEnv {
+pub(crate) struct IndexerEnv {
     pub indexing_max_buffer_size: u32,
     pub max_partition_size: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -30,7 +30,7 @@ pub struct IndexerEnv {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct HyperSyncEnv {
+pub(crate) struct HyperSyncEnv {
     pub client_timeout_millis: u32,
     pub serialization_format: &'static str,
     pub enable_query_caching: bool,
@@ -39,7 +39,7 @@ pub struct HyperSyncEnv {
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RpcSyncEnv {
+pub(crate) struct RpcSyncEnv {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_block_interval: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -52,7 +52,7 @@ pub struct RpcSyncEnv {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LoggerEnv {
+pub(crate) struct LoggerEnv {
     pub strategy: String,
     pub file: String,
     /// Unset means the entry point's own default: info for a run, silent for a
@@ -64,7 +64,7 @@ pub struct LoggerEnv {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DbEnv {
+pub(crate) struct DbEnv {
     pub host: String,
     pub port: u16,
     pub user: String,
@@ -81,7 +81,7 @@ pub struct DbEnv {
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ClickHouseEnv {
+pub(crate) struct ClickHouseEnv {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -98,7 +98,7 @@ pub struct ClickHouseEnv {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct HasuraEnv {
+pub(crate) struct HasuraEnv {
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_limit: Option<u32>,
@@ -111,14 +111,14 @@ pub struct HasuraEnv {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ThrottleEnv {
+pub(crate) struct ThrottleEnv {
     pub chain_metadata_interval_millis: u32,
     pub prune_stale_data_interval_millis: u32,
 }
 
 /// What the process can tell about its terminal, which the environment alone
 /// doesn't say.
-pub struct Terminal {
+pub(crate) struct Terminal {
     pub stdout_is_tty: bool,
 }
 
@@ -248,7 +248,7 @@ fn javascript_integer(value: &str) -> Option<i64> {
         .then_some(number as i64)
 }
 
-pub fn parse_bool(value: &str) -> Option<bool> {
+pub(crate) fn parse_bool(value: &str) -> Option<bool> {
     match value {
         "true" | "t" | "1" => Some(true),
         "false" | "f" | "0" => Some(false),
@@ -259,7 +259,7 @@ pub fn parse_bool(value: &str) -> Option<bool> {
 /// Whether a process draws the progress display: `ENVIO_TUI` when it says,
 /// else only when someone is watching. Piped output, CI, coding agents
 /// (`CLAUDECODE`) and terminals without ANSI support (`TERM=dumb`) aren't.
-pub fn shows_progress_display(
+pub(crate) fn shows_progress_display(
     explicit: Option<bool>,
     lookup: &dyn Fn(&str) -> Option<String>,
     terminal: &Terminal,
@@ -287,7 +287,7 @@ fn aggregate_entities(value: &str) -> Result<Vec<String>, String> {
 }
 
 impl IndexerEnv {
-    pub fn read(
+    pub(crate) fn read(
         lookup: &dyn Fn(&str) -> Option<String>,
         terminal: Terminal,
     ) -> Result<Self, String> {

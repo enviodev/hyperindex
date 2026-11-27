@@ -7,7 +7,7 @@ use crate::sources::failure::ClientError;
 
 #[napi(object)]
 #[derive(Clone)]
-pub struct Block {
+pub(super) struct Block {
     pub id: String,
     pub height: i64,
     pub time: i64,

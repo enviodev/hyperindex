@@ -33,14 +33,14 @@ use crate::storage::schema::Direction;
 /// the column serves the query, and building a second one would only cost write
 /// amplification.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Coverage {
+pub(crate) enum Coverage {
     Exact,
     LeadingColumns,
 }
 
 /// What a build is for, which decides how much an existing index has to match.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Purpose {
+pub(crate) enum Purpose {
     /// Serves a getWhere filter.
     Query,
     /// Promised by the schema, on an indexer that is already ready.
@@ -60,7 +60,7 @@ impl Purpose {
 /// table for as long as it runs, so a stalled-looking indexer has to be
 /// explainable from these alone.
 #[derive(Clone, PartialEq, Debug)]
-pub enum IndexEvent {
+pub(crate) enum IndexEvent {
     /// Indexes PostgreSQL reports as unusable, found on a reload.
     Invalid { names: Vec<String> },
     /// What a backfill's finalization owes before the indexer is ready.
@@ -99,7 +99,7 @@ pub enum IndexEvent {
     Committed { count: u32, seconds: f64 },
 }
 
-pub type Report = Arc<dyn Fn(IndexEvent) + Send + Sync>;
+pub(crate) type Report = Arc<dyn Fn(IndexEvent) + Send + Sync>;
 
 const SLOW_ON_LARGE_DATABASE: &str = "This can take a long time on a large database.";
 
@@ -120,7 +120,7 @@ fn log_postgres(logger: &BoundLogger, level: Level, msg: &str, mut params: Value
 }
 
 impl IndexEvent {
-    pub fn log(&self, logger: &BoundLogger, pg_schema: &str) {
+    pub(crate) fn log(&self, logger: &BoundLogger, pg_schema: &str) {
         if let IndexEvent::Planned { rebuilt, .. } = self {
             if !rebuilt.is_empty() {
                 log_postgres(
@@ -267,7 +267,7 @@ impl IndexEvent {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub struct Entry {
+pub(crate) struct Entry {
     pub name: String,
     pub table_name: String,
     pub method: String,
@@ -306,7 +306,7 @@ impl Entry {
 
     /// Why the index can't serve a request, in the order the checks are worth
     /// reporting.
-    pub fn reject_reason(
+    pub(crate) fn reject_reason(
         &self,
         definition: &IndexDefinition,
         coverage: Coverage,
@@ -372,7 +372,7 @@ impl Entry {
 /// index holds the generated name with exactly this identity, so it can only
 /// be one of ours — dropped and built again rather than left to block the name.
 #[derive(Debug, PartialEq)]
-pub struct Prepared {
+pub(crate) struct Prepared {
     pub definition: IndexDefinition,
     pub name: String,
     pub is_rebuild: bool,
@@ -380,7 +380,7 @@ pub struct Prepared {
 }
 
 #[derive(Default)]
-pub struct Catalog {
+pub(crate) struct Catalog {
     by_name: HashMap<String, Entry>,
     /// Coverage is asked per filtered column on every batched getWhere load,
     /// and scanning the whole schema there would make the hot path grow with
@@ -389,7 +389,7 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    pub fn new(entries: Vec<Entry>) -> Self {
+    pub(crate) fn new(entries: Vec<Entry>) -> Self {
         Self {
             by_name: entries
                 .into_iter()
@@ -415,7 +415,7 @@ impl Catalog {
         }
     }
 
-    pub fn covers(&mut self, definition: &IndexDefinition, coverage: Coverage) -> bool {
+    pub(crate) fn covers(&mut self, definition: &IndexDefinition, coverage: Coverage) -> bool {
         let key = (coverage, definition.key());
         if let Some(found) = self.covering.get(&key) {
             return found.is_some();
@@ -430,7 +430,7 @@ impl Catalog {
         covered
     }
 
-    pub fn invalid_names(&self) -> Vec<String> {
+    pub(crate) fn invalid_names(&self) -> Vec<String> {
         let mut names = self
             .by_name
             .values()
@@ -444,7 +444,7 @@ impl Catalog {
     /// `None` when the catalog already covers the definition. Resolving this
     /// before any DDL runs means a name held by an unrelated index fails while
     /// nothing is half-built.
-    pub fn prepare(
+    pub(crate) fn prepare(
         &mut self,
         definition: &IndexDefinition,
         coverage: Coverage,
@@ -517,7 +517,7 @@ fn built_by_another(error: &anyhow::Error) -> bool {
     }
 }
 
-pub trait Db: Send + Sync {
+pub(crate) trait Db: Send + Sync {
     fn run(&self, sql: &str) -> impl Future<Output = Result<()>> + Send;
     /// The schema's indexes, or the one named.
     fn read(
@@ -610,7 +610,7 @@ impl Db for PgClient {
     }
 }
 
-pub struct Indexes<D> {
+pub(crate) struct Indexes<D> {
     db: D,
     pg_schema: String,
     report: Report,
@@ -639,7 +639,7 @@ impl<D> Drop for Flight<'_, D> {
 }
 
 impl<D: Db> Indexes<D> {
-    pub fn new(db: D, pg_schema: String, report: Report) -> Self {
+    pub(crate) fn new(db: D, pg_schema: String, report: Report) -> Self {
         Self {
             db,
             pg_schema,
@@ -652,7 +652,7 @@ impl<D: Db> Indexes<D> {
 
     /// Replaces the catalog with the database's, so a restart plans against
     /// what is there rather than what an earlier run built.
-    pub async fn reload(&self) -> Result<()> {
+    pub(crate) async fn reload(&self) -> Result<()> {
         let catalog = Catalog::new(self.db.read(&self.pg_schema, None).await?);
         let invalid = catalog.invalid_names();
         *self.catalog.lock().unwrap() = catalog;
@@ -666,7 +666,7 @@ impl<D: Db> Indexes<D> {
     /// the schema, a getWhere filter or the primary key. An included column
     /// counts as much as a key one: it sits in the same index entry, under the
     /// same size limit.
-    pub fn btree_columns(&self, table_name: &str) -> HashSet<String> {
+    pub(crate) fn btree_columns(&self, table_name: &str) -> HashSet<String> {
         self.catalog
             .lock()
             .unwrap()
@@ -683,7 +683,7 @@ impl<D: Db> Indexes<D> {
             .collect()
     }
 
-    pub fn covers_all(&self, definitions: &[IndexDefinition], coverage: Coverage) -> bool {
+    pub(crate) fn covers_all(&self, definitions: &[IndexDefinition], coverage: Coverage) -> bool {
         let mut catalog = self.catalog.lock().unwrap();
         definitions
             .iter()
@@ -693,7 +693,7 @@ impl<D: Db> Indexes<D> {
     /// Builds whatever the catalog doesn't cover. Never fails: a failed build
     /// is reported and recorded nowhere, so what it was for runs unindexed and
     /// the next request retries.
-    pub async fn ensure(&self, definitions: Vec<IndexDefinition>, purpose: Purpose) {
+    pub(crate) async fn ensure(&self, definitions: Vec<IndexDefinition>, purpose: Purpose) {
         futures_util::future::join_all(
             definitions
                 .iter()
@@ -796,7 +796,7 @@ impl<D: Db> Indexes<D> {
     /// chains of the same schema can, though — it builds the same indexes at
     /// the same moment, which is why a lost create is re-read rather than taken
     /// as a failure.
-    pub async fn finalize(&self, definitions: Vec<IndexDefinition>) -> Result<usize> {
+    pub(crate) async fn finalize(&self, definitions: Vec<IndexDefinition>) -> Result<usize> {
         // `Exact`, so the set built here is decided by the schema alone.
         let missing = {
             let mut catalog = self.catalog.lock().unwrap();
@@ -884,7 +884,7 @@ impl<D: Db> Indexes<D> {
         }
     }
 
-    pub fn report(&self, event: IndexEvent) {
+    pub(crate) fn report(&self, event: IndexEvent) {
         (self.report)(event)
     }
 }

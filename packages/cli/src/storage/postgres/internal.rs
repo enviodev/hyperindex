@@ -9,10 +9,10 @@ use crate::storage::types::{
     INFO_TABLE as INFO,
 };
 
-pub const CONTRACTS: &str = "envio_contracts";
-pub const ADDRESSES: &str = "envio_addresses";
-pub const META_VIEW: &str = "_meta";
-pub const CHAIN_METADATA_VIEW: &str = "chain_metadata";
+pub(crate) const CONTRACTS: &str = "envio_contracts";
+pub(crate) const ADDRESSES: &str = "envio_addresses";
+pub(crate) const META_VIEW: &str = "_meta";
+pub(crate) const CHAIN_METADATA_VIEW: &str = "chain_metadata";
 
 fn column(name: &str, field_type: FieldType) -> ColumnSpec {
     ColumnSpec {
@@ -49,7 +49,7 @@ fn table(table_name: &str, columns: Vec<ColumnSpec>) -> TableSpec {
 
 /// Every table the indexer keeps outside the entities', for a schema counting
 /// checkpoints the way `sequence` says.
-pub fn tables(sequence: Sequence) -> Vec<TableSpec> {
+pub(crate) fn tables(sequence: Sequence) -> Vec<TableSpec> {
     vec![
         table(
             CHAINS,
@@ -143,7 +143,7 @@ pub fn tables(sequence: Sequence) -> Vec<TableSpec> {
     ]
 }
 
-pub fn chain_id_array(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
+pub(crate) fn chain_id_array(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
     pg_field_type(
         &FieldType::ChainId,
         pg_schema,
@@ -156,7 +156,7 @@ pub fn chain_id_array(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
 
 /// One `INSERT` for the chains' first rows, values written in: it runs inside
 /// the initialization's multi-statement text, which binds nothing.
-pub fn insert_chains(pg_schema: &str, chains: &[ChainConfig]) -> Option<String> {
+pub(crate) fn insert_chains(pg_schema: &str, chains: &[ChainConfig]) -> Option<String> {
     if chains.is_empty() {
         return None;
     }
@@ -184,7 +184,7 @@ pub fn insert_chains(pg_schema: &str, chains: &[ChainConfig]) -> Option<String> 
     ))
 }
 
-pub fn views(pg_schema: &str) -> String {
+pub(crate) fn views(pg_schema: &str) -> String {
     format!(
         "CREATE VIEW \"{pg_schema}\".\"{META_VIEW}\" AS \n\
          SELECT \n  \
@@ -220,7 +220,7 @@ pub fn views(pg_schema: &str) -> String {
     )
 }
 
-pub fn write_info(pg_schema: &str) -> String {
+pub(crate) fn write_info(pg_schema: &str) -> String {
     format!(
         "INSERT INTO \"{pg_schema}\".\"{INFO}\" (\"id\", \"config\", \"instance\") VALUES (1, $1, \
          $2) ON CONFLICT (\"id\") DO UPDATE SET \"config\" = EXCLUDED.\"config\", \"instance\" = \
@@ -228,28 +228,28 @@ pub fn write_info(pg_schema: &str) -> String {
     )
 }
 
-pub fn read_info(pg_schema: &str) -> String {
+pub(crate) fn read_info(pg_schema: &str) -> String {
     format!("SELECT \"config\" FROM \"{pg_schema}\".\"{INFO}\" LIMIT 1;")
 }
 
-pub fn read_instance(pg_schema: &str) -> String {
+pub(crate) fn read_instance(pg_schema: &str) -> String {
     format!("SELECT \"instance\" FROM \"{pg_schema}\".\"{INFO}\" LIMIT 1;")
 }
 
-pub fn insert_contracts(pg_schema: &str) -> String {
+pub(crate) fn insert_contracts(pg_schema: &str) -> String {
     format!(
         "INSERT INTO \"{pg_schema}\".\"{CONTRACTS}\" (\"id\", \"name\")\nSELECT * FROM \
          unnest($1::SMALLINT[],$2::TEXT[]);"
     )
 }
 
-pub fn read_contracts(pg_schema: &str) -> String {
+pub(crate) fn read_contracts(pg_schema: &str) -> String {
     format!("SELECT \"name\" FROM \"{pg_schema}\".\"{CONTRACTS}\" ORDER BY \"id\";")
 }
 
 /// A registration already stored is one a reorg replayed, so it is kept rather
 /// than refused.
-pub fn insert_addresses(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
+pub(crate) fn insert_addresses(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
     format!(
         "INSERT INTO \"{pg_schema}\".\"{ADDRESSES}\" (\"chain_id\", \"address\", \
          \"contract_id\", \"registration_block\")\nSELECT * FROM \
@@ -259,7 +259,7 @@ pub fn insert_addresses(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
     )
 }
 
-pub fn delete_addresses(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
+pub(crate) fn delete_addresses(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
     format!(
         "DELETE FROM \"{pg_schema}\".\"{ADDRESSES}\"\nUSING unnest($1::{},$2::BYTEA[],\
          $3::SMALLINT[]) AS dead(chain_id, address, contract_id)\nWHERE \
@@ -272,7 +272,7 @@ pub fn delete_addresses(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
 /// Plain rows rather than an aggregate per chain: one chain's `json_agg` can
 /// outgrow the longest string V8 will hold. Takes the chain ids as an `int8[]`
 /// in `$1`.
-pub fn read_addresses_of_chains(pg_schema: &str) -> String {
+pub(crate) fn read_addresses_of_chains(pg_schema: &str) -> String {
     format!(
         "SELECT \"chain_id\" as \"chainId\",\n\"address\" as \"address\",\n\"contract_id\" as \
          \"contractId\",\n\"registration_block\" as \"registrationBlock\"\nFROM \
@@ -280,18 +280,18 @@ pub fn read_addresses_of_chains(pg_schema: &str) -> String {
     )
 }
 
-pub fn read_stored_chains(pg_schema: &str) -> String {
+pub(crate) fn read_stored_chains(pg_schema: &str) -> String {
     format!(
         "SELECT \"id\"::int8, \"ecosystem\", \"start_block\", \"end_block\", \
          \"max_reorg_depth\" FROM \"{pg_schema}\".\"{CHAINS}\";"
     )
 }
 
-pub fn read_frontier(pg_schema: &str) -> String {
+pub(crate) fn read_frontier(pg_schema: &str) -> String {
     format!("SELECT \"id\"::int8, \"checkpoint_id\"::int8 FROM \"{pg_schema}\".\"{CHAINS}\";")
 }
 
-pub fn read_resumed_chains(pg_schema: &str) -> String {
+pub(crate) fn read_resumed_chains(pg_schema: &str) -> String {
     format!(
         "SELECT \"id\"::int8, \"start_block\", \"end_block\", \"max_reorg_depth\", \
          \"first_event_block\", (extract(epoch from \"ready_at\") * 1000)::float8, \
@@ -302,7 +302,7 @@ pub fn read_resumed_chains(pg_schema: &str) -> String {
     )
 }
 
-pub fn set_progress(pg_schema: &str) -> String {
+pub(crate) fn set_progress(pg_schema: &str) -> String {
     format!(
         "UPDATE \"{pg_schema}\".\"{CHAINS}\"\nSET \"progress_block\" = $2,\n    \
          \"progress_block_time\" = to_timestamp($3::float8),\n    \
@@ -313,7 +313,7 @@ pub fn set_progress(pg_schema: &str) -> String {
 /// A chain that caught up never un-catches up, so a null `ready_at` keeps the
 /// stamp: metadata is written on a throttle of its own, and a write staged
 /// before the stamp can land after it.
-pub fn set_meta(pg_schema: &str) -> String {
+pub(crate) fn set_meta(pg_schema: &str) -> String {
     format!(
         "UPDATE \"{pg_schema}\".\"{CHAINS}\"\nSET \"buffer_block\" = $2,\n    \
          \"first_event_block\" = $3,\n    \
@@ -326,14 +326,14 @@ pub fn set_meta(pg_schema: &str) -> String {
 /// state does: a partial recovery (a chain added to an indexer already synced)
 /// would otherwise restamp the chains already ready, and the next metadata
 /// write would push the stale in-memory value back over it.
-pub fn set_ready_at(pg_schema: &str) -> String {
+pub(crate) fn set_ready_at(pg_schema: &str) -> String {
     format!(
         "UPDATE \"{pg_schema}\".\"{CHAINS}\"\nSET \"ready_at\" = to_timestamp($1::float8 / \
          1000)\nWHERE \"id\" = $2\n  AND \"ready_at\" IS NULL;"
     )
 }
 
-pub fn set_frontier(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
+pub(crate) fn set_frontier(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
     format!(
         "UPDATE \"{pg_schema}\".\"{CHAINS}\"\nSET \"checkpoint_id\" = \
          envio_frontier.checkpoint_id\nFROM unnest($1::{},$2::BIGINT[]) AS \
@@ -343,7 +343,7 @@ pub fn set_frontier(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
     )
 }
 
-pub fn insert_checkpoints(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
+pub(crate) fn insert_checkpoints(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
     format!(
         "INSERT INTO \"{pg_schema}\".\"{CHECKPOINTS}\" (\"id\", \"chain_id\", \"block_number\", \
          \"block_hash\", \"events_processed\")\nSELECT * FROM unnest($1::BIGINT[],$2::{},\
@@ -358,7 +358,7 @@ pub fn insert_checkpoints(pg_schema: &str, chain_id_mode: ChainIdMode) -> String
 /// Ordered by id, which within a chain is block order: both consumers read
 /// them ascending, and physical order can't stand in for it, since a rollback
 /// frees space later checkpoints are written back into.
-pub fn read_reorg_checkpoints(pg_schema: &str) -> String {
+pub(crate) fn read_reorg_checkpoints(pg_schema: &str) -> String {
     format!(
         "WITH reorg_chains AS (\n  \
          SELECT \"id\" as id, \"source_block\" - \"max_reorg_depth\" - 1 AS safe_block\n  \
@@ -380,7 +380,7 @@ fn checkpoints_ref(pg_schema: &str) -> String {
     format!("\"{pg_schema}\".\"{CHECKPOINTS}\"")
 }
 
-pub fn rollback_checkpoints(pg_schema: &str, sequence: Sequence) -> anyhow::Result<String> {
+pub(crate) fn rollback_checkpoints(pg_schema: &str, sequence: Sequence) -> anyhow::Result<String> {
     let table_ref = checkpoints_ref(pg_schema);
     let bounds = bounds(sequence, Some("chain_id"), &table_ref)?;
     Ok(format!(
@@ -389,7 +389,7 @@ pub fn rollback_checkpoints(pg_schema: &str, sequence: Sequence) -> anyhow::Resu
     ))
 }
 
-pub fn prune_checkpoints(pg_schema: &str, sequence: Sequence) -> anyhow::Result<String> {
+pub(crate) fn prune_checkpoints(pg_schema: &str, sequence: Sequence) -> anyhow::Result<String> {
     let table_ref = checkpoints_ref(pg_schema);
     let bounds = bounds(sequence, Some("chain_id"), &table_ref)?;
     Ok(format!(
@@ -398,7 +398,7 @@ pub fn prune_checkpoints(pg_schema: &str, sequence: Sequence) -> anyhow::Result<
     ))
 }
 
-pub fn rollback_target_checkpoint(pg_schema: &str) -> String {
+pub(crate) fn rollback_target_checkpoint(pg_schema: &str) -> String {
     format!(
         "SELECT \"id\"::int8 FROM \"{pg_schema}\".\"{CHECKPOINTS}\"\nWHERE \"chain_id\" = $1 \
          AND \"block_number\" <= $2\nORDER BY \"id\" DESC\nLIMIT 1;"
@@ -407,7 +407,7 @@ pub fn rollback_target_checkpoint(pg_schema: &str) -> String {
 
 /// The chain's first checkpoint when one is given as `$1`; every chain's
 /// otherwise.
-pub fn lowest_checkpoint(pg_schema: &str, per_chain: bool) -> String {
+pub(crate) fn lowest_checkpoint(pg_schema: &str, per_chain: bool) -> String {
     let chain = if per_chain {
         "\nWHERE \"chain_id\" = $1"
     } else {
@@ -418,7 +418,10 @@ pub fn lowest_checkpoint(pg_schema: &str, per_chain: bool) -> String {
     )
 }
 
-pub fn rollback_progress_diff(pg_schema: &str, sequence: Sequence) -> anyhow::Result<String> {
+pub(crate) fn rollback_progress_diff(
+    pg_schema: &str,
+    sequence: Sequence,
+) -> anyhow::Result<String> {
     let bounds = bounds(sequence, Some("chain_id"), "t")?;
     Ok(format!(
         "SELECT t.\"chain_id\"::int8, SUM(t.\"events_processed\")::int8, \
@@ -431,7 +434,7 @@ pub fn rollback_progress_diff(pg_schema: &str, sequence: Sequence) -> anyhow::Re
 /// The effect caches in the schema: tables named like one whose columns are
 /// exactly an `id` and an `output`, so a user entity matching the name pattern
 /// is never mistaken for a cache.
-pub fn effect_cache_tables(pg_schema: &str) -> String {
+pub(crate) fn effect_cache_tables(pg_schema: &str) -> String {
     format!(
         "SELECT t.table_name::TEXT\nFROM information_schema.tables t\nWHERE t.table_schema = \
          '{pg_schema}'\nAND t.table_name ~ '^envio_([0-9]+_)?effect_.+'\nAND (\n  SELECT \
@@ -443,7 +446,7 @@ pub fn effect_cache_tables(pg_schema: &str) -> String {
 
 /// The name comes from the catalog, so anything cache-shaped created out of
 /// band reaches here; both identifiers are quoted with embedded quotes doubled.
-pub fn count_rows(pg_schema: &str, table_name: &str) -> String {
+pub(crate) fn count_rows(pg_schema: &str, table_name: &str) -> String {
     format!(
         "SELECT COUNT(*)::int FROM {}.{};",
         quote_ident(pg_schema),
@@ -451,7 +454,7 @@ pub fn count_rows(pg_schema: &str, table_name: &str) -> String {
     )
 }
 
-pub fn quote_ident(ident: &str) -> String {
+pub(crate) fn quote_ident(ident: &str) -> String {
     format!("\"{}\"", ident.replace('"', "\"\""))
 }
 

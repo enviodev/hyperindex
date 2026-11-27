@@ -2,13 +2,13 @@ use convert_case::{Case, Casing};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct CapitalizedOptions {
+pub(crate) struct CapitalizedOptions {
     pub capitalized: String,
     pub uncapitalized: String,
     pub original: String,
 }
 
-pub trait Capitalize {
+pub(crate) trait Capitalize {
     fn capitalize(&self) -> String;
 
     fn uncapitalize(&self) -> String;
@@ -45,14 +45,14 @@ impl Capitalize for String {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct CaseOptions {
+pub(crate) struct CaseOptions {
     pub pascal: String,
     pub snake: String,
     pub camel: String,
 }
 
 impl CaseOptions {
-    pub fn new(s: &str) -> Self {
+    pub(crate) fn new(s: &str) -> Self {
         Self {
             pascal: s.to_case(Case::Pascal),
             snake: s.to_case(Case::Snake),

@@ -48,14 +48,14 @@ pub struct TuiMessage {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Messages {
+pub(super) enum Messages {
     Loading,
     Loaded(Vec<TuiMessage>),
     Failed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Progress {
+pub(super) enum Progress {
     SearchingForEvents,
     Syncing {
         first_event_block: i64,
@@ -69,7 +69,7 @@ pub enum Progress {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Chain {
+pub(super) struct Chain {
     pub chain_id: String,
     pub name: Option<String>,
     pub events_processed: f64,
@@ -116,7 +116,7 @@ fn chain_name(ecosystem: &str, chain_id: &str) -> Option<String> {
 impl Chain {
     /// Waits are counted once they pass a second, so a single throttled
     /// request doesn't raise an alarm.
-    pub fn is_rate_limited(&self) -> bool {
+    pub(super) fn is_rate_limited(&self) -> bool {
         self.rate_limit_time_ms > 1000.
     }
 
@@ -137,7 +137,7 @@ impl Chain {
         }
     }
 
-    pub fn from_metrics(m: &TuiChain, ecosystem: &str, now: f64) -> Self {
+    pub(super) fn from_metrics(m: &TuiChain, ecosystem: &str, now: f64) -> Self {
         let first_event_block = m.first_event_block_number.unwrap_or(m.start_block);
         let latest_processed_block = m.progress_block_number;
         let synced = |caught_up_at| Progress::Synced {
@@ -187,7 +187,7 @@ impl Chain {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Eta {
+pub(super) enum Eta {
     Calculating,
     Syncing(String),
     /// How long this run took to sync; `None` when it resumed already synced.
@@ -197,7 +197,7 @@ pub enum Eta {
 const EVENTS_PER_SECOND_WINDOW_MS: f64 = 60_000.;
 
 #[derive(Clone, Debug)]
-pub struct State {
+pub(super) struct State {
     pub info: TuiInfo,
     pub chains: Vec<Chain>,
     pub messages: Messages,
@@ -213,7 +213,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(info: TuiInfo) -> Self {
+    pub(super) fn new(info: TuiInfo) -> Self {
         State {
             info,
             chains: Vec::new(),
@@ -224,7 +224,7 @@ impl State {
         }
     }
 
-    pub fn update(&mut self, chains: &[TuiChain], now: f64) {
+    pub(super) fn update(&mut self, chains: &[TuiChain], now: f64) {
         self.chains = chains
             .iter()
             .map(|chain| Chain::from_metrics(chain, &self.info.ecosystem, now))
@@ -255,11 +255,11 @@ impl State {
         }
     }
 
-    pub fn total_events(&self) -> f64 {
+    pub(super) fn total_events(&self) -> f64 {
         self.chains.iter().map(|chain| chain.events_processed).sum()
     }
 
-    pub fn events_per_second(&self) -> Option<f64> {
+    pub(super) fn events_per_second(&self) -> Option<f64> {
         match (self.samples.front(), self.samples.back()) {
             (Some(first), Some(last)) if last.0 > first.0 => {
                 Some((last.1 - first.1) / ((last.0 - first.0) / 1000.))
@@ -270,7 +270,7 @@ impl State {
 
     /// A supervised run draws before any worker has reported, and a run with
     /// nothing to report hasn't finished syncing.
-    pub fn is_fully_synced(&self) -> bool {
+    pub(super) fn is_fully_synced(&self) -> bool {
         !self.chains.is_empty()
             && self
                 .chains
@@ -295,7 +295,7 @@ impl State {
             .sum()
     }
 
-    pub fn eta(&self, now: f64) -> Eta {
+    pub(super) fn eta(&self, now: f64) -> Eta {
         if self.is_fully_synced() {
             let caught_up_at = self
                 .chains
@@ -319,7 +319,7 @@ impl State {
 
     /// The slowest chain's accumulated rate-limit wait, once it passes a second,
     /// with the longest time until any chain's limit resets.
-    pub fn rate_limit(&self) -> Option<(f64, f64)> {
+    pub(super) fn rate_limit(&self) -> Option<(f64, f64)> {
         let time_ms = self
             .chains
             .iter()

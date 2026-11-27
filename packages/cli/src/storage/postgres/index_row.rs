@@ -8,9 +8,9 @@ use super::index_definition::IndexDefinition;
 /// The largest entry a btree takes on an 8 kB page. A value is compressed
 /// before the check, so a longer one may still fit, but a shorter one always
 /// does: whatever was refused is among the values over it.
-pub const BTREE_MAX_ITEM_BYTES: usize = 2704;
+pub(crate) const BTREE_MAX_ITEM_BYTES: usize = 2704;
 
-pub const PROGRAM_LIMIT_EXCEEDED: &str = "54000";
+pub(crate) const PROGRAM_LIMIT_EXCEEDED: &str = "54000";
 
 const INDEXED_BY: &str =
     "The field is indexed by @index in schema.graphql or by a getWhere filter on it.";
@@ -23,7 +23,7 @@ const FIX: &str =
 const MAX_ID_CHARS: usize = 64;
 const MAX_VALUE_CHARS: usize = 32;
 
-pub struct Oversized {
+pub(crate) struct Oversized {
     pub column: String,
     pub id: String,
     pub value: String,
@@ -37,7 +37,7 @@ fn shortened(text: &str, max_chars: usize) -> String {
     }
 }
 
-pub fn explain_insert(table_name: &str, oversized: Option<Oversized>) -> String {
+pub(crate) fn explain_insert(table_name: &str, oversized: Option<Oversized>) -> String {
     let limit = format!("over the {BTREE_MAX_ITEM_BYTES} bytes a PostgreSQL index can hold");
     match oversized {
         Some(Oversized {
@@ -56,7 +56,7 @@ pub fn explain_insert(table_name: &str, oversized: Option<Oversized>) -> String 
     }
 }
 
-pub fn explain_build(definition: &IndexDefinition) -> String {
+pub(crate) fn explain_build(definition: &IndexDefinition) -> String {
     let columns = definition
         .columns
         .iter()

@@ -19,7 +19,7 @@ use crate::storage::types::{Bounds, Frontier, Sequence, CHANGE_COLUMN, CHECKPOIN
 /// literals, so a list of text goes as external data instead: rows the server
 /// reads rather than parses.
 #[derive(Debug, PartialEq)]
-pub struct Read {
+pub(crate) struct Read {
     pub sql: String,
     pub external: Vec<External>,
 }
@@ -27,12 +27,12 @@ pub struct Read {
 /// A one-column table the server reads beside a statement, its rows in
 /// RowBinary.
 #[derive(Debug, PartialEq)]
-pub struct External {
+pub(crate) struct External {
     pub name: String,
     pub rows: Vec<u8>,
 }
 
-pub const EXTERNAL_STRUCTURE: &str = "value String";
+pub(crate) const EXTERNAL_STRUCTURE: &str = "value String";
 
 /// The committed id a row compares against: its own chain's for a table with a
 /// chain column, the whole run's otherwise. A chain the frontier doesn't name
@@ -57,7 +57,7 @@ fn frontier_of(chain_column: Option<&str>, frontier: &Frontier) -> String {
 
 /// The rows a bound puts above it: past the one id every chain is held to
 /// under a shared sequence, past each chain's own otherwise.
-pub fn above(
+pub(crate) fn above(
     bounds: &Bounds,
     chain_column: Option<&str>,
     checkpoint_column: &str,
@@ -452,7 +452,7 @@ fn as_row_names<'a>(columns: impl IntoIterator<Item = &'a Column>) -> String {
 /// each entity is picked, which is safe because every row of an entity shares
 /// its key. Any other condition can only be judged on the latest row, so it
 /// picks out the entities to read and is checked again on what they read as.
-pub fn load(
+pub(crate) fn load(
     database: &str,
     table: &Table,
     conditions: &[Condition],
@@ -573,7 +573,7 @@ fn key_in(key: &[String], source: &str, filter: &str) -> String {
 }
 
 /// The history rows a bound puts above it.
-pub fn history_above(table: &Table, bounds: &Bounds) -> Result<String> {
+pub(crate) fn history_above(table: &Table, bounds: &Bounds) -> Result<String> {
     above(
         bounds,
         table.entity.chain_id_column.as_deref(),
@@ -583,7 +583,7 @@ pub fn history_above(table: &Table, bounds: &Bounds) -> Result<String> {
 
 /// The entities a rollback removes: every row they have is above the bound, so
 /// nothing of them existed at the target.
-pub fn rollback_removed(database: &str, table: &Table, bounds: &Bounds) -> Result<String> {
+pub(crate) fn rollback_removed(database: &str, table: &Table, bounds: &Bounds) -> Result<String> {
     let above = history_above(table, bounds)?;
     let key = table.entity.key();
     let source = table_ref(database, &table.entity.history_table);
@@ -597,7 +597,7 @@ pub fn rollback_removed(database: &str, table: &Table, bounds: &Bounds) -> Resul
 }
 
 /// The row each entity a rollback reaches held at the target — set or deleted.
-pub fn rollback_restored(database: &str, table: &Table, bounds: &Bounds) -> Result<String> {
+pub(crate) fn rollback_restored(database: &str, table: &Table, bounds: &Bounds) -> Result<String> {
     let above = history_above(table, bounds)?;
     let key = quoted_list(table.entity.key());
     let source = table_ref(database, &table.entity.history_table);
@@ -614,7 +614,7 @@ pub fn rollback_restored(database: &str, table: &Table, bounds: &Bounds) -> Resu
 
 /// Every committed row of the table's history, each with its change and
 /// checkpoint.
-pub fn history(database: &str, table: &Table, frontier: &Frontier) -> String {
+pub(crate) fn history(database: &str, table: &Table, frontier: &Frontier) -> String {
     let checkpoint = quoted(CHECKPOINT_ID_COLUMN);
     format!(
         "SELECT {}, {}, {checkpoint} FROM {} WHERE {checkpoint} <= {} ORDER BY {}, {checkpoint} \

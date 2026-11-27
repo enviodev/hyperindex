@@ -6,18 +6,18 @@
 //! rather than being part of it, so the catalog can always be matched on what
 //! an index actually covers.
 
-pub const BTREE: &str = "btree";
+pub(crate) const BTREE: &str = "btree";
 
 use crate::storage::schema::Direction;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct IndexColumn {
+pub(crate) struct IndexColumn {
     pub name: String,
     pub direction: Direction,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct IndexDefinition {
+pub(crate) struct IndexDefinition {
     pub table_name: String,
     pub columns: Vec<IndexColumn>,
     /// Columns stored in the index's leaf entries but never searched or
@@ -84,7 +84,7 @@ impl IndexDefinition {
     /// The included columns are appended only when there are some: an index
     /// without them has to keep the key, and with it the name, every deployed
     /// schema already holds.
-    pub fn key(&self) -> String {
+    pub(crate) fn key(&self) -> String {
         let key = format!(
             "{}|{}|{}",
             self.table_name,
@@ -102,7 +102,7 @@ impl IndexDefinition {
         }
     }
 
-    pub fn describe(&self) -> String {
+    pub(crate) fn describe(&self) -> String {
         let include = if self.include.is_empty() {
             String::new()
         } else {
@@ -151,7 +151,7 @@ impl IndexDefinition {
     /// readable half and keeping the hash whole makes every generated name
     /// distinct by construction. Prefixes are ASCII — GraphQL names are — so
     /// characters and Postgres' byte limit line up.
-    pub fn name(&self) -> String {
+    pub(crate) fn name(&self) -> String {
         let prefix = self.readable_prefix();
         let prefix = if prefix.chars().count() > MAX_PREFIX_LENGTH {
             prefix.chars().take(MAX_PREFIX_LENGTH).collect()
@@ -180,7 +180,7 @@ impl IndexDefinition {
     /// No `IF NOT EXISTS` either — a skipped create is indistinguishable from a
     /// successful one, and the whole point of the generated name is that nothing
     /// else can hold it.
-    pub fn create_query(&self, pg_schema: &str) -> String {
+    pub(crate) fn create_query(&self, pg_schema: &str) -> String {
         let using = if self.method == BTREE {
             String::new()
         } else {
@@ -207,7 +207,7 @@ impl IndexDefinition {
     }
 }
 
-pub fn drop_query(pg_schema: &str, index_name: &str) -> String {
+pub(crate) fn drop_query(pg_schema: &str, index_name: &str) -> String {
     format!("DROP INDEX IF EXISTS \"{pg_schema}\".\"{index_name}\";")
 }
 

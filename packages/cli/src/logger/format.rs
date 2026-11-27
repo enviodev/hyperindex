@@ -3,7 +3,7 @@ use chrono::{DateTime, Local};
 use serde_json::{value::RawValue, Map, Value};
 use std::io::Write;
 
-pub struct Record<'a> {
+pub(super) struct Record<'a> {
     pub level: Level,
     pub millis: i64,
     pub msg: &'a str,
@@ -39,7 +39,7 @@ const ECS_KEYS: [&str; 4] = ["log.level", "@timestamp", "ecs.version", "message"
 const CAPTURED_KEYS: [&str; 2] = ["level", "msg"];
 
 /// The line a log shipper or `jq` reads.
-pub fn write_json_line(record: &Record, out: &mut Vec<u8>) {
+pub(super) fn write_json_line(record: &Record, out: &mut Vec<u8>) {
     let _ = write!(
         out,
         "{{\"level\":{},\"time\":{}",
@@ -58,7 +58,7 @@ pub fn write_json_line(record: &Record, out: &mut Vec<u8>) {
 }
 
 /// Elastic Common Schema 1.6.
-pub fn write_ecs_line(record: &Record, out: &mut Vec<u8>) {
+pub(super) fn write_ecs_line(record: &Record, out: &mut Vec<u8>) {
     let _ = write!(
         out,
         "{{\"log.level\":\"{}\",\"@timestamp\":\"",
@@ -110,7 +110,7 @@ fn error_fields(value: &Value) -> Option<Value> {
 
 /// What a test reads back: the level by name and no timestamp, so a whole
 /// line can be compared at once.
-pub fn to_captured_line(record: &Record) -> Value {
+pub(super) fn to_captured_line(record: &Record) -> Value {
     let mut line = Map::with_capacity(record.fields.len() + 2);
     line.insert("level".into(), record.level.name().into());
     line.insert("msg".into(), record.msg.into());
@@ -147,7 +147,7 @@ fn level_color(level: Level) -> (&'static str, &'static str) {
 
 /// For a person at a terminal. Ends with a blank line, which keeps multi-line
 /// params apart.
-pub fn write_pretty_line(record: &Record, colorize: bool, out: &mut Vec<u8>) {
+pub(super) fn write_pretty_line(record: &Record, colorize: bool, out: &mut Vec<u8>) {
     let painted = |out: &mut Vec<u8>, color: &str, reset: &str, text: &[u8]| {
         if colorize {
             out.extend_from_slice(color.as_bytes());

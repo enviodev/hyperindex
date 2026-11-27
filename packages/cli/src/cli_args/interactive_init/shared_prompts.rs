@@ -15,13 +15,13 @@ use inquire::{validator::Validation, CustomType, MultiSelect, Select, Text};
 use std::str::FromStr;
 use strum::{EnumIter, IntoEnumIterator};
 
-pub fn prompt_template<T: Display>(options: Vec<T>) -> Result<T> {
+pub(super) fn prompt_template<T: Display>(options: Vec<T>) -> Result<T> {
     Select::new("Which template would you like to use?", options)
         .prompt()
         .context("Prompting user for template selection")
 }
 
-pub struct SelectItem<T> {
+pub(super) struct SelectItem<T> {
     pub item: T,
     pub display: String,
     pub preselect: bool,
@@ -36,7 +36,7 @@ impl<T> Display for SelectItem<T> {
 ///Takes a vec of Events and sets up a multi selecet prompt
 ///with all selected by default. Whatever is selected in the prompt
 ///is returned
-pub fn prompt_events_selection<T>(events: Vec<SelectItem<T>>) -> Result<Vec<T>> {
+pub(super) fn prompt_events_selection<T>(events: Vec<SelectItem<T>>) -> Result<Vec<T>> {
     //Collect all the indexes of the vector in another vector which will be used
     //to preselect all events
     let all_indexes_of_events = events
@@ -59,7 +59,7 @@ pub fn prompt_events_selection<T>(events: Vec<SelectItem<T>>) -> Result<Vec<T>> 
     Ok(selected_events)
 }
 
-pub fn prompt_abi_file_path(
+pub(super) fn prompt_abi_file_path(
     abi_validator: fn(abi_file_path: &str) -> Validation,
 ) -> Result<String> {
     Text::new("What is the path to your json abi file?")
@@ -72,7 +72,7 @@ pub fn prompt_abi_file_path(
         .context("Failed during prompt for abi file path")
 }
 
-pub fn prompt_contract_name() -> Result<String> {
+pub(super) fn prompt_contract_name() -> Result<String> {
     Text::new("What is the name of this contract?")
         .with_validator(contains_no_whitespace_validator)
         .with_validator(is_only_alpha_numeric_characters_validator)
@@ -81,7 +81,7 @@ pub fn prompt_contract_name() -> Result<String> {
         .context("Failed during contract name prompt")
 }
 
-pub fn prompt_contract_address<T: Clone + FromStr + Display + PartialEq + 'static>(
+pub(super) fn prompt_contract_address<T: Clone + FromStr + Display + PartialEq + 'static>(
     selected: Option<&Vec<T>>,
 ) -> Result<T> {
     let mut prompter = CustomType::<T>::new("What is the address of the contract?")
@@ -132,7 +132,7 @@ fn prompt_add_new_contract_option(
         .context("Failed prompting for add contract")
 }
 
-pub trait Contract {
+pub(super) trait Contract {
     fn get_network_name(&self) -> Result<String>;
     fn get_name(&self) -> String;
     fn add_address(&mut self) -> Result<()>;
@@ -146,7 +146,7 @@ enum AutoConfigError {
 }
 
 #[async_recursion]
-pub async fn prompt_to_continue_adding<T, CF, CFut>(
+pub(super) async fn prompt_to_continue_adding<T, CF, CFut>(
     contracts: &mut Vec<T>,
     mut add_contract: CF,
     can_add_network: bool,

@@ -8,13 +8,13 @@ use crate::{
     utils::text::Capitalize,
 };
 
-pub const TRANSFER_EVENT_NAME: &str = "Transfer";
-pub const MINT_EVENT_NAME: &str = "Mint";
-pub const BURN_EVENT_NAME: &str = "Burn";
-pub const CALL_EVENT_NAME: &str = "Call";
+pub(crate) const TRANSFER_EVENT_NAME: &str = "Transfer";
+pub(crate) const MINT_EVENT_NAME: &str = "Mint";
+pub(crate) const BURN_EVENT_NAME: &str = "Burn";
+pub(crate) const CALL_EVENT_NAME: &str = "Call";
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FuelType {
+pub(crate) struct FuelType {
     pub id: usize,
     pub type_decl: TypeDecl,
     pub abi_type_field: String,
@@ -51,7 +51,7 @@ impl FuelType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FuelLog {
+pub(crate) struct FuelLog {
     pub id: String,
     pub logged_type: FuelType,
     pub event_name: String,
@@ -59,9 +59,7 @@ pub struct FuelLog {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FuelAbi {
-    pub path_buf: PathBuf,
-    pub path: String,
+pub(crate) struct FuelAbi {
     pub raw: String,
     program: UnifiedProgramABI,
     logs: HashMap<String, FuelLog>,
@@ -381,7 +379,7 @@ impl FuelAbi {
         Ok(logs_map)
     }
 
-    pub fn parse(path_buf: PathBuf) -> Result<Self> {
+    pub(crate) fn parse(path_buf: PathBuf) -> Result<Self> {
         let path = path_buf
             .to_str()
             .context("The ABI file path is invalid Unicode")?
@@ -391,7 +389,7 @@ impl FuelAbi {
         Self::parse_raw(path_buf, raw)
     }
 
-    pub fn parse_raw(path_buf: PathBuf, raw: String) -> Result<Self> {
+    pub(crate) fn parse_raw(path_buf: PathBuf, raw: String) -> Result<Self> {
         let path = path_buf
             .to_str()
             .context("The ABI file path is invalid Unicode")?
@@ -410,8 +408,6 @@ impl FuelAbi {
             path
         ))?;
         Ok(Self {
-            path,
-            path_buf,
             raw,
             program,
             logs,
@@ -419,14 +415,14 @@ impl FuelAbi {
         })
     }
 
-    pub fn get_log(&self, log_id: &String) -> Result<FuelLog> {
+    pub(crate) fn get_log(&self, log_id: &String) -> Result<FuelLog> {
         match self.logs.get(log_id) {
             Some(log) => Ok(log.clone()),
             None => Err(anyhow!("ABI doesn't contain logged type with id {log_id}")),
         }
     }
 
-    pub fn get_type_by_struct_name(&self, struct_name: String) -> Result<FuelType> {
+    pub(crate) fn get_type_by_struct_name(&self, struct_name: String) -> Result<FuelType> {
         match self
             .program
             .types
@@ -449,7 +445,7 @@ impl FuelAbi {
         }
     }
 
-    pub fn get_log_by_type(&self, type_id: usize) -> Result<FuelLog> {
+    pub(crate) fn get_log_by_type(&self, type_id: usize) -> Result<FuelLog> {
         self.logs
             .values()
             .find(|&log| log.logged_type.id == type_id)
@@ -457,11 +453,11 @@ impl FuelAbi {
             .ok_or(anyhow!("Failed to find log by type id {type_id}"))
     }
 
-    pub fn get_logs(&self) -> Vec<FuelLog> {
+    pub(crate) fn get_logs(&self) -> Vec<FuelLog> {
         self.logs.values().cloned().collect()
     }
 
-    pub fn to_type_decl_multi(&self) -> Result<TypeDeclMulti> {
+    pub(crate) fn to_type_decl_multi(&self) -> Result<TypeDeclMulti> {
         let type_declerations = self
             .types
             .values()

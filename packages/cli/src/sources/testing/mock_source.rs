@@ -37,7 +37,7 @@ pub struct MockHeightCall {
 
 #[napi(object)]
 #[derive(Clone, Debug, PartialEq)]
-pub struct MockItemsQuery {
+pub(crate) struct MockItemsQuery {
     pub id: u32,
     pub partition_id: String,
     pub from_block: i64,

@@ -12,7 +12,7 @@ use std::{
 };
 
 #[derive(Clone)]
-pub struct Emulator {
+pub(super) struct Emulator {
     pub parser: Arc<Mutex<vt100::Parser>>,
     written: Arc<Mutex<usize>>,
 }
@@ -29,7 +29,7 @@ impl Write for Emulator {
 }
 
 impl Emulator {
-    pub fn new(size: Size) -> Self {
+    pub(super) fn new(size: Size) -> Self {
         Emulator {
             parser: Arc::new(Mutex::new(vt100::Parser::new(
                 size.height,
@@ -40,12 +40,12 @@ impl Emulator {
         }
     }
 
-    pub fn written(&self) -> usize {
+    pub(super) fn written(&self) -> usize {
         *self.written.lock().unwrap()
     }
 
     /// Scrollback followed by the screen, trailing blanks trimmed.
-    pub fn lines(&self) -> Vec<String> {
+    pub(super) fn lines(&self) -> Vec<String> {
         let mut parser = self.parser.lock().unwrap();
         parser.screen_mut().set_scrollback(usize::MAX);
         let scrolled = parser.screen().scrollback();
@@ -67,7 +67,7 @@ impl Emulator {
     }
 
     /// The screen as text, without the colours.
-    pub fn screen_text(&self) -> Vec<String> {
+    pub(super) fn screen_text(&self) -> Vec<String> {
         let parser = self.parser.lock().unwrap();
         let mut lines: Vec<String> = parser
             .screen()
@@ -80,20 +80,20 @@ impl Emulator {
         lines
     }
 
-    pub fn cursor(&self) -> (u16, u16) {
+    pub(super) fn cursor(&self) -> (u16, u16) {
         self.parser.lock().unwrap().screen().cursor_position()
     }
 
-    pub fn session(&self) -> Session<Emulator> {
+    pub(super) fn session(&self) -> Session<Emulator> {
         self.session_with(ColorLevel::TrueColor)
     }
 
-    pub fn session_with(&self, level: ColorLevel) -> Session<Emulator> {
+    pub(super) fn session_with(&self, level: ColorLevel) -> Session<Emulator> {
         Session::new(self.clone(), Palette { level })
     }
 
     /// The screen as a dark-themed terminal would draw it.
-    pub fn svg(&self) -> String {
+    pub(super) fn svg(&self) -> String {
         let parser = self.parser.lock().unwrap();
         let screen = parser.screen();
         let (rows, cols) = screen.size();
@@ -237,7 +237,7 @@ fn color(color: vt100::Color) -> Option<String> {
 /// Asserts the screen against `<name>.snap`, as text, and against
 /// `<name>_screen.snap.svg`, as an image. Each binary snapshot keeps its
 /// metadata in a `.snap` of its own, hence the separate name.
-pub fn assert_screen(name: &str, emulator: &Emulator) {
+pub(super) fn assert_screen(name: &str, emulator: &Emulator) {
     insta::assert_snapshot!(name, emulator.screen_text().join("\n"));
     insta::assert_binary_snapshot!(&format!("{name}_screen.svg"), emulator.svg().into_bytes());
 }

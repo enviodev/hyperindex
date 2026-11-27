@@ -1,5 +1,5 @@
 /// Renders the `.env` file scaffolded by both `envio init` and contract import.
-pub fn render(envio_api_token: &Option<String>) -> String {
+pub(crate) fn render(envio_api_token: &Option<String>) -> String {
     let mut out =
         String::from("# To create or update a token visit https://envio.dev/app/api-tokens\n");
     match envio_api_token {

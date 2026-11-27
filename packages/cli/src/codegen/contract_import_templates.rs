@@ -14,7 +14,7 @@ mod nested_params {
     ///so the rest of the template code can depend on a stable shape even if
     ///the enumeration logic grows in the future.
     #[derive(Debug, Clone, PartialEq)]
-    pub struct FlattenedEventParam {
+    pub(super) struct FlattenedEventParam {
         pub event_param_pos: usize,
         pub event_param: EventParam,
     }
@@ -32,7 +32,7 @@ mod nested_params {
         ///Key to use for the generated entity column. Same as the event param
         ///name in almost all cases; `id` is renamed to `event_id` because `id`
         ///is reserved for the entity primary key.
-        pub fn get_entity_key(&self) -> CapitalizedOptions {
+        pub(super) fn get_entity_key(&self) -> CapitalizedOptions {
             let mut entity_key = self.get_param_name();
             if entity_key == "id" {
                 entity_key = "event_id".to_string();
@@ -43,13 +43,18 @@ mod nested_params {
         ///Key used to access the param on the runtime event object. Always the
         ///param name; only differs from `get_entity_key` when the entity key
         ///was renamed.
-        pub fn get_event_param_key(&self) -> CapitalizedOptions {
+        pub(super) fn get_event_param_key(&self) -> CapitalizedOptions {
             self.get_param_name().to_capitalized_options()
         }
 
         ///Used for constructing in tests
         #[cfg(test)]
-        pub fn new(name: &str, kind: AbiType, indexed: bool, event_param_pos: usize) -> Self {
+        pub(super) fn new(
+            name: &str,
+            kind: AbiType,
+            indexed: bool,
+            event_param_pos: usize,
+        ) -> Self {
             FlattenedEventParam {
                 event_param_pos,
                 event_param: EventParam {
@@ -61,7 +66,7 @@ mod nested_params {
         }
     }
 
-    pub fn flatten_event_inputs(event_inputs: Vec<EventParam>) -> Vec<FlattenedEventParam> {
+    pub(super) fn flatten_event_inputs(event_inputs: Vec<EventParam>) -> Vec<FlattenedEventParam> {
         event_inputs
             .into_iter()
             .enumerate()
@@ -127,7 +132,7 @@ mod json_value {
 
     ///`value` is an expression of `type_ident`; `indent` is that of the line it
     ///starts on.
-    pub fn typescript(type_ident: &TypeIdent, value: &str, indent: &str) -> String {
+    pub(super) fn typescript(type_ident: &TypeIdent, value: &str, indent: &str) -> String {
         typescript_at(type_ident, value, indent, 0)
     }
 
@@ -163,7 +168,7 @@ mod json_value {
 
     ///The value [`typescript`] renders for the param's default value, in which
     ///every bigint is `0n` and every array is empty.
-    pub fn typescript_default(type_ident: &TypeIdent, indent: &str) -> String {
+    pub(super) fn typescript_default(type_ident: &TypeIdent, indent: &str) -> String {
         match type_ident {
             TypeIdent::BigInt => "\"0\"".to_string(),
             TypeIdent::Array(_) => "[]".to_string(),
@@ -198,7 +203,7 @@ mod json_value {
     ///`value` is an expression of `type_ident`; `indent` is that of the line it
     ///starts on. ReScript's `JSON.t` is a variant, so every value is wrapped,
     ///not only the ones holding a bigint.
-    pub fn rescript(type_ident: &TypeIdent, value: &str, indent: &str) -> String {
+    pub(super) fn rescript(type_ident: &TypeIdent, value: &str, indent: &str) -> String {
         rescript_at(type_ident, value, indent, 0)
     }
 
@@ -233,7 +238,7 @@ mod json_value {
 
     ///The value [`rescript`] renders for the param's default value, in which
     ///every bigint is `0n` and every array is empty.
-    pub fn rescript_default(type_ident: &TypeIdent, indent: &str) -> String {
+    pub(super) fn rescript_default(type_ident: &TypeIdent, indent: &str) -> String {
         match type_ident {
             TypeIdent::BigInt => "JSON.String(\"0\")".to_string(),
             TypeIdent::Array(_) => "JSON.Array([])".to_string(),
@@ -267,14 +272,14 @@ use std::{path::Path, vec};
 ///The struct that houses all the details of each contract necessary for
 ///populating the contract import templates
 #[derive(Serialize)]
-pub struct AutoSchemaHandlerTemplate {
+pub(crate) struct AutoSchemaHandlerTemplate {
     imported_contracts: Vec<Contract>,
     envio_api_token: Option<String>,
     first_chain_id: u64,
 }
 
 #[derive(Serialize)]
-pub struct Contract {
+pub(crate) struct Contract {
     name: CapitalizedOptions,
     imported_events: Vec<Event>,
 }
@@ -318,7 +323,7 @@ impl Contract {
     }
 
     /// Generates TypeScript handler file content for this contract
-    pub fn generate_typescript_handler_content(&self, _is_fuel: bool) -> String {
+    pub(crate) fn generate_typescript_handler_content(&self, _is_fuel: bool) -> String {
         let mut content = String::new();
 
         // Header comment
@@ -379,7 +384,7 @@ impl Contract {
     }
 
     /// Generates ReScript handler file content for this contract
-    pub fn generate_rescript_handler_content(&self, _is_fuel: bool) -> String {
+    pub(crate) fn generate_rescript_handler_content(&self, _is_fuel: bool) -> String {
         let mut content = String::new();
 
         // Header comment
@@ -429,7 +434,7 @@ impl Contract {
         content
     }
     /// Generates TypeScript test file content for this contract
-    pub fn generate_typescript_test_content(&self, is_fuel: bool, chain_id: u64) -> String {
+    pub(crate) fn generate_typescript_test_content(&self, is_fuel: bool, chain_id: u64) -> String {
         let first_event = match self.imported_events.first() {
             Some(event) => event,
             None => return String::new(),
@@ -583,7 +588,7 @@ impl Contract {
     }
 
     /// Generates ReScript test file content for this contract
-    pub fn generate_rescript_test_content(&self, is_fuel: bool, chain_id: u64) -> String {
+    pub(crate) fn generate_rescript_test_content(&self, is_fuel: bool, chain_id: u64) -> String {
         let first_event = match self.imported_events.first() {
             Some(event) => event,
             None => return String::new(),
@@ -712,7 +717,7 @@ impl Contract {
 }
 
 #[derive(Serialize)]
-pub struct Event {
+pub(crate) struct Event {
     name: String,
     entity_id_from_event_code: String,
     create_mock_code: String,
@@ -721,7 +726,7 @@ pub struct Event {
 
 impl Event {
     /// Returns the code to get the entity id from an event
-    pub fn get_entity_id_code(is_fuel: bool, language: &Language) -> String {
+    pub(crate) fn get_entity_id_code(is_fuel: bool, language: &Language) -> String {
         let int_as_string = |int_var_name| match language {
             Language::ReScript => format!("{int_var_name}->Belt.Int.toString"),
             Language::TypeScript => int_var_name,
@@ -822,7 +827,7 @@ impl Event {
 ///Param is used both in the context of an entity and an event for the generating
 ///schema and handlers.
 #[derive(Serialize, Clone)]
-pub struct Param {
+pub(crate) struct Param {
     res_name: String,
     js_name: String,
     ///Entity column name. Matches the param name, except for `id` which is
@@ -846,9 +851,7 @@ impl Param {
 
         let js_name = flattened_event_param.event_param.name.to_string();
         let res_name = RecordField::to_valid_rescript_name(&js_name);
-        let eth_param: crate::config_parsing::event_parsing::EvmEventParam =
-            (&flattened_event_param.event_param).into();
-        let type_ident = abi_to_rescript_type(&eth_param);
+        let type_ident = abi_to_rescript_type(&flattened_event_param.event_param.kind);
         let default_value_rescript = type_ident.get_default_value_rescript();
         let default_value_typescript = type_ident.get_default_value_non_rescript();
 
@@ -896,7 +899,7 @@ impl From<Param> for Field {
 }
 
 impl AutoSchemaHandlerTemplate {
-    pub fn try_from(
+    pub(crate) fn try_from(
         config: SystemConfig,
         language: &Language,
         envio_api_token: Option<String>,
@@ -921,7 +924,7 @@ impl AutoSchemaHandlerTemplate {
     }
 
     /// Generates individual handler files for each contract in src/handlers/
-    pub fn generate_handler_files(
+    pub(crate) fn generate_handler_files(
         &self,
         lang: &Language,
         project_root: &Path,
@@ -991,7 +994,7 @@ impl AutoSchemaHandlerTemplate {
         Ok(())
     }
 
-    pub fn generate_contract_import_templates(
+    pub(crate) fn generate_contract_import_templates(
         &self,
         lang: &Language,
         project_root: &Path,

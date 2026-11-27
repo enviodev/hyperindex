@@ -9,7 +9,7 @@ mod level;
 
 use fields::Fields;
 use format::Record;
-pub use level::Level;
+pub(crate) use level::Level;
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 use serde_json::Value;
@@ -294,13 +294,13 @@ fn write_to_stdout_or_above_display(bytes: &[u8]) -> io::Result<()> {
 /// A line already written by a worker's logger, passed on as it is.
 #[napi]
 #[cfg_attr(test, allow(dead_code))]
-pub fn write_stdout_line(line: String) {
+pub(crate) fn write_stdout_line(line: String) {
     let _ = write_to_stdout_or_above_display(format!("{line}\n").as_bytes());
 }
 
 #[napi]
 #[cfg_attr(test, allow(dead_code))]
-pub fn write_stderr_line(line: String) {
+pub(crate) fn write_stderr_line(line: String) {
     let line = format!("{line}\n");
     if !crate::tui::print_above_stderr(line.as_bytes()) {
         let _ = stderr().write_all(line.as_bytes());

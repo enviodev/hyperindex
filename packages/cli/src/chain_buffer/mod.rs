@@ -792,30 +792,30 @@ fn field_names<F: Copy>(variants: &[F], name: impl Fn(F) -> &'static str) -> Vec
 // addon's C ABI, which the test target does not build.
 #[napi]
 #[cfg_attr(test, allow(dead_code))]
-pub fn evm_block_field_names() -> Vec<String> {
+pub(crate) fn evm_block_field_names() -> Vec<String> {
     field_names(EvmBlockField::VARIANTS, EvmBlockField::name)
 }
 
 #[napi]
 #[cfg_attr(test, allow(dead_code))]
-pub fn evm_transaction_field_names() -> Vec<String> {
+pub(crate) fn evm_transaction_field_names() -> Vec<String> {
     field_names(EvmTxField::VARIANTS, EvmTxField::name)
 }
 
 #[napi]
 #[cfg_attr(test, allow(dead_code))]
-pub fn svm_block_field_names() -> Vec<String> {
+pub(crate) fn svm_block_field_names() -> Vec<String> {
     field_names(svm::SvmBlockField::VARIANTS, svm::SvmBlockField::name)
 }
 
 #[napi]
 #[cfg_attr(test, allow(dead_code))]
-pub fn svm_transaction_field_names() -> Vec<String> {
+pub(crate) fn svm_transaction_field_names() -> Vec<String> {
     field_names(svm::SvmTxField::VARIANTS, svm::SvmTxField::name)
 }
 
 #[napi]
 #[cfg_attr(test, allow(dead_code))]
-pub fn fuel_block_field_names() -> Vec<String> {
+pub(crate) fn fuel_block_field_names() -> Vec<String> {
     field_names(fuel::FuelBlockField::VARIANTS, fuel::FuelBlockField::name)
 }

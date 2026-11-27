@@ -73,7 +73,7 @@ fn long_statement_settings(sql: &str) -> Vec<(&'static str, String)> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Tuning {
+pub(crate) struct Tuning {
     pub retries: u32,
     pub statement_timeout: Duration,
     pub max_retry_delay: Duration,
@@ -108,16 +108,16 @@ impl Tuning {
     }
 }
 
-pub type Warn = Arc<dyn Fn(&str) + Send + Sync>;
+pub(crate) type Warn = Arc<dyn Fn(&str) + Send + Sync>;
 
-pub struct Connection {
+pub(crate) struct Connection {
     pub url: String,
     pub username: String,
     pub password: String,
     pub database: String,
 }
 
-pub struct Client {
+pub(crate) struct Client {
     /// The pool and the idle timeout it was built with. Rebuilt when the server
     /// says how long it keeps an idle socket, which a pool's settings can't
     /// change once built.
@@ -164,7 +164,7 @@ fn idle_timeout_of(keep_alive: &str) -> Option<Duration> {
 }
 
 impl Client {
-    pub fn new(connection: Connection, tuning: Tuning, warn: Warn) -> Result<Self> {
+    pub(crate) fn new(connection: Connection, tuning: Tuning, warn: Warn) -> Result<Self> {
         // `localhost:8123` parses too, as a URL whose scheme is `localhost`.
         let reachable = reqwest::Url::parse(&connection.url)
             .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.has_host());
@@ -216,12 +216,12 @@ impl Client {
         }
     }
 
-    pub async fn statement(&self, query: String) -> Result<String> {
+    pub(crate) async fn statement(&self, query: String) -> Result<String> {
         let body = self.read(query).await?;
         Ok(String::from_utf8_lossy(&body).into_owned())
     }
 
-    pub async fn read(&self, query: String) -> Result<Bytes> {
+    pub(crate) async fn read(&self, query: String) -> Result<Bytes> {
         self.read_with(Read {
             sql: query,
             external: Vec::new(),
@@ -229,7 +229,7 @@ impl Client {
         .await
     }
 
-    pub async fn read_with(&self, read: Read) -> Result<Bytes> {
+    pub(crate) async fn read_with(&self, read: Read) -> Result<Bytes> {
         self.post(read)
             .await?
             .bytes()
@@ -320,13 +320,18 @@ impl Client {
 
     /// Sends rows with `query`, retrying what a resend can fix — whole, or
     /// halved where the batch's size is what failed.
-    pub async fn insert(&self, table: &str, query: &str, encoded: &EncodedRows) -> Result<()> {
+    pub(crate) async fn insert(
+        &self,
+        table: &str,
+        query: &str,
+        encoded: &EncodedRows,
+    ) -> Result<()> {
         self.insert_retrying(table, query, encoded, true).await
     }
 
     /// Sends rows that only mean anything all together, retrying them whole
     /// whatever failed.
-    pub async fn insert_whole(
+    pub(crate) async fn insert_whole(
         &self,
         table: &str,
         query: &str,
@@ -634,7 +639,7 @@ fn retry_for(status: reqwest::StatusCode, body: &str) -> Retry {
 /// quote a `Code:` of its own, so the marker ClickHouse puts in every exception
 /// it writes is what makes the number the server's own verdict rather than
 /// someone else's.
-pub fn error_code(body: &str) -> Option<u32> {
+pub(crate) fn error_code(body: &str) -> Option<u32> {
     if !body.contains("DB::Exception") {
         return None;
     }
@@ -651,7 +656,7 @@ pub fn error_code(body: &str) -> Option<u32> {
 pub(crate) mod test_support {
     use super::*;
 
-    pub fn connection(url: String) -> Connection {
+    pub(crate) fn connection(url: String) -> Connection {
         Connection {
             url,
             username: "default".to_string(),

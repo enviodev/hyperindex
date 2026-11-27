@@ -1,14 +1,14 @@
-pub mod ch_type;
-pub mod client;
-pub mod ddl;
+pub(crate) mod ch_type;
+pub(crate) mod client;
+pub(crate) mod ddl;
 #[cfg(test)]
 pub(crate) mod live_tests;
 #[cfg(test)]
 mod mock_server;
-pub mod row_binary;
-pub mod select;
-pub mod storage;
-pub mod table;
+pub(crate) mod row_binary;
+pub(crate) mod select;
+pub(crate) mod storage;
+pub(crate) mod table;
 
 /// Backtick-quotes an identifier. ClickHouse reads C-style escapes inside one
 /// just as it does inside a string, so a backslash is doubled alongside the

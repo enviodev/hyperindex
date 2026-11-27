@@ -55,7 +55,7 @@ fn read_managed_by(skill_dir: &Path) -> Option<String> {
 
 /// Writes the commands in every Markdown file under `dir` for the package
 /// manager.
-pub fn rewrite_commands_in_markdown(dir: &Path, pm: PackageManager) -> Result<()> {
+pub(super) fn rewrite_commands_in_markdown(dir: &Path, pm: PackageManager) -> Result<()> {
     for entry in fs::read_dir(dir).with_context(|| format!("Failed reading {}", dir.display()))? {
         let path = entry.context("Failed reading directory entry")?.path();
         if path.is_dir() {
@@ -77,7 +77,7 @@ pub fn rewrite_commands_in_markdown(dir: &Path, pm: PackageManager) -> Result<()
 /// `metadata.managed-by: envio`, then writes the current shipped set.
 /// User-authored skills (no marker or a different marker) are left
 /// untouched.
-pub fn run_update(project_paths: &ParsedProjectPaths) -> Result<()> {
+pub(super) fn run_update(project_paths: &ParsedProjectPaths) -> Result<()> {
     let project_root = &project_paths.project_root;
     let skills_root = project_root.join(".claude").join("skills");
     fs::create_dir_all(&skills_root)

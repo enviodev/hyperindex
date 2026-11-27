@@ -2,20 +2,20 @@ use crate::{
     constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
     utils::text::{Capitalize, CapitalizedOptions},
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use core::fmt;
 use itertools::Itertools;
 use serde::Serialize;
 use std::fmt::Display;
 
-pub struct TypeDeclMulti(Vec<TypeDecl>);
+pub(crate) struct TypeDeclMulti(Vec<TypeDecl>);
 
 impl TypeDeclMulti {
-    pub fn type_declarations(&self) -> &[TypeDecl] {
+    pub(crate) fn type_declarations(&self) -> &[TypeDecl] {
         &self.0
     }
 
-    pub fn new(type_declarations: Vec<TypeDecl>) -> Self {
+    pub(crate) fn new(type_declarations: Vec<TypeDecl>) -> Self {
         // TODO: validation
         //no duplicates,
         //all named types accounted for? (maybe don't want this)
@@ -61,14 +61,14 @@ impl Display for TypeDeclMulti {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct TypeDecl {
+pub(crate) struct TypeDecl {
     pub name: String,
     pub type_expr: TypeExpr,
     pub parameters: Vec<String>,
 }
 
 impl TypeDecl {
-    pub fn new(name: String, type_expr: TypeExpr, parameters: Vec<String>) -> Self {
+    pub(crate) fn new(name: String, type_expr: TypeExpr, parameters: Vec<String>) -> Self {
         // TODO: name validation
         //validate unique parameters
         Self {
@@ -115,7 +115,7 @@ impl TypeDecl {
 
     /// Renders a TypeScript type declaration with namespace-qualified references.
     /// Mirrors `to_string_no_type_keyword()` but for TS namespace syntax.
-    pub fn to_ts_type_decl(&self, ns: &str) -> String {
+    pub(crate) fn to_ts_type_decl(&self, ns: &str) -> String {
         let parameters = if self.parameters.is_empty() {
             "".to_string()
         } else {
@@ -128,24 +128,6 @@ impl TypeDecl {
             type_expr = self.type_expr.to_ts_type_string_with_namespace(ns)
         )
     }
-
-    pub fn to_usage(&self, arguments: Vec<String>) -> Result<String> {
-        if self.parameters.len() != arguments.len() {
-            Err(anyhow!(
-                "Failed to use type {}. The number of arguments is different from number of \
-                 parameters.",
-                self.name
-            ))?
-        }
-        let arguments_code = if arguments.is_empty() {
-            "".to_string()
-        } else {
-            // Lowercase generic params because of the issue https://github.com/rescript-lang/rescript-compiler/issues/6759
-            let args_joined = arguments.join(", ");
-            format!("<{args_joined}>")
-        };
-        Ok(format!("{}{arguments_code}", self.name))
-    }
 }
 
 impl Display for TypeDecl {
@@ -155,7 +137,7 @@ impl Display for TypeDecl {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum TypeExpr {
+pub(crate) enum TypeExpr {
     Identifier(TypeIdent),
     Record(Vec<RecordField>),
     Variant(Vec<VariantConstr>),
@@ -187,7 +169,7 @@ impl TypeExpr {
     }
 
     /// Renders TypeScript with type references qualified by namespace (e.g., `FuelTypes.Greeter.type5`).
-    pub fn to_ts_type_string_with_namespace(&self, ns: &str) -> String {
+    pub(crate) fn to_ts_type_string_with_namespace(&self, ns: &str) -> String {
         match self {
             Self::Identifier(type_ident) => type_ident.to_ts_type_string_with_namespace(ns),
             Self::Record(fields) => {
@@ -225,52 +207,17 @@ impl TypeExpr {
                 .join(" | "),
         }
     }
-
-    pub fn to_ts_type_string(&self) -> String {
-        match self {
-            Self::Identifier(type_ident) => type_ident.to_ts_type_string(),
-            Self::Record(fields) => {
-                if fields.is_empty() {
-                    "{}".to_string()
-                } else {
-                    let fields_str = fields
-                        .iter()
-                        .map(|field| {
-                            let field_name = field
-                                .as_name
-                                .as_ref()
-                                .map_or(field.name.as_str(), |name| name.as_str());
-                            format!("{}: {}", field_name, field.type_ident.to_ts_type_string())
-                        })
-                        .collect::<Vec<String>>()
-                        .join("; ");
-                    format!("{{ {} }}", fields_str)
-                }
-            }
-            Self::Variant(constructors) => constructors
-                .iter()
-                .map(|constr| {
-                    format!(
-                        "{{ case: \"{}\"; payload: {} }}",
-                        constr.name,
-                        constr.payload.to_ts_type_string()
-                    )
-                })
-                .collect::<Vec<String>>()
-                .join(" | "),
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub struct RecordField {
+pub(crate) struct RecordField {
     pub name: String,
     pub as_name: Option<String>,
     pub type_ident: TypeIdent,
 }
 
 impl RecordField {
-    pub fn to_valid_rescript_name(s: &str) -> String {
+    pub(crate) fn to_valid_rescript_name(s: &str) -> String {
         if s.is_empty() {
             return "_".to_string();
         }
@@ -288,7 +235,7 @@ impl RecordField {
         }
     }
 
-    pub fn new(name: String, type_ident: TypeIdent) -> Self {
+    pub(crate) fn new(name: String, type_ident: TypeIdent) -> Self {
         let res_name = Self::to_valid_rescript_name(&name);
         Self {
             as_name: if res_name == name { None } else { Some(name) },
@@ -313,21 +260,21 @@ impl Display for RecordField {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct VariantConstr {
+pub(crate) struct VariantConstr {
     pub name: String,
     pub payload: TypeIdent, //Not supporting records here but tuples are currently part of
                             //TypeIdent
 }
 
 impl VariantConstr {
-    pub fn new(name: String, payload: TypeIdent) -> Self {
+    pub(crate) fn new(name: String, payload: TypeIdent) -> Self {
         // TODO: validate uppercase name
         Self { name, payload }
     }
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
-pub enum TypeIdent {
+pub(crate) enum TypeIdent {
     Unit,
     ID,
     Int,
@@ -371,12 +318,12 @@ pub enum TypeIdent {
 
 impl TypeIdent {
     //Simply an ergonomic shorthand
-    pub fn get_expr(self) -> TypeExpr {
+    pub(crate) fn get_expr(self) -> TypeExpr {
         TypeExpr::Identifier(self)
     }
 
     //Simply an ergonomic shorthand
-    pub fn get_ok_expr(self) -> anyhow::Result<TypeExpr> {
+    pub(crate) fn get_ok_expr(self) -> anyhow::Result<TypeExpr> {
         Ok(self.get_expr())
     }
 
@@ -454,7 +401,7 @@ impl TypeIdent {
 
     /// Renders TypeScript with type references qualified by namespace (e.g., `FuelTypes.Greeter.type5`).
     /// Generic params render as bare names since they're in scope from the type declaration.
-    pub fn to_ts_type_string_with_namespace(&self, ns: &str) -> String {
+    pub(crate) fn to_ts_type_string_with_namespace(&self, ns: &str) -> String {
         match self {
             Self::TypeApplication { name, type_params } => {
                 if type_params.is_empty() {
@@ -511,7 +458,7 @@ impl TypeIdent {
     }
 
     /// Recursively builds the TypeScript string representation of the type
-    pub fn to_ts_type_string(&self) -> String {
+    pub(crate) fn to_ts_type_string(&self) -> String {
         match self {
             Self::Unit => "undefined".to_string(),
             Self::Int => "number".to_string(),
@@ -583,7 +530,7 @@ impl TypeIdent {
         }
     }
 
-    pub fn get_default_value_rescript(&self) -> String {
+    pub(crate) fn get_default_value_rescript(&self) -> String {
         match self {
             Self::Unit => "()".to_string(),
             Self::Int => "0".to_string(),
@@ -670,7 +617,7 @@ impl TypeIdent {
         }
     }
 
-    pub fn get_default_value_non_rescript(&self) -> String {
+    pub(crate) fn get_default_value_non_rescript(&self) -> String {
         match self {
             Self::Unit | Self::Unknown => "undefined".to_string(),
             Self::Int | Self::Float => "0".to_string(),
@@ -756,10 +703,6 @@ impl TypeIdent {
         }
     }
 
-    pub fn is_option(&self) -> bool {
-        matches!(self, Self::Option(_))
-    }
-
     /// `readonly` binds to the array type right after it, so an element that
     /// is itself a union or an array needs parentheses:
     /// `readonly readonly bigint[][]` is a syntax error (TS1354).
@@ -771,11 +714,11 @@ impl TypeIdent {
         }
     }
 
-    pub fn option(inner_type: Self) -> Self {
+    pub(crate) fn option(inner_type: Self) -> Self {
         Self::Option(Box::new(inner_type))
     }
 
-    pub fn array(inner_type: Self) -> Self {
+    pub(crate) fn array(inner_type: Self) -> Self {
         Self::Array(Box::new(inner_type))
     }
 }
@@ -1100,39 +1043,6 @@ mod tests {
             }
             .to_ts_type_string(),
             "MyGeneric<number, string>"
-        );
-    }
-
-    #[test]
-    fn test_to_ts_type_string_record_expr() {
-        assert_eq!(TypeExpr::Record(vec![]).to_ts_type_string(), "{}");
-        assert_eq!(
-            TypeExpr::Record(vec![
-                RecordField::new("fieldA".to_string(), TypeIdent::Int),
-                RecordField::new("fieldB".to_string(), TypeIdent::Bool),
-            ])
-            .to_ts_type_string(),
-            "{ fieldA: number; fieldB: boolean }"
-        );
-    }
-
-    #[test]
-    fn test_to_ts_type_string_variant_expr() {
-        assert_eq!(
-            TypeExpr::Variant(vec![
-                VariantConstr::new("ConstrA".to_string(), TypeIdent::Int),
-                VariantConstr::new("ConstrB".to_string(), TypeIdent::Bool),
-            ])
-            .to_ts_type_string(),
-            "{ case: \"ConstrA\"; payload: number } | { case: \"ConstrB\"; payload: boolean }"
-        );
-    }
-
-    #[test]
-    fn test_to_ts_type_string_identifier_expr() {
-        assert_eq!(
-            TypeExpr::Identifier(TypeIdent::Int).to_ts_type_string(),
-            "number"
         );
     }
 }

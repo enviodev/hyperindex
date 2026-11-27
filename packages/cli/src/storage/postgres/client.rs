@@ -21,7 +21,7 @@ use super::tls::MakeRustlsConnect;
 /// plaintext connection when the server refuses TLS. Existing deployments rely
 /// on this.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SslSetting {
+pub(crate) enum SslSetting {
     /// `false` — never TLS.
     Disable,
     /// `true` or `verify-full` — TLS, certificate and hostname checked.
@@ -33,7 +33,7 @@ pub enum SslSetting {
 }
 
 impl SslSetting {
-    pub fn parse(value: &str) -> Result<Self> {
+    pub(crate) fn parse(value: &str) -> Result<Self> {
         Ok(match value {
             "false" => SslSetting::Disable,
             "true" | "verify-full" => SslSetting::Verify,
@@ -59,7 +59,7 @@ impl SslSetting {
     }
 }
 
-pub struct PgConnectionOptions {
+pub(crate) struct PgConnectionOptions {
     pub host: String,
     pub port: u16,
     pub user: String,
@@ -88,7 +88,7 @@ pub struct PgConnectionOptions {
 /// applies it to a peer's full receive window too, and a batch's pipelined
 /// statements fill the server's while a slow one ahead of them runs: a healthy
 /// write on a large table would fail.
-pub struct Keepalive {
+pub(crate) struct Keepalive {
     pub idle: std::time::Duration,
     pub interval: std::time::Duration,
     pub retries: u32,
@@ -105,13 +105,13 @@ impl Default for Keepalive {
 }
 
 /// One column of a result, as the statement describes it.
-pub struct Column {
+pub(crate) struct Column {
     pub name: String,
     pub ty: Type,
 }
 
 #[derive(Clone)]
-pub struct PgClient {
+pub(crate) struct PgClient {
     pool: Pool,
 }
 
@@ -120,7 +120,7 @@ pub struct PgClient {
 /// Cloning one shares that connection. A batch write issues its statements at
 /// once, so they are pipelined on it rather than serialised.
 #[derive(Clone)]
-pub struct Transaction {
+pub(crate) struct Transaction {
     connection: Arc<Pinned>,
 }
 
@@ -199,33 +199,37 @@ impl Transaction {
         }
     }
 
-    pub async fn execute(&self, sql: &str, params: &[Param]) -> Result<u64> {
+    pub(crate) async fn execute(&self, sql: &str, params: &[Param]) -> Result<u64> {
         let _open = self.connection.open().await?;
         self.connection
             .note(execute_on(self.connection.client(), sql, params).await)
     }
 
     #[cfg(test)]
-    pub async fn query(&self, sql: &str, params: &[Param]) -> Result<(Vec<Row>, Vec<Column>)> {
+    pub(crate) async fn query(
+        &self,
+        sql: &str,
+        params: &[Param],
+    ) -> Result<(Vec<Row>, Vec<Column>)> {
         let _open = self.connection.open().await?;
         self.connection
             .note(query_on(self.connection.client(), sql, params).await)
     }
 
-    pub async fn batch(&self, sql: &str) -> Result<()> {
+    pub(crate) async fn batch(&self, sql: &str) -> Result<()> {
         let _open = self.connection.open().await?;
         let outcome = self.connection.client().batch_execute(sql).await;
         self.connection.note(outcome.map_err(Into::into))
     }
 
-    pub async fn commit(self) -> Result<()> {
+    pub(crate) async fn commit(self) -> Result<()> {
         self.finish(true).await
     }
 
     /// Undoes everything the transaction did. Safe to send after a statement
     /// has already failed: the server has aborted the transaction by then and
     /// is waiting for exactly this.
-    pub async fn rollback(self) -> Result<()> {
+    pub(crate) async fn rollback(self) -> Result<()> {
         self.finish(false).await
     }
 
@@ -333,7 +337,7 @@ fn build_config(options: &PgConnectionOptions) -> Config {
 }
 
 impl PgClient {
-    pub fn connect(options: PgConnectionOptions) -> Result<Self> {
+    pub(crate) fn connect(options: PgConnectionOptions) -> Result<Self> {
         let config = build_config(&options);
         // A returned connection is checked for being closed and nothing more.
         // Nothing here leaves session state behind to reset — the one thing
@@ -381,17 +385,21 @@ impl PgClient {
     /// This is the path for DDL and for the multi-statement text the
     /// initialization builds; a simple query is what allows more than one
     /// statement in a single round trip.
-    pub async fn batch(&self, sql: &str) -> Result<()> {
+    pub(crate) async fn batch(&self, sql: &str) -> Result<()> {
         self.client().await?.batch_execute(sql).await?;
         Ok(())
     }
 
-    pub async fn execute(&self, sql: &str, params: &[Param]) -> Result<u64> {
+    pub(crate) async fn execute(&self, sql: &str, params: &[Param]) -> Result<u64> {
         let client = self.client().await?;
         execute_on(&client, sql, params).await
     }
 
-    pub async fn query(&self, sql: &str, params: &[Param]) -> Result<(Vec<Row>, Vec<Column>)> {
+    pub(crate) async fn query(
+        &self,
+        sql: &str,
+        params: &[Param],
+    ) -> Result<(Vec<Row>, Vec<Column>)> {
         let client = self.client().await?;
         query_on(&client, sql, params).await
     }
@@ -402,7 +410,7 @@ impl PgClient {
     /// transaction type, which borrows the connection it runs on and so could
     /// not be held in a map across calls. What matters is the same either way:
     /// every statement until the commit runs on this one connection.
-    pub async fn begin(&self) -> Result<Transaction> {
+    pub(crate) async fn begin(&self) -> Result<Transaction> {
         let connection = self.client().await?;
         connection.batch_execute("BEGIN").await?;
         Ok(Transaction::on(connection))
@@ -411,7 +419,7 @@ impl PgClient {
     /// Runs a `COPY ... TO STDOUT` and writes what it produces to `file` as it
     /// arrives, so a cache of any size costs one buffer rather than its own
     /// length in memory.
-    pub async fn copy_out(&self, sql: &str, file: &mut tokio::fs::File) -> Result<()> {
+    pub(crate) async fn copy_out(&self, sql: &str, file: &mut tokio::fs::File) -> Result<()> {
         let client = self.client().await?;
         let stream = client.copy_out(sql).await?;
         pin_mut!(stream);
@@ -422,7 +430,7 @@ impl PgClient {
     }
 
     /// Feeds `path` to a `COPY ... FROM STDIN`, returning the rows it took.
-    pub async fn copy_in(&self, sql: &str, path: &str) -> Result<u64> {
+    pub(crate) async fn copy_in(&self, sql: &str, path: &str) -> Result<u64> {
         let client = self.client().await?;
         let mut file = tokio::fs::File::open(path)
             .await
@@ -447,11 +455,11 @@ impl PgClient {
     /// prepared before it is then refused with "cached plan must not change
     /// result type", mid-statement, aborting whatever transaction the caller
     /// was in — so the caches are dropped rather than recovered from.
-    pub fn forget_prepared(&self) {
+    pub(crate) fn forget_prepared(&self) {
         self.pool.manager().statement_caches.clear();
     }
 
-    pub fn close(&self) {
+    pub(crate) fn close(&self) {
         self.pool.close();
     }
 }

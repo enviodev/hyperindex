@@ -28,7 +28,7 @@ use subenum::subenum;
 use super::human_config::BytesType;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Schema {
+pub(crate) struct Schema {
     pub entities: HashMap<String, Entity>,
     pub enums: HashMap<String, GraphQLEnum>,
     pub bytes_type: BytesType,
@@ -40,7 +40,7 @@ enum TypeDef<'a> {
 }
 
 impl Schema {
-    pub fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Schema {
             entities: HashMap::new(),
             enums: HashMap::new(),
@@ -50,13 +50,13 @@ impl Schema {
 
     /// Entities in name order, so a validation error doesn't depend on which
     /// one the hash map happened to yield first.
-    pub fn entities_by_name(&self) -> Vec<&Entity> {
+    pub(crate) fn entities_by_name(&self) -> Vec<&Entity> {
         let mut entities: Vec<&Entity> = self.entities.values().collect();
         entities.sort_by(|a, b| a.name.cmp(&b.name));
         entities
     }
 
-    pub fn new(
+    pub(crate) fn new(
         entities: Vec<Entity>,
         enums: Vec<GraphQLEnum>,
         bytes_type: BytesType,
@@ -116,7 +116,7 @@ impl Schema {
         Self::new(entities, enums, bytes_type)
     }
 
-    pub fn parse_from_file(
+    pub(crate) fn parse_from_file(
         project_paths: &ParsedProjectPaths,
         maybe_custom_path: &Option<String>,
         default_scope: DefaultChainScope,
@@ -148,7 +148,8 @@ impl Schema {
         Self::from_string_at(&schema_string, default_scope, bytes_type, &source)
     }
 
-    pub fn from_string(
+    #[cfg(test)]
+    pub(crate) fn from_string(
         schema_string: &str,
         default_scope: DefaultChainScope,
         bytes_type: BytesType,
@@ -161,7 +162,7 @@ impl Schema {
         )
     }
 
-    pub fn from_string_at(
+    pub(crate) fn from_string_at(
         schema_string: &str,
         default_scope: DefaultChainScope,
         bytes_type: BytesType,
@@ -274,7 +275,7 @@ impl Schema {
     /// stores the referenced entity's id, every other scalar stores itself.
     /// Storage validation has to reason about the stored column type, which for
     /// a relation is not the schema-level type.
-    pub fn resolve_stored_scalar(&self, scalar: &GqlScalar) -> anyhow::Result<GqlScalar> {
+    pub(crate) fn resolve_stored_scalar(&self, scalar: &GqlScalar) -> anyhow::Result<GqlScalar> {
         match scalar {
             GqlScalar::Custom(name) => match self.try_get_type_def(name)? {
                 TypeDef::Entity(entity) => entity.get_id_scalar(),
@@ -398,7 +399,7 @@ fn at(source: &str, position: Pos) -> String {
 /// How errors name the schema when the file itself isn't resolved against a
 /// project on disk: the `schema:` path config.yaml set, normalized so
 /// `./db/schema.graphql` reads the way the project would write it.
-pub fn schema_source_label(configured_path: &Option<String>) -> String {
+pub(crate) fn schema_source_label(configured_path: &Option<String>) -> String {
     match configured_path {
         Some(path) => path_utils::normalize_path(PathBuf::from(path))
             .display()
@@ -775,14 +776,14 @@ impl MultiFieldIndex {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct GraphQLEnum {
+pub(crate) struct GraphQLEnum {
     pub name: String,
     pub values: Vec<String>,
     pub description: Option<String>,
 }
 
 impl GraphQLEnum {
-    pub fn new(
+    pub(crate) fn new(
         name: String,
         values: Vec<String>,
         description: Option<String>,
@@ -853,7 +854,7 @@ impl GraphQLEnum {
 /// A data skipping index on the entity's ClickHouse history table, emitted
 /// into the DDL as `INDEX <name> <expr> TYPE <type> GRANULARITY <granularity>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClickHouseSkippingIndex {
+pub(crate) struct ClickHouseSkippingIndex {
     pub name: String,
     /// Raw ClickHouse expression the index is built over.
     pub expr: String,
@@ -870,7 +871,7 @@ pub struct ClickHouseSkippingIndex {
 /// ["timestamp"], ttl: "timestamp + INTERVAL 2 YEAR", skippingIndexes: [{name:
 /// "idx_from", expr: "fromAddress", type: "bloom_filter(0.01)"}]})`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ClickHouseTableOptions {
+pub(crate) struct ClickHouseTableOptions {
     /// Raw ClickHouse expression emitted as `PARTITION BY <expr>`.
     pub partition_by: Option<String>,
     /// Columns that lead the history table's sorting key, replacing the default
@@ -884,13 +885,13 @@ pub struct ClickHouseTableOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClickHouseEntityStorage {
+pub(crate) enum ClickHouseEntityStorage {
     Enabled(bool),
     Options(ClickHouseTableOptions),
 }
 
 impl ClickHouseEntityStorage {
-    pub fn is_enabled(&self) -> bool {
+    pub(crate) fn is_enabled(&self) -> bool {
         match self {
             Self::Enabled(enabled) => *enabled,
             Self::Options(_) => true,
@@ -901,7 +902,7 @@ impl ClickHouseEntityStorage {
 /// What an entity is when it says nothing itself: shared across chains, or
 /// per-chain because config.yaml sets `disable_default_cross_chain: true`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DefaultChainScope {
+pub(crate) enum DefaultChainScope {
     CrossChain,
     PerChain,
 }
@@ -910,13 +911,13 @@ impl DefaultChainScope {
     /// Whether an entity's rows are shared across chains. `@crossChain` shares
     /// whatever the default is; the per-chain entities are the ones envio
     /// appends the chain-id column to.
-    pub fn is_cross_chain(self, cross_chain_directive: bool) -> bool {
+    pub(crate) fn is_cross_chain(self, cross_chain_directive: bool) -> bool {
         cross_chain_directive || self.is_cross_chain_by_default()
     }
 
     /// The same question for an entity that carries no directive, which is what
     /// the internal config JSON stores for the runtime to read.
-    pub fn is_cross_chain_by_default(self) -> bool {
+    pub(crate) fn is_cross_chain_by_default(self) -> bool {
         self == Self::CrossChain
     }
 }
@@ -924,15 +925,15 @@ impl DefaultChainScope {
 /// Postgres silently truncates longer identifiers, which can collide two
 /// distinct columns and breaks the Hasura `custom_name` mapping, keyed by the
 /// untruncated name.
-pub const MAX_PG_IDENTIFIER_LENGTH: usize = 63;
+pub(crate) const MAX_PG_IDENTIFIER_LENGTH: usize = 63;
 
 /// The name envio gives the chain-id column it appends to a per-chain entity.
 /// Storage may spell the column differently (`column_name_format: snake_case`),
 /// but a directive always names it the way the schema would.
-pub const CHAIN_ID_FIELD_NAME: &str = "chainId";
+pub(crate) const CHAIN_ID_FIELD_NAME: &str = "chainId";
 
 /// Every entity's primary key.
-pub const ID_FIELD_NAME: &str = "id";
+pub(crate) const ID_FIELD_NAME: &str = "id";
 
 const INDEX_DIRECTIVE: &str = "@index";
 const ORDER_BY_DIRECTIVE: &str = "clickhouse.orderBy";
@@ -941,14 +942,14 @@ const ORDER_BY_DIRECTIVE: &str = "clickhouse.orderBy";
 /// `chainIdColumnName` in `Config.res`, which is what names the column in
 /// storage — a `column_name_format` added there needs its spelling here, or the
 /// name it produces is neither reserved nor recognized in a directive.
-pub const RESERVED_CHAIN_ID_FIELD_NAMES: [&str; 2] = [CHAIN_ID_FIELD_NAME, "chain_id"];
+pub(crate) const RESERVED_CHAIN_ID_FIELD_NAMES: [&str; 2] = [CHAIN_ID_FIELD_NAME, "chain_id"];
 
 /// A column an entity directive (`@index`, `@storage(clickhouse: {orderBy})`)
 /// may name: a field the schema declares, or the chain id envio appends to a
 /// per-chain entity. Only [`Entity::from_object`] builds one, so a resolved
 /// [`Entity`] cannot carry a directive naming a column its table lacks.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum EntityColumn {
+pub(crate) enum EntityColumn {
     Declared(String),
     ChainId,
 }
@@ -957,7 +958,7 @@ impl EntityColumn {
     /// The name the runtime resolves the column by. Both `Table.getFieldByName`
     /// and ClickHouse's `columnByFieldName` key on schema field names, and the
     /// appended chain id keeps `chainId` there whatever storage spells it.
-    pub fn field_name(&self) -> &str {
+    pub(crate) fn field_name(&self) -> &str {
         match self {
             Self::Declared(name) => name,
             Self::ChainId => CHAIN_ID_FIELD_NAME,
@@ -966,7 +967,7 @@ impl EntityColumn {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Entity {
+pub(crate) struct Entity {
     pub name: String,
     pub fields: Vec<Field>,
     pub multi_field_indexes: Vec<MultiFieldIndex>,
@@ -984,7 +985,7 @@ pub struct Entity {
 impl Entity {
     /// Whether the entity's rows are shared across chains, which decides
     /// whether envio appends the chain-id column to its table.
-    pub fn is_cross_chain(&self, default_scope: DefaultChainScope) -> bool {
+    pub(crate) fn is_cross_chain(&self, default_scope: DefaultChainScope) -> bool {
         default_scope.is_cross_chain(self.cross_chain)
     }
 
@@ -1167,7 +1168,7 @@ fn parse_index_directive_columns(
 }
 
 impl Entity {
-    pub fn has_storage_directive(&self) -> bool {
+    pub(crate) fn has_storage_directive(&self) -> bool {
         self.postgres.is_some() || self.clickhouse.is_some()
     }
 
@@ -1176,7 +1177,7 @@ impl Entity {
     /// `Option.getOr(false)`), so a directive routes to ClickHouse only when it
     /// enables the backend — a boolean `true` or the table options object.
     /// Without a directive the entity follows the backend's `default`.
-    pub fn uses_clickhouse(&self, clickhouse_default: bool) -> bool {
+    pub(crate) fn uses_clickhouse(&self, clickhouse_default: bool) -> bool {
         if self.has_storage_directive() {
             self.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
         } else {
@@ -1185,12 +1186,12 @@ impl Entity {
     }
 
     /// Returns the fields of this [`Entity`] in schema-defined order.
-    pub fn get_fields(&self) -> Vec<&Field> {
+    pub(crate) fn get_fields(&self) -> Vec<&Field> {
         self.fields.iter().collect()
     }
 
     /// Returns a field by name, if it exists.
-    pub fn get_field(&self, name: &str) -> Option<&Field> {
+    pub(crate) fn get_field(&self, name: &str) -> Option<&Field> {
         self.fields.iter().find(|f| f.name == name)
     }
 
@@ -1198,7 +1199,7 @@ impl Entity {
     /// this entity adopt this scalar, so the id and its `_id` columns stay the
     /// same type. Parsing validates the id is a supported non-derived scalar,
     /// so this never resolves to a relation or derived field.
-    pub fn get_id_scalar(&self) -> anyhow::Result<GqlScalar> {
+    pub(crate) fn get_id_scalar(&self) -> anyhow::Result<GqlScalar> {
         let id_field = self
             .get_field(ID_FIELD_NAME)
             .ok_or_else(|| anyhow!("Entity {} is missing an 'id' field", self.name))?;
@@ -1211,7 +1212,7 @@ impl Entity {
         }
     }
 
-    pub fn get_relationships(&self) -> Vec<Relationship> {
+    pub(crate) fn get_relationships(&self) -> Vec<Relationship> {
         let derived_from_fields: Vec<Relationship> = self
             .get_fields()
             .into_iter()
@@ -1235,7 +1236,7 @@ impl Entity {
         [derived_from_fields, object_relationship_fields].concat()
     }
 
-    pub fn get_related_entities<'a>(
+    pub(crate) fn get_related_entities<'a>(
         &'a self,
         schema: &'a Schema,
     ) -> anyhow::Result<Vec<(&'a Field, &'a Self)>> {
@@ -1286,7 +1287,7 @@ impl Entity {
 
     /// The indexes over more than one key column that include nothing. Those
     /// that do are `get_covering_indexes`, whatever their key.
-    pub fn get_composite_indexes(&self) -> Vec<Vec<IndexField>> {
+    pub(crate) fn get_composite_indexes(&self) -> Vec<Vec<IndexField>> {
         self.multi_field_indexes
             .iter()
             .filter(|index| index.fields.len() > 1 && index.include.is_empty())
@@ -1294,7 +1295,7 @@ impl Entity {
             .collect()
     }
 
-    pub fn get_covering_indexes(&self) -> Vec<&MultiFieldIndex> {
+    pub(crate) fn get_covering_indexes(&self) -> Vec<&MultiFieldIndex> {
         self.multi_field_indexes
             .iter()
             .filter(|index| !index.include.is_empty())
@@ -1706,7 +1707,7 @@ fn get_positive_integer(arg_value: &Value<String>) -> anyhow::Result<u32> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Field {
+pub(crate) struct Field {
     pub name: String,
     pub field_type: FieldType,
     pub description: Option<String>,
@@ -1906,7 +1907,7 @@ impl Field {
         self.field_type.validate_type(schema)
     }
 
-    pub fn is_indexed_field(&self, entity: &Entity) -> bool {
+    pub(crate) fn is_indexed_field(&self, entity: &Entity) -> bool {
         let has_indexed_directive = self.field_type.has_indexed_directive();
         let has_single_field_index_directive = entity
             .multi_field_indexes
@@ -1917,7 +1918,7 @@ impl Field {
         has_indexed_directive || has_single_field_index_directive
     }
 
-    pub fn is_derived_lookup_field(&self, entity: &Entity, schema: &Schema) -> bool {
+    pub(crate) fn is_derived_lookup_field(&self, entity: &Entity, schema: &Schema) -> bool {
         schema.entities.values().any(|entity_inner| {
             entity_inner.get_fields().iter().any(|field| {
                 matches!(
@@ -1931,12 +1932,12 @@ impl Field {
         })
     }
 
-    pub fn is_primary_key(&self) -> bool {
+    pub(crate) fn is_primary_key(&self) -> bool {
         self.name.as_str().to_lowercase() == "id"
     }
 
     ///Returns None if it is a derived field
-    pub fn get_postgres_field(
+    pub(crate) fn get_postgres_field(
         &self,
         schema: &Schema,
         entity: &Entity,
@@ -1959,7 +1960,7 @@ impl Field {
         }
     }
 
-    pub fn get_derived_from_field(&self) -> Option<DerivedFieldTemplate> {
+    pub(crate) fn get_derived_from_field(&self) -> Option<DerivedFieldTemplate> {
         match &self.field_type {
             FieldType::DerivedFromField {
                 entity_name,
@@ -1977,7 +1978,7 @@ impl Field {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum IndexFieldDirection {
+pub(crate) enum IndexFieldDirection {
     Asc,
     Desc,
 }
@@ -1985,7 +1986,7 @@ pub enum IndexFieldDirection {
 impl IndexFieldDirection {
     /// The spelling the generated ReScript and the stored config share, as
     /// opposed to `Display`, which renders the lowercase SQL keyword.
-    pub fn as_pascal_str(&self) -> &'static str {
+    pub(crate) fn as_pascal_str(&self) -> &'static str {
         match self {
             Self::Asc => "Asc",
             Self::Desc => "Desc",
@@ -2003,24 +2004,24 @@ impl fmt::Display for IndexFieldDirection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct IndexField {
+pub(crate) struct IndexField {
     pub column: EntityColumn,
     pub direction: IndexFieldDirection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct MultiFieldIndex {
+pub(crate) struct MultiFieldIndex {
     fields: Vec<IndexField>,
     /// Sorted by name.
     include: Vec<EntityColumn>,
 }
 
 impl MultiFieldIndex {
-    pub fn get_index_fields(&self) -> &[IndexField] {
+    pub(crate) fn get_index_fields(&self) -> &[IndexField] {
         &self.fields
     }
 
-    pub fn get_included_columns(&self) -> &[EntityColumn] {
+    pub(crate) fn get_included_columns(&self) -> &[EntityColumn] {
         &self.include
     }
 
@@ -2036,7 +2037,7 @@ impl MultiFieldIndex {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum UserDefinedFieldType {
+pub(crate) enum UserDefinedFieldType {
     Single(GqlScalar),
     ListType(Box<UserDefinedFieldType>),
     NonNullType(Box<UserDefinedFieldType>),
@@ -2060,7 +2061,7 @@ impl UserDefinedFieldType {
         }
     }
 
-    pub fn validate_type(&self, schema: &Schema) -> anyhow::Result<()> {
+    pub(crate) fn validate_type(&self, schema: &Schema) -> anyhow::Result<()> {
         match self {
             Self::Single(_) => Ok(()),
             Self::ListType(field_type) => match field_type.as_ref() {
@@ -2102,7 +2103,10 @@ impl UserDefinedFieldType {
         }
     }
 
-    pub fn to_underlying_postgres_primitive(&self, schema: &Schema) -> anyhow::Result<PGPrimitive> {
+    pub(crate) fn to_underlying_postgres_primitive(
+        &self,
+        schema: &Schema,
+    ) -> anyhow::Result<PGPrimitive> {
         match self {
             Self::Single(gql_scalar) => gql_scalar.to_underlying_postgres_primitive(schema),
             Self::ListType(field_type) | Self::NonNullType(field_type) => {
@@ -2111,11 +2115,11 @@ impl UserDefinedFieldType {
         }
     }
 
-    pub fn is_optional(&self) -> bool {
+    pub(crate) fn is_optional(&self) -> bool {
         !matches!(self, Self::NonNullType(_))
     }
 
-    pub fn is_array(&self) -> bool {
+    pub(crate) fn is_array(&self) -> bool {
         match self {
             Self::ListType(_) => true,
             Self::NonNullType(field_type) => field_type.is_array(),
@@ -2123,7 +2127,7 @@ impl UserDefinedFieldType {
         }
     }
 
-    pub fn is_list_of_lists(&self) -> bool {
+    pub(crate) fn is_list_of_lists(&self) -> bool {
         match self {
             Self::ListType(item) => item.strip_non_null().is_array(),
             Self::NonNullType(field_type) => field_type.is_list_of_lists(),
@@ -2131,7 +2135,7 @@ impl UserDefinedFieldType {
         }
     }
 
-    pub fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<TypeIdent> {
+    pub(crate) fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<TypeIdent> {
         let composed_type_name = match self {
             //Only types in here should be non optional
             Self::NonNullType(field_type) => match field_type.as_ref() {
@@ -2164,12 +2168,12 @@ impl UserDefinedFieldType {
         }
     }
 
-    pub fn is_entity_field(&self, schema: &Schema) -> anyhow::Result<bool> {
+    pub(crate) fn is_entity_field(&self, schema: &Schema) -> anyhow::Result<bool> {
         self.get_underlying_scalar().is_entity(schema)
     }
 
     ///Returns None if field is not a linked entity and   Some(<ENTITY_NAME>) if it is
-    pub fn get_linked_entity(&self, schema: &Schema) -> anyhow::Result<Option<String>> {
+    pub(crate) fn get_linked_entity(&self, schema: &Schema) -> anyhow::Result<Option<String>> {
         self.get_underlying_scalar().get_linked_entity(schema)
     }
 
@@ -2208,7 +2212,7 @@ impl UserDefinedFieldType {
         }
     }
 
-    pub fn from_dyn_sol_type(sol_type: &DynSolType) -> anyhow::Result<Self> {
+    pub(crate) fn from_dyn_sol_type(sol_type: &DynSolType) -> anyhow::Result<Self> {
         match sol_type {
             DynSolType::Uint(_) | DynSolType::Int(_) => Ok(Self::NonNullType(Box::new(
                 Self::Single(GqlScalar::BigInt(None)),
@@ -2277,19 +2281,19 @@ impl Serialize for UserDefinedFieldType {
 }
 
 #[derive(Default)]
-pub struct PgTypeModifications {
+pub(crate) struct PgTypeModifications {
     pub big_int_precision: Option<u32>,
     pub big_decimal_precision_scale: Option<(u32, u32)>,
 }
 
-pub struct FieldTypeParams {
+pub(crate) struct FieldTypeParams {
     pub derived_from_field: Option<String>,
     pub has_indexed_directive: bool,
     pub pg_type_modifications: PgTypeModifications,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum FieldType {
+pub(crate) enum FieldType {
     DerivedFromField {
         entity_name: String,
         derived_from_field: String,
@@ -2348,18 +2352,18 @@ impl FieldType {
         }
     }
 
-    pub fn validate_type(&self, schema: &Schema) -> anyhow::Result<()> {
+    pub(crate) fn validate_type(&self, schema: &Schema) -> anyhow::Result<()> {
         match self {
             Self::DerivedFromField { .. } => Ok(()), //Already validated
             Self::RegularField { field_type: t, .. } => t.validate_type(schema),
         }
     }
 
-    pub fn is_optional(&self) -> bool {
+    pub(crate) fn is_optional(&self) -> bool {
         self.to_user_defined_field_type().is_optional()
     }
 
-    pub fn is_derived_from(&self) -> bool {
+    pub(crate) fn is_derived_from(&self) -> bool {
         matches!(self, Self::DerivedFromField { .. })
     }
 
@@ -2373,22 +2377,22 @@ impl FieldType {
         }
     }
 
-    pub fn is_array(&self) -> bool {
+    pub(crate) fn is_array(&self) -> bool {
         match self {
             Self::DerivedFromField { .. } => true,
             Self::RegularField { field_type: t, .. } => t.is_array(),
         }
     }
 
-    pub fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<TypeIdent> {
+    pub(crate) fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<TypeIdent> {
         self.to_user_defined_field_type().to_rescript_type(schema)
     }
 
-    pub fn get_underlying_scalar(&self) -> GqlScalar {
+    pub(crate) fn get_underlying_scalar(&self) -> GqlScalar {
         self.to_user_defined_field_type().get_underlying_scalar()
     }
 
-    pub fn is_entity_field(&self, schema: &Schema) -> anyhow::Result<bool> {
+    pub(crate) fn is_entity_field(&self, schema: &Schema) -> anyhow::Result<bool> {
         self.to_user_defined_field_type().is_entity_field(schema)
     }
 
@@ -2404,7 +2408,7 @@ impl FieldType {
         }
     }
 
-    pub fn from_dyn_sol_type(sol_type: &DynSolType) -> anyhow::Result<Self> {
+    pub(crate) fn from_dyn_sol_type(sol_type: &DynSolType) -> anyhow::Result<Self> {
         Ok(Self::RegularField {
             field_type: UserDefinedFieldType::from_dyn_sol_type(sol_type)?,
             has_indexed_directive: false,
@@ -2430,7 +2434,7 @@ impl Serialize for FieldType {
 
 #[subenum(BuiltInGqlScalar, AdditionalGqlScalar)]
 #[derive(Debug, Clone, PartialEq, strum_macros::Display, Eq, Hash)]
-pub enum GqlScalar {
+pub(crate) enum GqlScalar {
     #[subenum(BuiltInGqlScalar)]
     ID,
     #[subenum(BuiltInGqlScalar)]
@@ -2455,14 +2459,8 @@ pub enum GqlScalar {
     Custom(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct BigIntPrecisionScale {
-    pub precision: Option<u32>,
-    pub scale: Option<u32>,
-}
-
 #[derive(Debug, Clone)]
-pub enum Relationship {
+pub(crate) enum Relationship {
     TypeDef {
         name: String,
     },
@@ -2500,7 +2498,10 @@ impl GqlScalar {
         }
     }
 
-    pub fn to_underlying_postgres_primitive(&self, schema: &Schema) -> anyhow::Result<PGPrimitive> {
+    pub(crate) fn to_underlying_postgres_primitive(
+        &self,
+        schema: &Schema,
+    ) -> anyhow::Result<PGPrimitive> {
         let converted = match self {
             GqlScalar::ID => PGPrimitive::String,
             GqlScalar::String => PGPrimitive::String,

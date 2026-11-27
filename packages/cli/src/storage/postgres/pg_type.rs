@@ -1,4 +1,4 @@
-pub use crate::config_parsing::system_config::ChainIdMode;
+pub(crate) use crate::config_parsing::system_config::ChainIdMode;
 
 use crate::storage::schema::FieldType;
 
@@ -10,7 +10,7 @@ const TEXT: &str = "TEXT";
 /// `is_numeric_array_as_text` is the Hasura workaround from issue #788: Hasura
 /// cannot read a `numeric[]`, so a schema tracked by it stores those as `text[]`
 /// instead. It applies to arrays alone — a scalar `numeric` it reads fine.
-pub fn pg_field_type(
+pub(crate) fn pg_field_type(
     field_type: &FieldType,
     pg_schema: &str,
     is_array: bool,

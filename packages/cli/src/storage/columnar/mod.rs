@@ -42,7 +42,7 @@
 //! Filling must not span an `await`: a stage that yielded to the event loop
 //! would let another stage's commit interleave with this one's writes.
 
-pub mod js;
+pub(crate) mod js;
 
 use anyhow::{bail, Context, Result};
 
@@ -87,7 +87,7 @@ impl ColumnKind {
 /// What a column holds. A list has to say what its elements are and how many of
 /// them there are in total, since the element column is sized once.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ColumnSpec {
+pub(crate) enum ColumnSpec {
     Scalar(ColumnKind),
     List {
         element: ColumnKind,
@@ -133,7 +133,7 @@ enum Storage {
     },
 }
 
-pub struct Column {
+pub(crate) struct Column {
     kind: ColumnKind,
     storage: Storage,
     /// One byte per row, non-zero where the row carries no value. A column that
@@ -181,7 +181,7 @@ impl Column {
 
     /// The elements of a list column, and where each row's run of them stops.
     #[cfg(test)]
-    pub fn list(&self) -> Result<(&Column, &[u32])> {
+    pub(crate) fn list(&self) -> Result<(&Column, &[u32])> {
         match &self.storage {
             Storage::List { elements, row_ends } => Ok((elements, row_ends)),
             _ => bail!("this column is not a list"),
@@ -192,13 +192,13 @@ impl Column {
     // neither LTO nor a single codegen unit, so what would otherwise be a field
     // read becomes a cross-module call in the innermost loop there is.
     #[inline]
-    pub fn kind(&self) -> ColumnKind {
+    pub(crate) fn kind(&self) -> ColumnKind {
         self.kind
     }
 
     /// How many rows the column holds, which sealing has already checked
     /// against the arena's row count.
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match &self.storage {
             Storage::Fixed(words) => words.len(),
             Storage::Variable { ends, .. } => ends.len(),
@@ -209,7 +209,7 @@ impl Column {
     /// Only meaningful once the arena is sealed: `any_null` is what sealing
     /// found, and before that it is still false.
     #[inline]
-    pub fn is_null(&self, row: usize) -> bool {
+    pub(crate) fn is_null(&self, row: usize) -> bool {
         self.any_null && self.nulls[row] != 0
     }
 
@@ -222,22 +222,22 @@ impl Column {
     }
 
     #[inline]
-    pub fn f64_at(&self, row: usize) -> f64 {
+    pub(crate) fn f64_at(&self, row: usize) -> f64 {
         f64::from_bits(self.words()[row])
     }
 
     #[inline]
-    pub fn u64_at(&self, row: usize) -> u64 {
+    pub(crate) fn u64_at(&self, row: usize) -> u64 {
         self.words()[row]
     }
 
     #[inline]
-    pub fn i64_at(&self, row: usize) -> i64 {
+    pub(crate) fn i64_at(&self, row: usize) -> i64 {
         self.words()[row] as i64
     }
 
     #[inline]
-    pub fn bytes_at(&self, row: usize) -> &[u8] {
+    pub(crate) fn bytes_at(&self, row: usize) -> &[u8] {
         match &self.storage {
             Storage::Variable { data, ends } => {
                 let end = ends[row] as usize;
@@ -249,7 +249,7 @@ impl Column {
     }
 
     #[inline]
-    pub fn str_at(&self, row: usize) -> Result<&str> {
+    pub(crate) fn str_at(&self, row: usize) -> Result<&str> {
         std::str::from_utf8(self.bytes_at(row)).context("staged text is not UTF-8")
     }
 
@@ -360,14 +360,14 @@ enum Phase {
 }
 
 /// One batch's columns, allocated together and filled by JavaScript.
-pub struct Arena {
+pub(crate) struct Arena {
     rows: usize,
     columns: Vec<Column>,
     phase: Phase,
 }
 
 impl Arena {
-    pub fn new(rows: usize, kinds: &[ColumnKind]) -> Result<Self> {
+    pub(crate) fn new(rows: usize, kinds: &[ColumnKind]) -> Result<Self> {
         if rows == 0 {
             bail!("a staged batch needs at least one row");
         }
@@ -388,7 +388,7 @@ impl Arena {
     /// Unlike a staged batch, this one may hold no rows: a query matching
     /// nothing is an ordinary answer, and the columns still have to be
     /// described so the other side builds the same views over them.
-    pub fn new_filled(rows: usize, specs: &[ColumnSpec]) -> Self {
+    pub(crate) fn new_filled(rows: usize, specs: &[ColumnSpec]) -> Self {
         Self {
             rows,
             columns: specs
@@ -404,21 +404,21 @@ impl Arena {
         }
     }
 
-    pub fn rows(&self) -> usize {
+    pub(crate) fn rows(&self) -> usize {
         self.rows
     }
 
-    pub fn columns(&self) -> &[Column] {
+    pub(crate) fn columns(&self) -> &[Column] {
         &self.columns
     }
 
-    pub fn is_sealed(&self) -> bool {
+    pub(crate) fn is_sealed(&self) -> bool {
         self.phase == Phase::Sealed
     }
 
     /// Whether JavaScript currently holds the arena's buffers, in either
     /// direction. Both end by detaching every one of them.
-    pub fn is_lent(&self) -> bool {
+    pub(crate) fn is_lent(&self) -> bool {
         self.phase == Phase::Filling || self.phase == Phase::Reading
     }
 
@@ -494,7 +494,7 @@ impl Arena {
     /// Checks the values against the row count, which is what lets the encoder
     /// slice them. Only reachable once every buffer is detached, so nothing can
     /// change them between the check and the read.
-    pub fn seal(&mut self, names: &[String]) -> Result<()> {
+    pub(crate) fn seal(&mut self, names: &[String]) -> Result<()> {
         if self.phase != Phase::Detached {
             bail!("a staged batch can only be sealed once, and not while it is still lent out");
         }
@@ -555,39 +555,39 @@ impl Column {
 }
 
 impl Arena {
-    pub fn set_f64(&mut self, column: usize, row: usize, value: f64) {
+    pub(crate) fn set_f64(&mut self, column: usize, row: usize, value: f64) {
         self.columns[column].write_word(row, value.to_bits());
     }
 
-    pub fn set_bytes(&mut self, column: usize, row: usize, value: &[u8]) {
+    pub(crate) fn set_bytes(&mut self, column: usize, row: usize, value: &[u8]) {
         self.columns[column].write_bytes(row, value);
     }
 
-    pub fn mark_null(&mut self, column: usize, row: usize) {
+    pub(crate) fn mark_null(&mut self, column: usize, row: usize) {
         self.columns[column].write_null(row);
     }
 
     /// The element column of a list, written by the same calls as a top-level
     /// one — `element` counts across the whole column, not within a row.
-    pub fn set_element_f64(&mut self, column: usize, element: usize, value: f64) {
+    pub(crate) fn set_element_f64(&mut self, column: usize, element: usize, value: f64) {
         self.columns[column]
             .elements_mut()
             .write_word(element, value.to_bits());
     }
 
-    pub fn set_element_bytes(&mut self, column: usize, element: usize, value: &[u8]) {
+    pub(crate) fn set_element_bytes(&mut self, column: usize, element: usize, value: &[u8]) {
         self.columns[column]
             .elements_mut()
             .write_bytes(element, value);
     }
 
-    pub fn mark_element_null(&mut self, column: usize, element: usize) {
+    pub(crate) fn mark_element_null(&mut self, column: usize, element: usize) {
         self.columns[column].elements_mut().write_null(element);
     }
 
     /// Closes a list row at `elements` written so far, which is where the next
     /// row's own elements begin.
-    pub fn end_list_row(&mut self, column: usize, row: usize, elements: usize) {
+    pub(crate) fn end_list_row(&mut self, column: usize, row: usize, elements: usize) {
         match &mut self.columns[column].storage {
             Storage::List { row_ends, .. } => row_ends[row] = elements as u32,
             _ => panic!("column {column} is not a list"),
@@ -595,25 +595,25 @@ impl Arena {
     }
 
     #[cfg(test)]
-    pub fn set_u64(&mut self, column: usize, row: usize, value: u64) {
+    pub(crate) fn set_u64(&mut self, column: usize, row: usize, value: u64) {
         self.columns[column].write_word(row, value);
     }
 
     #[cfg(test)]
-    pub fn set_i64(&mut self, column: usize, row: usize, value: i64) {
+    pub(crate) fn set_i64(&mut self, column: usize, row: usize, value: i64) {
         self.columns[column].write_word(row, value as u64);
     }
 
     /// Nothing was lent out — the values came from Rust, not from an isolate —
     /// so there is no buffer to detach before sealing.
     #[cfg(test)]
-    pub fn seal_unlent(&mut self, names: &[String]) -> Result<()> {
+    pub(crate) fn seal_unlent(&mut self, names: &[String]) -> Result<()> {
         self.finish_lending();
         self.seal(names)
     }
 
     #[cfg(test)]
-    pub fn seal_for_test(&mut self) -> Result<()> {
+    pub(crate) fn seal_for_test(&mut self) -> Result<()> {
         let names: Vec<String> = (0..self.columns.len()).map(|i| i.to_string()).collect();
         self.seal_unlent(&names)
     }

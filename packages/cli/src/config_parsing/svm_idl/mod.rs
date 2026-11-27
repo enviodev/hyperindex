@@ -17,7 +17,7 @@ use serde_json::{Map, Value};
 
 /// One account slot of an instruction, in declared order.
 #[derive(Debug, Clone, PartialEq)]
-pub struct IdlAccount {
+pub(crate) struct IdlAccount {
     pub name: String,
     pub optional: bool,
 }
@@ -31,16 +31,16 @@ fn optional_before_a_required_slot(accounts: &[IdlAccount]) -> Option<&IdlAccoun
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct IxIdl {
+pub(crate) struct IxIdl {
     pub discriminator: Vec<u8>,
     pub accounts: Vec<IdlAccount>,
     pub args: Vec<NamedField>,
 }
 
-pub type Unusable = BTreeMap<String, String>;
+pub(crate) type Unusable = BTreeMap<String, String>;
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct ProgramIdl {
+pub(crate) struct ProgramIdl {
     pub address: Option<String>,
     pub instructions: BTreeMap<String, IxIdl>,
     pub defined_types: BTreeMap<String, FieldType>,
@@ -113,7 +113,7 @@ fn at(source: &str, position: Option<&(usize, usize)>) -> String {
 
 /// `source` names the file the IDL came from, and is what every reason is
 /// reported against.
-pub fn parse_idl(source: &str, json: &str) -> Result<ProgramIdl> {
+pub(crate) fn parse_idl(source: &str, json: &str) -> Result<ProgramIdl> {
     let root: Value =
         serde_json::from_str(json).map_err(|err| anyhow!("{source} is not valid JSON: {err}"))?;
     let root = root
@@ -146,7 +146,7 @@ impl ProgramIdl {
     /// Test fixture constructor. It goes through the same checks, so a fixture
     /// cannot carry two instructions on the same discriminator bytes.
     #[cfg(test)]
-    pub fn compiled_in(
+    pub(crate) fn compiled_in(
         source: &str,
         address: String,
         instructions: BTreeMap<String, IxIdl>,

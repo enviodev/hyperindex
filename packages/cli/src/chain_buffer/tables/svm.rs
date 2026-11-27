@@ -182,7 +182,7 @@ impl<'a> InstructionView<'a> {
 /// mask and its column in the blocks table.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, VariantArray)]
 #[repr(i32)]
-pub enum SvmBlockField {
+pub(crate) enum SvmBlockField {
     Slot = 0,
     Time = 1,
     Hash = 2,
@@ -199,7 +199,7 @@ impl SvmBlockField {
     pub(crate) const TRANSACTION_COUNTS_MASK: u64 = (1 << SvmBlockField::TransactionCount as u32)
         | (1 << SvmBlockField::FailedTransactionCount as u32);
 
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         use SvmBlockField::*;
         match self {
             Slot => "slot",
@@ -240,7 +240,7 @@ const SLOT_BIT: u64 = 1 << SvmBlockField::Slot as u32;
 /// How many transactions HyperSync stores for a slot, which leaves out votes,
 /// and how many of those failed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SvmTransactionCounts {
+pub(crate) struct SvmTransactionCounts {
     pub total: u64,
     pub failed: u64,
 }
@@ -376,7 +376,7 @@ pub(crate) fn block_columns(
 /// selection mask and its column in the transactions table.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, VariantArray)]
 #[repr(i32)]
-pub enum SvmTxField {
+pub(crate) enum SvmTxField {
     TransactionIndex = 0,
     Signature = 1,
     FeePayer = 2,
@@ -392,7 +392,7 @@ pub enum SvmTxField {
 }
 
 impl SvmTxField {
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         use SvmTxField::*;
         match self {
             TransactionIndex => "transactionIndex",

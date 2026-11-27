@@ -6,7 +6,7 @@ pub fn network_to_hypersync_url(network: &HypersyncChain) -> String {
     format!("https://{}.hypersync.xyz", *network as u64)
 }
 
-pub fn get_default_hypersync_endpoint(chain_id: u64) -> anyhow::Result<String> {
+pub(crate) fn get_default_hypersync_endpoint(chain_id: u64) -> anyhow::Result<String> {
     let network_name = Network::from_network_id(chain_id)
         .context(format!("Getting network name from id ({})", chain_id))?;
 

@@ -24,9 +24,9 @@ use std::path::Path;
 /// Exit code used when `envio init` short-circuits with an agent prompt.
 /// Distinct from 1 (generic failure) so coding agents can tell "the user
 /// needs to take a follow-up step" from "the command actually failed".
-pub const AGENTIC_INIT_EXIT_CODE: i32 = 2;
+pub(crate) const AGENTIC_INIT_EXIT_CODE: i32 = 2;
 
-pub async fn run_init_args(
+pub(crate) async fn run_init_args(
     init_args: InitArgs,
     project_paths: &ProjectPaths,
     envio_package_dir: Option<&str>,
@@ -375,7 +375,7 @@ fn next_steps_message(project_root: &Path, pm: init_config::PackageManager) -> S
 /// zero-arg quick start keeps them on the supported path instead of the
 /// advanced subcommands. The detailed plan is left to the bare command, which
 /// prints it once the agent actually runs `envio init`.
-pub fn init_help_preamble() -> String {
+pub(crate) fn init_help_preamble() -> String {
     let mut out = String::new();
     out.push_str("Quick start, run with no arguments:\n\n  pnpx envio init\n\n");
     out.push_str(

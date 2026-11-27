@@ -44,7 +44,7 @@ pub enum ChType {
 /// The digits ClickHouse's widest Decimal, `Decimal256`, holds. It falls short
 /// of a uint256, whose top has 78 digits, so a number with no bound, or one past
 /// this, is stored as `String`.
-pub const MAX_DECIMAL_PRECISION: u32 = 76;
+pub(crate) const MAX_DECIMAL_PRECISION: u32 = 76;
 
 impl ChType {
     /// The type a value has once it is known to be there.
@@ -74,7 +74,7 @@ impl ChType {
     }
 }
 
-pub fn decimal_bytes(precision: u32) -> Result<usize> {
+pub(crate) fn decimal_bytes(precision: u32) -> Result<usize> {
     match precision {
         1..=9 => Ok(4),
         10..=18 => Ok(8),
@@ -103,11 +103,11 @@ fn decimal_or_string(precision: Option<u32>, scale: u32) -> ChType {
 /// sorting-key validation has to refuse it. Shares [`decimal_or_string`] with
 /// the type derivation, which is what keeps the two from disagreeing about a
 /// precision neither bound mentions.
-pub fn stored_as_string(precision: Option<u32>, scale: u32) -> bool {
+pub(crate) fn stored_as_string(precision: Option<u32>, scale: u32) -> bool {
     matches!(decimal_or_string(precision, scale), ChType::String)
 }
 
-pub fn chain_id(chain_id_mode: ChainIdMode) -> ChType {
+pub(crate) fn chain_id(chain_id_mode: ChainIdMode) -> ChType {
     match chain_id_mode {
         ChainIdMode::Int32 => ChType::Int32,
         ChainIdMode::Int64 => ChType::UInt64,
@@ -212,7 +212,7 @@ impl fmt::Display for ChType {
 pub(crate) mod test_support {
     use super::*;
 
-    pub fn field(field_type: &str) -> Field {
+    pub(crate) fn field(field_type: &str) -> Field {
         Field::new(
             "value",
             match field_type {
@@ -237,18 +237,18 @@ pub(crate) mod test_support {
         )
     }
 
-    pub fn typed(field_type: FieldType) -> Field {
+    pub(crate) fn typed(field_type: FieldType) -> Field {
         Field::new("value", field_type)
     }
 
-    pub fn enumeration(variants: Vec<String>) -> Field {
+    pub(crate) fn enumeration(variants: Vec<String>) -> Field {
         typed(FieldType::Enum {
             name: "Kind".to_string(),
             variants,
         })
     }
 
-    pub fn parse_type(text: &str) -> ChType {
+    pub(crate) fn parse_type(text: &str) -> ChType {
         let text = text.trim();
         let Some((name, args)) = text.split_once('(').map(|(name, rest)| {
             (

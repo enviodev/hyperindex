@@ -492,7 +492,9 @@ async fn prompt_selected_contracts(mut args: ContractImportArgs) -> Result<Vec<S
     Ok(contracts)
 }
 
-pub async fn prompt_contract_import_init_flow(mut args: ContractImportArgs) -> Result<InitFlow> {
+pub(super) async fn prompt_contract_import_init_flow(
+    mut args: ContractImportArgs,
+) -> Result<InitFlow> {
     // Apply flags from the LocalOrExplorerImport variant if present
     if let Some(import_variant) = &args.local_or_explorer {
         let (all_events, single_contract) = import_variant.get_flags();

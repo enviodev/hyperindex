@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 use std::{fs, path::PathBuf};
 
-pub async fn write_file_string_to_system(file_string: String, fs_file_path: PathBuf) -> Result<()> {
+pub(crate) async fn write_file_string_to_system(
+    file_string: String,
+    fs_file_path: PathBuf,
+) -> Result<()> {
     let file_path_str = fs_file_path.to_str().unwrap_or("unknown file path");
     // Create the directory if it doesn't exist
     if let Some(parent_dir) = fs_file_path.parent() {

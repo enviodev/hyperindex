@@ -11,17 +11,17 @@
 use std::collections::HashSet;
 
 #[derive(Default)]
-pub struct ClientFilteredContracts(HashSet<String>);
+pub(crate) struct ClientFilteredContracts(HashSet<String>);
 
 impl ClientFilteredContracts {
-    pub fn from_vec(contract_names: Vec<String>) -> Self {
+    pub(crate) fn from_vec(contract_names: Vec<String>) -> Self {
         Self(contract_names.into_iter().collect())
     }
 
     /// Whether this registration should be fetched address-free and routed as a
     /// wildcard. Only address-dependent registrations are affected; a genuinely
     /// wildcard registration is already address-free.
-    pub fn applies(&self, contract_name: &str) -> bool {
+    pub(crate) fn applies(&self, contract_name: &str) -> bool {
         self.0.contains(contract_name)
     }
 }

@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use std::collections::HashMap;
 
-pub fn try_insert<K, V>(map: &mut HashMap<K, V>, key: K, val: V) -> anyhow::Result<()>
+pub(crate) fn try_insert<K, V>(map: &mut HashMap<K, V>, key: K, val: V) -> anyhow::Result<()>
 where
     K: std::cmp::Eq + std::hash::Hash + std::fmt::Display,
 {
@@ -16,7 +16,7 @@ where
     }
 }
 
-pub fn from_vec_no_duplicates<K, V>(v: Vec<(K, V)>) -> anyhow::Result<HashMap<K, V>>
+pub(crate) fn from_vec_no_duplicates<K, V>(v: Vec<(K, V)>) -> anyhow::Result<HashMap<K, V>>
 where
     K: std::cmp::Eq + std::hash::Hash + std::fmt::Display,
 {

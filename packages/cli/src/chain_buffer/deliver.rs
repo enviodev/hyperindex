@@ -570,7 +570,7 @@ pub(crate) fn lay_out(built: Built) -> Result<BuiltItems> {
 }
 
 /// One field across all rows, `None` where a row has no value.
-pub enum Column {
+pub(crate) enum Column {
     I64(Vec<Option<i64>>),
     F64(Vec<Option<f64>>),
     Bool(Vec<Option<bool>>),
@@ -582,7 +582,7 @@ pub enum Column {
     AccountActivities(Vec<Option<Vec<SvmAccountActivityOut>>>),
 }
 
-pub struct Columns {
+pub(crate) struct Columns {
     pub len: usize,
     pub columns: Vec<(&'static str, Column)>,
 }
@@ -621,7 +621,7 @@ fn write_cells<T>(
 impl Columns {
     /// Lays the flat columns out as a sealed arena; the nested ones travel
     /// beside it.
-    pub fn into_arena(self) -> Result<(Arena, FieldRows)> {
+    pub(crate) fn into_arena(self) -> Result<(Arena, FieldRows)> {
         let mut reads = Vec::new();
         let mut flat = Vec::new();
         let mut rows = FieldRows {
@@ -711,7 +711,7 @@ impl Columns {
 }
 
 /// Decodes each field of `variants` some mask selects.
-pub fn build_columns<F: Copy>(
+pub(crate) fn build_columns<F: Copy>(
     variants: &'static [F],
     masks: &[u64],
     len: usize,

@@ -14,7 +14,7 @@ fn resolve_port(project_root: &Path) -> Result<u16> {
     }
 }
 
-pub async fn run(runtime: bool, project_root: &Path) -> Result<()> {
+pub(super) async fn run(runtime: bool, project_root: &Path) -> Result<()> {
     let port = resolve_port(project_root)?;
     let path = if runtime {
         "/metrics/runtime"

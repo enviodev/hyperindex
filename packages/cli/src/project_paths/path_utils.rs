@@ -8,7 +8,7 @@ use super::ParsedProjectPaths;
 //eg. current path is root_path/, config_path is root_path/config.yaml
 //handler in config.yaml is defined as ./EventHandler.js
 //return value should be root_path/EventHandler.js
-pub fn get_config_path_relative_to_root(
+pub(crate) fn get_config_path_relative_to_root(
     project_paths: &ParsedProjectPaths,
     relative_config_path: PathBuf,
 ) -> anyhow::Result<PathBuf> {
@@ -27,7 +27,7 @@ pub fn get_config_path_relative_to_root(
     Ok(path)
 }
 
-pub fn normalize_path(path: PathBuf) -> PathBuf {
+pub(crate) fn normalize_path(path: PathBuf) -> PathBuf {
     let mut components = path.components().peekable();
 
     let mut normalized_path_buf = match components.clone().peek() {

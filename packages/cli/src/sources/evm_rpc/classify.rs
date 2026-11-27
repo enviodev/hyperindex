@@ -22,7 +22,7 @@ static TOO_LARGE_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     ]
 });
 
-pub fn is_response_too_large_message(message: &str) -> bool {
+pub(super) fn is_response_too_large_message(message: &str) -> bool {
     TOO_LARGE_PATTERNS.iter().any(|re| re.is_match(message))
 }
 
@@ -51,7 +51,7 @@ static RATE_LIMITED: LazyLock<Regex> = LazyLock::new(|| {
 /// the request even under HTTP 429 or a throttling code: `-32005` is throttling
 /// on geth-based endpoints and a result cap on Infura, so neither the status
 /// nor the code alone can decide.
-pub fn is_rate_limited(http_status: u16, code: Option<i64>, message: &str) -> bool {
+pub(super) fn is_rate_limited(http_status: u16, code: Option<i64>, message: &str) -> bool {
     if suggested_block_interval_from_message(message).is_some()
         || is_response_too_large_message(message)
         || is_result_cap_message(message)
@@ -63,7 +63,7 @@ pub fn is_rate_limited(http_status: u16, code: Option<i64>, message: &str) -> bo
 
 /// Whether a provider refused an `eth_getLogs` for what the answer would hold,
 /// as opposed to throttling the caller or limiting the range.
-pub fn is_result_cap_message(message: &str) -> bool {
+pub(super) fn is_result_cap_message(message: &str) -> bool {
     RESULT_CAP.is_match(message) && !RATE_LIMITED.is_match(message)
 }
 
@@ -79,7 +79,7 @@ static UNSUPPORTED_REQUEST: LazyLock<Regex> = LazyLock::new(|| {
 /// params and missing methods included, so asking again the same way is
 /// futile. Anything else, a block it doesn't know included, may answer on a
 /// later attempt.
-pub fn is_unsupported_request(code: i64, message: &str) -> bool {
+pub(super) fn is_unsupported_request(code: i64, message: &str) -> bool {
     code == -32601 || code == -32602 || UNSUPPORTED_REQUEST.is_match(message)
 }
 
@@ -130,7 +130,7 @@ fn extract_positive_u64(re: &Regex, message: &str) -> Option<u64> {
 }
 
 /// Returns `Some((suggested block interval, is the provider's structural max))`.
-pub fn suggested_block_interval_from_message(message: &str) -> Option<(u64, bool)> {
+pub(super) fn suggested_block_interval_from_message(message: &str) -> Option<(u64, bool)> {
     if let Some(caps) = SUGGESTED_RANGE.captures(message) {
         let from: u64 = caps.get(1)?.as_str().parse().ok()?;
         let to: u64 = caps.get(2)?.as_str().parse().ok()?;

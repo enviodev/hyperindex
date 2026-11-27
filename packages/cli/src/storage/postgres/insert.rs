@@ -60,7 +60,7 @@ fn on_conflict(columns: &[ColumnSpec], append_only: bool) -> String {
 }
 
 /// `INSERT ... SELECT ... FROM unnest(...)`, binding `columns` in order.
-pub fn unnest_query(
+pub(crate) fn unnest_query(
     table_name: &str,
     columns: &[ColumnSpec],
     pg_schema: &str,

@@ -26,9 +26,9 @@ use napi_derive::napi;
 // source code that sleeps moves here; it is built now so that code lands on the
 // same timeline as the ReScript timers rather than on tokio's.
 #[cfg_attr(not(test), allow(dead_code))]
-pub type Sleep = Pin<Box<dyn Future<Output = ()> + Send>>;
+pub(crate) type Sleep = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-pub trait Clock: Send + Sync {
+pub(crate) trait Clock: Send + Sync {
     fn now_ms(&self) -> f64;
     /// `label` names the timer in a virtual clock's timeline.
     #[cfg_attr(not(test), allow(dead_code))]
@@ -120,12 +120,12 @@ const TIMELINE_TAIL: usize = 40;
 /// A test's clock. Cloning shares it, so the Rust code under test and the
 /// ReScript shim read and arm the same queue.
 #[derive(Clone)]
-pub struct VirtualClock {
+pub(crate) struct VirtualClock {
     state: Arc<Mutex<State>>,
 }
 
 impl VirtualClock {
-    pub fn new(seed: u32) -> Self {
+    pub(crate) fn new(seed: u32) -> Self {
         VirtualClock {
             state: Arc::new(Mutex::new(State {
                 now: 0.,
@@ -146,15 +146,15 @@ impl VirtualClock {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    pub fn arm_js(&self, label: &str, millis: f64) -> u32 {
+    pub(crate) fn arm_js(&self, label: &str, millis: f64) -> u32 {
         self.state().arm(label, millis, Owner::Js)
     }
 
-    pub fn clear(&self, id: u32) {
+    pub(crate) fn clear(&self, id: u32) {
         self.state().clear(id);
     }
 
-    pub fn begin_advance(&self, millis: f64) -> f64 {
+    pub(crate) fn begin_advance(&self, millis: f64) -> f64 {
         let mut state = self.state();
         state.record(format!("advance {}", format_ms(millis)));
         state.now + millis
@@ -163,7 +163,7 @@ impl VirtualClock {
     /// Takes the next timer due by `until` off the queue and moves time to it.
     /// A Rust sleep is woken here; a ReScript timer comes back for its caller to
     /// run, since only that side holds the callback.
-    pub fn fire_next(&self, until: f64) -> Option<FiredTimer> {
+    pub(crate) fn fire_next(&self, until: f64) -> Option<FiredTimer> {
         let timer = {
             let mut state = self.state();
             let position = state.next_due(until)?;
@@ -183,16 +183,16 @@ impl VirtualClock {
         })
     }
 
-    pub fn end_advance(&self, until: f64) {
+    pub(crate) fn end_advance(&self, until: f64) {
         let mut state = self.state();
         state.now = state.now.max(until);
     }
 
-    pub fn note(&self, event: String) {
+    pub(crate) fn note(&self, event: String) {
         self.state().record(event);
     }
 
-    pub fn describe(&self) -> String {
+    pub(crate) fn describe(&self) -> String {
         let state = self.state();
         let mut pending: Vec<&Timer> = state.timers.iter().collect();
         pending.sort_by(|a, b| a.due.total_cmp(&b.due).then(a.id.cmp(&b.id)));

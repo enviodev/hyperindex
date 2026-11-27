@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 
-pub async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result<Command> {
+pub(super) async fn run_dev(project_paths: ParsedProjectPaths, restart: bool) -> Result<Command> {
     let config =
         SystemConfig::parse_from_project_files(&project_paths).context("Failed parsing config")?;
 

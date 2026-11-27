@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{fmt::Display, str::FromStr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Address(AlloyAddress);
+pub(crate) struct Address(AlloyAddress);
 
 impl<'de> Deserialize<'de> for Address {
     fn deserialize<D>(deserializer: D) -> Result<Address, D::Error>
@@ -28,11 +28,7 @@ impl Serialize for Address {
 }
 
 impl Address {
-    pub fn new(address: &str) -> Result<Self> {
-        address.parse()
-    }
-
-    pub fn to_checksum_hex_string(&self) -> String {
+    pub(crate) fn to_checksum_hex_string(&self) -> String {
         self.0.to_checksum(None)
     }
 }
@@ -68,7 +64,7 @@ mod test {
     #[test]
     fn convert_address_to_checksum_string() {
         let address_str = "0x85149247691df622eaf1a8bd0cafd40bc45154a9";
-        let address = Address::new(address_str).unwrap();
+        let address: Address = address_str.parse().unwrap();
         assert_eq!(
             address.to_string(),
             "0x85149247691df622eaF1a8Bd0CaFd40BC45154a9"
@@ -85,7 +81,9 @@ mod test {
         let deserialized_map: HashMap<&str, Address> = serde_json::from_str(address_json).unwrap();
         let deserialized = deserialized_map.get("test_field").unwrap();
 
-        let expected_address = Address::new("0x6B175474E89094C44Da98b954EedeAC495271d0F").unwrap();
+        let expected_address: Address = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+            .parse()
+            .unwrap();
 
         assert_eq!(&expected_address, deserialized);
     }

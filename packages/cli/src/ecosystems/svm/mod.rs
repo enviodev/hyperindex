@@ -3,5 +3,5 @@
 //! chain_buffer, address_store or sources.
 
 pub(crate) mod borsh_decoder;
-pub mod pubkey;
+pub(crate) mod pubkey;
 pub(crate) mod types;

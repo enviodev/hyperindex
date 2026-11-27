@@ -83,7 +83,7 @@ pub(crate) fn parse_evm_address(address: &str) -> Option<[u8; 20]> {
 }
 
 #[napi]
-pub fn normalize_evm_address(address: String, should_checksum: bool) -> Option<String> {
+pub(crate) fn normalize_evm_address(address: String, should_checksum: bool) -> Option<String> {
     parse_evm_address(&address)
         .map(|key| shown_address_string(Ecosystem::Evm, should_checksum, &key))
 }
@@ -100,7 +100,10 @@ fn address_topic(key: &[u8]) -> String {
 /// holds and the bytes a store keys on can't fork.
 #[cfg_attr(test, allow(dead_code))]
 #[napi]
-pub fn encode_addresses(ecosystem: String, addresses: Vec<String>) -> napi::Result<Vec<Buffer>> {
+pub(crate) fn encode_addresses(
+    ecosystem: String,
+    addresses: Vec<String>,
+) -> napi::Result<Vec<Buffer>> {
     let ecosystem = Ecosystem::parse(&ecosystem).map_err(crate::chain_buffer::to_napi)?;
     addresses
         .iter()
@@ -162,7 +165,7 @@ fn key_slices<'a>(
 /// The inverse of `encode_addresses`, and the only decoder.
 #[cfg_attr(test, allow(dead_code))]
 #[napi]
-pub fn render_addresses(
+pub(crate) fn render_addresses(
     ecosystem: String,
     should_checksum: bool,
     bytes: Buffer,
@@ -180,7 +183,7 @@ pub fn render_addresses(
 /// indexer state exists and the resumed rows are all there is.
 #[cfg_attr(test, allow(dead_code))]
 #[napi]
-pub fn render_contract_addresses(
+pub(crate) fn render_contract_addresses(
     ecosystem: String,
     should_checksum: bool,
     bytes: Buffer,
@@ -210,7 +213,7 @@ pub fn render_contract_addresses(
 /// the ids never depend on the order contracts happen to be declared in.
 #[cfg_attr(test, allow(dead_code))]
 #[napi]
-pub fn canonical_contract_names(mut names: Vec<String>) -> Vec<String> {
+pub(crate) fn canonical_contract_names(mut names: Vec<String>) -> Vec<String> {
     names.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
     names.dedup();
     names
@@ -441,9 +444,9 @@ pub struct RegistrationVerdict {
     pub fetchable: bool,
 }
 
-pub const VERDICT_ADDED: &str = "added";
-pub const VERDICT_DUPLICATE: &str = "duplicate";
-pub const VERDICT_INVALID: &str = "invalid";
+pub(crate) const VERDICT_ADDED: &str = "added";
+pub(crate) const VERDICT_DUPLICATE: &str = "duplicate";
+pub(crate) const VERDICT_INVALID: &str = "invalid";
 
 #[napi(object)]
 pub struct StartBlockGroup {

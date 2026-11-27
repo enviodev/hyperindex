@@ -235,7 +235,7 @@ fn running_display() -> Option<mpsc::Sender<Command>> {
 
 /// Sends output meant for stdout above the display when there is one and
 /// stdout is the terminal it draws on. Returns whether it did.
-pub fn print_above_stdout(output: &[u8]) -> bool {
+pub(crate) fn print_above_stdout(output: &[u8]) -> bool {
     static IS_TERMINAL: OnceLock<bool> = OnceLock::new();
     print_above(
         output,
@@ -244,7 +244,7 @@ pub fn print_above_stdout(output: &[u8]) -> bool {
     )
 }
 
-pub fn print_above_stderr(output: &[u8]) -> bool {
+pub(crate) fn print_above_stderr(output: &[u8]) -> bool {
     static IS_TERMINAL: OnceLock<bool> = OnceLock::new();
     print_above(
         output,
@@ -256,7 +256,7 @@ pub fn print_above_stderr(output: &[u8]) -> bool {
 /// Where Rust loggers write: above the display while one is running, since a
 /// direct write to the terminal would land in the middle of its frame, and to
 /// stderr otherwise.
-pub struct LogWriter;
+pub(crate) struct LogWriter;
 
 impl Write for LogWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {

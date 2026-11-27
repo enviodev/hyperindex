@@ -158,7 +158,7 @@ pub(crate) fn tx_fields_in(mask: u64) -> Vec<TransactionField> {
         .collect()
 }
 
-pub fn parse_hex_u64(s: &str) -> Result<u64> {
+pub(crate) fn parse_hex_u64(s: &str) -> Result<u64> {
     let hex = s
         .strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))

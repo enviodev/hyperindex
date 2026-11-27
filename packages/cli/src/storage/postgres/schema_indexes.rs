@@ -25,7 +25,7 @@ fn single(table_name: &str, column: &str) -> IndexDefinition {
 /// chains' partitions only: the planner uses a partition's own index either
 /// way, and building one chain's index then neither waits for nor locks the
 /// rows of a chain a sibling process drives.
-pub fn index_tables(entity: &Entity, partitions: Option<&[i64]>) -> Vec<String> {
+pub(crate) fn index_tables(entity: &Entity, partitions: Option<&[i64]>) -> Vec<String> {
     match (&entity.chain_id, partitions) {
         (Some(_), Some(chain_ids)) => chain_ids
             .iter()
@@ -42,7 +42,7 @@ pub fn index_tables(entity: &Entity, partitions: Option<&[i64]>) -> Vec<String> 
 ///
 /// Every `@derivedFrom` target among them resolves: config parsing rejects a
 /// Postgres entity deriving from one that isn't in Postgres.
-pub fn schema_indexes(schema: &Schema, partitions: Option<&[i64]>) -> Vec<IndexDefinition> {
+pub(crate) fn schema_indexes(schema: &Schema, partitions: Option<&[i64]>) -> Vec<IndexDefinition> {
     let entities = schema
         .entities
         .iter()

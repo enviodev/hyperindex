@@ -76,13 +76,13 @@ async fn execute_command(
 ///
 /// `run` prepends the literal `run` token so `npm run <script>` works;
 /// pnpm/yarn/bun tolerate the extra `run`.
-pub mod pm {
+pub(crate) mod pm {
     use super::execute_command;
     use crate::cli_args::init_config::PackageManager;
     use anyhow::{anyhow, Result};
     use std::path::Path;
 
-    pub async fn install(pm: PackageManager, cwd: &Path) -> Result<()> {
+    pub(crate) async fn install(pm: PackageManager, cwd: &Path) -> Result<()> {
         let exit = execute_command(pm.cmd(), vec!["install"], cwd).await?;
         if !exit.success() {
             return Err(anyhow!(
@@ -94,7 +94,7 @@ pub mod pm {
         Ok(())
     }
 
-    pub async fn run_script(pm: PackageManager, script: &str, cwd: &Path) -> Result<()> {
+    pub(crate) async fn run_script(pm: PackageManager, script: &str, cwd: &Path) -> Result<()> {
         let exit = execute_command(pm.cmd(), vec!["run", script], cwd).await?;
         if !exit.success() {
             return Err(anyhow!(
@@ -138,11 +138,11 @@ async fn execute_command_silent(
         ))
 }
 
-pub mod codegen {
+pub(crate) mod codegen {
     use crate::config_parsing::system_config::SystemConfig;
     use anyhow::{self, Context};
 
-    pub async fn run_codegen(config: &SystemConfig) -> anyhow::Result<()> {
+    pub(crate) async fn run_codegen(config: &SystemConfig) -> anyhow::Result<()> {
         let template = crate::codegen::codegen_templates::ProjectTemplate::from_config(config)
             .context("Failed creating project template")?;
 
@@ -154,7 +154,7 @@ pub mod codegen {
     }
 }
 
-pub mod git {
+pub(crate) mod git {
     use super::execute_command_silent;
     use anyhow::{anyhow, Result};
     use std::path::Path;
@@ -169,7 +169,7 @@ pub mod git {
 
     /// Initialize a git repository if not already inside one.
     /// Returns true if a new repository was created, false if already inside one.
-    pub async fn init(project_root: &Path) -> Result<bool> {
+    pub(crate) async fn init(project_root: &Path) -> Result<bool> {
         // Skip if already inside a git repository
         if is_inside_git_repo(project_root).await {
             return Ok(false);

@@ -3,7 +3,7 @@ mod fuel_prompts;
 mod inquire_helpers;
 mod shared_prompts;
 mod svm_prompts;
-pub mod validation;
+pub(crate) mod validation;
 
 use super::{
     clap_definitions::{self, InitArgs, ProjectPaths},
@@ -260,7 +260,7 @@ enum ApiTokenInput {
     AddExisting,
 }
 
-pub async fn prompt_missing_init_args(
+pub(crate) async fn prompt_missing_init_args(
     init_args: InitArgs,
     project_paths: &ProjectPaths,
     is_non_interactive: bool,

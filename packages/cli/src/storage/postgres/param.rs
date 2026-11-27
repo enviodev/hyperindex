@@ -16,7 +16,7 @@ use tokio_postgres::types::{to_sql_checked, Format, IsNull, ToSql, Type};
 /// `Null` is distinct from an empty `Text`: an empty string is a value, and a
 /// column that holds one must not read back as NULL.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Param {
+pub(crate) enum Param {
     Null,
     Text(String),
 }

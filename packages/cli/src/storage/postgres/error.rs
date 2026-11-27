@@ -9,7 +9,7 @@
 ///
 /// Anything else — a connection that would not open, a pool that timed out —
 /// has no server message and is reported with the context it was given.
-pub fn message_of(error: &anyhow::Error) -> String {
+pub(crate) fn message_of(error: &anyhow::Error) -> String {
     match database_error(error) {
         Some(database) => {
             let mut message = match error.downcast_ref::<Explained>() {
@@ -60,7 +60,7 @@ fn database_error(error: &anyhow::Error) -> Option<&tokio_postgres::error::DbErr
 /// What a server failure means for the indexer's schema, where that is known.
 /// Attached as context, it leads the message with the server's own below it.
 #[derive(Debug)]
-pub struct Explained(pub String);
+pub(crate) struct Explained(pub String);
 
 impl std::fmt::Display for Explained {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -73,7 +73,7 @@ impl std::fmt::Display for Explained {
 /// so the storage layer reads it as the cascade of the failure behind it rather
 /// than as a cause.
 #[derive(Debug)]
-pub struct Aborted(pub &'static str);
+pub(crate) struct Aborted(pub &'static str);
 
 impl std::fmt::Display for Aborted {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -86,7 +86,7 @@ impl std::error::Error for Aborted {}
 /// A statement held back because the connection was already known to be gone,
 /// so the server never saw it.
 #[derive(Debug)]
-pub struct NeverSent(pub &'static str);
+pub(crate) struct NeverSent(pub &'static str);
 
 impl std::fmt::Display for NeverSent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -96,12 +96,12 @@ impl std::fmt::Display for NeverSent {
 
 impl std::error::Error for NeverSent {}
 
-pub fn was_never_sent(error: &anyhow::Error) -> bool {
+pub(crate) fn was_never_sent(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| cause.is::<NeverSent>())
 }
 
 /// The SQLSTATE, where the failure came from the server or stands in for one.
-pub fn sql_state(error: &anyhow::Error) -> Option<&str> {
+pub(crate) fn sql_state(error: &anyhow::Error) -> Option<&str> {
     database_error(error)
         .map(|database| database.code().code())
         .or_else(|| {
@@ -122,7 +122,7 @@ pub fn sql_state(error: &anyhow::Error) -> Option<&str> {
 /// before the indexer gives up. `08P01` is left out: the server raises it for a
 /// malformed message, which a resend repeats. So is a socket error that isn't
 /// the peer going, such as a certificate the trust store refuses.
-pub fn is_connection_lost(error: &anyhow::Error) -> bool {
+pub(crate) fn is_connection_lost(error: &anyhow::Error) -> bool {
     if let Some(database) = database_error(error) {
         return matches!(
             database.code().code(),
@@ -171,11 +171,11 @@ fn is_name_unresolved(io: &std::io::Error) -> bool {
 /// What a lost connection crosses the boundary as, whatever the server or the
 /// socket said: the one code the indexer reads, to send an idempotent statement
 /// again.
-pub const CONNECTION_LOST: &str = "08006";
+pub(crate) const CONNECTION_LOST: &str = "08006";
 
 /// napi only puts its own status names in an error's `code`, so the SQLSTATE
 /// travels as the message of a `cause`.
-pub fn to_napi(error: anyhow::Error) -> napi::Error {
+pub(crate) fn to_napi(error: anyhow::Error) -> napi::Error {
     let mut napi_error = napi::Error::from_reason(message_of(&error));
     let code = if is_connection_lost(&error) {
         Some(CONNECTION_LOST)

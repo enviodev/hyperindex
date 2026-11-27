@@ -11,7 +11,7 @@ const BACKOFF_INCREMENT: Duration = Duration::from_secs(1);
 const HASURA_ENDPOINT: &str = "http://localhost:8080/"; // todo: is this available somewhere
 
 // Function to fetch the health of the Hasura service
-pub async fn fetch_hasura_healthz() -> Result<bool, reqwest::Error> {
+pub(crate) async fn fetch_hasura_healthz() -> Result<bool, reqwest::Error> {
     let client = reqwest::Client::new();
     let url = format!("{}/hasura/healthz?strict=true", HASURA_ENDPOINT);
     let response = client.get(&url).send().await?;
@@ -25,12 +25,12 @@ fn delete_last_println() {
 }
 
 #[derive(Debug)]
-pub enum EndpointHealth {
+pub(crate) enum EndpointHealth {
     Healthy,
     Unhealthy(String),
 }
 
-pub async fn fetch_hasura_healthz_with_retry() -> EndpointHealth {
+pub(crate) async fn fetch_hasura_healthz_with_retry() -> EndpointHealth {
     let mut refetch_delay = BACKOFF_INCREMENT;
 
     let mut first_run = true;
