@@ -117,11 +117,9 @@ fn http_client_builder(user_agent: &str) -> reqwest::ClientBuilder {
         // request timeout. Hyper splits it across the resolved addresses and
         // moves on to the next.
         .connect_timeout(CONNECT_TIMEOUT)
-        // Over HTTP/2 every query in flight shares one connection, and its
-        // throughput caps the source: on the open indexer benchmark it halved
-        // Solana's events/s against HTTP/1.1, whose pool gives each query a
-        // connection of its own, and bought EVM nothing. A larger flow control
-        // window did not recover it.
+        // Over HTTP/2 every query in flight shares one connection. On the open
+        // indexer benchmark, from a runner with a direct route, HTTP/1.1's pool
+        // of a connection per query was 6% faster on Solana and level on EVM.
         .http1_only()
 }
 
