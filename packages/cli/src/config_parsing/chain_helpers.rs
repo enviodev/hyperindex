@@ -461,17 +461,13 @@ pub enum Network {
 }
 
 impl Network {
-    pub fn get_network_id(&self) -> u64 {
-        *self as u64
-    }
-
-    pub fn from_network_id(id: u64) -> anyhow::Result<Self> {
+    pub(crate) fn from_network_id(id: u64) -> anyhow::Result<Self> {
         Network::from_repr(id)
             .ok_or_else(|| anyhow!("Failed converting network_id {} to network name", id))
     }
 
     /// Returns the end block for this network if it is finite
-    pub fn get_finite_end_block(&self) -> Option<u64> {
+    pub(crate) fn get_finite_end_block(&self) -> Option<u64> {
         match self {
             Self::Goerli => Some(10_387_962),
             Self::Mumbai => Some(47_002_303),
@@ -480,7 +476,7 @@ impl Network {
     }
 
     //TODO: research a sufficient threshold for all chains (some should be 0)
-    pub fn get_max_reorg_depth(&self) -> Option<u32> {
+    pub(crate) fn get_max_reorg_depth(&self) -> Option<u32> {
         match self {
             //Reorgs do not happen on these networks
             Network::ArbitrumTestnet
@@ -635,7 +631,7 @@ impl Network {
 }
 
 impl HypersyncChain {
-    pub fn get_plain_name(&self) -> String {
+    pub(crate) fn get_plain_name(&self) -> String {
         Network::from(*self).to_string()
     }
 }

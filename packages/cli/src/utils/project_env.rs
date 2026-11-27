@@ -22,7 +22,7 @@ impl ProjectEnv {
     }
 
     pub(crate) fn var(&self, name: &str) -> Option<String> {
-        if let Ok(val) = std::env::var(name) {
+        if let Some(val) = crate::env::var(name) {
             return Some(val);
         }
         self.dotenv

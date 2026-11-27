@@ -1,6 +1,6 @@
 use crate::{
-    clap_definitions::CommandLineArgs, config_parsing::system_config::SystemConfig,
-    hbs_templating::codegen_templates::ProjectTemplate, project_paths::ParsedProjectPaths,
+    clap_definitions::CommandLineArgs, codegen::codegen_templates::ProjectTemplate,
+    config_parsing::system_config::SystemConfig, project_paths::ParsedProjectPaths,
 };
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
@@ -45,7 +45,7 @@ pub(crate) fn get_config_json(
 ) -> napi::Result<String> {
     let project_root = directory.unwrap_or_else(|| ".".to_string());
     let config = config_path
-        .or_else(|| std::env::var("ENVIO_CONFIG").ok())
+        .or_else(|| crate::env::var("ENVIO_CONFIG"))
         .unwrap_or_else(|| "config.yaml".to_string());
     let project_paths = ParsedProjectPaths::new(&project_root, &config)
         .map_err(|e| napi::Error::from_reason(format!("Failed parsing project paths: {e}")))?;
@@ -91,6 +91,22 @@ pub(crate) fn from_user_api(
         indexer_types,
         indexer_code,
     })
+}
+
+/// Every environment variable the indexer runtime uses, read and validated
+/// once, as JSON in the shape of `IndexerEnv.t`.
+#[napi_derive::napi]
+pub(crate) fn read_indexer_env() -> napi::Result<String> {
+    use std::io::IsTerminal;
+    let env = crate::indexer_env::IndexerEnv::read(
+        &crate::env::var,
+        crate::indexer_env::Terminal {
+            stdout_is_tty: std::io::stdout().is_terminal(),
+        },
+    )
+    .map_err(napi::Error::from_reason)?;
+    serde_json::to_string(&env)
+        .map_err(|e| napi::Error::from_reason(format!("Failed serializing the environment: {e}")))
 }
 
 #[napi_derive::napi]

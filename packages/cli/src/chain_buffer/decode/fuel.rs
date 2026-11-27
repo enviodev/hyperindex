@@ -2,8 +2,8 @@
 //! registration's ABI, the other kinds flattened from their columns.
 
 use crate::chain_buffer::deliver::utf8;
-use crate::chain_buffer::fuel::ReceiptView;
-use crate::fuel_hypersync_source::selection::{RegistrationKind, RECEIPT_TRANSFER_OUT};
+use crate::chain_buffer::selection::fuel::{RegistrationKind, RECEIPT_TRANSFER_OUT};
+use crate::chain_buffer::tables::fuel::ReceiptView;
 use crate::js_value::JsTape;
 
 /// `None` when the receipt doesn't decode under the registration: LogData

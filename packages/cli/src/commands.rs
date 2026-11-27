@@ -139,11 +139,11 @@ async fn execute_command_silent(
 }
 
 pub(crate) mod codegen {
-    use crate::{config_parsing::system_config::SystemConfig, hbs_templating};
+    use crate::config_parsing::system_config::SystemConfig;
     use anyhow::{self, Context};
 
     pub(crate) async fn run_codegen(config: &SystemConfig) -> anyhow::Result<()> {
-        let template = hbs_templating::codegen_templates::ProjectTemplate::from_config(config)
+        let template = crate::codegen::codegen_templates::ProjectTemplate::from_config(config)
             .context("Failed creating project template")?;
 
         template

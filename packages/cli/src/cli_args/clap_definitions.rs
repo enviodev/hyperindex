@@ -252,7 +252,8 @@ pub(crate) enum InitFlow {
 pub(crate) mod evm {
     use crate::{
         config_parsing::chain_helpers::{Network, NetworkWithExplorer},
-        evm, init_config,
+        ecosystems::evm,
+        init_config,
     };
 
     use anyhow::Context;
@@ -393,7 +394,7 @@ pub(crate) mod fuel {
     use clap::{Args, Subcommand};
     use strum::{Display, EnumIter, EnumString};
 
-    use crate::{fuel, init_config};
+    use crate::{ecosystems::fuel, init_config};
 
     #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
     pub(crate) enum InitFlow {

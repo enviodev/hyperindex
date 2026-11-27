@@ -20,7 +20,7 @@ use crate::{
         },
         system_config::EvmAbi,
     },
-    evm::{abi::AbiOrNestedAbi, address::Address},
+    ecosystems::evm::{abi::AbiOrNestedAbi, address::Address},
     init_config::evm::{ContractImportSelection, InitFlow},
 };
 use alloy_json_abi::{Event as AlloyEvent, JsonAbi};
@@ -351,7 +351,7 @@ impl LocalImportArgs {
         ))?;
 
         let source = abi_path.display().to_string();
-        let abi = match crate::evm::abi::parse(Some(&source), &abi_file)? {
+        let abi = match crate::ecosystems::evm::abi::parse(Some(&source), &abi_file)? {
             AbiOrNestedAbi::Abi(abi) => abi,
             AbiOrNestedAbi::NestedAbi { abi } => abi,
         };

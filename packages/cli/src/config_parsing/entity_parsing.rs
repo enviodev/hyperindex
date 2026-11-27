@@ -3,8 +3,8 @@ use super::{
     validation::{check_names_from_schema_for_reserved_words, is_valid_postgres_db_name},
 };
 use crate::{
+    codegen::codegen_templates::DerivedFieldTemplate,
     constants::project_paths::DEFAULT_SCHEMA_PATH,
-    hbs_templating::codegen_templates::DerivedFieldTemplate,
     project_paths::{path_utils, ParsedProjectPaths},
     type_schema::TypeIdent,
     utils::{text::Capitalize, unique_hashmap},

@@ -1,21 +1,5 @@
-use crate::config_parsing::abi_compat::{AbiType, EventParam};
+use crate::config_parsing::abi_compat::AbiType;
 use crate::type_schema::{RecordField, TypeIdent};
-
-pub(crate) struct EvmEventParam<'a> {
-    abi_type: &'a AbiType,
-}
-
-impl<'a> From<&'a EventParam> for EvmEventParam<'a> {
-    fn from(abi_param: &'a EventParam) -> EvmEventParam<'a> {
-        EvmEventParam {
-            abi_type: &abi_param.kind,
-        }
-    }
-}
-
-pub(crate) fn abi_to_rescript_type(param: &EvmEventParam) -> TypeIdent {
-    abi_type_to_rescript(param.abi_type)
-}
 
 /// Same as [`abi_to_rescript_type`] but discards component names, using the
 /// positional index (`"0"`, `"1"`, …) as the JS object key instead. Used for
@@ -24,11 +8,7 @@ pub(crate) fn abi_to_rescript_type(param: &EvmEventParam) -> TypeIdent {
 /// shape regardless of ABI naming. The rendered type is still a JS object
 /// (`{"0": ..., "1": ...}`) so it remains inlinable inside generics and
 /// optional fields without needing a lifted alias.
-pub(crate) fn abi_to_rescript_type_positional(param: &EvmEventParam) -> TypeIdent {
-    abi_type_to_rescript_positional(param.abi_type)
-}
-
-fn abi_type_to_rescript_positional(ty: &AbiType) -> TypeIdent {
+pub(crate) fn abi_to_rescript_type_positional(ty: &AbiType) -> TypeIdent {
     match ty {
         AbiType::Uint(_) => TypeIdent::BigInt,
         AbiType::Int(_) => TypeIdent::BigInt,
@@ -40,23 +20,23 @@ fn abi_type_to_rescript_positional(ty: &AbiType) -> TypeIdent {
         AbiType::Function => {
             unreachable!("Function type should be filtered out before reaching here")
         }
-        AbiType::Array(inner) => TypeIdent::Array(Box::new(abi_type_to_rescript_positional(inner))),
+        AbiType::Array(inner) => TypeIdent::Array(Box::new(abi_to_rescript_type_positional(inner))),
         AbiType::FixedArray(inner, _) => {
-            TypeIdent::Array(Box::new(abi_type_to_rescript_positional(inner)))
+            TypeIdent::Array(Box::new(abi_to_rescript_type_positional(inner)))
         }
         AbiType::Tuple(fields) => TypeIdent::Record(
             fields
                 .iter()
                 .enumerate()
                 .map(|(i, f)| {
-                    RecordField::new(i.to_string(), abi_type_to_rescript_positional(&f.kind))
+                    RecordField::new(i.to_string(), abi_to_rescript_type_positional(&f.kind))
                 })
                 .collect(),
         ),
     }
 }
 
-fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
+pub(crate) fn abi_to_rescript_type(ty: &AbiType) -> TypeIdent {
     match ty {
         AbiType::Uint(_) => TypeIdent::BigInt,
         AbiType::Int(_) => TypeIdent::BigInt,
@@ -68,8 +48,8 @@ fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
         AbiType::Function => {
             unreachable!("Function type should be filtered out before reaching here")
         }
-        AbiType::Array(inner) => TypeIdent::Array(Box::new(abi_type_to_rescript(inner))),
-        AbiType::FixedArray(inner, _) => TypeIdent::Array(Box::new(abi_type_to_rescript(inner))),
+        AbiType::Array(inner) => TypeIdent::Array(Box::new(abi_to_rescript_type(inner))),
+        AbiType::FixedArray(inner, _) => TypeIdent::Array(Box::new(abi_to_rescript_type(inner))),
         AbiType::Tuple(fields) => {
             // All tuples render as inline records so handlers can access fields
             // by key (`event.params.commonParams["funder"]`) regardless of whether
@@ -85,7 +65,7 @@ fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
                     .enumerate()
                     .map(|(i, f)| {
                         let name = f.name.clone().unwrap_or_else(|| i.to_string());
-                        RecordField::new(name, abi_type_to_rescript(&f.kind))
+                        RecordField::new(name, abi_to_rescript_type(&f.kind))
                     })
                     .collect(),
             )
@@ -95,18 +75,14 @@ fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
 
 #[cfg(test)]
 mod tests {
-    use super::{abi_to_rescript_type, AbiType, EvmEventParam};
+    use super::{abi_to_rescript_type, AbiType};
     use crate::config_parsing::abi_compat::{self, AbiTupleField};
     use crate::type_schema::{RecordField, TypeIdent};
 
     #[test]
     fn test_record_type_array() {
         let array_string_type = AbiType::Array(Box::new(AbiType::String));
-        let param = EvmEventParam {
-            abi_type: &array_string_type,
-        };
-
-        let parsed_rescript_string = abi_to_rescript_type(&param);
+        let parsed_rescript_string = abi_to_rescript_type(&array_string_type);
 
         assert_eq!(
             parsed_rescript_string.to_string(),
@@ -117,10 +93,7 @@ mod tests {
     #[test]
     fn test_record_type_fixed_array() {
         let array_fixed_arr_type = AbiType::FixedArray(Box::new(AbiType::String), 1);
-        let param = EvmEventParam {
-            abi_type: &array_fixed_arr_type,
-        };
-        let parsed_rescript_string = abi_to_rescript_type(&param);
+        let parsed_rescript_string = abi_to_rescript_type(&array_fixed_arr_type);
 
         assert_eq!(
             parsed_rescript_string.to_string(),
@@ -144,11 +117,7 @@ mod tests {
                 kind: AbiType::String,
             },
         ]);
-        let param = EvmEventParam {
-            abi_type: &tuple_type,
-        };
-
-        let parsed = abi_to_rescript_type(&param);
+        let parsed = abi_to_rescript_type(&tuple_type);
 
         assert_eq!(
             (parsed.to_string(), parsed.to_ts_type_string()),
@@ -171,11 +140,7 @@ mod tests {
                 kind: AbiType::Uint(256),
             },
         ]);
-        let param = EvmEventParam {
-            abi_type: &tuple_type,
-        };
-
-        let parsed = abi_to_rescript_type(&param);
+        let parsed = abi_to_rescript_type(&tuple_type);
 
         // Fully anonymous tuples also render as inline records — every component
         // falls back to its positional index as the JS object key so handlers
@@ -202,11 +167,7 @@ mod tests {
                 kind: AbiType::Uint(256),
             },
         ]);
-        let param = EvmEventParam {
-            abi_type: &tuple_type,
-        };
-
-        let parsed = abi_to_rescript_type(&param);
+        let parsed = abi_to_rescript_type(&tuple_type);
 
         match &parsed {
             TypeIdent::Record(fields) => {
@@ -257,11 +218,7 @@ mod tests {
                 kind: AbiType::Address,
             },
         ]);
-        let param = EvmEventParam {
-            abi_type: &tuple_type,
-        };
-
-        let parsed = abi_to_rescript_type(&param);
+        let parsed = abi_to_rescript_type(&tuple_type);
 
         match &parsed {
             TypeIdent::Record(fields) => {
@@ -295,16 +252,10 @@ mod tests {
         )
         .expect("parsing event");
 
-        let params: Vec<EvmEventParam> = event.inputs.iter().map(|p| p.into()).collect();
-        let user_address = &params[0];
-        let amount_uint256 = &params[1];
-        let tuple_bool_string = &params[2];
-        let bytes_arr = &params[3];
-
-        let user_address_res_type = abi_to_rescript_type(user_address);
-        let amount_uint256_res_type = abi_to_rescript_type(amount_uint256);
-        let tuple_bool_string_res_type = abi_to_rescript_type(tuple_bool_string);
-        let bytes_arr_res_type = abi_to_rescript_type(bytes_arr);
+        let user_address_res_type = abi_to_rescript_type(&event.inputs[0].kind);
+        let amount_uint256_res_type = abi_to_rescript_type(&event.inputs[1].kind);
+        let tuple_bool_string_res_type = abi_to_rescript_type(&event.inputs[2].kind);
+        let bytes_arr_res_type = abi_to_rescript_type(&event.inputs[3].kind);
 
         assert_eq!(user_address_res_type.to_string(), "Address.t".to_string());
         assert_eq!(amount_uint256_res_type.to_string(), "bigint".to_string());

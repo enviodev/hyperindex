@@ -64,6 +64,12 @@ type rawReply = {status: int, headers?: dict<string>, body?: string}
 let pushRawReply = (server, reply: rawReply) =>
   server->pushResponseJson(reply->JSON.stringifyAny->Option.getOrThrow)
 
+@send external pushHeightReplyJson: (t, string) => unit = "pushHeightReply"
+
+/// Queue an HTTP-level reply for the next `/height` request.
+let pushHeightReply = (server, reply: rawReply) =>
+  server->pushHeightReplyJson(reply->JSON.stringifyAny->Option.getOrThrow)
+
 /// The query bodies received so far, oldest first, draining them.
 let takeQueries = server => server->takeQueriesJson->Array.map(body => body->JSON.parseOrThrow)
 

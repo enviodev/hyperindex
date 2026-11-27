@@ -68,9 +68,9 @@ pub(crate) async fn execute(
     Ok(command.map(|command| command.with_project_flags(project_flags)))
 }
 
-/// The whole of `examples/script.rs`. The `script` subcommands regenerate
-/// committed build artifacts and finish in Rust, so they run without the Node
-/// host; every other command needs the host's JS dispatch and is refused.
+/// Runs a `script` subcommand named by the process arguments. Those finish in
+/// Rust, so they need no Node host; every other command hands work to the
+/// host's JS dispatch and is refused.
 pub async fn run_script_from_process_args() -> Result<()> {
     let command_line_args = CommandLineArgs::from_arg_matches(
         &CommandLineArgs::command().version(VERSION).get_matches(),

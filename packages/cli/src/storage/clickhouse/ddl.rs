@@ -1,0 +1,868 @@
+use std::collections::HashMap;
+use std::fmt::Write as _;
+use std::sync::LazyLock;
+
+use anyhow::{bail, Result};
+use regex::{Captures, Regex};
+
+use super::ch_type::ChType;
+use super::{literal, quoted, quoted_list, table_ref};
+use crate::config_parsing::system_config::ChainIdMode;
+use crate::storage::schema::{Field, SkippingIndex};
+use crate::storage::types::{
+    CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN, DELETE, INFO_TABLE, SET,
+};
+
+pub(crate) const ID_COLUMN: &str = "id";
+pub(crate) const CHAIN_ID_COLUMN: &str = "chain_id";
+const BLOCK_NUMBER_COLUMN: &str = "block_number";
+/// What a chains row is ordered by among the rows written for the same chain.
+/// The latest one written is the chain's state.
+pub(crate) const VERSION_COLUMN: &str = "version";
+const FRONTIER_COLUMN: &str = "checkpoint_id";
+
+/// An entity's field with the ClickHouse type it is stored as.
+#[derive(Debug, Clone)]
+pub(crate) struct Column {
+    pub field: Field,
+    pub ch_type: ChType,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct EntitySpec {
+    pub name: String,
+    pub history_table: String,
+    pub columns: Vec<Column>,
+    pub chain_id_column: Option<String>,
+    pub partition_by: Option<String>,
+    pub order_by: Option<Vec<String>>,
+    pub ttl: Option<String>,
+    pub skipping_indexes: Vec<SkippingIndex>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Topology {
+    pub replicated: bool,
+    /// Whether table-level DDL carries its own `ON CLUSTER`. A `Replicated`
+    /// database engine propagates DDL through its own log, and combining the two
+    /// is rejected — so the clause is only for the plain-database case.
+    pub ddl_on_cluster: bool,
+}
+
+impl Topology {
+    fn engine(&self) -> &'static str {
+        if self.replicated {
+            "ReplicatedMergeTree"
+        } else {
+            "MergeTree()"
+        }
+    }
+
+    fn replacing_engine(&self, version: &str) -> String {
+        let version = quoted(version);
+        if self.replicated {
+            format!("ReplicatedReplacingMergeTree({version})")
+        } else {
+            format!("ReplacingMergeTree({version})")
+        }
+    }
+
+    pub(crate) fn on_cluster(&self) -> &'static str {
+        on_cluster_clause(self.ddl_on_cluster)
+    }
+
+    /// ReplicatedMergeTree drops an insert whose block hash is already in
+    /// Keeper, and mutations don't clear those hashes. Crash recovery trims the
+    /// history tail past the committed checkpoint and replays it, so an
+    /// identical replayed block would be discarded while still reporting success
+    /// — a permanent gap nothing surfaces. Trim-then-replay is what makes
+    /// recovery correct here, and the duplicates dedup would have caught are
+    /// already collapsed by every read, which keeps one row per key and
+    /// checkpoint. Plain MergeTree goes by
+    /// `non_replicated_deduplication_window` (0 by default), so it needs no
+    /// clause.
+    fn settings(&self) -> &'static str {
+        if self.replicated {
+            "\nSETTINGS replicated_deduplication_window = 0"
+        } else {
+            ""
+        }
+    }
+}
+
+/// A plain database created with ON CLUSTER doesn't turn subsequent DDL into
+/// cluster-wide statements; ClickHouse keeps no "this database is clustered"
+/// flag. Without a Replicated database engine, every CREATE must carry its own
+/// ON CLUSTER to reach all replicas, otherwise it runs only on the connected
+/// node. The '{cluster}' macro resolves to each node's configured cluster name.
+pub(crate) fn on_cluster_clause(on_cluster: bool) -> &'static str {
+    if on_cluster {
+        " ON CLUSTER '{cluster}'"
+    } else {
+        ""
+    }
+}
+
+pub(crate) fn database_engine_name(engine_spec: &str) -> &str {
+    engine_spec
+        .trim()
+        .split('(')
+        .next()
+        .unwrap_or_default()
+        .split(' ')
+        .next()
+        .unwrap_or_default()
+        .trim()
+}
+
+pub(crate) fn change_type() -> ChType {
+    ChType::Enum {
+        variants: vec![SET.to_string(), DELETE.to_string()],
+    }
+}
+
+impl Column {
+    pub(crate) fn new(field: Field, chain_id_mode: ChainIdMode, context: &str) -> Result<Self> {
+        let ch_type = field
+            .ch_type(chain_id_mode)
+            .map_err(|error| error.context(format!("Column `{}` of {context}", field.ch_column)))?;
+        Ok(Self { field, ch_type })
+    }
+
+    pub(crate) fn ch_column(&self) -> &str {
+        &self.field.ch_column
+    }
+
+    /// What a read names the column: its Postgres name, so a row reads the
+    /// same whichever store answered.
+    pub(crate) fn row_name(&self) -> &str {
+        &self.field.pg_column
+    }
+}
+
+impl EntitySpec {
+    /// What a history row carries: the entity's columns, then the checkpoint
+    /// it was written at and whether it set or deleted the entity.
+    pub(crate) fn history_columns(&self) -> Vec<(String, ChType)> {
+        self.columns
+            .iter()
+            .map(|column| (column.ch_column().to_string(), column.ch_type.clone()))
+            .chain([
+                (CHECKPOINT_ID_COLUMN.to_string(), ChType::UInt64),
+                (CHANGE_COLUMN.to_string(), change_type()),
+            ])
+            .collect()
+    }
+
+    /// The columns naming one entity: its id, and the chain a per-chain one
+    /// belongs to.
+    pub(crate) fn key(&self) -> Vec<String> {
+        let mut key = vec![ID_COLUMN.to_string()];
+        if let Some(chain_id_column) = &self.chain_id_column {
+            key.push(chain_id_column.clone());
+        }
+        key
+    }
+
+    fn column_by_field_name(&self) -> HashMap<&str, &str> {
+        self.columns
+            .iter()
+            .map(|column| (column.field.schema_name.as_str(), column.ch_column()))
+            .collect()
+    }
+
+    /// Only the fields an expression cannot name as-is. A field whose column
+    /// kept its name already reads as the column, and quoting it would also
+    /// claim every other meaning the bare word has — a field named `day` would
+    /// swallow the unit of `INTERVAL 30 day`.
+    fn renamed_column_by_field_name(&self) -> HashMap<&str, &str> {
+        self.columns
+            .iter()
+            .filter(|column| column.field.schema_name != column.ch_column())
+            .map(|column| (column.field.schema_name.as_str(), column.ch_column()))
+            .collect()
+    }
+}
+
+static EXPRESSION_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|[A-Za-z_][A-Za-z0-9_]*"#)
+        .expect("expression token regex")
+});
+
+fn resolve_expression_columns(expression: &str, columns: &HashMap<&str, &str>) -> String {
+    EXPRESSION_TOKEN
+        .replace_all(expression, |captures: &Captures| {
+            let token = &captures[0];
+            match columns.get(token) {
+                Some(column) => quoted(column),
+                None => token.to_string(),
+            }
+        })
+        .into_owned()
+}
+
+fn definitions(columns: &[(String, ChType)]) -> String {
+    columns
+        .iter()
+        .map(|(name, ch_type)| format!("{} {ch_type}", quoted(name)))
+        .collect::<Vec<_>>()
+        .join(",\n  ")
+}
+
+pub(crate) fn create_history_table(
+    entity: &EntitySpec,
+    database: &str,
+    topology: Topology,
+) -> Result<String> {
+    let columns = entity.history_columns();
+    let by_field_name = entity.column_by_field_name();
+
+    let (order_by, leads_with_id) = match &entity.order_by {
+        Some(field_names) => {
+            let mut resolved = Vec::with_capacity(field_names.len());
+            for field_name in field_names {
+                match by_field_name.get(field_name.as_str()) {
+                    Some(column) => resolved.push(quoted(column)),
+                    None => bail!(
+                        "ClickHouse orderBy field \"{field_name}\" is not defined on entity \"{}\"",
+                        entity.name
+                    ),
+                }
+            }
+            let leads_with_id = resolved.first() == Some(&quoted(ID_COLUMN));
+            (
+                format!("{}, {}", resolved.join(", "), quoted(CHECKPOINT_ID_COLUMN)),
+                leads_with_id,
+            )
+        }
+        None => (
+            format!("{}, {}", quoted(ID_COLUMN), quoted(CHECKPOINT_ID_COLUMN)),
+            true,
+        ),
+    };
+
+    let renamed = entity.renamed_column_by_field_name();
+    let partition_by = match &entity.partition_by {
+        Some(expression) => format!(
+            "\nPARTITION BY {}",
+            resolve_expression_columns(expression, &renamed)
+        ),
+        None => String::new(),
+    };
+    // A delete leaves every column but its key at the type's default, which the
+    // expression would read as long expired: kept, it outlives the sets it
+    // cancels rather than going first and bringing the entity back.
+    let ttl = match &entity.ttl {
+        Some(expression) => format!(
+            "\nTTL {} WHERE {} = '{SET}'",
+            resolve_expression_columns(expression, &renamed),
+            quoted(CHANGE_COLUMN)
+        ),
+        None => String::new(),
+    };
+
+    // Older parts hold only older checkpoints, so a range above one (a
+    // rollback's, a resume's trim) skips them instead of reading every part.
+    let mut indexes = format!(
+        ",\n  INDEX `envio_checkpoint_minmax` {} TYPE minmax GRANULARITY 1",
+        quoted(CHECKPOINT_ID_COLUMN)
+    );
+    // Every load names ids, which a sort led by something else can't narrow.
+    if !leads_with_id {
+        write!(
+            indexes,
+            ",\n  INDEX `envio_id_bloom_filter` {} TYPE bloom_filter GRANULARITY 1",
+            quoted(ID_COLUMN)
+        )
+        .expect("writing to a String cannot fail");
+    }
+    for index in &entity.skipping_indexes {
+        let granularity = match index.granularity {
+            Some(granularity) => format!(" GRANULARITY {granularity}"),
+            None => String::new(),
+        };
+        write!(
+            indexes,
+            ",\n  INDEX {} {} TYPE {}{granularity}",
+            quoted(&index.name),
+            resolve_expression_columns(&index.expr, &renamed),
+            index.index_type
+        )
+        .expect("writing to a String cannot fail");
+    }
+
+    Ok(format!(
+        "CREATE TABLE IF NOT EXISTS {}{} (\n  {}{indexes}\n)\nENGINE = {}{partition_by}\nORDER BY ({order_by}){ttl}{}",
+        table_ref(database, &entity.history_table),
+        topology.on_cluster(),
+        definitions(&columns),
+        topology.engine(),
+        topology.settings(),
+    ))
+}
+
+pub(crate) fn checkpoint_columns(chain_id_type: &ChType) -> Vec<(String, ChType)> {
+    vec![
+        (CHAIN_ID_COLUMN.to_string(), chain_id_type.clone()),
+        (ID_COLUMN.to_string(), ChType::UInt64),
+        (BLOCK_NUMBER_COLUMN.to_string(), ChType::Int32),
+        (
+            "block_hash".to_string(),
+            ChType::Nullable(Box::new(ChType::String)),
+        ),
+        // A count of every event a chain has processed outgrows an Int32 where
+        // Postgres keeps one, and ClickHouse has the id's width to spare.
+        ("events_processed".to_string(), ChType::UInt64),
+    ]
+}
+
+/// Every checkpoint a write made, which is what maps a history row's checkpoint
+/// back to the block it came from.
+///
+/// The chain leads the key: every read of the table names one, and a resume
+/// trims a chain's rows as one range. Within a chain ids grow with the block, so
+/// a block range is narrowed by the min-max index rather than read in full.
+pub(crate) fn create_checkpoints_table(
+    chain_id_type: &ChType,
+    database: &str,
+    topology: Topology,
+) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS {}{} (\n  {},\n  INDEX `block_number_minmax` {} TYPE minmax GRANULARITY 1\n)\nENGINE = {}\nORDER BY ({}, {}){}",
+        table_ref(database, CHECKPOINTS_TABLE),
+        topology.on_cluster(),
+        definitions(&checkpoint_columns(chain_id_type)),
+        quoted(BLOCK_NUMBER_COLUMN),
+        topology.engine(),
+        quoted(CHAIN_ID_COLUMN),
+        quoted(ID_COLUMN),
+        topology.settings(),
+    )
+}
+
+pub(crate) fn chain_columns(chain_id_type: &ChType) -> Vec<(String, ChType)> {
+    vec![
+        (CHAIN_ID_COLUMN.to_string(), chain_id_type.clone()),
+        (FRONTIER_COLUMN.to_string(), ChType::UInt64),
+        (VERSION_COLUMN.to_string(), ChType::UInt64),
+    ]
+}
+
+/// One row per chain, holding its frontier. A write's last insert is its
+/// chains' rows, which is what commits it: nothing a write stamped past
+/// `checkpoint_id` is readable until the row carrying it lands. The latest
+/// version of a chain's row is its frontier, so the table is read with FINAL.
+///
+/// The dedup window is off for the same reason as on the other tables: a row
+/// identical to one already written would otherwise be dropped while the insert
+/// reports success.
+pub(crate) fn create_chains_table(
+    chain_id_type: &ChType,
+    database: &str,
+    topology: Topology,
+) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS {}{} (\n  {}\n)\nENGINE = {}\nORDER BY ({}){}",
+        table_ref(database, CHAINS_TABLE),
+        topology.on_cluster(),
+        definitions(&chain_columns(chain_id_type)),
+        topology.replacing_engine(VERSION_COLUMN),
+        quoted(CHAIN_ID_COLUMN),
+        topology.settings(),
+    )
+}
+
+pub(crate) fn info_columns() -> Vec<(String, ChType)> {
+    vec![
+        (ID_COLUMN.to_string(), ChType::Int32),
+        ("instance".to_string(), ChType::String),
+    ]
+}
+
+/// A singleton naming the initialize that built the database, which pairs it
+/// with the Postgres schema built alongside it.
+pub(crate) fn create_info_table(database: &str, topology: Topology) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS {}{} (\n  {}\n)\nENGINE = {}\nORDER BY ({}){}",
+        table_ref(database, INFO_TABLE),
+        topology.on_cluster(),
+        definitions(&info_columns()),
+        topology.engine(),
+        quoted(ID_COLUMN),
+        topology.settings(),
+    )
+}
+
+/// The rows an entity view reads as current: the latest at or below its
+/// chain's frontier, which a write raises only once the rows it covers have
+/// landed. A per-chain entity's row compares against its own chain's id — a
+/// sibling's id says nothing about it, and under a per-chain sequence isn't
+/// even comparable. A cross-chain entity's rows belong to no one chain; they
+/// only exist under one shared sequence, where the highest id is the frontier
+/// of the whole run.
+///
+/// The frontier is read once per query as a scalar and looked up per row, which
+/// costs one comparison and leaves the predicate free to run as PREWHERE. A
+/// chain the frontier doesn't name reads as 0, so its rows stay hidden.
+pub(crate) fn create_view(entity: &EntitySpec, database: &str, topology: Topology) -> String {
+    let dedup_key = quoted_list(entity.key());
+    let entity_fields = quoted_list(entity.columns.iter().map(Column::ch_column));
+
+    let chains = format!("{} FINAL", table_ref(database, CHAINS_TABLE));
+    let checkpoint_id = quoted(FRONTIER_COLUMN);
+    let (with, marker) = match &entity.chain_id_column {
+        Some(chain_id_column) => (
+            format!(
+                "WITH (SELECT mapFromArrays(groupArray({chain}), groupArray({checkpoint_id})) FROM {chains}) AS envio_frontier\n",
+                chain = quoted(CHAIN_ID_COLUMN),
+            ),
+            format!("envio_frontier[{}]", quoted(chain_id_column)),
+        ),
+        None => (
+            String::new(),
+            format!("(SELECT max({checkpoint_id}) FROM {chains})"),
+        ),
+    };
+
+    // The dedup key leads the sort so the rows a `LIMIT 1 BY` group needs
+    // arrive together: the history table is sorted by that key already (or by a
+    // prefix of it, under a custom `orderBy`), so ClickHouse reads in order and
+    // a `LIMIT n` over the view stops after n groups instead of sorting every
+    // version in the table first. The checkpoint stays last and descending,
+    // which is what makes the surviving row per key the latest one.
+    let dedup_sort = format!("{dedup_key}, {} DESC", quoted(CHECKPOINT_ID_COLUMN));
+
+    format!(
+        "CREATE VIEW IF NOT EXISTS {}{} AS\n{with}SELECT {entity_fields}\nFROM (\n  SELECT {entity_fields}, {}\n  FROM {}\n  WHERE {} <= {marker}\n  ORDER BY {dedup_sort}\n  LIMIT 1 BY {dedup_key}\n)\nWHERE {} = {}",
+        table_ref(database, &entity.name),
+        topology.on_cluster(),
+        quoted(CHANGE_COLUMN),
+        table_ref(database, &entity.history_table),
+        quoted(CHECKPOINT_ID_COLUMN),
+        quoted(CHANGE_COLUMN),
+        literal(SET),
+    )
+}
+
+pub(crate) fn insert_query(
+    database: &str,
+    table: &str,
+    columns: impl IntoIterator<Item = impl AsRef<str>>,
+) -> String {
+    format!(
+        "INSERT INTO {} ({}) FORMAT RowBinary",
+        table_ref(database, table),
+        quoted_list(columns)
+    )
+}
+
+/// One read that answers, for every table a resume could trim, whether any
+/// row sits above the checkpoint it trims to. A table answering no needs no
+/// mutation, and on a clean restart every one of them does — which is what
+/// keeps a resume from scheduling a part rewrite per entity for nothing.
+///
+/// `count()` over a `LIMIT 1` subquery stops at the first matching row where a
+/// bare `count()` would scan the whole column: `envio_checkpoint_id` trails the
+/// sorting key, so the primary index prunes nothing. The aliases live outside
+/// the table's own scope and carry a prefix no entity field can, since `exists`
+/// loses its alias under the old analyzer and a user may have named a column
+/// `name`.
+pub(crate) fn holds_rows_above_checkpoint(
+    database: &str,
+    above_by_table: &[(String, String)],
+) -> String {
+    let branches: Vec<String> = above_by_table
+        .iter()
+        .map(|(table, above)| {
+            format!(
+                "SELECT {} AS `_envio_table`, count() AS `_envio_holds` FROM (SELECT 1 FROM {} \
+                 WHERE {above} LIMIT 1)",
+                literal(table),
+                table_ref(database, table),
+            )
+        })
+        .collect();
+    format!(
+        "SELECT `_envio_table`, `_envio_holds` FROM ({}) FORMAT TabSeparated",
+        branches.join(" UNION ALL ")
+    )
+}
+
+/// Trims one table's rows past the checkpoint being resumed from.
+///
+/// `ALTER ... DELETE` schedules a mutation rather than running one, so without
+/// `mutations_sync` the statement returns while the rows are still there and
+/// resume would report a rewind it has only asked for. Waiting for this node
+/// (`1`) is what makes the storage actually be at the checkpoint by the time
+/// the indexer starts writing again; the indexer reads and writes this node
+/// alone, and the replicas behind it catch up on their own.
+pub(crate) fn trim_table(database: &str, table: &str, above: &str) -> String {
+    format!(
+        "ALTER TABLE {} DELETE WHERE {above} SETTINGS mutations_sync = 1",
+        table_ref(database, table),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::clickhouse::ch_type::test_support::field;
+    use pretty_assertions::assert_eq;
+
+    fn plain() -> Topology {
+        Topology {
+            replicated: false,
+            ddl_on_cluster: false,
+        }
+    }
+
+    fn replicated() -> Topology {
+        Topology {
+            replicated: true,
+            ddl_on_cluster: true,
+        }
+    }
+
+    fn column(name: &str, field_type: &str) -> Column {
+        renamed(name, name, field_type)
+    }
+
+    fn renamed(name: &str, field_name: &str, field_type: &str) -> Column {
+        Column::new(
+            Field {
+                schema_name: field_name.to_string(),
+                ch_column: name.to_string(),
+                ..field(field_type)
+            },
+            ChainIdMode::Int32,
+            "a test",
+        )
+        .unwrap()
+    }
+
+    fn entity(name: &str, columns: Vec<Column>) -> EntitySpec {
+        EntitySpec {
+            name: name.to_string(),
+            history_table: format!("envio_history_{name}"),
+            columns,
+            chain_id_column: None,
+            partition_by: None,
+            order_by: None,
+            ttl: None,
+            skipping_indexes: Vec::new(),
+        }
+    }
+
+    fn render(entity: &EntitySpec, topology: Topology) -> String {
+        create_history_table(entity, "test_db", topology).unwrap()
+    }
+
+    #[test]
+    fn creates_a_history_table_with_the_checkpoint_and_change_columns_appended() {
+        let entity = entity(
+            "Account",
+            vec![column("id", "String"), column("balance", "Int32")],
+        );
+        assert_eq!(
+            render(&entity, plain()),
+            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_history_Account` (\n  \
+             `id` String,\n  \
+             `balance` Int32,\n  \
+             `envio_checkpoint_id` UInt64,\n  \
+             `envio_change` Enum8('SET' = 1, 'DELETE' = 2),\n  \
+             INDEX `envio_checkpoint_minmax` `envio_checkpoint_id` TYPE minmax GRANULARITY 1\n\
+             )\n\
+             ENGINE = MergeTree()\n\
+             ORDER BY (`id`, `envio_checkpoint_id`)"
+        );
+    }
+
+    #[test]
+    fn a_replicated_table_carries_the_engine_cluster_and_dedup_settings() {
+        let entity = entity("Account", vec![column("id", "String")]);
+        assert_eq!(
+            render(&entity, replicated()),
+            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_history_Account` ON CLUSTER '{cluster}' (\n  \
+             `id` String,\n  \
+             `envio_checkpoint_id` UInt64,\n  \
+             `envio_change` Enum8('SET' = 1, 'DELETE' = 2),\n  \
+             INDEX `envio_checkpoint_minmax` `envio_checkpoint_id` TYPE minmax GRANULARITY 1\n\
+             )\n\
+             ENGINE = ReplicatedMergeTree\n\
+             ORDER BY (`id`, `envio_checkpoint_id`)\n\
+             SETTINGS replicated_deduplication_window = 0"
+        );
+    }
+
+    #[test]
+    fn table_options_resolve_field_names_to_columns() {
+        let mut entity = entity(
+            "Account",
+            vec![
+                column("id", "String"),
+                renamed("created_at", "createdAt", "Date"),
+            ],
+        );
+        entity.order_by = Some(vec!["createdAt".to_string()]);
+        entity.partition_by = Some("toYYYYMM(createdAt)".to_string());
+        entity.ttl = Some("createdAt + INTERVAL 1 MONTH".to_string());
+        entity.skipping_indexes = vec![SkippingIndex {
+            name: "idx_created".to_string(),
+            expr: "createdAt".to_string(),
+            index_type: "minmax".to_string(),
+            granularity: Some(4),
+        }];
+        assert_eq!(
+            render(&entity, plain()),
+            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_history_Account` (\n  \
+             `id` String,\n  \
+             `created_at` DateTime64(3, 'UTC'),\n  \
+             `envio_checkpoint_id` UInt64,\n  \
+             `envio_change` Enum8('SET' = 1, 'DELETE' = 2),\n  \
+             INDEX `envio_checkpoint_minmax` `envio_checkpoint_id` TYPE minmax GRANULARITY 1,\n  \
+             INDEX `envio_id_bloom_filter` `id` TYPE bloom_filter GRANULARITY 1,\n  \
+             INDEX `idx_created` `created_at` TYPE minmax GRANULARITY 4\n\
+             )\n\
+             ENGINE = MergeTree()\n\
+             PARTITION BY toYYYYMM(`created_at`)\n\
+             ORDER BY (`created_at`, `envio_checkpoint_id`)\n\
+             TTL `created_at` + INTERVAL 1 MONTH WHERE `envio_change` = 'SET'"
+        );
+    }
+
+    #[test]
+    fn expression_rewriting_leaves_everything_that_is_not_a_field_alone() {
+        let columns = HashMap::from([("createdAt", "created_at")]);
+        let resolved = [
+            "toYYYYMM(createdAt)",
+            "kind = 'createdAt'",
+            "`createdAt` + 1",
+            "toStartOfDay(createdAt) + INTERVAL 7 DAY",
+            "toYYYYMM(\"created_at\")",
+            "kind = 'a' || \"createdAt\"",
+            // ClickHouse reads C-style escapes inside a literal, so a \' does
+            // not end one and nothing inside is a bare identifier.
+            r"kind = 'a\'createdAt b'",
+        ]
+        .map(|expression| resolve_expression_columns(expression, &columns));
+        assert_eq!(
+            resolved,
+            [
+                "toYYYYMM(`created_at`)",
+                "kind = 'createdAt'",
+                "`createdAt` + 1",
+                "toStartOfDay(`created_at`) + INTERVAL 7 DAY",
+                "toYYYYMM(\"created_at\")",
+                "kind = 'a' || \"createdAt\"",
+                r"kind = 'a\'createdAt b'",
+            ]
+        );
+    }
+
+    // A field whose column keeps its name already reads as that column in the
+    // expression, so rewriting it buys nothing — and quoting it turns every
+    // other meaning the bare word has into the column: a field named `day`
+    // would swallow the unit of `INTERVAL 30 day`.
+    #[test]
+    fn a_field_whose_column_keeps_its_name_is_not_rewritten() {
+        let mut entity = entity(
+            "Visit",
+            vec![
+                column("id", "String"),
+                column("day", "Int32"),
+                renamed("created_at", "createdAt", "Date"),
+            ],
+        );
+        entity.ttl = Some("createdAt + INTERVAL 30 day".to_string());
+        entity.partition_by = Some("day".to_string());
+        assert_eq!(
+            render(&entity, plain()),
+            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_history_Visit` (\n  \
+             `id` String,\n  \
+             `day` Int32,\n  \
+             `created_at` DateTime64(3, 'UTC'),\n  \
+             `envio_checkpoint_id` UInt64,\n  \
+             `envio_change` Enum8('SET' = 1, 'DELETE' = 2),\n  \
+             INDEX `envio_checkpoint_minmax` `envio_checkpoint_id` TYPE minmax GRANULARITY 1\n\
+             )\n\
+             ENGINE = MergeTree()\n\
+             PARTITION BY day\n\
+             ORDER BY (`id`, `envio_checkpoint_id`)\n\
+             TTL `created_at` + INTERVAL 30 day WHERE `envio_change` = 'SET'"
+        );
+    }
+
+    #[test]
+    fn rejects_an_order_by_field_the_entity_does_not_have() {
+        let mut entity = entity("Account", vec![column("id", "String")]);
+        entity.order_by = Some(vec!["missing".to_string()]);
+        assert_eq!(
+            create_history_table(&entity, "test_db", plain())
+                .unwrap_err()
+                .to_string(),
+            "ClickHouse orderBy field \"missing\" is not defined on entity \"Account\""
+        );
+    }
+
+    #[test]
+    fn creates_the_checkpoints_table() {
+        assert_eq!(
+            create_checkpoints_table(&ChType::Int32, "test_db", plain()),
+            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_checkpoints` (\n  \
+             `chain_id` Int32,\n  \
+             `id` UInt64,\n  \
+             `block_number` Int32,\n  \
+             `block_hash` Nullable(String),\n  \
+             `events_processed` UInt64,\n  \
+             INDEX `block_number_minmax` `block_number` TYPE minmax GRANULARITY 1\n\
+             )\n\
+             ENGINE = MergeTree()\n\
+             ORDER BY (`chain_id`, `id`)"
+        );
+    }
+
+    #[test]
+    fn a_replicated_checkpoints_table_carries_the_engine_cluster_and_dedup_settings() {
+        let created = create_checkpoints_table(&ChType::UInt64, "test_db", replicated());
+        assert_eq!(
+            (
+                created.lines().next(),
+                created.lines().nth(1),
+                created.lines().rev().take(3).collect::<Vec<_>>()
+            ),
+            (
+                Some("CREATE TABLE IF NOT EXISTS `test_db`.`envio_checkpoints` ON CLUSTER '{cluster}' ("),
+                Some("  `chain_id` UInt64,"),
+                vec![
+                    "SETTINGS replicated_deduplication_window = 0",
+                    "ORDER BY (`chain_id`, `id`)",
+                    "ENGINE = ReplicatedMergeTree"
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn the_chains_table_keeps_the_latest_version_of_each_chain() {
+        assert_eq!(
+            create_chains_table(&ChType::Int32, "test_db", plain()),
+            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_chains` (\n  \
+             `chain_id` Int32,\n  \
+             `checkpoint_id` UInt64,\n  \
+             `version` UInt64\n\
+             )\n\
+             ENGINE = ReplacingMergeTree(`version`)\n\
+             ORDER BY (`chain_id`)"
+        );
+    }
+
+    #[test]
+    fn a_replicated_chains_table_carries_the_engine_cluster_and_dedup_settings() {
+        let created = create_chains_table(&ChType::UInt64, "test_db", replicated());
+        assert_eq!(
+            created.lines().rev().take(3).collect::<Vec<_>>(),
+            vec![
+                "SETTINGS replicated_deduplication_window = 0",
+                "ORDER BY (`chain_id`)",
+                "ENGINE = ReplicatedReplacingMergeTree(`version`)"
+            ]
+        );
+    }
+
+    #[test]
+    fn creates_a_view_over_the_history_table() {
+        let entity = entity(
+            "Account",
+            vec![column("id", "String"), column("balance", "Int32")],
+        );
+        assert_eq!(
+            create_view(&entity, "test_db", plain()),
+            "CREATE VIEW IF NOT EXISTS `test_db`.`Account` AS\n\
+             SELECT `id`, `balance`\n\
+             FROM (\n  \
+             SELECT `id`, `balance`, `envio_change`\n  \
+             FROM `test_db`.`envio_history_Account`\n  \
+             WHERE `envio_checkpoint_id` <= (SELECT max(`checkpoint_id`) FROM `test_db`.`envio_chains` FINAL)\n  \
+             ORDER BY `id`, `envio_checkpoint_id` DESC\n  \
+             LIMIT 1 BY `id`\n\
+             )\n\
+             WHERE `envio_change` = 'SET'"
+        );
+    }
+
+    // A sibling's id says nothing about this chain's rows, so each row is held
+    // to its own chain's frontier — read once as a scalar, looked up per row.
+    #[test]
+    fn a_per_chain_entity_view_holds_each_row_to_its_own_chains_frontier() {
+        let entity = EntitySpec {
+            chain_id_column: Some("chainId".to_string()),
+            ..entity(
+                "Account",
+                vec![
+                    column("id", "String"),
+                    column("chainId", "ChainId"),
+                    column("balance", "Int32"),
+                ],
+            )
+        };
+        assert_eq!(
+            create_view(&entity, "test_db", plain()),
+            "CREATE VIEW IF NOT EXISTS `test_db`.`Account` AS\n\
+             WITH (SELECT mapFromArrays(groupArray(`chain_id`), groupArray(`checkpoint_id`)) FROM \
+             `test_db`.`envio_chains` FINAL) AS envio_frontier\n\
+             SELECT `id`, `chainId`, `balance`\n\
+             FROM (\n  \
+             SELECT `id`, `chainId`, `balance`, `envio_change`\n  \
+             FROM `test_db`.`envio_history_Account`\n  \
+             WHERE `envio_checkpoint_id` <= envio_frontier[`chainId`]\n  \
+             ORDER BY `id`, `chainId`, `envio_checkpoint_id` DESC\n  \
+             LIMIT 1 BY `id`, `chainId`\n\
+             )\n\
+             WHERE `envio_change` = 'SET'"
+        );
+    }
+
+    #[test]
+    fn a_replicated_view_is_created_on_the_cluster() {
+        let entity = entity("Account", vec![column("id", "String")]);
+        assert_eq!(
+            create_view(&entity, "test_db", replicated()).lines().next(),
+            Some("CREATE VIEW IF NOT EXISTS `test_db`.`Account` ON CLUSTER '{cluster}' AS")
+        );
+    }
+
+    #[test]
+    fn strips_arguments_and_settings_from_a_database_engine() {
+        let names = [
+            "Replicated('/p','{shard}','{replica}') SETTINGS x=1",
+            "Replicated SETTINGS x=1",
+            "  Atomic  ",
+        ]
+        .map(database_engine_name);
+        assert_eq!(names, ["Replicated", "Replicated", "Atomic"]);
+    }
+
+    #[test]
+    fn names_every_column_the_insert_sends_and_escapes_them() {
+        assert_eq!(
+            insert_query(
+                "db",
+                "envio_history_Account",
+                ["id", "bal`ance", r"back\slash"].iter()
+            ),
+            concat!(
+                "INSERT INTO `db`.`envio_history_Account` ",
+                r"(`id`, `bal``ance`, `back\\slash`) FORMAT RowBinary"
+            )
+        );
+    }
+
+    #[test]
+    fn trims_a_table_past_a_checkpoint() {
+        assert_eq!(
+            trim_table("db", "envio_history_Account", "`envio_checkpoint_id` > 42"),
+            "ALTER TABLE `db`.`envio_history_Account` DELETE WHERE `envio_checkpoint_id` > 42 \
+             SETTINGS mutations_sync = 1"
+        );
+    }
+}

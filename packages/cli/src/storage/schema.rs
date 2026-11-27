@@ -10,9 +10,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 
 use super::types::Sequence;
-use crate::columnar::ColumnKind;
 use crate::config_parsing::human_config::ColumnNameFormat;
 use crate::config_parsing::system_config::ChainIdMode;
+use crate::storage::columnar::ColumnKind;
 
 /// The schema's scalars, as the table model names them. `BigInt` and
 /// `BigDecimal` carry the precision and scale a `@config` directive set, which

@@ -207,42 +207,6 @@ impl TypeExpr {
                 .join(" | "),
         }
     }
-
-    #[cfg(test)]
-    pub(crate) fn to_ts_type_string(&self) -> String {
-        match self {
-            Self::Identifier(type_ident) => type_ident.to_ts_type_string(),
-            Self::Record(fields) => {
-                if fields.is_empty() {
-                    "{}".to_string()
-                } else {
-                    let fields_str = fields
-                        .iter()
-                        .map(|field| {
-                            let field_name = field
-                                .as_name
-                                .as_ref()
-                                .map_or(field.name.as_str(), |name| name.as_str());
-                            format!("{}: {}", field_name, field.type_ident.to_ts_type_string())
-                        })
-                        .collect::<Vec<String>>()
-                        .join("; ");
-                    format!("{{ {} }}", fields_str)
-                }
-            }
-            Self::Variant(constructors) => constructors
-                .iter()
-                .map(|constr| {
-                    format!(
-                        "{{ case: \"{}\"; payload: {} }}",
-                        constr.name,
-                        constr.payload.to_ts_type_string()
-                    )
-                })
-                .collect::<Vec<String>>()
-                .join(" | "),
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -1079,39 +1043,6 @@ mod tests {
             }
             .to_ts_type_string(),
             "MyGeneric<number, string>"
-        );
-    }
-
-    #[test]
-    fn test_to_ts_type_string_record_expr() {
-        assert_eq!(TypeExpr::Record(vec![]).to_ts_type_string(), "{}");
-        assert_eq!(
-            TypeExpr::Record(vec![
-                RecordField::new("fieldA".to_string(), TypeIdent::Int),
-                RecordField::new("fieldB".to_string(), TypeIdent::Bool),
-            ])
-            .to_ts_type_string(),
-            "{ fieldA: number; fieldB: boolean }"
-        );
-    }
-
-    #[test]
-    fn test_to_ts_type_string_variant_expr() {
-        assert_eq!(
-            TypeExpr::Variant(vec![
-                VariantConstr::new("ConstrA".to_string(), TypeIdent::Int),
-                VariantConstr::new("ConstrB".to_string(), TypeIdent::Bool),
-            ])
-            .to_ts_type_string(),
-            "{ case: \"ConstrA\"; payload: number } | { case: \"ConstrB\"; payload: boolean }"
-        );
-    }
-
-    #[test]
-    fn test_to_ts_type_string_identifier_expr() {
-        assert_eq!(
-            TypeExpr::Identifier(TypeIdent::Int).to_ts_type_string(),
-            "number"
         );
     }
 }

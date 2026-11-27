@@ -3,13 +3,13 @@ import { fileURLToPath } from "node:url";
 import * as path from "node:path";
 
 // Must match the TypeScript version the init templates pin
-// (packages/cli/src/hbs_templating/init_templates.rs), so handlers are checked
+// (packages/cli/src/codegen/init_templates.rs), so handlers are checked
 // with the exact compiler a real project runs. Bump both together.
 const EXPECTED_TS_VERSION = "6.0.3";
 if (ts.version !== EXPECTED_TS_VERSION) {
   throw new Error(
     `TypeChecker expects TypeScript ${EXPECTED_TS_VERSION} to match the init-template pin ` +
-      `in packages/cli/src/hbs_templating/init_templates.rs, but resolved ${ts.version}. ` +
+      `in packages/cli/src/codegen/init_templates.rs, but resolved ${ts.version}. ` +
       `Update both together.`,
   );
 }

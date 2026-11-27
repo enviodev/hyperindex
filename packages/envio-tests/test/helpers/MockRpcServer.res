@@ -5,7 +5,7 @@
 // Prefer `withScenario` for behavior/contract tests. It accepts the expected
 // calls inline, verifies that all of them were consumed, rejects unexpected
 // calls, and always waits for the server to close. The lower-level `start`,
-// `makeRaw`, `makeWithParams`, and `make` helpers remain for tests that need a
+// `makeWithParams`, and `make` helpers remain for tests that need a
 // fully dynamic response function.
 type server
 type req
@@ -258,7 +258,7 @@ let verificationMessage = (~name, {failures, pending}: verification) => {
 // `port` defaults to 0, so the OS picks a free one and the caller reads it back
 // off `url`. Pass a fixed port only when the url has to be known before the
 // server can start — a config fixture parsed while vitest collects, say.
-let startInternal = (~name, ~calls: array<expectedCall>, ~legacyHandler=?, ~port=0) =>
+let startInternal = (~name, ~calls: array<expectedCall>, ~dynamicHandler=?, ~port=0) =>
   Promise.make((resolve, reject) => {
     let requests = []
     let transcript = []
@@ -282,7 +282,7 @@ let startInternal = (~name, ~calls: array<expectedCall>, ~legacyHandler=?, ~port
           sequence := sequence.contents + 1
           requests->Array.push(data.contents)->ignore
 
-          switch legacyHandler {
+          switch dynamicHandler {
           | Some(handler) => {
               let (status, body) = handler(data.contents)
               res->writeRaw(~status, ~body)
@@ -401,10 +401,7 @@ let withScenario = async (~name="unnamed", ~calls, testFn) => {
 // Low-level dynamic server retained for cases whose reply cannot reasonably be
 // expressed as a finite inline scenario.
 let start = (~handler: string => (int, string), ~port=0) =>
-  startInternal(~name="legacy dynamic handler", ~calls=[], ~legacyHandler=handler, ~port)
-
-// Reply with a fixed status and body to every request.
-let makeRaw = (~status, ~body) => start(~handler=_ => (status, body))
+  startInternal(~name="dynamic handler", ~calls=[], ~dynamicHandler=handler, ~port)
 
 // Reply 200 with a JSON-RPC envelope whose `result` is routed by the request's
 // `method` and `params`, echoing the request's `id` back.

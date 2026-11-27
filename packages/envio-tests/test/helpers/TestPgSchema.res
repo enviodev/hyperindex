@@ -10,7 +10,7 @@ let client = (~logger=Logger.makeInMemory(), ~pgSchema=?, ~maxConnections=?, ~co
   Storage.makeClient(
     ~logger,
     ~config?,
-    ~postgres=Storage.postgresOptions(~pgSchema?, ~maxConnections?),
+    ~postgres=Storage.postgresOptions(~db=IndexerEnv.read().db, ~pgSchema?, ~maxConnections?),
   )
 
 let prefix = "envio_test_"

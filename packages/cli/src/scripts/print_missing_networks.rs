@@ -101,11 +101,11 @@ impl Diff {
         })
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.missing_chains.is_empty() && self.extra_chains.is_empty()
     }
 
-    pub fn print_message(&self) {
+    pub(crate) fn print_message(&self) {
         if self.is_empty() {
             println!(
                 "All chains from the API are present in the HypersyncChain enum, and vice versa. \

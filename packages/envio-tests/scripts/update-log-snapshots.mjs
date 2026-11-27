@@ -3,7 +3,7 @@ import { execSync } from "child_process";
 import { writeFileSync, mkdirSync } from "fs";
 
 const FIXTURE_PATH = "test/fixtures/LogTesting.res.mjs";
-const SNAPSHOTS_DIR = "test/__snapshots__";
+const SNAPSHOTS_DIR = "test/run/__snapshots__";
 
 // Strategies that output to stdout
 const strategies = [

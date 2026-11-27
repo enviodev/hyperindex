@@ -1,0 +1,1101 @@
+type rollbackState =
+  | NoRollback
+  | ReorgDetected({chainId: ChainId.t, blockNumber: int})
+  | FindingReorgDepth
+  | FoundReorgDepth({chainId: ChainId.t, rollbackTargetBlockNumber: int})
+  | RollbackReady({eventsProcessedDiffByChain: dict<float>})
+
+// Per-(contract, event) handler counters rendered into the
+// envio_processing_handler_* and envio_preload_handler_* metrics.
+type handlerStat = {
+  contract: string,
+  event: string,
+  mutable processingSeconds: float,
+  // Floats: cumulative counters outgrow int32.
+  mutable processingCount: float,
+  // Wall-clock preload time: overlapping preloads of the same handler count once.
+  mutable preloadSeconds: float,
+  mutable preloadCount: float,
+  // Cumulative per-call preload time; exceeds preloadSeconds under parallel execution.
+  mutable preloadSecondsTotal: float,
+  mutable preloadPendingCount: int,
+  mutable preloadPendingTimerRef: Clock.timeRef,
+  clock: Clock.t,
+}
+
+// Per-(storage, operation) load counters rendered into the
+// envio_storage_load_* metrics.
+type storageLoadStat = {
+  operation: string,
+  storage: string,
+  // Wall-clock load time: overlapping loads of the same operation count once.
+  mutable seconds: float,
+  mutable secondsTotal: float,
+  mutable count: float,
+  mutable whereSize: float,
+  mutable size: float,
+  mutable pendingCount: int,
+  mutable pendingTimerRef: Clock.timeRef,
+}
+
+type storageWriteStat = {
+  storage: string,
+  mutable seconds: float,
+  mutable count: int,
+}
+
+type historyPruneStat = {
+  mutable seconds: float,
+  mutable count: int,
+}
+
+type t = {
+  config: Config.t,
+  logger: Logger.t,
+  clock: Clock.t,
+  storage: Persistence.storage,
+  // Processing waits for writes once the store holds this many changes.
+  inMemoryObjectsTarget: float,
+  // --- In-memory store: entity/effect tables and the pending-write queue. ---
+  // Cross-chain entities only; each ChainState holds its own partition for the
+  // per-chain ones.
+  mutable entities: EntityTables.t,
+  effectState: EffectState.t,
+  // The effect cache tables the storage holds, by table name, each with the
+  // row count read at startup plus what this process has written since.
+  storedEffectCaches: dict<Persistence.effectCacheRecord>,
+  mutable rollback: option<Persistence.rollback>,
+  // Last checkpoint each chain has persisted to the db.
+  mutable committedFrontier: Frontier.t,
+  // Processing frontier; runs ahead of committedFrontier while writes lag.
+  mutable processedFrontier: Frontier.t,
+  // Processed but unwritten. The cycle drains them, splitting each write at a
+  // change in the history policy so it never mixes history-saving modes.
+  mutable processedBatches: array<Batch.t>,
+  // Count of processed batches; version-independent progress counter.
+  mutable processedBatchesCount: int,
+  // The single in-flight write loop, None when idle.
+  mutable writeFiber: option<promise<unit>>,
+  // The single in-flight finalization, None when none is running. Every path
+  // that reaches the FinalizingIndexes phase awaits this one instead of
+  // starting a second pass over the same indexes.
+  mutable finalizeFiber: option<promise<unit>>,
+  // Set once a write throws, to stop the loop. The error itself goes to onError.
+  mutable hasFailedWrite: bool,
+  // Storage calls parked on their retry timer after losing the connection.
+  // Until the clock fires it, such a call does nothing.
+  mutable waitingOnDatabase: int,
+  // Resolved after every commit so capacity/flush waiters can re-evaluate.
+  mutable commitWaiters: array<unit => unit>,
+  // Latest metadata staged per chain; used to skip unchanged restages.
+  mutable chainMeta: dict<InternalTable.Chains.metaFields>,
+  // Set on a real change. Folded into a batch write, else flushed on the throttle.
+  mutable chainMetaDirty: bool,
+  // Throttles metadata-only writes when no batches flow.
+  chainMetaThrottler: Throttler.t,
+  // True while a batch is being processed; guards ProcessEventBatch re-entry.
+  mutable isProcessing: bool,
+  // Processing was asked for while a batch was in flight. That batch was built
+  // before whatever asked, so the loop runs another round for it.
+  mutable isProcessingRequested: bool,
+  // Whole-indexer view over every chain's runtime state plus the run-wide flags
+  // derived from it. Mutated in place through CrossChainState.
+  crossChainState: CrossChainState.t,
+  mutable rollbackState: rollbackState,
+  indexerStartTime: Date.t,
+  // Monotonic peer of indexerStartTime, on the run's clock. Elapsed run time is
+  // derived from this so an NTP correction can't move it out of step with the
+  // clock-based counters that get divided by it.
+  indexerStartTimeRef: Clock.timeRef,
+  // When an entity's history was last pruned. No key = never pruned yet,
+  // which counts as overdue.
+  lastPrunedAtMillis: dict<float>,
+  loadManager: LoadManager.t,
+  keepProcessAlive: bool,
+  exitAfterFirstEventBlock: bool,
+  // The single fatal-error handler.
+  onError: ErrorHandling.t => unit,
+  // Invoked once when the indexer catches up and would otherwise exit the
+  // process. `None` keeps the production behavior (exit the process); the
+  // in-process test runner injects a callback that resolves its run promise
+  // instead, so a caught-up run doesn't kill the test process.
+  onExit: option<unit => unit>,
+  // Told, in the processing pass that gets it there, that a run holding its
+  // realtime transitions has gone as far as it can on its own. The test
+  // runner's stand-in supervisor releases from it, so the release lands at a
+  // point in the indexer's own progress rather than on a timer.
+  onArrivedAtHead: option<unit => unit>,
+  mutable reportedArrivalAtHead: bool,
+  // Set once on any fatal error. Every loop checks it to stop iterating and
+  // every launch skips when it's set, so a single failure quiesces the indexer.
+  mutable isStopped: bool,
+  // Bumped when in-flight fetch work must be invalidated: on a reorg (responses
+  // requested against pre-reorg state) and on the realtime transition (the
+  // waitForNewBlock waiter is bound to the old, pre-realtime source). A fetch
+  // response or waiter carrying an older epoch than this is discarded.
+  mutable epoch: int,
+  // The loop's one door in from outside it: IndexerLoop owns scheduling and
+  // wires this when it starts, so an event the loop can't see for itself can
+  // still make it re-evaluate. A no-op before then.
+  mutable scheduleProcessing: unit => unit,
+  // None off the simulate path.
+  simulateDeadInputTracker: option<SimulateDeadInputTracker.t>,
+  // --- Metric counters, rendered by Metrics at scrape time. ---
+  mutable preloadSeconds: float,
+  mutable processingSeconds: float,
+  mutable processingStalledOnFetchSeconds: float,
+  // Set while the processing loop is idle after starving on an empty buffer;
+  // None while processing or when the loop stopped for a reorg/shutdown. The
+  // getter folds the in-progress interval in so a scrape mid-stall isn't stale.
+  mutable processingStalledOnFetchSince: option<Clock.timeRef>,
+  mutable processingStalledOnStorageWriteSeconds: float,
+  // One stat per contract/event metric series. Per-chain event configs share a
+  // series, so the by-config map only spares a run from building the key.
+  handlerStatBySeries: dict<handlerStat>,
+  handlerStatByEventConfig: Utils.Map.t<Internal.eventConfig, handlerStat>,
+  storageLoadStats: dict<storageLoadStat>,
+  storageWriteStats: dict<storageWriteStat>,
+  historyPruneStats: dict<historyPruneStat>,
+  mutable rollbackSeconds: float,
+  mutable rollbackCount: int,
+  mutable rollbackEventsCount: float,
+}
+
+let make = (
+  ~config: Config.t,
+  ~logger: Logger.t,
+  ~storage: Persistence.storage,
+  ~chainStates: dict<ChainState.t>,
+  ~isRealtime: bool,
+  ~targetBufferSize=config.env.indexingMaxBufferSize,
+  ~inMemoryObjectsTarget=config.env.inMemoryObjectsTarget->Int.toFloat,
+  ~holdRealtime=false,
+  ~committedFrontier=Frontier.empty(),
+  ~storedEffectCaches=Dict.make(),
+  ~isDevelopmentMode=false,
+  ~shouldUseTui=false,
+  ~exitAfterFirstEventBlock=false,
+  ~onError: ErrorHandling.t => unit,
+  ~onExit=?,
+  ~onArrivedAtHead=?,
+  ~clock=Clock.real,
+) => {
+  let chainMetaThrottler = {
+    let intervalMillis = config.env.throttle.chainMetadataIntervalMillis
+    Throttler.make(
+      ~clock,
+      ~intervalMillis,
+      ~logger=logger->Logger.withFields({
+        "context": "Throttler for chain metadata writes",
+        "intervalMillis": intervalMillis,
+      }),
+    )
+  }
+
+  {
+    config,
+    logger,
+    clock,
+    storage,
+    inMemoryObjectsTarget,
+    entities: EntityTables.make(config.userEntities->EntityTables.crossChain),
+    effectState: EffectState.make(~clock, ()),
+    storedEffectCaches,
+    rollback: None,
+    committedFrontier,
+    processedFrontier: committedFrontier->Frontier.copy,
+    processedBatches: [],
+    processedBatchesCount: 0,
+    writeFiber: None,
+    finalizeFiber: None,
+    hasFailedWrite: false,
+    waitingOnDatabase: 0,
+    commitWaiters: [],
+    chainMeta: Dict.make(),
+    chainMetaDirty: false,
+    chainMetaThrottler,
+    isProcessing: false,
+    isProcessingRequested: false,
+    crossChainState: CrossChainState.make(
+      ~chainStates,
+      ~isRealtime,
+      ~targetBufferSize,
+      ~holdRealtime,
+    ),
+    indexerStartTime: Date.make(),
+    indexerStartTimeRef: clock->Clock.readTimeRef,
+    rollbackState: NoRollback,
+    lastPrunedAtMillis: Dict.make(),
+    scheduleProcessing: () => (),
+    loadManager: LoadManager.make(),
+    keepProcessAlive: isDevelopmentMode || shouldUseTui,
+    exitAfterFirstEventBlock,
+    onError,
+    onExit,
+    onArrivedAtHead,
+    reportedArrivalAtHead: false,
+    isStopped: false,
+    epoch: 0,
+    simulateDeadInputTracker: SimulateDeadInputTracker.makeFromConfig(config),
+    preloadSeconds: 0.,
+    processingSeconds: 0.,
+    processingStalledOnFetchSeconds: 0.,
+    processingStalledOnFetchSince: None,
+    processingStalledOnStorageWriteSeconds: 0.,
+    handlerStatBySeries: Dict.make(),
+    handlerStatByEventConfig: Utils.Map.make(),
+    storageLoadStats: Dict.make(),
+    storageWriteStats: Dict.make(),
+    historyPruneStats: Dict.make(),
+    rollbackSeconds: 0.,
+    rollbackCount: 0,
+    rollbackEventsCount: 0.,
+  }
+}
+
+// Check if progress is past the reorg threshold (safe block).
+// A chain is in reorg threshold once its progress passes the safe block,
+// sourceBlockNumber - maxReorgDepth - 1. This matches the reorg checkpoints
+// query in packages/cli/src/postgres/internal.rs.
+let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~maxReorgDepth) => {
+  maxReorgDepth > 0 &&
+  sourceBlockNumber > 0 &&
+  progressBlockNumber > sourceBlockNumber - maxReorgDepth - 1
+}
+
+let makeFromDbState = (
+  ~config: Config.t,
+  ~logger: Logger.t,
+  ~storage: Persistence.storage,
+  ~initialState: Persistence.initialState,
+  ~registrationsByChainId,
+  ~isDevelopmentMode=false,
+  ~shouldUseTui=false,
+  ~exitAfterFirstEventBlock=false,
+  ~sourceTiming=?,
+  ~targetBufferSize=config.env.indexingMaxBufferSize,
+  ~inMemoryObjectsTarget=?,
+  // A process driving part of a split run waits for its supervisor before
+  // entering the reorg threshold or switching to realtime.
+  ~holdRealtime=false,
+  ~onError,
+  ~onExit=?,
+  ~onArrivedAtHead=?,
+) => {
+  let isInReorgThreshold = if initialState.cleanRun {
+    false
+  } else {
+    // Check if any chain is in reorg threshold by comparing progress with sourceBlock - maxReorgDepth.
+    initialState.chains->Array.some(resumedChainState =>
+      isProgressInReorgThreshold(
+        ~progressBlockNumber=resumedChainState.progressBlockNumber,
+        ~sourceBlockNumber=resumedChainState.sourceBlockNumber,
+        ~maxReorgDepth=resumedChainState.maxReorgDepth,
+      )
+    )
+  }
+
+  // `ready_at` is durable: a chain that once caught up resumes realtime, and the
+  // deferred indexes committed alongside that stamp are not owed again.
+  let isRealtime =
+    initialState.chains->Array.length > 0 &&
+      initialState.chains->Array.every(c => c.timestampCaughtUpToHeadOrEndblock->Option.isSome)
+
+  let chainStates = Dict.make()
+  initialState.chains->Array.forEach((resumedChainState: Persistence.initialChainState) => {
+    let chainId = Config.getChain(config, ~chainId=resumedChainState.id)
+    let chainConfig = config.chainMap->ChainMap.get(chainId)
+    chainStates->ChainId.Dict.set(
+      resumedChainState.id,
+      chainConfig->ChainState.makeFromDbState(
+        ~resumedChainState,
+        ~reorgCheckpoints=initialState.reorgCheckpoints,
+        ~isInReorgThreshold,
+        ~isRealtime,
+        ~config,
+        ~contractMapping=initialState.contractMapping,
+        ~registrationsByChainId,
+        ~logger,
+        ~sourceTiming?,
+      ),
+    )
+  })
+
+  let state = make(
+    ~config,
+    ~logger,
+    ~storage,
+    ~chainStates,
+    ~isRealtime,
+    ~targetBufferSize,
+    ~inMemoryObjectsTarget?,
+    ~holdRealtime,
+    ~committedFrontier=initialState.checkpointFrontier,
+    ~storedEffectCaches=initialState.cache,
+    ~isDevelopmentMode,
+    ~shouldUseTui,
+    ~exitAfterFirstEventBlock,
+    ~onError,
+    ~onExit?,
+    ~onArrivedAtHead?,
+    ~clock=?sourceTiming->Option.flatMap(timing => timing.clock),
+  )
+  state.crossChainState->CrossChainState.markCaughtUpOnResume
+  initialState.cache->Utils.Dict.forEach(({effectName, count, scope}) => {
+    state.effectState->EffectState.setUnregisteredCacheCount(~effectName, ~scope, ~count)
+  })
+  state
+}
+
+// A fetch response or new-block waiter is stale once the indexer stopped or the
+// epoch moved on (reorg / realtime transition) since the work was scheduled.
+@inline
+let isStale = (state: t, ~stateId) => state.isStopped || stateId !== state.epoch
+
+// True from when a reorg is detected until its rollback target is resolved.
+// Fetching and batch processing pause while it holds so they don't act on chain
+// state that's about to be rolled back. Once RollbackReady, processing resumes to
+// apply the diff, so this reads false there.
+let isResolvingReorg = (state: t) =>
+  switch state.rollbackState {
+  | ReorgDetected(_) | FindingReorgDepth | FoundReorgDepth(_) => true
+  | NoRollback | RollbackReady(_) => false
+  }
+
+// The single fatal-error handler. Stops every loop before reporting, and only
+// reports the first error so redundant handlers (eg an error caught in two
+// nested scopes) don't double-report.
+@inline
+let // Close an open fetch-stall interval, accruing it into the counter. Called
+// whenever the reason for the idle changes, so the interval never spans into
+// time another counter owns — or, at shutdown, past the point where the loops
+// stop and nothing would ever close it.
+settleStalledOnFetch = (state: t) =>
+  switch state.processingStalledOnFetchSince {
+  | Some(since) =>
+    state.processingStalledOnFetchSeconds =
+      state.processingStalledOnFetchSeconds +. state.clock->Clock.secondsSince(since)
+    state.processingStalledOnFetchSince = None
+  | None => ()
+  }
+
+let errorExit = (state: t, errHandler) =>
+  if !state.isStopped {
+    state->settleStalledOnFetch
+    state.isStopped = true
+    state.onError(errHandler)
+  }
+
+let unexpectedErrorMsg = "Indexer has failed with an unexpected error"
+
+// Halt the loops without reporting an error, eg to hand the shared db over to a
+// resumed indexer in tests.
+let stop = (state: t) => {
+  state->settleStalledOnFetch
+  state.isStopped = true
+}
+
+let getChainState = (state: t, ~chainId: ChainId.t): ChainState.t =>
+  switch state.crossChainState
+  ->CrossChainState.chainStates
+  ->ChainId.Dict.dangerouslyGetNonOption(chainId) {
+  | Some(cs) => cs
+  | None =>
+    // Should be unreachable: every configured chain gets a state at startup
+    JsError.throwWithMessage(
+      "No chain with id " ++ chainId->ChainId.toString ++ " found in chain states",
+    )
+  }
+
+// Built on the item's chain logger, so the chain id leads every item's line.
+let loggerForItem = (state: t, item: Internal.item) =>
+  item->Ecosystem.loggerForItem(
+    ~ecosystem=state.config.ecosystem,
+    ~logger=state->getChainState(~chainId=item->Internal.getItemChainId)->ChainState.logger,
+  )
+
+// A load groups calls from many items, so its lines name the chain it reads,
+// not an item.
+let loggerForScope = (state: t, scope: Internal.chainScope) =>
+  switch scope {
+  | Chain(chainId) => state->getChainState(~chainId)->ChainState.logger
+  | CrossChain => state.logger
+  }
+
+let getSafeCheckpointIdByChain = (state: t) =>
+  state.crossChainState->CrossChainState.getSafeCheckpointIdByChain(
+    ~sequence=state.config.checkpointSequence,
+    ~committedFrontier=state.committedFrontier,
+  )
+
+let createBatch = (state: t, ~batchSizeTarget: int): promise<Batch.t> =>
+  state.crossChainState->CrossChainState.createBatch(
+    ~config=state.config,
+    ~frontier=state.processedFrontier,
+    ~batchSizeTarget,
+  )
+
+let prebuildNextBatch = (state: t) =>
+  state.crossChainState->CrossChainState.prebuildNextBatch(~batchSizeTarget=state.config.batchSize)
+
+let enterReorgThreshold = (state: t) => state.crossChainState->CrossChainState.enterReorgThreshold
+
+// Begin a reorg rollback. Invalidates in-flight fetches and enters the
+// ReorgDetected state as one step, so the epoch bump can never be left out. The
+// caller has already mutated the chain states (restored counters, reset pending
+// queries). isResolvingReorg derives from rollbackState.
+let beginReorg = (state: t, ~chainId, ~blockNumber) => {
+  // Settle here, or the rollback that follows would be folded into the stall on
+  // the next beginProcessing — time envio_rollback_seconds already counts.
+  state->settleStalledOnFetch
+  state.epoch = state.epoch + 1
+  state.rollbackState = ReorgDetected({chainId, blockNumber})
+}
+
+let enterFindingReorgDepth = (state: t) => state.rollbackState = FindingReorgDepth
+
+let foundReorgDepth = (state: t, ~chainId, ~rollbackTargetBlockNumber) =>
+  state.rollbackState = FoundReorgDepth({chainId, rollbackTargetBlockNumber})
+
+// Finish a rollback. The caller has already rolled the chain states back in
+// place; this leaves the diff ready for the next batch to consume.
+// RollbackReady makes isResolvingReorg false, so processing resumes to apply it.
+let completeRollback = (state: t, ~eventsProcessedDiffByChain) => {
+  state.rollbackState = RollbackReady({eventsProcessedDiffByChain: eventsProcessedDiffByChain})
+}
+
+let clearRollback = (state: t) => state.rollbackState = NoRollback
+
+// Invalidate in-flight fetches/waiters without starting a rollback, eg on the
+// realtime transition where the parked waiter is bound to the pre-realtime source.
+// Drops the pending queries with it, the way the reorg path does: a response
+// carrying the old epoch is discarded before handleQueryResult can retire its
+// query, and a partition that still holds one never asks for another range.
+let invalidateInflight = (state: t) => {
+  state.epoch = state.epoch + 1
+  state.crossChainState
+  ->CrossChainState.chainStates
+  ->Utils.Dict.forEach(ChainState.resetPendingQueries)
+}
+
+let applyBatchProgress = (state: t, ~batch: Batch.t) =>
+  state.crossChainState->CrossChainState.applyBatchProgress(
+    ~batch,
+    ~blockTimestampName=state.config.ecosystem.blockTimestampName,
+  )
+
+// Processing-loop mutex. Guards ProcessEventBatch re-entry so only one
+// processing loop runs at a time.
+let isProcessing = (state: t) => state.isProcessing
+// Whether some chain is running its contractRegister handlers.
+let isRegisteringContracts = (state: t) =>
+  state.crossChainState
+  ->CrossChainState.chainStates
+  ->Dict.valuesToArray
+  ->Array.some(ChainState.isRegisteringContracts)
+let beginProcessing = (state: t) => {
+  state->settleStalledOnFetch
+  state.isProcessing = true
+}
+let endProcessing = (state: t) => state.isProcessing = false
+let requestProcessing = (state: t) => state.isProcessingRequested = true
+let takeProcessingRequest = (state: t) => {
+  let isRequested = state.isProcessingRequested
+  state.isProcessingRequested = false
+  isRequested
+}
+
+// Start attributing idle time to fetch starvation. Called when the processing
+// loop exits with no work left; skipped when it exits for a reorg or shutdown,
+// so only genuine buffer starvation is counted.
+let markProcessingStalledOnFetch = (state: t) =>
+  if state.processingStalledOnFetchSince->Option.isNone {
+    state.processingStalledOnFetchSince = Some(state.clock->Clock.readTimeRef)
+  }
+
+let recordStalledOnStorageWrite = (state: t, ~seconds) =>
+  state.processingStalledOnStorageWriteSeconds =
+    state.processingStalledOnStorageWriteSeconds +. seconds
+
+let recordProcessedBatch = (state: t) =>
+  state.processedBatchesCount = state.processedBatchesCount + 1
+
+// --- Read accessors. The type is abstract in the interface; modules read state
+// through these and change it only through the transitions above and the domain
+// operations below. Accessors returning a mutable dict/array let callers mutate
+// the container in place (eg insert an entity table). ---
+
+let config = (state: t) => state.config
+let logger = (state: t) => state.logger
+let clock = (state: t) => state.clock
+let inMemoryObjectsTarget = (state: t) => state.inMemoryObjectsTarget
+let storage = (state: t) => state.storage
+let entities = (state: t) => state.entities
+
+// Every in-memory entity table across all scopes, cross-chain first. The size,
+// drop and flush passes walk the whole store this way instead of assuming a
+// single partition.
+let eachEntityTable = (
+  state: t,
+  fn: (
+    ~entityConfig: Internal.entityConfig,
+    ~scope: Internal.chainScope,
+    ~table: InMemoryTable.Entity.t,
+  ) => unit,
+) => {
+  let chainStates = state.crossChainState->CrossChainState.chainStates
+  state.config.userEntities->Array.forEach(entityConfig =>
+    if entityConfig.crossChain {
+      fn(
+        ~entityConfig,
+        ~scope=Internal.CrossChain,
+        ~table=state.entities->EntityTables.get(~entityName=entityConfig.name),
+      )
+    } else {
+      chainStates->Utils.Dict.forEach(chainState => {
+        fn(
+          ~entityConfig,
+          ~scope=Internal.Chain((chainState->ChainState.chainConfig).id),
+          ~table=chainState->ChainState.entities->EntityTables.get(~entityName=entityConfig.name),
+        )
+      })
+    }
+  )
+}
+let effectState = (state: t) => state.effectState
+let storedEffectCaches = (state: t) => state.storedEffectCaches
+let committedFrontier = (state: t) => state.committedFrontier
+let processedFrontier = (state: t) => state.processedFrontier
+
+// The committed id a scope's in-memory rows compare against.
+let committedCheckpointIdFor = (state: t, ~scope) =>
+  state.config.checkpointSequence->CheckpointSequence.forScope(state.committedFrontier, ~scope)
+
+let processedBatches = (state: t) => state.processedBatches
+let processedBatchesCount = (state: t) => state.processedBatchesCount
+let writeFiber = (state: t) => state.writeFiber
+let finalizeFiber = (state: t) => state.finalizeFiber
+let hasFailedWrite = (state: t) => state.hasFailedWrite
+let chainMetaDirty = (state: t) => state.chainMetaDirty
+let chainMetaThrottler = (state: t) => state.chainMetaThrottler
+let crossChainState = (state: t) => state.crossChainState
+let chainStates = (state: t) => state.crossChainState->CrossChainState.chainStates
+let isInReorgThreshold = (state: t) => state.crossChainState->CrossChainState.isInReorgThreshold
+let shouldSaveHistory = (state: t) => state.crossChainState->CrossChainState.shouldSaveHistory
+let isRealtime = (state: t) => state.crossChainState->CrossChainState.isRealtime
+
+// The indexer runs Backfilling → FinalizingIndexes → Ready. This is true only
+// in the middle phase: the chains this process drives have caught up, but the
+// indexes the schema promises them and their `ready_at` haven't been committed
+// yet.
+let isFinalizingIndexes = (state: t) =>
+  state.crossChainState->CrossChainState.isCaughtUp &&
+    !(state.crossChainState->CrossChainState.isRealtime)
+
+// The FinalizingIndexes phase is the transition a held process waits on: it
+// ends with `ready_at` committed and the indexer realtime.
+let shouldFinalizeIndexes = (state: t) =>
+  state->isFinalizingIndexes && !(state.crossChainState->CrossChainState.isHoldingRealtime)
+
+let markCaughtUpIfSettled = (state: t) =>
+  state.crossChainState->CrossChainState.markCaughtUpIfSettled
+
+let isReadyToEnterReorgThreshold = (state: t, ~batch) =>
+  state.crossChainState->CrossChainState.isReadyToEnterReorgThreshold(~batch)
+
+let bindScheduleProcessing = (state: t, scheduleProcessing) =>
+  state.scheduleProcessing = scheduleProcessing
+
+// A process still waiting on its supervisor owes the schema the indexes its
+// chains deferred, so reaching every end block doesn't make it done.
+let isHoldingRealtime = (state: t) => state.crossChainState->CrossChainState.isHoldingRealtime
+
+let hasArrivedAtHead = (state: t) => state.crossChainState->CrossChainState.hasArrivedAtHead
+
+let reportArrivalAtHead = (state: t) =>
+  switch state.onArrivedAtHead {
+  | Some(onArrivedAtHead)
+    if !state.reportedArrivalAtHead && state->isHoldingRealtime && state->hasArrivedAtHead =>
+    state.reportedArrivalAtHead = true
+    onArrivedAtHead()
+  | _ => ()
+  }
+
+let releaseRealtime = (state: t) => {
+  state.crossChainState->CrossChainState.releaseRealtime
+  // Every chain is parked at the head with no batch coming, so nothing would
+  // notice the hold is gone without a pass through processing.
+  state.scheduleProcessing()
+}
+
+let markReady = (state: t, ~readyAt) => state.crossChainState->CrossChainState.markReady(~readyAt)
+
+let reportFinished = (state: t) => state.crossChainState->CrossChainState.reportFinished
+
+let rollbackState = (state: t) => state.rollbackState
+let loadManager = (state: t) => state.loadManager
+let keepProcessAlive = (state: t) => state.keepProcessAlive
+let exitAfterFirstEventBlock = (state: t) => state.exitAfterFirstEventBlock
+let onExit = (state: t) => state.onExit
+let isStopped = (state: t) => state.isStopped
+let epoch = (state: t) => state.epoch
+let lastPrunedAtMillis = (state: t) => state.lastPrunedAtMillis
+let simulateDeadInputTracker = (state: t) => state.simulateDeadInputTracker
+
+// Read-only snapshot of every metric; the single window into the mutable
+// counters for the /metrics endpoint, the TUI and the console API.
+let toMetrics = (state: t): Metrics.t => {
+  let chainStates = state.crossChainState->CrossChainState.chainStates
+  let sourceRequests = []
+  let sourceHeights = []
+  let sourceHeightStreams = []
+  chainStates->Utils.Dict.forEach(cs => {
+    let sourceManager = cs->ChainState.sourceManager
+    sourceManager
+    ->SourceManager.getRequestStatSamples
+    ->Array.forEach(s =>
+      sourceRequests->Array.push({
+        Metrics.source: s.sourceName,
+        chainId: s.chainId,
+        method: s.method,
+        count: s.count,
+        seconds: s.seconds,
+        responseBlocks: s.responseBlocks,
+        emptyResponseCount: s.emptyResponseCount,
+      })
+    )
+    sourceManager
+    ->SourceManager.getSourceHeightSamples
+    ->Array.forEach(s =>
+      sourceHeights->Array.push({
+        Metrics.source: s.sourceName,
+        chainId: s.chainId,
+        height: s.height,
+      })
+    )
+    sourceManager
+    ->SourceManager.getHeightStreamSamples
+    ->Array.forEach(s =>
+      sourceHeightStreams->Array.push({
+        Metrics.source: s.sourceName,
+        chainId: s.chainId,
+        connectCount: s.stream.connectCount,
+        disconnectsByReason: s.stream.disconnectsByReason,
+      })
+    )
+  })
+  let historyPrunes = []
+  state.historyPruneStats->Utils.Dict.forEachWithKey((s, entityName) =>
+    historyPrunes->Array.push({
+      Metrics.entity: entityName,
+      seconds: s.seconds,
+      count: s.count,
+    })
+  )
+  {
+    startTime: state.indexerStartTime,
+    metricTime: Date.make(),
+    elapsedSeconds: state.clock->Clock.secondsSince(state.indexerStartTimeRef),
+    targetBufferSize: state.crossChainState->CrossChainState.targetBufferSize,
+    isInReorgThreshold: state.crossChainState->CrossChainState.isInReorgThreshold,
+    hasArrivedAtHead: state.crossChainState->CrossChainState.hasArrivedAtHead,
+    rollbackEnabled: state.config.shouldRollbackOnReorg,
+    maxBatchSize: state.config.batchSize,
+    preloadSeconds: state.preloadSeconds,
+    processingSeconds: state.processingSeconds,
+    processingStalledOnFetchSeconds: state.processingStalledOnFetchSeconds +.
+    switch state.processingStalledOnFetchSince {
+    | Some(since) => state.clock->Clock.secondsSince(since)
+    | None => 0.
+    },
+    processingStalledOnStorageWriteSeconds: state.processingStalledOnStorageWriteSeconds,
+    rollbackSeconds: state.rollbackSeconds,
+    rollbackCount: state.rollbackCount,
+    rollbackEventsCount: state.rollbackEventsCount,
+    chains: chainStates->Dict.valuesToArray->Array.map(ChainState.toMetrics),
+    handlers: state.handlerStatBySeries
+    ->Dict.valuesToArray
+    ->Array.map(s => {
+      Metrics.contract: s.contract,
+      event: s.event,
+      processingSeconds: s.processingSeconds,
+      processingCount: s.processingCount,
+      preloadSeconds: s.preloadSeconds,
+      preloadCount: s.preloadCount,
+      preloadSecondsTotal: s.preloadSecondsTotal,
+    }),
+    effects: state.effectState->EffectState.toMetrics,
+    storageLoads: state.storageLoadStats
+    ->Dict.valuesToArray
+    ->Array.map(s => {
+      Metrics.operation: s.operation,
+      storage: s.storage,
+      seconds: s.seconds,
+      secondsTotal: s.secondsTotal,
+      count: s.count,
+      whereSize: s.whereSize,
+      size: s.size,
+    }),
+    storageWrites: state.storageWriteStats
+    ->Dict.valuesToArray
+    ->Array.map(s => {
+      Metrics.storage: s.storage,
+      seconds: s.seconds,
+      count: s.count,
+    }),
+    historyPrunes,
+    sourceRequests,
+    sourceHeights,
+    sourceHeightStreams,
+  }
+}
+
+// --- Metric counters. ---
+
+let recordBatchDurations = (state: t, ~loadDuration, ~handlerDuration) => {
+  state.preloadSeconds = state.preloadSeconds +. loadDuration
+  state.processingSeconds = state.processingSeconds +. handlerDuration
+}
+
+let getHandlerStat = (state: t, ~contract, ~event) => {
+  // Length-prefixed so names containing the separator can't collide.
+  let key = contract->String.length->Int.toString ++ ":" ++ contract ++ event
+  switch state.handlerStatBySeries->Utils.Dict.dangerouslyGetNonOption(key) {
+  | Some(stat) => stat
+  | None =>
+    let stat: handlerStat = {
+      contract,
+      event,
+      processingSeconds: 0.,
+      processingCount: 0.,
+      preloadSeconds: 0.,
+      preloadCount: 0.,
+      preloadSecondsTotal: 0.,
+      preloadPendingCount: 0,
+      preloadPendingTimerRef: %raw(`null`),
+      clock: state.clock,
+    }
+    state.handlerStatBySeries->Dict.set(key, stat)
+    stat
+  }
+}
+
+let handlerStatFor = (state: t, eventConfig: Internal.eventConfig) =>
+  switch state.handlerStatByEventConfig->Utils.Map.get(eventConfig) {
+  | Some(stat) => stat
+  | None =>
+    let stat = state->getHandlerStat(~contract=eventConfig.contractName, ~event=eventConfig.name)
+    state.handlerStatByEventConfig->Utils.Map.set(eventConfig, stat)->ignore
+    stat
+  }
+
+let recordHandlerDuration = (stat: handlerStat, ~duration) => {
+  stat.processingSeconds = stat.processingSeconds +. duration
+  stat.processingCount = stat.processingCount +. 1.
+}
+
+let startPreloadHandler = (stat: handlerStat) => {
+  let timerRef = stat.clock->Clock.readTimeRef
+  if stat.preloadPendingCount === 0 {
+    stat.preloadPendingTimerRef = timerRef
+  }
+  stat.preloadPendingCount = stat.preloadPendingCount + 1
+  timerRef
+}
+
+let endPreloadHandler = (stat: handlerStat, timerRef) => {
+  stat.preloadPendingCount = stat.preloadPendingCount - 1
+  if stat.preloadPendingCount === 0 {
+    stat.preloadSeconds =
+      stat.preloadSeconds +. stat.clock->Clock.secondsSince(stat.preloadPendingTimerRef)
+  }
+  stat.preloadSecondsTotal = stat.preloadSecondsTotal +. stat.clock->Clock.secondsSince(timerRef)
+  stat.preloadCount = stat.preloadCount +. 1.
+}
+
+let getStorageLoadStat = (state: t, ~storage, ~operation) => {
+  // Length-prefixed so names containing the separator can't collide.
+  let key = storage->String.length->Int.toString ++ ":" ++ storage ++ operation
+  switch state.storageLoadStats->Utils.Dict.dangerouslyGetNonOption(key) {
+  | Some(stat) => stat
+  | None =>
+    let stat: storageLoadStat = {
+      operation,
+      storage,
+      seconds: 0.,
+      secondsTotal: 0.,
+      count: 0.,
+      whereSize: 0.,
+      size: 0.,
+      pendingCount: 0,
+      pendingTimerRef: %raw(`null`),
+    }
+    state.storageLoadStats->Dict.set(key, stat)
+    stat
+  }
+}
+
+let startStorageLoad = (state: t, ~storage, ~operation) => {
+  let stat = state->getStorageLoadStat(~storage, ~operation)
+  if stat.pendingCount === 0 {
+    stat.pendingTimerRef = state.clock->Clock.readTimeRef
+  }
+  stat.pendingCount = stat.pendingCount + 1
+  state.clock->Clock.readTimeRef
+}
+
+let endStorageLoad = (state: t, timerRef, ~storage, ~operation, ~whereSize, ~size) => {
+  let stat = state->getStorageLoadStat(~storage, ~operation)
+  stat.pendingCount = stat.pendingCount - 1
+  if stat.pendingCount === 0 {
+    stat.seconds = stat.seconds +. state.clock->Clock.secondsSince(stat.pendingTimerRef)
+  }
+  stat.secondsTotal = stat.secondsTotal +. state.clock->Clock.secondsSince(timerRef)
+  stat.count = stat.count +. 1.
+  stat.whereSize = stat.whereSize +. whereSize->Int.toFloat
+  stat.size = stat.size +. size->Int.toFloat
+}
+
+let recordStorageWrite = (state: t, ~storage, ~timeSeconds) => {
+  let stat = switch state.storageWriteStats->Utils.Dict.dangerouslyGetNonOption(storage) {
+  | Some(stat) => stat
+  | None =>
+    let stat: storageWriteStat = {storage, seconds: 0., count: 0}
+    state.storageWriteStats->Dict.set(storage, stat)
+    stat
+  }
+  stat.seconds = stat.seconds +. timeSeconds
+  stat.count = stat.count + 1
+}
+
+let recordHistoryPrune = (state: t, ~entityName, ~timeSeconds) => {
+  let stat = switch state.historyPruneStats->Utils.Dict.dangerouslyGetNonOption(entityName) {
+  | Some(stat) => stat
+  | None =>
+    let stat: historyPruneStat = {seconds: 0., count: 0}
+    state.historyPruneStats->Dict.set(entityName, stat)
+    stat
+  }
+  stat.seconds = stat.seconds +. timeSeconds
+  stat.count = stat.count + 1
+}
+
+let recordRollbackSuccess = (state: t, ~timeSeconds, ~rollbackedProcessedEvents) => {
+  state.rollbackSeconds = state.rollbackSeconds +. timeSeconds
+  state.rollbackCount = state.rollbackCount + 1
+  state.rollbackEventsCount = state.rollbackEventsCount +. rollbackedProcessedEvents
+}
+
+// --- Store domain operations. ---
+
+// Queue a processed batch for writing and advance the processing frontier.
+let queueProcessedBatch = (state: t, ~batch: Batch.t) => {
+  state.processedBatches->Array.push(batch)->ignore
+  state.processedFrontier = Frontier.mergeMax(
+    state.processedFrontier,
+    batch->Batch.checkpointFrontier,
+  )
+}
+
+// Take the leading run of queued batches sharing a history policy as one merged
+// batch, leaving the rest queued for the next write. Caller guarantees the queue
+// is non-empty.
+let drainBatchRun = (state: t): Batch.t => {
+  let all = state.processedBatches
+  let history = (all->Array.getUnsafe(0)).history
+
+  let rest = []
+  let progressedChainsById = Dict.make()
+  let totalBatchSize = ref(0)
+  let items = []
+  let checkpointIds = []
+  let checkpointChainIds = []
+  let checkpointBlockNumbers = []
+  let checkpointBlockHashes = []
+  let checkpointItemsCount = []
+  let checkpointEventsProcessed = []
+  let registeredAddresses = []
+  all->Array.forEach(batch => {
+    // Once one batch lands in rest, all later ones follow it, preserving order.
+    if rest->Utils.Array.isEmpty && batch.history == history {
+      batch.progressedChainsById->Utils.Dict.forEachWithKey((chainAfterBatch, key) =>
+        progressedChainsById->Dict.set(key, chainAfterBatch)
+      )
+      totalBatchSize := totalBatchSize.contents + batch.totalBatchSize
+      items->Array.pushMany(batch.items)
+      checkpointIds->Array.pushMany(batch.checkpointIds)
+      checkpointChainIds->Array.pushMany(batch.checkpointChainIds)
+      checkpointBlockNumbers->Array.pushMany(batch.checkpointBlockNumbers)
+      checkpointBlockHashes->Array.pushMany(batch.checkpointBlockHashes)
+      checkpointItemsCount->Array.pushMany(batch.checkpointItemsCount)
+      checkpointEventsProcessed->Array.pushMany(batch.checkpointEventsProcessed)
+      registeredAddresses->Array.pushMany(batch.registeredAddresses)
+    } else {
+      rest->Array.push(batch)
+    }
+  })
+  state.processedBatches = rest
+
+  {
+    totalBatchSize: totalBatchSize.contents,
+    items,
+    progressedChainsById,
+    history,
+    checkpointIds,
+    checkpointChainIds,
+    checkpointBlockNumbers,
+    checkpointBlockHashes,
+    checkpointItemsCount,
+    checkpointEventsProcessed,
+    registeredAddresses,
+    // Read already: a run is drained from batches that were processed.
+  }
+}
+
+let pendingRollback = (state: t): option<Persistence.rollback> => state.rollback
+
+// Take the pending rollback diff to write, clearing it from the store.
+let takeRollback = (state: t): option<Persistence.rollback> => {
+  let rollback = state.rollback
+  state.rollback = None
+  rollback
+}
+
+// Advance the committed (durably persisted) frontier after a successful write.
+// Written rows leave the buffer only once the transaction that holds them has
+// committed. A failed write keeps them, and re-inserting a row the database
+// already has is a no-op. Rows staged while the write was in flight belong to
+// later checkpoints — ids only ever grow — so this can't drop one unwritten.
+let markCommitted = (state: t, ~writtenFrontier) => {
+  state.committedFrontier = Frontier.mergeMax(state.committedFrontier, writtenFrontier)
+}
+
+// Reset the in-memory tables and arm the rollback diff that the next write
+// commits. The diff ids start from the committed frontier — a rollback that
+// supersedes an unwritten one takes over its ids along with its rows. A sibling
+// the rollback leaves alone gets no diff row: burning an id on it would leave a
+// hole in its sequence.
+let beginRollbackDiff = (
+  state: t,
+  ~floors: RollbackFloors.t,
+  ~progressedChains: array<InternalTable.Chains.progressedChain>,
+  ~rolledBackAddresses,
+): Frontier.t => {
+  let diffFrontier = {
+    let cursor =
+      state.config.checkpointSequence->CheckpointSequence.cursor(~frontier=state.committedFrontier)
+    floors.checkpointBounds.byChain
+    ->Frontier.chainIds
+    ->Array.map(chainId => (chainId, cursor->CheckpointSequence.next(~chainId)))
+    ->Frontier.fromEntries
+  }
+  state.processedFrontier = Frontier.mergeMax(state.processedFrontier, diffFrontier)
+  let perChainEntities = state.config.userEntities->EntityTables.perChain
+  state.entities = EntityTables.make(state.config.userEntities->EntityTables.crossChain)
+  state->chainStates->Utils.Dict.forEach(cs => cs->ChainState.resetEntities(~perChainEntities))
+  state.effectState->EffectState.resetForRollback
+  // The address store reports only what each rollback killed, and never
+  // re-reports a registration it already tombstoned. A rollback that lands
+  // before the previous one has been written must therefore carry the earlier
+  // keys too, or their rows outlive every rollback that could delete them.
+  let rolledBackAddresses = switch state.rollback {
+  | Some({rolledBackAddresses: pending}) => pending->Array.concat(rolledBackAddresses)
+  | None => rolledBackAddresses
+  }
+  // Same for the chains: this rollback recomputes progress from the checkpoints,
+  // so a chain the pending diff already moved can land on exactly the block it
+  // is now at and go unreported here. Its stored progress still needs
+  // correcting, so the pending rows carry over — this rollback's row for a
+  // chain wins, being the later reading of the same chain state.
+  let progressedChains = switch state.rollback {
+  | Some({progressedChains: pending}) =>
+    let byChainId = Dict.make()
+    pending->Array.forEach(chain => byChainId->ChainId.Dict.set(chain.chainId, chain))
+    progressedChains->Array.forEach(chain => byChainId->ChainId.Dict.set(chain.chainId, chain))
+    byChainId->Dict.valuesToArray
+  | None => progressedChains
+  }
+  state.rollback = Some({
+    diffFrontier,
+    diffCheckpoints: diffFrontier
+    ->Frontier.entries
+    ->Array.map(((chainId, checkpointId)): InternalTable.Checkpoints.diffCheckpoint => {
+      chainId,
+      checkpointId,
+      blockNumber: state->getChainState(~chainId)->ChainState.committedProgressBlockNumber,
+    }),
+    floors,
+    progressedChains,
+    rolledBackAddresses,
+  })
+  diffFrontier
+}
+
+// Stop the write loop and surface the failure; the error itself goes to onError.
+let recordWriteFailure = (state: t, exn) => {
+  state.hasFailedWrite = true
+  state.onError(
+    exn->ErrorHandling.make(~logger=state.logger, ~msg="Failed writing batch to the database"),
+  )
+}
+
+// Ends the write loop as a failure does, with nothing to report: whatever
+// stopped the indexer has said why.
+let abandonWrites = (state: t) => state.hasFailedWrite = true
+
+let waitingOnDatabase = (state: t) => state.waitingOnDatabase
+let waitForDatabase = async (state: t, wait) => {
+  state.waitingOnDatabase = state.waitingOnDatabase + 1
+  switch await wait {
+  | () => state.waitingOnDatabase = state.waitingOnDatabase - 1
+  | exception exn =>
+    state.waitingOnDatabase = state.waitingOnDatabase - 1
+    throw(exn)
+  }
+}
+
+let beginWriteFiber = (state: t, fiber) => state.writeFiber = Some(fiber)
+let endWriteFiber = (state: t) => state.writeFiber = None
+
+let beginFinalizeFiber = (state: t, fiber) => state.finalizeFiber = Some(fiber)
+let endFinalizeFiber = (state: t) => state.finalizeFiber = None
+
+// Resolve and clear everyone waiting on a commit so they can re-evaluate.
+let wakeCommitWaiters = (state: t) => {
+  let waiters = state.commitWaiters
+  state.commitWaiters = []
+  waiters->Array.forEach(resolve => resolve())
+}
+
+let addCommitWaiter = (state: t, resolve) => state.commitWaiters->Array.push(resolve)->ignore
+
+let metaFieldsEqual = (a: InternalTable.Chains.metaFields, b: InternalTable.Chains.metaFields) =>
+  a.firstEventBlockNumber == b.firstEventBlockNumber &&
+  a.latestFetchedBlockNumber == b.latestFetchedBlockNumber &&
+  a.isHyperSync == b.isHyperSync &&
+  // Date is boxed; compare epoch ms.
+  a.timestampCaughtUpToHeadOrEndblock->Null.toOption->Option.map(Date.getTime) ==
+    b.timestampCaughtUpToHeadOrEndblock->Null.toOption->Option.map(Date.getTime)
+
+// Stage per-chain metadata, dirtying only on a real change so restages are no-ops.
+let stageChainMeta = (state: t, chainsData: dict<InternalTable.Chains.metaFields>) =>
+  chainsData->Utils.Dict.forEachWithKey((meta, chainId) => {
+    let changed = switch state.chainMeta->Utils.Dict.dangerouslyGetNonOption(chainId) {
+    | Some(prev) => !metaFieldsEqual(meta, prev)
+    | None => true
+    }
+    if changed {
+      state.chainMeta->Dict.set(chainId, meta)
+      state.chainMetaDirty = true
+    }
+  })
+
+// Take a snapshot of staged metadata to write, clearing the dirty flag. A restage
+// during the in-flight write re-dirties it and is rewritten next iteration.
+let takeChainMetaSnapshot = (state: t): option<dict<InternalTable.Chains.metaFields>> =>
+  if state.chainMetaDirty {
+    state.chainMetaDirty = false
+    Some(state.chainMeta->Utils.Dict.shallowCopy)
+  } else {
+    None
+  }

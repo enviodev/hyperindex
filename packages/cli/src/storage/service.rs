@@ -19,10 +19,10 @@ use super::types::{
     Bounds, ChainMeta, Frontier, ProgressDiff, ResumedChain, Sequence, StoredConfig,
 };
 use super::{AddChain, Holding, Initialize, Resume, Resumed, Store};
-use crate::clickhouse;
 use crate::entity_filter::Condition;
-use crate::postgres;
-use crate::postgres::indexes::{Coverage, Purpose};
+use crate::storage::clickhouse;
+use crate::storage::postgres;
+use crate::storage::postgres::indexes::{Coverage, Purpose};
 
 pub(crate) struct Storage {
     pub schema: Arc<Schema>,

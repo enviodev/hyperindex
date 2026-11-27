@@ -278,37 +278,41 @@ let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) 
 // A response is trusted only after its page has proved that it is
 // internally coherent. `requiredBlockNumbers` is used by getBlockHashes to
 // reject a response that simply omitted one of the requested hashes.
+// A page that contradicts itself: the same block with two hashes, or a
+// requested hash missing.
+type inconsistency = {
+  method: string,
+  blockNumber: option<int>,
+  storedHash: option<string>,
+  receivedHash: option<string>,
+  missingBlockNumbers: array<int>,
+}
+
 let validateResponsePage = (
   ~method: string,
   ~page: BufferPage.t,
   ~requiredBlockNumbers: array<int>=[],
-) => {
+): option<inconsistency> =>
   switch page->BufferPage.responseConflict->Null.toOption {
   | Some({blockNumber, storedHash, receivedHash}) =>
-    throw(
-      Source.InconsistentResponse({
-        method,
-        blockNumber: Some(blockNumber),
-        storedHash: Some(storedHash),
-        receivedHash: Some(receivedHash),
-        missingBlockNumbers: [],
-      }),
-    )
+    Some({
+      method,
+      blockNumber: Some(blockNumber),
+      storedHash: Some(storedHash),
+      receivedHash: Some(receivedHash),
+      missingBlockNumbers: [],
+    })
   | None =>
-    let missingBlockNumbers = page->BufferPage.missingHashes(requiredBlockNumbers)
-    if missingBlockNumbers->Array.length > 0 {
-      throw(
-        Source.InconsistentResponse({
-          method,
-          blockNumber: None,
-          storedHash: None,
-          receivedHash: None,
-          missingBlockNumbers,
-        }),
-      )
+    switch page->BufferPage.missingHashes(requiredBlockNumbers) {
+    | [] => None
+    | missingBlockNumbers =>
+      Some({method, blockNumber: None, storedHash: None, receivedHash: None, missingBlockNumbers})
     }
   }
-}
+
+// The provider's own words about a failure, logged as an error object so a
+// log line shows its message the same way whichever source it came from.
+let causeError = (cause: string) => JsError.make(cause)
 
 let onReorg = (sourceManager: t) => {
   sourceManager.sourcesState->Array.forEach(({source}) => {
@@ -816,12 +820,11 @@ let retryInconsistentResponse = async (
   ~retry,
   ~isRealtime,
   ~logger: Logger.t,
-  ~method: string,
-  ~err: exn,
+  ~inconsistency: inconsistency,
   ~excludedSources=?,
 ) => {
   let backoffMillis = retry->retryBackoffMillis
-  let msg = `Received a partial indicator of a possible reorg from the ${sourceState.source.name} source while fetching ${method}. Retrying the request to better identify whether a reorg happened.`
+  let msg = `Received a partial indicator of a possible reorg from the ${sourceState.source.name} source while fetching ${inconsistency.method}. Retrying the request to better identify whether a reorg happened.`
   let (level, msg) = stalledLog(
     ~retry,
     ~warnAfter=2,
@@ -832,10 +835,10 @@ let retryInconsistentResponse = async (
     level,
     msg,
     ~params={
-      "method": method,
+      "method": inconsistency.method,
       "retry": retry,
       "backOffMilliseconds": backoffMillis,
-      "err": err->Utils.prettifyExn,
+      "err": inconsistency,
     },
   )
   // Before the backoff, not after: local state may point at an orphaned chain,
@@ -862,10 +865,9 @@ let retryFailedPage = async (
   ~isRealtime,
   ~logger: Logger.t,
   ~msg: string,
-  ~attemptedToBlock: int,
   ~backoffMillis: int,
   ~minBackoffMillis=0,
-  ~err: option<exn>,
+  ~cause: option<string>,
   ~excludedSources=?,
 ) => {
   let (level, msg) = stalledLog(
@@ -878,10 +880,9 @@ let retryFailedPage = async (
     level,
     msg,
     ~params={
-      "toBlock": attemptedToBlock,
       "backOffMilliseconds": backoffMillis,
       "retry": retry,
-      "err": err->Option.map(Utils.prettifyExn),
+      "err": cause->Option.map(causeError),
     },
   )
   await sourceManager->backoffBeforeRetry(
@@ -1186,36 +1187,55 @@ let executeQuery = async (
       "retry": retry,
     })
 
-    try {
-      let response = await source.getItemsOrThrow(
-        ~fromBlock=query.fromBlock,
-        ~toBlock,
-        ~addressSet=query.addresses,
-        ~reorgableFrom,
-        ~partitionId=query.partitionId,
-        ~knownHeight,
-        ~selection=query.selection->FetchState.narrowSelectionToRange(~toBlock),
-        ~retry,
-        ~logger,
-      )
-      sourceState->recordRequestStats(response.requestStats)
-      validateResponsePage(~method="getItems", ~page=response.page)
-      sourceState->markAnswered
+    let startedAt = Performance.now()
+    let outcome = switch await source.getItems(
+      ~fromBlock=query.fromBlock,
+      ~toBlock,
+      ~addressSet=query.addresses,
+      ~reorgableFrom,
+      ~partitionId=query.partitionId,
+      ~knownHeight,
+      ~selection=query.selection->FetchState.narrowSelectionToRange(~toBlock),
+      ~retry,
+    ) {
+    | outcome => outcome
+    | exception exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to fetch block Range")
+    }
+    sourceState->recordRequestStats(outcome.requestStats)
+    switch outcome.result {
+    | Ok({page, latestFetchedBlockNumber, knownHeight: reportedHeight}) =>
+      switch validateResponsePage(~method="getItems", ~page) {
+      | Some(inconsistency) =>
+        await sourceManager->retryInconsistentResponse(
+          sourceState,
+          ~retry,
+          ~isRealtime,
+          ~logger,
+          ~inconsistency,
+          ~excludedSources=?excludedSourcesRef.contents,
+        )
+        retryRef := retryRef.contents + 1
+      | None =>
+        sourceState->markAnswered
+        // A height reported with the page is fresh for exactly this source, so
+        // during a long backfill (when nothing is waiting on the feed) it keeps
+        // the per-source envio_source_known_height current — and if a wait is
+        // in flight, a height learned this way can settle it.
+        reportedHeight->Option.forEach(height => sourceState.feed->HeightFeed.recordHeight(height))
+        responseRef :=
+          Some({
+            Source.page,
+            latestFetchedBlockNumber,
+            knownHeight: reportedHeight->Option.getOr(knownHeight),
+            totalTimeElapsed: startedAt->Performance.secondsSince,
+          })
+      }
 
-      // The response carries a fresh height for exactly this source, so during a
-      // long backfill (when nothing is waiting on the feed) it keeps the
-      // per-source envio_source_known_height current — and if a wait is in
-      // flight, a height learned this way can settle it.
-      sourceState.feed->HeightFeed.recordHeight(response.knownHeight)
-      responseRef := Some(response)
-    } catch {
-    | Source.RateLimited({resetMs, requestStats}) =>
-      sourceState->recordRequestStats(requestStats)
+    | Error(RateLimited({resetMs})) =>
       await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
-    | Source.SourceBehindHead({blockNumber, requestStats}) =>
-      sourceState->recordRequestStats(requestStats)
+    | Error(BehindHead({blockNumber})) =>
       await sourceManager->retryBehindHead(
         sourceState,
         ~retry,
@@ -1226,115 +1246,69 @@ let executeQuery = async (
       )
       retryRef := retryRef.contents + 1
 
-    | Source.InconsistentResponse(_) as err =>
-      await sourceManager->retryInconsistentResponse(
+    | Error(Unusable({message, ?blockNumber})) =>
+      // Several partitions can fail on the same source at once; only the one
+      // that disables it reports why.
+      if sourceManager->disableSource(sourceState) {
+        sourceManager.disableReason = Some(message)
+        logger->Logger.error(message, ~params={"blockNumber": blockNumber})
+      }
+      retryRef := 0
+
+    // A suggestion that doesn't narrow the range asks for the query that just
+    // failed. Retrying it unchanged and without a wait makes no progress and
+    // never counts against the source, so pace it like any other failure and
+    // let the schedule move on to one that can answer.
+    | Error(NarrowRange({toBlock, attemptedToBlock})) if toBlock >= attemptedToBlock =>
+      await sourceManager->retryFailedPage(
         sourceState,
         ~retry,
         ~isRealtime,
         ~logger,
-        ~method="getItems",
-        ~err,
+        ~msg=`The ${source.name} source rejected the block range and suggested #${toBlock->Int.toString}, which is no narrower than the #${attemptedToBlock->Int.toString} it just refused.`,
+        ~backoffMillis=retry->retryBackoffMillis,
+        ~minBackoffMillis=minRecoverableBackoffMillis,
+        ~cause=None,
         ~excludedSources=?excludedSourcesRef.contents,
       )
       retryRef := retryRef.contents + 1
 
-    | Source.GetItemsError(error) =>
-      // A page that ends in a retry still made requests; count them, as the
-      // rate-limit and behind-head arms above do.
-      sourceState->recordRequestStats(error->Source.getItemsErrorRequestStats)
-      switch error {
-      | UnsupportedSelection(_)
-      | FailedGettingFieldSelection(_) => {
-          // These errors are impossible to recover, so we disable the source
-          // so it's not attempted anymore
-          let notAlreadyDisabled = sourceManager->disableSource(sourceState)
+    | Error(NarrowRange({toBlock, attemptedToBlock})) =>
+      logger->Logger.trace(
+        "Failed getting data for the block range. Immediately retrying with the suggested block range from response.",
+        ~params={"toBlock": attemptedToBlock, "suggestedToBlock": toBlock},
+      )
+      toBlockRef := Some(toBlock)
+      // The next attempt asks a strictly smaller question, so it starts a
+      // fresh schedule rather than continuing this one.
+      retryRef := 0
 
-          // In case there are multiple partitions
-          // failing at the same time. Log only once
-          if notAlreadyDisabled {
-            switch error {
-            | UnsupportedSelection({message}) =>
-              sourceManager.disableReason = Some(message)
-              logger->Logger.error(message)
-            | FailedGettingFieldSelection({?exn, message, blockNumber}) =>
-              sourceManager.disableReason = Some(message)
-              logger->Logger.error(
-                message,
-                ~params={"err": exn->Option.map(Utils.prettifyExn), "blockNumber": blockNumber},
-              )
-            | _ => ()
-            }
-          }
-
-          retryRef := 0
-        }
-      // A suggestion that doesn't narrow the range asks for the query that just
-      // failed. Retrying it unchanged and without a wait makes no progress and
-      // never counts against the source, so pace it like any other failure and
-      // let the schedule move on to one that can answer.
-      | FailedGettingItems({?exn, attemptedToBlock, retry: WithSuggestedToBlock({toBlock})})
-        if toBlock >= attemptedToBlock =>
-        await sourceManager->retryFailedPage(
-          sourceState,
-          ~retry,
-          ~isRealtime,
-          ~logger,
-          ~msg=`The ${source.name} source rejected the block range and suggested #${toBlock->Int.toString}, which is no narrower than the #${attemptedToBlock->Int.toString} it just refused.`,
-          ~attemptedToBlock,
-          ~backoffMillis=retry->retryBackoffMillis,
-          ~minBackoffMillis=minRecoverableBackoffMillis,
-          ~err=exn,
-          ~excludedSources=?excludedSourcesRef.contents,
-        )
-        retryRef := retryRef.contents + 1
-
-      | FailedGettingItems({attemptedToBlock, retry: WithSuggestedToBlock({toBlock})}) =>
-        logger->Logger.trace(
-          "Failed getting data for the block range. Immediately retrying with the suggested block range from response.",
-          ~params={"toBlock": attemptedToBlock, "suggestedToBlock": toBlock},
-        )
-        toBlockRef := Some(toBlock)
-        // The next attempt asks a strictly smaller question, so it starts a
-        // fresh schedule rather than continuing this one.
-        retryRef := 0
-      | FailedGettingItems({?exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
-        // Not marked failed - the source isn't broken, the query just can't work on it
-        let excludedSources = switch excludedSourcesRef.contents {
-        | Some(s) => s
-        | None =>
-          let s = Utils.Set.make()
-          excludedSourcesRef := Some(s)
-          s
-        }
-        excludedSources->Utils.Set.add(sourceState)->ignore
-
-        logger->Logger.warn(
-          message ++ " - Attempting another source",
-          ~params={"toBlock": attemptedToBlock, "err": exn->Option.map(Utils.prettifyExn)},
-        )
-        retryRef := 0
-
-      | FailedGettingItems({
-          ?exn,
-          attemptedToBlock,
-          retry: WithBackoff({message, backoffMillis}),
-        }) =>
-        await sourceManager->retryFailedPage(
-          sourceState,
-          ~retry,
-          ~isRealtime,
-          ~logger,
-          ~msg=message,
-          ~attemptedToBlock,
-          ~backoffMillis,
-          ~err=exn,
-          ~excludedSources=?excludedSourcesRef.contents,
-        )
-        retryRef := retryRef.contents + 1
+    | Error(WrongSourceForQuery({message})) =>
+      // Not marked failed: the source isn't broken, the query just can't work
+      // on it.
+      let excludedSources = switch excludedSourcesRef.contents {
+      | Some(s) => s
+      | None =>
+        let s = Utils.Set.make()
+        excludedSourcesRef := Some(s)
+        s
       }
+      excludedSources->Utils.Set.add(sourceState)->ignore
+      logger->Logger.warn(message ++ " - Attempting another source")
+      retryRef := 0
 
-    // TODO: Handle more error cases and hang/retry instead of throwing
-    | exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to fetch block Range")
+    | Error(Backoff({message, ?backoffMillis, ?cause})) =>
+      await sourceManager->retryFailedPage(
+        sourceState,
+        ~retry,
+        ~isRealtime,
+        ~logger,
+        ~msg=message,
+        ~backoffMillis=backoffMillis->Option.getOr(retry->retryBackoffMillis),
+        ~cause,
+        ~excludedSources=?excludedSourcesRef.contents,
+      )
+      retryRef := retryRef.contents + 1
     }
   }
 
@@ -1344,11 +1318,20 @@ let executeQuery = async (
 let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isRealtime: bool) => {
   let responseRef = ref(None)
   let retryRef = ref(0)
+  let cannotReadHashes = Utils.Set.make()
+  sourceManager.sourcesState->Array.forEach(sourceState =>
+    if sourceState.source.getBlockHashes->Option.isNone {
+      cannotReadHashes->Utils.Set.add(sourceState)->ignore
+    }
+  )
 
   while responseRef.contents->Option.isNone {
-    let sourceState = switch sourceManager->getNextSource(~isRealtime) {
-    | Some(s) => s
-    | None =>
+    let (sourceState, getBlockHashes) = switch sourceManager->getNextSource(
+      ~isRealtime,
+      ~excludedSources=cannotReadHashes,
+    ) {
+    | Some({source: {getBlockHashes: Some(getBlockHashes)}} as s) => (s, getBlockHashes)
+    | _ =>
       let logger = sourceManager.logger
       %raw(`null`)->ErrorHandling.mkLogAndRaise(
         ~logger,
@@ -1365,43 +1348,42 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       "retry": retry,
     })
 
-    try {
-      let res = await source.getBlockHashes(~blockNumbers, ~logger)
-      sourceState->recordRequestStats(res.requestStats)
-      switch res.result {
-      | Ok(data) =>
-        validateResponsePage(
-          ~method="getBlockHashes",
-          ~page=data,
-          ~requiredBlockNumbers=blockNumbers,
+    let outcome = switch await getBlockHashes(blockNumbers) {
+    | outcome => outcome
+    | exception exn =>
+      exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to fetch block hashes")
+    }
+    sourceState->recordRequestStats(outcome.requestStats)
+    switch outcome.result {
+    | Ok(page) =>
+      switch validateResponsePage(
+        ~method="getBlockHashes",
+        ~page,
+        ~requiredBlockNumbers=blockNumbers,
+      ) {
+      | Some(inconsistency) =>
+        await sourceManager->retryInconsistentResponse(
+          sourceState,
+          ~retry,
+          ~isRealtime,
+          ~logger,
+          ~inconsistency,
         )
+        retryRef := retryRef.contents + 1
+      | None =>
         sourceState->markAnswered
-        responseRef := Some(data)
-      | Error(exn) => throw(exn)
+        responseRef := Some(page)
       }
-    } catch {
-    // A failure arrives as `res.result`, whose `res.requestStats` is already
-    // recorded above, so the stats the error carries are not recorded again.
-    | Source.RateLimited({resetMs}) =>
+
+    | Error(RateLimited({resetMs})) =>
       await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
-    | Source.SourceBehindHead({blockNumber}) =>
+    | Error(BehindHead({blockNumber})) =>
       await sourceManager->retryBehindHead(sourceState, ~retry, ~isRealtime, ~logger, ~blockNumber)
       retryRef := retryRef.contents + 1
 
-    | Source.InconsistentResponse(_) as err =>
-      await sourceManager->retryInconsistentResponse(
-        sourceState,
-        ~retry,
-        ~isRealtime,
-        ~logger,
-        ~method="getBlockHashes",
-        ~err,
-      )
-      retryRef := retryRef.contents + 1
-
-    | exn =>
+    | Error((Backoff(_) | NarrowRange(_) | WrongSourceForQuery(_) | Unusable(_)) as failure) =>
       let backoffMillis = retry->retryBackoffMillis
       let level = retry >= 4 ? #warn : #trace
       logger->Logger.logAt(
@@ -1410,7 +1392,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
         ~params={
           "retry": retry,
           "backOffMilliseconds": backoffMillis,
-          "err": exn->Utils.prettifyExn,
+          "failure": failure,
         },
       )
       await sourceManager->backoffBeforeRetry(
