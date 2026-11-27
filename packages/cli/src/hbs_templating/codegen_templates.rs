@@ -46,7 +46,7 @@ fn indent(code: &str) -> String {
 // ============== Template Types ==============
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct GraphQlEnumTypeTemplate {
+pub(crate) struct GraphQlEnumTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<CapitalizedOptions>,
 }
@@ -168,7 +168,7 @@ fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct EntityParamTypeTemplate {
+pub(crate) struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
     #[serde(rename = "res_type")]
     pub field_type: TypeIdent,
@@ -218,7 +218,7 @@ pub struct DerivedFieldTemplate {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct CompositeIndexFieldTemplate {
+pub(crate) struct CompositeIndexFieldTemplate {
     pub field_name: String,
     pub direction: String,
 }
@@ -233,7 +233,7 @@ impl CompositeIndexFieldTemplate {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct EntityRecordTypeTemplate {
+pub(crate) struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub type_code: String,
     pub get_where_filter_code: String,
@@ -344,7 +344,7 @@ impl EntityRecordTypeTemplate {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct EventMod {
+pub(crate) struct EventMod {
     pub event_name: String,
     pub data_type: String,
     pub event_filter_type: String,
@@ -477,7 +477,7 @@ type whereParams = {where_params_type}
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct EventTemplate {
+pub(crate) struct EventTemplate {
     pub name: String,
     pub module_code: String,
 }
@@ -485,7 +485,7 @@ pub struct EventTemplate {
 impl EventTemplate {
     const EVENT_FILTER_TYPE_STUB: &'static str = "{}";
 
-    pub fn generate_event_filter_type(params: &[EventParam]) -> String {
+    pub(crate) fn generate_event_filter_type(params: &[EventParam]) -> String {
         let field_rows = params
             .iter()
             .filter(|param| param.indexed)
@@ -510,7 +510,7 @@ impl EventTemplate {
         format!("{{{field_rows}}}")
     }
 
-    pub fn from_fuel_supply_event(
+    pub(crate) fn from_fuel_supply_event(
         config_event: &system_config::Event,
         all_ecosystem_fields: Option<FieldSelection>,
         contract_name: &CapitalizedOptions,
@@ -531,7 +531,7 @@ impl EventTemplate {
         }
     }
 
-    pub fn from_fuel_transfer_event(
+    pub(crate) fn from_fuel_transfer_event(
         config_event: &system_config::Event,
         all_ecosystem_fields: Option<FieldSelection>,
         contract_name: &CapitalizedOptions,
@@ -552,7 +552,7 @@ impl EventTemplate {
         }
     }
 
-    pub fn from_config_event(
+    pub(crate) fn from_config_event(
         config_event: &system_config::Event,
         all_ecosystem_fields: Option<FieldSelection>,
         contract_name: &CapitalizedOptions,
@@ -665,7 +665,7 @@ impl EventTemplate {
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
-pub struct ContractTemplate {
+pub(crate) struct ContractTemplate {
     pub name: CapitalizedOptions,
     pub codegen_events: Vec<EventTemplate>,
     pub module_code: String,
@@ -711,7 +711,7 @@ impl ContractTemplate {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct PerNetworkContractEventTemplate {
+pub(crate) struct PerNetworkContractEventTemplate {
     pub name: String,
 }
 
@@ -724,7 +724,7 @@ impl PerNetworkContractEventTemplate {
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
-pub struct PerNetworkContractTemplate {
+pub(crate) struct PerNetworkContractTemplate {
     name: CapitalizedOptions,
     addresses: Vec<EthAddress>,
     events: Vec<PerNetworkContractEventTemplate>,
@@ -779,7 +779,7 @@ impl NetworkTemplate {
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
-pub struct NetworkConfigTemplate {
+pub(crate) struct NetworkConfigTemplate {
     network_config: NetworkTemplate,
     codegen_contracts: Vec<PerNetworkContractTemplate>,
 }
@@ -931,7 +931,7 @@ struct SelectedFieldTemplate {
     ts_type: String,
 }
 
-pub struct ProjectTemplate {
+pub(crate) struct ProjectTemplate {
     /// Read by chain-config unit tests in this module. Not used by the
     /// production codegen flow, hence the dead-code allowance.
     #[allow(dead_code)]
@@ -957,17 +957,17 @@ fn write_if_changed(path: &std::path::Path, contents: &str) -> std::io::Result<(
 impl ProjectTemplate {
     /// The generated `.envio/types.d.ts` contents (the `declare module "envio"`
     /// augmentation binding this config's chains/contracts/entities/enums).
-    pub fn indexer_types_dts(&self) -> &str {
+    pub(crate) fn indexer_types_dts(&self) -> &str {
         &self.envio_types_dts
     }
 
     /// The generated `Indexer.res` contents (the project's ReScript surface).
     /// `None` for SVM, which has no ReScript surface.
-    pub fn indexer_code(&self) -> Option<&str> {
+    pub(crate) fn indexer_code(&self) -> Option<&str> {
         self.indexer_code.as_deref()
     }
 
-    pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
+    pub(crate) fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
         // 1. `.envio/types.d.ts` — augments `envio` with project-derived
         //    chains/contracts/entities/enums.
         std::fs::create_dir_all(&project_paths.envio_dir)
@@ -1860,7 +1860,7 @@ type testIndexer = {{
         Ok(indexer_code)
     }
 
-    pub fn from_config(cfg: &SystemConfig) -> Result<Self> {
+    pub(crate) fn from_config(cfg: &SystemConfig) -> Result<Self> {
         // Compute all available fields for the ecosystem (EVM has all block/tx fields,
         // Fuel has fixed fields). Used for generating deprecated S.never markers.
         let all_ecosystem_fields = match cfg.get_ecosystem() {

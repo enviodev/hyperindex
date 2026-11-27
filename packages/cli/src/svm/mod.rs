@@ -1,1 +1,1 @@
-pub mod pubkey;
+pub(crate) mod pubkey;

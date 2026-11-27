@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::fs;
 
-pub fn is_valid_folder_name(name: &str) -> bool {
+pub(crate) fn is_valid_folder_name(name: &str) -> bool {
     // Disallow invalid characters in folder names.
     let invalid_chars = ['/', '\\', ':', '*', '?', '"', '\'', '<', '>', '|'];
     if name.chars().any(|c| invalid_chars.contains(&c)) {
@@ -23,7 +23,9 @@ pub fn is_valid_folder_name(name: &str) -> bool {
 }
 
 // todo: consider returning invalid rather than error ?
-pub fn is_valid_foldername_inquire_validator(name: &str) -> Result<Validation, CustomUserError> {
+pub(crate) fn is_valid_foldername_inquire_validator(
+    name: &str,
+) -> Result<Validation, CustomUserError> {
     if !is_valid_folder_name(name) {
         Ok(Validation::Invalid(
             "Invalid folder name. The folder name cannot contain any of the following special \
@@ -35,11 +37,11 @@ pub fn is_valid_foldername_inquire_validator(name: &str) -> Result<Validation, C
     }
 }
 
-pub fn is_directory_new(directory: &str) -> bool {
+pub(crate) fn is_directory_new(directory: &str) -> bool {
     !(fs::metadata(directory).is_ok() && directory != DEFAULT_PROJECT_ROOT_PATH)
 }
 
-pub fn is_directory_new_validator(directory: &str) -> Result<Validation, CustomUserError> {
+pub(crate) fn is_directory_new_validator(directory: &str) -> Result<Validation, CustomUserError> {
     if !is_directory_new(directory) {
         Ok(Validation::Invalid(
             format!(
@@ -54,7 +56,7 @@ pub fn is_directory_new_validator(directory: &str) -> Result<Validation, CustomU
 }
 
 #[derive(Clone)]
-pub struct UniqueValueValidator<T> {
+pub(crate) struct UniqueValueValidator<T> {
     other_values: Vec<T>,
 }
 
@@ -71,12 +73,12 @@ impl<T: Clone + Display + PartialEq> CustomTypeValidator<T> for UniqueValueValid
 }
 
 impl<T> UniqueValueValidator<T> {
-    pub fn new(other_values: Vec<T>) -> UniqueValueValidator<T> {
+    pub(crate) fn new(other_values: Vec<T>) -> UniqueValueValidator<T> {
         Self { other_values }
     }
 }
 
-pub fn contains_no_whitespace_validator(s: &str) -> Result<Validation, CustomUserError> {
+pub(crate) fn contains_no_whitespace_validator(s: &str) -> Result<Validation, CustomUserError> {
     if s.contains(char::is_whitespace) {
         Ok(Validation::Invalid(
             "Invalid input cannot contain spaces".into(),
@@ -86,7 +88,9 @@ pub fn contains_no_whitespace_validator(s: &str) -> Result<Validation, CustomUse
     }
 }
 
-pub fn is_only_alpha_numeric_characters_validator(s: &str) -> Result<Validation, CustomUserError> {
+pub(crate) fn is_only_alpha_numeric_characters_validator(
+    s: &str,
+) -> Result<Validation, CustomUserError> {
     if !s.chars().all(|s| s.is_ascii_alphanumeric()) {
         Ok(Validation::Invalid(
             "Invalid input, must use alpha-numeric characters".into(),
@@ -96,7 +100,7 @@ pub fn is_only_alpha_numeric_characters_validator(s: &str) -> Result<Validation,
     }
 }
 
-pub fn first_char_is_alphabet_validator(s: &str) -> Result<Validation, CustomUserError> {
+pub(crate) fn first_char_is_alphabet_validator(s: &str) -> Result<Validation, CustomUserError> {
     match s.chars().next() {
         Some(c) if c.is_ascii_alphabetic() => Ok(Validation::Valid),
         _ => Ok(Validation::Invalid(
@@ -143,7 +147,7 @@ fn are_events_equivalent(event1: &AlloyEvent, event2: &AlloyEvent) -> bool {
             })
 }
 
-pub fn filter_duplicate_events(
+pub(crate) fn filter_duplicate_events(
     events: BTreeMap<String, Vec<AlloyEvent>>,
 ) -> BTreeMap<String, Vec<AlloyEvent>> {
     let mut filtered_events: BTreeMap<String, Vec<AlloyEvent>> = BTreeMap::new();

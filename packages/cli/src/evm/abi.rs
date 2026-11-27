@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 
 #[derive(Deserialize)]
 #[serde(untagged)]
-pub enum AbiOrNestedAbi {
+pub(crate) enum AbiOrNestedAbi {
     Abi(JsonAbi),
     // This is a case for Hardhat or Foundry generated ABI files
     NestedAbi { abi: JsonAbi },
@@ -206,7 +206,7 @@ fn explain(source: Option<&str>, text: &str, err: &serde_json::Error) -> anyhow:
 /// Reads an ABI, filling in what its writer left out. `source` names the file
 /// it came from, and is what an unreadable entry is reported against; an ABI
 /// with no file behind it passes `None`.
-pub fn parse(source: Option<&str>, text: &str) -> Result<AbiOrNestedAbi> {
+pub(crate) fn parse(source: Option<&str>, text: &str) -> Result<AbiOrNestedAbi> {
     let err = match serde_json::from_str::<AbiOrNestedAbi>(text) {
         Ok(abi) => return Ok(abi),
         Err(err) => err,

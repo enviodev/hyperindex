@@ -45,7 +45,7 @@ use crate::storage::{
     AddChain, Batch, Failure, Handoff, Initialize, Resumed, RollbackWrite, WriteError,
 };
 
-pub struct Settings {
+pub(crate) struct Settings {
     pub pg_schema: String,
     /// Only for the GRANT the schema is created with.
     pub pg_user: String,
@@ -74,7 +74,7 @@ impl ColumnSpec {
 /// A table the storage writes, and how a staged batch's columns reach it. An
 /// insert binds the spec's leading columns, one per source it is given, so the
 /// staged fields lead and what the table fills itself trails.
-pub struct Table {
+pub(crate) struct Table {
     pub spec: TableSpec,
     /// The staged fields, in the order a batch lays them out.
     fields: Vec<Field>,
@@ -103,7 +103,7 @@ impl Table {
         }
     }
 
-    pub fn raw_events() -> Self {
+    pub(crate) fn raw_events() -> Self {
         Self::internal(
             RAW_EVENTS_TABLE,
             raw_event_fields(),
@@ -112,7 +112,7 @@ impl Table {
         )
     }
 
-    pub fn effect_cache(name: &str) -> Self {
+    pub(crate) fn effect_cache(name: &str) -> Self {
         Self::internal(name, effect_cache_fields(), Vec::new(), false)
     }
 
@@ -196,7 +196,7 @@ impl Table {
         })
     }
 
-    pub fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         &self.spec.table_name
     }
 
@@ -276,7 +276,7 @@ fn execute<'a>(
     })
 }
 
-pub struct Storage {
+pub(crate) struct Storage {
     pub client: PgClient,
     settings: Settings,
     schema: Arc<Schema>,
@@ -340,7 +340,7 @@ fn settle<T>(outcomes: Vec<std::result::Result<T, Failure>>) -> std::result::Res
 }
 
 impl Storage {
-    pub fn new(
+    pub(crate) fn new(
         client: PgClient,
         settings: Settings,
         schema: Arc<Schema>,
@@ -379,7 +379,7 @@ impl Storage {
         self.schema.chain_id_mode
     }
 
-    pub fn entity_table(&self, index: usize) -> Option<&Arc<Table>> {
+    pub(crate) fn entity_table(&self, index: usize) -> Option<&Arc<Table>> {
         self.entities.get(index).and_then(Option::as_ref)
     }
 
@@ -388,7 +388,7 @@ impl Storage {
             .ok_or_else(|| anyhow!("\"{}\" is not stored in Postgres", entity.name))
     }
 
-    pub fn effect_cache_table(&self, name: &str) -> Arc<Table> {
+    pub(crate) fn effect_cache_table(&self, name: &str) -> Arc<Table> {
         self.caches
             .lock()
             .unwrap()
@@ -444,13 +444,13 @@ impl Storage {
             .any(|name| name == CHAINS_TABLE || name == "event_sync_state")
     }
 
-    pub async fn is_initialized(&self) -> Result<bool> {
+    pub(crate) async fn is_initialized(&self) -> Result<bool> {
         Ok(Self::has_indexer_tables(&self.table_names().await?))
     }
 
     /// Whether the schema is empty, refusing one that holds anything but an
     /// indexer's tables: initializing drops it.
-    pub async fn check_schema_for_initialize(&self) -> Result<bool> {
+    pub(crate) async fn check_schema_for_initialize(&self) -> Result<bool> {
         let names = self.table_names().await?;
         if !names.is_empty() && !Self::has_indexer_tables(&names) {
             bail!(
@@ -474,7 +474,7 @@ impl Storage {
     /// Only tables, keys, views and chain rows. The schema's read indexes make
     /// backfill writes far dearer, so they come later, from
     /// `finalizeBackfill`.
-    pub async fn initialize(
+    pub(crate) async fn initialize(
         &self,
         input: &Initialize,
         instance: &str,
@@ -587,7 +587,7 @@ impl Storage {
 
     /// Brings a chain the schema doesn't have yet: its partitions, its config
     /// addresses and its row. Only one process ever adds a given chain.
-    pub async fn add_chain(&self, input: &AddChain) -> Result<()> {
+    pub(crate) async fn add_chain(&self, input: &AddChain) -> Result<()> {
         let transaction = self.client.begin().await?;
         let outcome = async {
             for partition in self.create_partitions(&[input.chain.id]) {
@@ -607,7 +607,7 @@ impl Storage {
     }
 
     /// None for a schema an older envio built, which keeps none.
-    pub async fn instance(&self) -> Result<Option<String>> {
+    pub(crate) async fn instance(&self) -> Result<Option<String>> {
         match self
             .client
             .query(&internal::read_instance(self.schema()), &[])
@@ -622,7 +622,7 @@ impl Storage {
 
     /// The record a resume is checked against. A chain's config addresses are
     /// checked by the process that resumes it, from the rows it reads anyway.
-    pub async fn read_stored_config(&self) -> Result<StoredConfig> {
+    pub(crate) async fn read_stored_config(&self) -> Result<StoredConfig> {
         let schema = self.schema();
         let (read_info, read_contracts) = (
             internal::read_info(schema),
@@ -671,7 +671,7 @@ impl Storage {
 
     /// Each chain's frontier as committed: the checkpoint its rows are readable
     /// up to.
-    pub async fn read_frontier(&self) -> Result<Frontier> {
+    pub(crate) async fn read_frontier(&self) -> Result<Frontier> {
         let (rows, _) = self
             .client
             .query(&internal::read_frontier(self.schema()), &[])
@@ -683,7 +683,7 @@ impl Storage {
 
     /// Where each of the chains stands, without anything a process indexing
     /// them needs besides.
-    pub async fn read_chain_progress(&self, chain_ids: &[i64]) -> Result<Vec<ResumedChain>> {
+    pub(crate) async fn read_chain_progress(&self, chain_ids: &[i64]) -> Result<Vec<ResumedChain>> {
         let (rows, _) = self
             .client
             .query(
@@ -713,7 +713,7 @@ impl Storage {
     /// Everything a process indexing the chains starts from, and nothing of
     /// the chains it doesn't: a sibling process reads its own, and a table of
     /// tens of millions of addresses costs every process that reads it whole.
-    pub async fn resume(&self, chain_ids: &[i64]) -> Result<Resumed> {
+    pub(crate) async fn resume(&self, chain_ids: &[i64]) -> Result<Resumed> {
         let schema = self.schema();
         let (read_addresses, read_checkpoints) = (
             internal::read_addresses_of_chains(schema),
@@ -745,7 +745,7 @@ impl Storage {
         })
     }
 
-    pub async fn set_chain_meta(&self, chains: &[ChainMeta]) -> Result<()> {
+    pub(crate) async fn set_chain_meta(&self, chains: &[ChainMeta]) -> Result<()> {
         let sql = internal::set_meta(self.schema());
         let params = chains.iter().map(meta_params).collect::<Vec<_>>();
         let updates = params
@@ -786,7 +786,7 @@ impl Storage {
     /// stamped only once every one is verified, so a crash either leaves it
     /// unset and the retry finds the indexes built, or commits readiness the
     /// schema backs.
-    pub async fn finalize_backfill(&self, chain_ids: &[i64], ready_at: f64) -> Result<()> {
+    pub(crate) async fn finalize_backfill(&self, chain_ids: &[i64], ready_at: f64) -> Result<()> {
         let start = std::time::Instant::now();
         let built = self
             .indexes
@@ -805,7 +805,7 @@ impl Storage {
     }
 
     /// Every index the schema promises for the given chains.
-    pub fn schema_indexes(&self, chain_ids: &[i64]) -> Vec<IndexDefinition> {
+    pub(crate) fn schema_indexes(&self, chain_ids: &[i64]) -> Vec<IndexDefinition> {
         schema_indexes::schema_indexes(&self.schema, self.settings.isolated.then_some(chain_ids))
     }
 
@@ -814,7 +814,7 @@ impl Storage {
     /// per-chain entity's query carries the chain, so it is planned against
     /// that chain's partition, which an index on the parent covers by
     /// cascading.
-    pub fn query_indexes(
+    pub(crate) fn query_indexes(
         &self,
         entity: &Entity,
         chain_id: Option<i64>,
@@ -840,7 +840,7 @@ impl Storage {
             .collect()
     }
 
-    pub async fn prune_checkpoints(&self, bounds: &Bounds) -> Result<()> {
+    pub(crate) async fn prune_checkpoints(&self, bounds: &Bounds) -> Result<()> {
         self.client
             .execute(
                 &internal::prune_checkpoints(self.schema(), bounds.sequence)?,
@@ -850,7 +850,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn prune_history(&self, entity: &Entity, bounds: &Bounds) -> Result<()> {
+    pub(crate) async fn prune_history(&self, entity: &Entity, bounds: &Bounds) -> Result<()> {
         let entity = self.entity_table_or_err(entity)?.entity_history()?;
         self.client
             .execute(
@@ -861,7 +861,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn rollback_target_checkpoint(
+    pub(crate) async fn rollback_target_checkpoint(
         &self,
         chain_id: i64,
         block_number: i32,
@@ -879,7 +879,7 @@ impl Storage {
         rows.first().map(|row| cell(row, 0)).transpose()
     }
 
-    pub async fn lowest_checkpoint(&self, chain_id: Option<i64>) -> Result<Option<i64>> {
+    pub(crate) async fn lowest_checkpoint(&self, chain_id: Option<i64>) -> Result<Option<i64>> {
         let params = chain_id
             .map(|chain_id| Param::Text(chain_id.to_string()))
             .into_iter()
@@ -894,7 +894,10 @@ impl Storage {
         rows.first().map(|row| cell(row, 0)).transpose()
     }
 
-    pub async fn rollback_progress_diff(&self, bounds: &Bounds) -> Result<Vec<ProgressDiff>> {
+    pub(crate) async fn rollback_progress_diff(
+        &self,
+        bounds: &Bounds,
+    ) -> Result<Vec<ProgressDiff>> {
         let (rows, _) = self
             .client
             .query(
@@ -914,7 +917,7 @@ impl Storage {
     }
 
     /// The ids a rollback removes, and the history rows it restores from.
-    pub async fn rollback_data(
+    pub(crate) async fn rollback_data(
         &self,
         entity: &Entity,
         bounds: &Bounds,
@@ -935,7 +938,7 @@ impl Storage {
 
     /// The effect caches the schema holds that `wanted` keeps, each with its
     /// row count. Only those are counted: a count is a scan of the table.
-    pub async fn effect_caches(
+    pub(crate) async fn effect_caches(
         &self,
         wanted: impl Fn(&EffectCache) -> bool,
     ) -> Result<Vec<StoredCache>> {
@@ -970,7 +973,7 @@ impl Storage {
             .collect()
     }
 
-    pub async fn upload_effect_cache(&self, files: &[CacheFile]) -> Result<()> {
+    pub(crate) async fn upload_effect_cache(&self, files: &[CacheFile]) -> Result<()> {
         let schema = self.schema();
         let uploads = files.iter().map(|file| async move {
             let table = self.effect_cache_table(&file.table);
@@ -992,7 +995,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn dump_effect_cache(&self, files: &[CacheFile]) -> Result<()> {
+    pub(crate) async fn dump_effect_cache(&self, files: &[CacheFile]) -> Result<()> {
         let schema = self.schema();
         let dumps = files.iter().map(|dump| {
             let sql = format!(
@@ -1011,7 +1014,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn load_where(
+    pub(crate) async fn load_where(
         &self,
         table_name: &str,
         conditions: Vec<Condition>,
@@ -1021,7 +1024,7 @@ impl Storage {
         into_result(&rows, &columns)
     }
 
-    pub async fn reset(&self) -> Result<()> {
+    pub(crate) async fn reset(&self) -> Result<()> {
         self.client
             .batch(&format!(
                 "DROP SCHEMA IF EXISTS \"{}\" CASCADE;",
@@ -1048,7 +1051,7 @@ impl Storage {
     /// COMMIT was in flight is `Uncertain`: the server may have committed before
     /// it went. Neither is one whose caches failed for another reason, which
     /// writing again would only repeat.
-    pub async fn write_batch(
+    pub(crate) async fn write_batch(
         &self,
         batch: &Batch,
         mut handoff: Handoff,
@@ -1525,7 +1528,7 @@ async fn missing_as_none<T>(read: impl Future<Output = Result<T>>) -> Result<Opt
 /// An array literal of already-rendered elements, each quoted: inside quotes
 /// only the quote and the backslash mean anything, so this doesn't have to
 /// know what the element type treats as special.
-pub fn array_literal<S: AsRef<str>>(elements: impl IntoIterator<Item = Option<S>>) -> Param {
+pub(crate) fn array_literal<S: AsRef<str>>(elements: impl IntoIterator<Item = Option<S>>) -> Param {
     let mut literal = String::from("{");
     for (index, element) in elements.into_iter().enumerate() {
         if index > 0 {

@@ -12,12 +12,12 @@ use crate::storage::types::{
     Sequence, CHANGE_COLUMN, CHECKPOINT_ID_COLUMN as CHECKPOINT_COLUMN, DELETE, SET,
 };
 
-pub const CHANGE_TYPE: &str = "ENVIO_HISTORY_CHANGE";
+pub(crate) const CHANGE_TYPE: &str = "ENVIO_HISTORY_CHANGE";
 
 /// The pieces a statement splices in to read its bound as `checkpoint_id`: a
 /// join for a select, a `USING` for a delete.
 #[derive(Debug)]
-pub struct Bounds {
+pub(crate) struct Bounds {
     pub join: String,
     pub using: String,
     pub using_match: String,
@@ -28,7 +28,7 @@ pub struct Bounds {
 /// own: nothing indexes the join, so the values only have to compare.
 const RELATION: &str = "unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, checkpoint_id)";
 
-pub fn bounds(
+pub(crate) fn bounds(
     sequence: Sequence,
     chain_id_column: Option<&str>,
     table_ref: &str,
@@ -58,7 +58,7 @@ pub fn bounds(
 
 /// An entity's history table, and what its statements need to know about the
 /// entity it follows.
-pub struct History {
+pub(crate) struct History {
     pub entity_table: String,
     pub history_table: String,
     /// The entity's own columns, in the order its table declares them.
@@ -70,7 +70,7 @@ pub struct History {
 }
 
 impl History {
-    pub fn key_columns(&self) -> Vec<String> {
+    pub(crate) fn key_columns(&self) -> Vec<String> {
         let mut keys = vec!["id".to_string()];
         keys.extend(self.chain_id_column.iter().cloned());
         keys
@@ -108,7 +108,7 @@ impl History {
     /// The newest row at or before the target per key, which `DISTINCT ON` with
     /// the matching `ORDER BY` picks. The `EXISTS` is what limits it to keys the
     /// rolled-back range actually touched.
-    pub fn pre_target_rows(&self, pg_schema: &str, sequence: Sequence) -> Result<String> {
+    pub(crate) fn pre_target_rows(&self, pg_schema: &str, sequence: Sequence) -> Result<String> {
         let table_ref = self.table_ref();
         let bounds = self.bounds(sequence, &table_ref)?;
         let keys = self.qualified(&self.key_columns());
@@ -136,7 +136,7 @@ impl History {
     ///
     /// A DELETE row at or before the target is not one of these: the restore
     /// query returns it, and what it means is decided there.
-    pub fn removed_ids(&self, pg_schema: &str, sequence: Sequence) -> Result<String> {
+    pub(crate) fn removed_ids(&self, pg_schema: &str, sequence: Sequence) -> Result<String> {
         let table_ref = self.table_ref();
         let bounds = self.bounds(sequence, &table_ref)?;
         Ok(format!(
@@ -159,7 +159,7 @@ impl History {
 
     /// Forgets everything after the target, which the rollback is about to
     /// write again.
-    pub fn rollback(&self, pg_schema: &str, sequence: Sequence) -> Result<String> {
+    pub(crate) fn rollback(&self, pg_schema: &str, sequence: Sequence) -> Result<String> {
         let table_ref = format!("\"{pg_schema}\".\"{}\"", self.history_table);
         let bounds = self.bounds(sequence, &table_ref)?;
         Ok(format!(
@@ -178,7 +178,7 @@ impl History {
     /// entity, which is part of the history key — a row keyed on a NULL chain
     /// would not be the row that was deleted — and which is bound as `$3` when
     /// the write names a chain.
-    pub fn insert_delete_rows(&self, pg_schema: &str, with_chain: bool) -> String {
+    pub(crate) fn insert_delete_rows(&self, pg_schema: &str, with_chain: bool) -> String {
         let chain_id_column = self.chain_id_column.as_deref().filter(|_| with_chain);
         let mut names = self.data_columns.clone();
         names.push(CHECKPOINT_COLUMN.to_string());
@@ -216,7 +216,7 @@ impl History {
     /// The chain is written into the statement rather than bound: this scans
     /// the entity table, which is partitioned by it, and Postgres only prunes a
     /// cached plan on a constant.
-    pub fn backfill(&self, pg_schema: &str, chain_id: Option<i64>) -> String {
+    pub(crate) fn backfill(&self, pg_schema: &str, chain_id: Option<i64>) -> String {
         let history = format!("\"{pg_schema}\".\"{}\"", self.history_table);
         let chain_filter = match (&self.chain_id_column, chain_id) {
             (Some(column), Some(chain_id)) => format!(" AND e.\"{column}\" = {chain_id}"),
@@ -243,7 +243,7 @@ impl History {
 
     /// Deletes the entity rows of the `$1` ids. A per-chain entity's delete
     /// names its chain, written in for the same reason as the backfill's.
-    pub fn delete_entities(&self, pg_schema: &str, chain_id: Option<i64>) -> String {
+    pub(crate) fn delete_entities(&self, pg_schema: &str, chain_id: Option<i64>) -> String {
         let chain_filter = match (&self.chain_id_column, chain_id) {
             (Some(column), Some(chain_id)) => format!(" AND \"{column}\" = {chain_id}"),
             _ => String::new(),
@@ -267,7 +267,7 @@ impl History {
     /// Per-chain bounds are joined in rather than run as a statement each: the
     /// anchors aggregate the whole table however narrow the bound is, and
     /// history carries no index to narrow the scan with.
-    pub fn prune(&self, pg_schema: &str, sequence: Sequence) -> Result<String> {
+    pub(crate) fn prune(&self, pg_schema: &str, sequence: Sequence) -> Result<String> {
         let history = format!("\"{pg_schema}\".\"{}\"", self.history_table);
         let bounds = self.bounds(sequence, "t")?;
         let keys = self
@@ -298,7 +298,7 @@ impl History {
     }
 }
 
-pub fn quoted(columns: &[String]) -> String {
+pub(crate) fn quoted(columns: &[String]) -> String {
     columns
         .iter()
         .map(|column| format!("\"{column}\""))

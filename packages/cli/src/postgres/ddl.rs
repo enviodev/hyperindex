@@ -7,7 +7,7 @@ use crate::storage::schema::FieldType;
 /// database name — a `column_name_format` rename is resolved before the spec is
 /// built, so nothing here has to know the schema field it came from.
 #[derive(Clone)]
-pub struct ColumnSpec {
+pub(crate) struct ColumnSpec {
     pub name: String,
     pub field_type: FieldType,
     pub is_array: bool,
@@ -17,7 +17,7 @@ pub struct ColumnSpec {
 }
 
 #[derive(Clone)]
-pub struct TableSpec {
+pub(crate) struct TableSpec {
     pub table_name: String,
     pub columns: Vec<ColumnSpec>,
     /// Set for a per-chain entity, whose rows are split into one partition per
@@ -30,7 +30,7 @@ pub struct TableSpec {
 /// A column that carries a default takes it in place of `NOT NULL`: the default
 /// is what makes the column safe to omit, and the two were never emitted
 /// together.
-pub fn create_table_query(
+pub(crate) fn create_table_query(
     spec: &TableSpec,
     pg_schema: &str,
     is_numeric_array_as_text: bool,
@@ -87,7 +87,7 @@ pub fn create_table_query(
 }
 
 /// One chain's partition of a per-chain entity's table.
-pub fn create_partition_query(
+pub(crate) fn create_partition_query(
     pg_schema: &str,
     table_name: &str,
     partition_name: &str,

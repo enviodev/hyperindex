@@ -11,7 +11,7 @@ use crate::storage::schema::{iso_millis, Encoding};
 
 /// How a staged column's cells become text, beyond what their slot says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Render {
+pub(crate) enum Render {
     Plain,
     /// Milliseconds, which a timestamp column reads as an ISO instant.
     Date,
@@ -21,7 +21,7 @@ pub enum Render {
 }
 
 impl Render {
-    pub fn of(encoding: Encoding, element: Encoding) -> Self {
+    pub(crate) fn of(encoding: Encoding, element: Encoding) -> Self {
         match encoding {
             Encoding::Date => Render::Date,
             Encoding::List => Render::List(element),
@@ -31,7 +31,7 @@ impl Render {
 }
 
 /// Where one bound column's values come from.
-pub enum Source<'a> {
+pub(crate) enum Source<'a> {
     Staged {
         column: &'a Column,
         render: Render,
@@ -150,7 +150,7 @@ fn write_cell(into: &mut String, column: &Column, render: Render, row: usize) ->
 /// Each column becomes one array literal, built in a single pass: a cell is
 /// written where it will be read from rather than rendered to a string of its
 /// own first, which for a batch is one allocation instead of one per cell.
-pub fn unnest_params(sources: &[Source], rows: &[usize]) -> Result<Vec<Param>> {
+pub(crate) fn unnest_params(sources: &[Source], rows: &[usize]) -> Result<Vec<Param>> {
     sources
         .iter()
         .map(|source| {

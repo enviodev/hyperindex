@@ -100,7 +100,7 @@ pub(crate) fn map_i64<T: AsRef<[u8]>>(opt: &Option<T>) -> Result<Option<i64>> {
 }
 
 #[napi(object)]
-pub struct RollbackGuard {
+pub(crate) struct RollbackGuard {
     /// Block number of the last scanned block
     pub block_number: i64,
     /// Block timestamp of the last scanned block

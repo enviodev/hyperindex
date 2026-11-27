@@ -5,7 +5,7 @@ use polars_arrow::array::{BinaryArray, Int64Array, StaticArray, UInt64Array, UIn
 
 #[napi(object)]
 #[derive(Clone)]
-pub struct Block {
+pub(super) struct Block {
     pub id: String,
     pub height: i64,
     pub time: i64,

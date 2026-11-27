@@ -40,16 +40,16 @@ enum Coder {
     Enum(Vec<(String, Coder)>),
 }
 
-pub fn parse_abi(abi: &serde_json::Value) -> Result<UnifiedProgramABI> {
+pub(crate) fn parse_abi(abi: &serde_json::Value) -> Result<UnifiedProgramABI> {
     let program = ProgramABI::deserialize(abi).context("parse Fuel ABI")?;
     Ok(UnifiedProgramABI::from_counterpart(&program)?)
 }
 
 #[derive(Clone)]
-pub struct LogDecoder(Arc<Coder>);
+pub(crate) struct LogDecoder(Arc<Coder>);
 
 impl LogDecoder {
-    pub fn new(program: &UnifiedProgramABI, log_id: &str) -> Result<Self> {
+    pub(crate) fn new(program: &UnifiedProgramABI, log_id: &str) -> Result<Self> {
         let logged = program
             .logged_types
             .iter()
@@ -69,7 +69,7 @@ impl LogDecoder {
     /// the ABI's contract routinely lands here; the caller drops the receipt
     /// for this registration only, rather than failing the indexer on data
     /// it doesn't control.
-    pub fn decode(&self, data: &[u8]) -> Option<JsTape> {
+    pub(crate) fn decode(&self, data: &[u8]) -> Option<JsTape> {
         let mut input = Input {
             buf: data,
             zero_sized_budget: data.len() + ZERO_SIZED_BUDGET_SLACK,

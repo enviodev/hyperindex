@@ -1,21 +1,21 @@
-pub mod client;
-pub mod ddl;
-pub mod error;
-pub mod history;
-pub mod index_definition;
-pub mod index_row;
-pub mod indexes;
-pub mod insert;
-pub mod internal;
+pub(crate) mod client;
+pub(crate) mod ddl;
+pub(crate) mod error;
+pub(crate) mod history;
+pub(crate) mod index_definition;
+pub(crate) mod index_row;
+pub(crate) mod indexes;
+pub(crate) mod insert;
+pub(crate) mod internal;
 #[cfg(test)]
 pub(crate) mod live_tests;
 #[cfg(test)]
 mod network_tests;
-pub mod param;
-pub mod pg_type;
-pub mod rows;
-pub mod schema_indexes;
-pub mod select;
-pub mod storage;
+pub(crate) mod param;
+pub(crate) mod pg_type;
+pub(crate) mod rows;
+pub(crate) mod schema_indexes;
+pub(crate) mod select;
+pub(crate) mod storage;
 mod tls;
-pub mod write;
+pub(crate) mod write;

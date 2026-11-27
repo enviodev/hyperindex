@@ -2,7 +2,7 @@ use super::env_template;
 use crate::cli_args::init_config::{Language, PackageManager};
 
 /// `.github/workflows/test.yaml`, set up for the project's package manager.
-pub fn render_test_workflow(pm: PackageManager) -> String {
+pub(crate) fn render_test_workflow(pm: PackageManager) -> String {
     let setup = match pm {
         PackageManager::Pnpm => "      # Set up pnpm package manager
       # Update the version below if you need a different pnpm version
@@ -99,7 +99,7 @@ jobs:
 }
 
 #[derive(Debug, PartialEq)]
-pub struct InitTemplates {
+pub(crate) struct InitTemplates {
     project_name: String,
     is_rescript: bool,
     is_typescript: bool,
@@ -109,7 +109,7 @@ pub struct InitTemplates {
 }
 
 impl InitTemplates {
-    pub fn new(
+    pub(crate) fn new(
         project_name: String,
         lang: &Language,
         envio_version: String,
@@ -126,11 +126,11 @@ impl InitTemplates {
         }
     }
 
-    pub fn render_env(&self) -> String {
+    pub(crate) fn render_env(&self) -> String {
         env_template::render(&self.envio_api_token)
     }
 
-    pub fn render_package_json(&self) -> String {
+    pub(crate) fn render_package_json(&self) -> String {
         let mut out = String::new();
         out.push_str("{\n");
         out.push_str(&format!("  \"name\": \"{}\",\n", self.project_name));

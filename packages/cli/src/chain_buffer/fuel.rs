@@ -136,14 +136,14 @@ impl<'a> ReceiptView<'a> {
 /// selection mask and its column in the blocks table.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, VariantArray)]
 #[repr(i32)]
-pub enum FuelBlockField {
+pub(crate) enum FuelBlockField {
     Height = 0,
     Id = 1,
     Time = 2,
 }
 
 impl FuelBlockField {
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             FuelBlockField::Height => "height",
             FuelBlockField::Id => "id",

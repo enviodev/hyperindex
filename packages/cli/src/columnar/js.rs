@@ -34,7 +34,10 @@ fn lend<'env>(env: &'env Env, data: *mut u8, len: usize) -> napi::Result<ArrayBu
 
 /// Every buffer of `arena`, column by column, in the order the column's kind
 /// lays them out. The arena is in its filling phase from here on.
-pub fn expose<'env>(env: &'env Env, arena: &mut Arena) -> napi::Result<Vec<ArrayBuffer<'env>>> {
+pub(crate) fn expose<'env>(
+    env: &'env Env,
+    arena: &mut Arena,
+) -> napi::Result<Vec<ArrayBuffer<'env>>> {
     let mut buffers = Vec::new();
     for column in arena.columns.iter_mut() {
         for (data, len) in column.buffers() {
@@ -54,7 +57,7 @@ pub fn expose<'env>(env: &'env Env, arena: &mut Arena) -> napi::Result<Vec<Array
 /// it, and the error the caller sees is the one that says why. Nothing runs
 /// between the two: JavaScript is blocked in this call, so the moment where the
 /// old buffer describes a freed allocation is not one it can write in.
-pub fn grow<'env>(
+pub(crate) fn grow<'env>(
     env: &'env Env,
     arena: &mut Arena,
     column: u32,
@@ -77,7 +80,7 @@ pub fn grow<'env>(
 /// Does nothing for an arena that is already detached, which is the abort after
 /// a commit that detached everything and then failed to seal. Counting those
 /// buffers as missing would report the cleanup instead of the failure.
-pub fn detach_all(arena: &mut Arena, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
+pub(crate) fn detach_all(arena: &mut Arena, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
     if !arena.is_lent() {
         return Ok(());
     }
@@ -111,7 +114,7 @@ fn to_napi(err: anyhow::Error) -> napi::Error {
 /// Hands a filled arena's buffers to JavaScript to read from. The mirror of
 /// [`expose`]: the same memory, lent the other way round, and taken back by the
 /// same [`detach_all`].
-pub fn lend_for_reading<'env>(
+pub(crate) fn lend_for_reading<'env>(
     env: &'env Env,
     arena: &mut Arena,
 ) -> napi::Result<Vec<ArrayBuffer<'env>>> {
@@ -123,7 +126,7 @@ pub fn lend_for_reading<'env>(
 
 /// A batch lent to JavaScript to fill, and the names its columns are sealed
 /// under.
-pub struct Staged {
+pub(crate) struct Staged {
     pub names: Vec<String>,
     pub arena: Arena,
 }
@@ -131,14 +134,14 @@ pub struct Staged {
 /// The batches lent out, by handle, from `begin` until a store takes them to
 /// write.
 #[derive(Default)]
-pub struct Stages {
+pub(crate) struct Stages {
     batches: Mutex<HashMap<u32, Staged>>,
 }
 
 impl Stages {
     /// Lays out a batch and lends JavaScript its buffers, as
     /// `{ handle, buffers }`. Nothing may await between here and `commit`.
-    pub fn begin<'env>(
+    pub(crate) fn begin<'env>(
         &self,
         env: &'env Env,
         handle: u32,
@@ -161,11 +164,11 @@ impl Stages {
     }
 
     #[cfg(test)]
-    pub fn insert(&self, handle: u32, staged: Staged) {
+    pub(crate) fn insert(&self, handle: u32, staged: Staged) {
         self.batches.lock().unwrap().insert(handle, staged);
     }
 
-    pub fn grow<'env>(
+    pub(crate) fn grow<'env>(
         &self,
         env: &'env Env,
         handle: u32,
@@ -180,7 +183,7 @@ impl Stages {
 
     /// Ends the filling phase: every buffer is detached, so a view JavaScript
     /// kept throws rather than writing into memory Rust is about to read.
-    pub fn commit(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
+    pub(crate) fn commit(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
         let mut batches = self.batches.lock().unwrap();
         detach_or_abandon(&mut batches, handle, buffers)?;
         let staged = batches.get_mut(&handle).ok_or_else(|| unknown(handle))?;
@@ -191,7 +194,7 @@ impl Stages {
     /// buffers first. A batch that cannot hand them back is abandoned, which is
     /// safe, and the failure is returned for the caller to mention: the error
     /// that sent it here is the one worth throwing.
-    pub fn abort(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> Option<napi::Error> {
+    pub(crate) fn abort(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> Option<napi::Error> {
         let mut batches = self.batches.lock().unwrap();
         if !batches.contains_key(&handle) {
             return None;
@@ -203,7 +206,7 @@ impl Stages {
 
     /// Hands over a committed batch to be written. One that was never committed
     /// stays where it is, still lent out, for `abort` to take back.
-    pub fn take_sealed(&self, handle: u32) -> napi::Result<Staged> {
+    pub(crate) fn take_sealed(&self, handle: u32) -> napi::Result<Staged> {
         let mut batches = self.batches.lock().unwrap();
         if !batches
             .get(&handle)
@@ -220,7 +223,7 @@ impl Stages {
 
     /// How many batches are lent out or waiting to be written.
     #[cfg(test)]
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.batches.lock().unwrap().len()
     }
 }

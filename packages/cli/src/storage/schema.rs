@@ -141,27 +141,27 @@ impl Field {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Direction {
+pub(crate) enum Direction {
     Asc,
     Desc,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct IndexField {
+pub(crate) struct IndexField {
     /// The schema field, as `@index` names it.
     pub field: String,
     pub direction: Direction,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct CompositeIndex {
+pub(crate) struct CompositeIndex {
     pub fields: Vec<IndexField>,
     /// Schema fields the index carries without keying on them.
     pub include: Vec<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize)]
-pub struct DerivedFrom {
+pub(crate) struct DerivedFrom {
     #[serde(rename = "derivedFromEntity")]
     pub entity: String,
     #[serde(rename = "derivedFromField")]
@@ -170,7 +170,7 @@ pub struct DerivedFrom {
 
 #[derive(Clone, PartialEq, Eq, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ClickHouseOptions {
+pub(crate) struct ClickHouseOptions {
     pub partition_by: Option<String>,
     pub order_by: Option<Vec<String>>,
     pub ttl: Option<String>,
@@ -179,7 +179,7 @@ pub struct ClickHouseOptions {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize)]
-pub struct SkippingIndex {
+pub(crate) struct SkippingIndex {
     pub name: String,
     pub expr: String,
     #[serde(rename = "type")]
@@ -191,13 +191,13 @@ pub struct SkippingIndex {
 /// key, but no handler sees it: a batch's rows take it from the chain they
 /// were written for.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct ChainIdColumn {
+pub(crate) struct ChainIdColumn {
     pub pg_column: String,
     pub ch_column: String,
 }
 
 impl ChainIdColumn {
-    pub fn field(&self) -> Field {
+    pub(crate) fn field(&self) -> Field {
         Field {
             pg_column: self.pg_column.clone(),
             ch_column: self.ch_column.clone(),
@@ -207,13 +207,13 @@ impl ChainIdColumn {
     }
 }
 
-pub const CHAIN_ID_FIELD: &str = "chainId";
-pub const ID_FIELD: &str = "id";
+pub(crate) const CHAIN_ID_FIELD: &str = "chainId";
+pub(crate) const ID_FIELD: &str = "id";
 const HISTORY_TABLE_PREFIX: &str = "envio_history_";
 const MAX_PG_TABLE_NAME_LENGTH: usize = 63;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Entity {
+pub(crate) struct Entity {
     /// Its position in the config, which is how the runtime names it.
     pub index: usize,
     /// The schema's name for it, which its Postgres table and its ClickHouse
@@ -235,7 +235,7 @@ pub struct Entity {
 /// collapse two long names onto one. Cutting the readable half and keeping
 /// `unique_suffix` whole makes every generated name distinct by construction,
 /// so the suffix has to be something already unique to the table it names.
-pub fn fit_pg_table_name(full_name: &str, unique_suffix: &str) -> String {
+pub(crate) fn fit_pg_table_name(full_name: &str, unique_suffix: &str) -> String {
     if full_name.len() > MAX_PG_TABLE_NAME_LENGTH {
         let keep = MAX_PG_TABLE_NAME_LENGTH.saturating_sub(unique_suffix.len());
         let mut cut = keep.min(full_name.len());
@@ -249,7 +249,7 @@ pub fn fit_pg_table_name(full_name: &str, unique_suffix: &str) -> String {
 }
 
 impl Entity {
-    pub fn id(&self) -> Result<(usize, &Field)> {
+    pub(crate) fn id(&self) -> Result<(usize, &Field)> {
         self.fields
             .iter()
             .enumerate()
@@ -260,7 +260,7 @@ impl Entity {
     /// The Postgres column an index or a relationship names by its schema
     /// spelling: a declared field's, or the chain column envio appends to a
     /// per-chain entity.
-    pub fn pg_column(&self, schema_name: &str) -> Option<&str> {
+    pub(crate) fn pg_column(&self, schema_name: &str) -> Option<&str> {
         self.fields
             .iter()
             .find(|field| field.schema_name == schema_name)
@@ -279,7 +279,7 @@ impl Entity {
     /// name can never collide with the table another entity claims; past the
     /// identifier limit the entity index keeps what survives truncation
     /// unique.
-    pub fn partition_table_name(&self, chain_id: i64) -> String {
+    pub(crate) fn partition_table_name(&self, chain_id: i64) -> String {
         fit_pg_table_name(
             &format!("{}${chain_id}", self.name),
             &format!("${}${chain_id}", self.index),
@@ -288,7 +288,7 @@ impl Entity {
 }
 
 /// A Date's milliseconds as the ISO instant a timestamp column reads.
-pub fn iso_millis(ms: i64) -> String {
+pub(crate) fn iso_millis(ms: i64) -> String {
     let days = ms.div_euclid(86_400_000);
     let ms = ms.rem_euclid(86_400_000);
     // Days since 1970-01-01 to a civil date, via a 400-year era whose day
@@ -311,11 +311,11 @@ pub fn iso_millis(ms: i64) -> String {
     )
 }
 
-pub const RAW_EVENTS_TABLE: &str = "raw_events";
+pub(crate) const RAW_EVENTS_TABLE: &str = "raw_events";
 
 /// What a raw event row stores, in the order a staged batch lays it out. The
 /// `serial` key is the table's own.
-pub fn raw_event_fields() -> Vec<Field> {
+pub(crate) fn raw_event_fields() -> Vec<Field> {
     let field = Field::new;
     vec![
         field("chain_id", FieldType::ChainId),
@@ -333,7 +333,7 @@ pub fn raw_event_fields() -> Vec<Field> {
     ]
 }
 
-pub fn raw_events_key() -> Field {
+pub(crate) fn raw_events_key() -> Field {
     Field {
         is_nullable: true,
         is_primary_key: true,
@@ -342,7 +342,7 @@ pub fn raw_events_key() -> Field {
 }
 
 /// Every effect's cache keeps the same two columns, whatever its output.
-pub fn effect_cache_fields() -> Vec<Field> {
+pub(crate) fn effect_cache_fields() -> Vec<Field> {
     vec![
         Field {
             is_primary_key: true,
@@ -357,7 +357,7 @@ pub fn effect_cache_fields() -> Vec<Field> {
 
 /// `$` can't occur in a GraphQL entity name, so it marks where a truncated
 /// name stops and the index that keeps it unique begins.
-pub fn history_table_name(entity_name: &str, entity_index: usize) -> String {
+pub(crate) fn history_table_name(entity_name: &str, entity_index: usize) -> String {
     fit_pg_table_name(
         &format!("{HISTORY_TABLE_PREFIX}{entity_name}"),
         &format!("${entity_index}"),
@@ -365,7 +365,7 @@ pub fn history_table_name(entity_name: &str, entity_index: usize) -> String {
 }
 
 #[derive(Debug)]
-pub struct Schema {
+pub(crate) struct Schema {
     pub entities: Vec<Arc<Entity>>,
     pub enums: Vec<(String, Vec<String>)>,
     pub sequence: Sequence,
@@ -373,7 +373,7 @@ pub struct Schema {
 }
 
 impl Schema {
-    pub fn empty(chain_id_mode: ChainIdMode) -> Self {
+    pub(crate) fn empty(chain_id_mode: ChainIdMode) -> Self {
         Self {
             entities: Vec::new(),
             enums: Vec::new(),
@@ -382,7 +382,7 @@ impl Schema {
         }
     }
 
-    pub fn entity(&self, index: u32) -> Result<&Arc<Entity>> {
+    pub(crate) fn entity(&self, index: u32) -> Result<&Arc<Entity>> {
         self.entities
             .get(index as usize)
             .ok_or_else(|| anyhow!("The schema has no entity {index}"))
@@ -391,7 +391,7 @@ impl Schema {
     /// The entities, enums and storage settings of the config the CLI wrote,
     /// read the way the runtime reads them: whatever the CLI left out because
     /// it is the default is resolved here, to the same default.
-    pub fn from_config_json(json: &str) -> Result<Self> {
+    pub(crate) fn from_config_json(json: &str) -> Result<Self> {
         let config: ConfigJson =
             serde_json::from_str(json).context("Failed reading the config's entities")?;
         config.resolve()
@@ -664,10 +664,10 @@ impl PropertyJson {
 }
 
 #[cfg(test)]
-pub mod test_support {
+pub(crate) mod test_support {
     use super::*;
 
-    pub fn id() -> Field {
+    pub(crate) fn id() -> Field {
         Field {
             is_primary_key: true,
             ..Field::new(ID_FIELD, FieldType::String)
@@ -675,7 +675,7 @@ pub mod test_support {
     }
 
     /// An entity both stores keep, per-chain when `chain_id` names its column.
-    pub fn entity(name: &str, fields: Vec<Field>, chain_id: Option<&str>) -> Entity {
+    pub(crate) fn entity(name: &str, fields: Vec<Field>, chain_id: Option<&str>) -> Entity {
         Entity {
             index: 0,
             name: name.to_string(),

@@ -1,4 +1,4 @@
-pub fn number(value: f64) -> String {
+pub(super) fn number(value: f64) -> String {
     let rounded = value.round() as i64;
     let digits = rounded.unsigned_abs().to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
@@ -15,7 +15,7 @@ pub fn number(value: f64) -> String {
 }
 
 /// Below ten thousand in full, so a small count never reads as a rounded one.
-pub fn compact(value: f64) -> String {
+pub(super) fn compact(value: f64) -> String {
     if value.abs() < 10_000. {
         return number(value);
     }
@@ -33,7 +33,7 @@ pub fn compact(value: f64) -> String {
 /// The two largest units, the second padded so a ticking value keeps its
 /// width. Hours stay unbounded rather than rolling over into days, so a
 /// multi-day ETA reads as "50h 03m" instead of silently dropping the days.
-pub fn duration(ms: f64) -> String {
+pub(super) fn duration(ms: f64) -> String {
     let seconds = (ms / 1000.).floor().max(0.) as i64;
     let (hours, minutes, seconds) = (seconds / 3600, seconds % 3600 / 60, seconds % 60);
     if hours > 0 {
@@ -45,7 +45,7 @@ pub fn duration(ms: f64) -> String {
     }
 }
 
-pub fn home_relative(path: &str, home: &str) -> String {
+pub(super) fn home_relative(path: &str, home: &str) -> String {
     let home = home.trim_end_matches('/');
     match path.strip_prefix(home) {
         Some(rest) if !home.is_empty() && (rest.is_empty() || rest.starts_with('/')) => {

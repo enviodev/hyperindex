@@ -6,7 +6,7 @@ use napi_derive::napi;
 /// registration rather than matching nothing: account filters are compared as
 /// raw base58 text when instructions are routed.
 #[napi]
-pub fn is_svm_pubkey(value: String) -> bool {
+pub(crate) fn is_svm_pubkey(value: String) -> bool {
     value.parse::<Address>().is_ok()
 }
 

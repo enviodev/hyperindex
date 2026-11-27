@@ -10,7 +10,7 @@
 
 /// Whether a registration whose start block is `start_block` (`None` being
 /// unrestricted) accepts an item at `block_number`.
-pub fn has_started(start_block: Option<i64>, block_number: i64) -> bool {
+pub(crate) fn has_started(start_block: Option<i64>, block_number: i64) -> bool {
     match start_block {
         Some(start_block) => block_number >= start_block,
         None => true,

@@ -14,7 +14,7 @@ use crate::columnar::{Arena, Column, ColumnKind};
 
 /// How a change set is laid out: the entity's fields, the checkpoint each
 /// change was made at, and 1 for a change that deletes the entity.
-pub fn layout(entity: &Entity) -> (Vec<String>, Vec<ColumnKind>) {
+pub(crate) fn layout(entity: &Entity) -> (Vec<String>, Vec<ColumnKind>) {
     entity
         .fields
         .iter()
@@ -26,7 +26,7 @@ pub fn layout(entity: &Entity) -> (Vec<String>, Vec<ColumnKind>) {
         .unzip()
 }
 
-pub struct ChangeSet {
+pub(crate) struct ChangeSet {
     pub entity: Arc<Entity>,
     /// The scope's chain, for a per-chain entity.
     pub chain_id: Option<i64>,
@@ -39,14 +39,14 @@ pub struct ChangeSet {
 /// A row's id, as its column holds it. Two rows name the same entity exactly
 /// when these are equal.
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
-pub enum Key<'a> {
+pub(crate) enum Key<'a> {
     Bytes(&'a [u8]),
     Bits(u64),
 }
 
 /// The rows Postgres takes from a change set.
 #[derive(Debug, Default, PartialEq)]
-pub struct Projection {
+pub(crate) struct Projection {
     /// Each id's latest change, where it sets the entity.
     pub sets: Vec<usize>,
     /// Each id's latest change, where it deletes the entity.
@@ -60,7 +60,7 @@ pub struct Projection {
 }
 
 impl ChangeSet {
-    pub fn new(
+    pub(crate) fn new(
         entity: Arc<Entity>,
         chain_id: Option<i64>,
         keeps_history: bool,
@@ -91,35 +91,35 @@ impl ChangeSet {
         })
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.rows.rows()
     }
 
-    pub fn fields(&self) -> &[Column] {
+    pub(crate) fn fields(&self) -> &[Column] {
         &self.rows.columns()[..self.entity.fields.len()]
     }
 
-    pub fn id_index(&self) -> usize {
+    pub(crate) fn id_index(&self) -> usize {
         self.id
     }
 
-    pub fn id_column(&self) -> &Column {
+    pub(crate) fn id_column(&self) -> &Column {
         &self.rows.columns()[self.id]
     }
 
-    pub fn checkpoints(&self) -> &Column {
+    pub(crate) fn checkpoints(&self) -> &Column {
         &self.rows.columns()[self.entity.fields.len()]
     }
 
-    pub fn checkpoint(&self, row: usize) -> i64 {
+    pub(crate) fn checkpoint(&self, row: usize) -> i64 {
         self.checkpoints().i64_at(row)
     }
 
-    pub fn is_delete(&self, row: usize) -> bool {
+    pub(crate) fn is_delete(&self, row: usize) -> bool {
         self.rows.columns()[self.entity.fields.len() + 1].f64_at(row) != 0.0
     }
 
-    pub fn key(&self, row: usize) -> Key<'_> {
+    pub(crate) fn key(&self, row: usize) -> Key<'_> {
         let column = self.id_column();
         match column.kind() {
             ColumnKind::Text | ColumnKind::Bytes => Key::Bytes(column.bytes_at(row)),
@@ -132,7 +132,7 @@ impl ChangeSet {
     /// rollback's diff restores an id's latest state rather than changing it,
     /// so a change at `diff` is no history of its own, and the id it restored
     /// already has the history its backfill would copy.
-    pub fn project(&self, diff: Option<i64>) -> Projection {
+    pub(crate) fn project(&self, diff: Option<i64>) -> Projection {
         let mut latest: HashMap<Key<'_>, usize> = HashMap::with_capacity(self.len());
         let mut order = Vec::with_capacity(self.len());
         let mut restored = std::collections::HashSet::new();
@@ -168,17 +168,17 @@ impl ChangeSet {
 }
 
 #[cfg(test)]
-pub mod test_support {
+pub(crate) mod test_support {
     use super::*;
     use crate::columnar::ColumnSpec;
 
-    pub enum Change<'a> {
+    pub(crate) enum Change<'a> {
         Set(&'a [Option<&'a str>], i64),
         Delete(&'a str, i64),
     }
 
     /// A change set of an entity whose fields are all text.
-    pub fn change_set(
+    pub(crate) fn change_set(
         entity: Arc<Entity>,
         chain_id: Option<i64>,
         keeps_history: bool,

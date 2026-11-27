@@ -794,30 +794,30 @@ fn field_names<F: Copy>(variants: &[F], name: impl Fn(F) -> &'static str) -> Vec
 
 #[allow(dead_code)]
 #[napi]
-pub fn evm_block_field_names() -> Vec<String> {
+pub(crate) fn evm_block_field_names() -> Vec<String> {
     field_names(evm::EvmBlockField::VARIANTS, evm::EvmBlockField::name)
 }
 
 #[allow(dead_code)]
 #[napi]
-pub fn evm_transaction_field_names() -> Vec<String> {
+pub(crate) fn evm_transaction_field_names() -> Vec<String> {
     field_names(evm::EvmTxField::VARIANTS, evm::EvmTxField::name)
 }
 
 #[allow(dead_code)]
 #[napi]
-pub fn svm_block_field_names() -> Vec<String> {
+pub(crate) fn svm_block_field_names() -> Vec<String> {
     field_names(svm::SvmBlockField::VARIANTS, svm::SvmBlockField::name)
 }
 
 #[allow(dead_code)]
 #[napi]
-pub fn svm_transaction_field_names() -> Vec<String> {
+pub(crate) fn svm_transaction_field_names() -> Vec<String> {
     field_names(svm::SvmTxField::VARIANTS, svm::SvmTxField::name)
 }
 
 #[allow(dead_code)]
 #[napi]
-pub fn fuel_block_field_names() -> Vec<String> {
+pub(crate) fn fuel_block_field_names() -> Vec<String> {
     field_names(fuel::FuelBlockField::VARIANTS, fuel::FuelBlockField::name)
 }

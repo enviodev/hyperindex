@@ -7,7 +7,7 @@ use inquire::{
 
 //Copied from inquire's examples in repo
 #[derive(Clone, Default)]
-pub struct FilePathCompleter {
+pub(super) struct FilePathCompleter {
     input: String,
     paths: Vec<String>,
     lcp: String,

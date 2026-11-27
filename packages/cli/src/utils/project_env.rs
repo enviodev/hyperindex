@@ -8,20 +8,20 @@ use std::{
 /// environment wins, and anything unset there falls back to the project's
 /// `.env`. The file is read at most once, on the first miss.
 #[derive(Debug)]
-pub struct ProjectEnv {
+pub(crate) struct ProjectEnv {
     dotenv: OnceCell<EnvMap>,
     project_root: PathBuf,
 }
 
 impl ProjectEnv {
-    pub fn new(project_root: &Path) -> Self {
+    pub(crate) fn new(project_root: &Path) -> Self {
         ProjectEnv {
             dotenv: OnceCell::new(),
             project_root: PathBuf::from(project_root),
         }
     }
 
-    pub fn var(&self, name: &str) -> Option<String> {
+    pub(crate) fn var(&self, name: &str) -> Option<String> {
         if let Ok(val) = std::env::var(name) {
             return Some(val);
         }

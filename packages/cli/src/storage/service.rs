@@ -24,7 +24,7 @@ use crate::entity_filter::Condition;
 use crate::postgres;
 use crate::postgres::indexes::{Coverage, Purpose};
 
-pub struct Storage {
+pub(crate) struct Storage {
     pub schema: Arc<Schema>,
     pub postgres: Arc<postgres::storage::Storage>,
     pub clickhouse: Option<Arc<clickhouse::storage::Storage>>,
@@ -49,7 +49,7 @@ fn new_instance() -> String {
 impl Storage {
     /// The store an entity is read from: Postgres where it keeps one,
     /// ClickHouse otherwise.
-    pub fn home(&self, entity: &Entity) -> Result<Store> {
+    pub(crate) fn home(&self, entity: &Entity) -> Result<Store> {
         match (entity.postgres, &entity.clickhouse, &self.clickhouse) {
             (true, _, _) => Ok(Store::Postgres),
             (false, Some(_), Some(_)) => Ok(Store::ClickHouse),
@@ -66,7 +66,7 @@ impl Storage {
             .ok_or_else(|| anyhow!("No ClickHouse is configured"))
     }
 
-    pub async fn holding(&self) -> Result<Holding> {
+    pub(crate) async fn holding(&self) -> Result<Holding> {
         let built = match &self.clickhouse {
             Some(clickhouse) => clickhouse.instance().await?,
             None => None,
@@ -105,7 +105,7 @@ impl Storage {
     /// Postgres untouched. Its pairing record last, once Postgres committed:
     /// a ClickHouse built for a Postgres that then failed is left unpaired,
     /// which the next start sets up again.
-    pub async fn initialize(&self, input: Initialize) -> Result<()> {
+    pub(crate) async fn initialize(&self, input: Initialize) -> Result<()> {
         let is_empty_schema = self.postgres.check_schema_for_initialize().await?;
         if let Some(clickhouse) = &self.clickhouse {
             clickhouse.check_for_initialize().await?;
@@ -121,11 +121,11 @@ impl Storage {
         }
     }
 
-    pub async fn add_chain(&self, input: AddChain) -> Result<()> {
+    pub(crate) async fn add_chain(&self, input: AddChain) -> Result<()> {
         self.postgres.add_chain(&input).await
     }
 
-    pub async fn read_stored_config(&self) -> Result<StoredConfig> {
+    pub(crate) async fn read_stored_config(&self) -> Result<StoredConfig> {
         self.postgres.read_stored_config().await
     }
 
@@ -137,7 +137,7 @@ impl Storage {
     /// keeps. So with ClickHouse it lands on the last checkpoint below those
     /// Postgres keeps — every chain's under a shared counter, where one
     /// chain's rollback reverts them all.
-    pub async fn rollback_target_checkpoint(
+    pub(crate) async fn rollback_target_checkpoint(
         &self,
         chain_id: i64,
         block_number: i32,
@@ -157,13 +157,16 @@ impl Storage {
         clickhouse.last_checkpoint_below(chain_id, kept_from).await
     }
 
-    pub async fn rollback_progress_diff(&self, bounds: &Bounds) -> Result<Vec<ProgressDiff>> {
+    pub(crate) async fn rollback_progress_diff(
+        &self,
+        bounds: &Bounds,
+    ) -> Result<Vec<ProgressDiff>> {
         self.postgres.rollback_progress_diff(bounds).await
     }
 
     /// What the chains resume from. Only reads, so a resume refused on what it
     /// finds leaves every store as it was.
-    pub async fn resume(&self, chain_ids: &[i64]) -> Result<Resumed> {
+    pub(crate) async fn resume(&self, chain_ids: &[i64]) -> Result<Resumed> {
         self.postgres.resume(chain_ids).await
     }
 
@@ -176,7 +179,7 @@ impl Storage {
     /// Nothing holds other writers off between this check and the trim: it
     /// catches what they did before it, which is when a second indexer started
     /// on the same chains would be found.
-    pub async fn take_over_clickhouse(&self, committed: Frontier) -> Result<()> {
+    pub(crate) async fn take_over_clickhouse(&self, committed: Frontier) -> Result<()> {
         let Some(clickhouse) = &self.clickhouse else {
             return Ok(());
         };
@@ -202,27 +205,27 @@ impl Storage {
     }
 
     /// Postgres holds the chains' progress of record.
-    pub async fn read_chain_progress(&self, chain_ids: &[i64]) -> Result<Vec<ResumedChain>> {
+    pub(crate) async fn read_chain_progress(&self, chain_ids: &[i64]) -> Result<Vec<ResumedChain>> {
         self.postgres.read_chain_progress(chain_ids).await
     }
 
     /// Postgres holds the frontier of record; ClickHouse follows it.
-    pub async fn read_frontier(&self) -> Result<Frontier> {
+    pub(crate) async fn read_frontier(&self) -> Result<Frontier> {
         self.postgres.read_frontier().await
     }
 
-    pub async fn set_chain_meta(&self, chains: &[ChainMeta]) -> Result<()> {
+    pub(crate) async fn set_chain_meta(&self, chains: &[ChainMeta]) -> Result<()> {
         self.postgres.set_chain_meta(chains).await
     }
 
-    pub async fn finalize_backfill(&self, chain_ids: &[i64], ready_at: f64) -> Result<()> {
+    pub(crate) async fn finalize_backfill(&self, chain_ids: &[i64], ready_at: f64) -> Result<()> {
         self.postgres.finalize_backfill(chain_ids, ready_at).await
     }
 
     /// Restores whatever the schema promises and Postgres no longer has. A
     /// failed build is reported, and its queries run unindexed until the next
     /// restart.
-    pub async fn ensure_schema_indexes(&self, chain_ids: &[i64]) {
+    pub(crate) async fn ensure_schema_indexes(&self, chain_ids: &[i64]) {
         self.postgres
             .indexes
             .ensure(self.postgres.schema_indexes(chain_ids), Purpose::Schema)
@@ -232,7 +235,7 @@ impl Storage {
     /// The build a getWhere on `columns` still needs, if any. None when the
     /// catalog already covers them, which is every call but the first — and
     /// every call for an entity Postgres doesn't keep, which builds none.
-    pub fn ensure_query_indexes(
+    pub(crate) fn ensure_query_indexes(
         &self,
         entity: &Entity,
         chain_id: Option<i64>,
@@ -250,17 +253,17 @@ impl Storage {
         Some(async move { indexes.ensure(definitions, Purpose::Query).await })
     }
 
-    pub async fn prune_checkpoints(&self, bounds: &Bounds) -> Result<()> {
+    pub(crate) async fn prune_checkpoints(&self, bounds: &Bounds) -> Result<()> {
         self.postgres.prune_checkpoints(bounds).await
     }
 
     /// ClickHouse keeps every history row: its reads resolve the entities from
     /// them.
-    pub async fn prune_history(&self, entity: &Entity, bounds: &Bounds) -> Result<()> {
+    pub(crate) async fn prune_history(&self, entity: &Entity, bounds: &Bounds) -> Result<()> {
         self.postgres.prune_history(entity, bounds).await
     }
 
-    pub async fn load_where(
+    pub(crate) async fn load_where(
         &self,
         entity: &Entity,
         conditions: Vec<Condition>,
@@ -271,7 +274,7 @@ impl Storage {
         }
     }
 
-    pub async fn load_effect_cache(
+    pub(crate) async fn load_effect_cache(
         &self,
         table: &str,
         conditions: Vec<Condition>,
@@ -283,7 +286,7 @@ impl Storage {
     }
 
     /// The keys a rollback removes, and the rows it restores.
-    pub async fn rollback_data(
+    pub(crate) async fn rollback_data(
         &self,
         entity: &Entity,
         bounds: &Bounds,
@@ -295,19 +298,19 @@ impl Storage {
     }
 
     /// Every current row of an entity ClickHouse keeps.
-    pub async fn clickhouse_rows(&self, entity: &Entity) -> Result<ResultSet> {
+    pub(crate) async fn clickhouse_rows(&self, entity: &Entity) -> Result<ResultSet> {
         self.clickhouse()?.load_where(entity, Vec::new()).await
     }
 
     /// Every committed history row of an entity ClickHouse keeps.
-    pub async fn clickhouse_history(&self, entity: &Entity) -> Result<ResultSet> {
+    pub(crate) async fn clickhouse_history(&self, entity: &Entity) -> Result<ResultSet> {
         self.clickhouse()?.history(entity).await
     }
 
     /// Uploads the caches saved under `cache_dir`, then counts those serving
     /// the chains. A failed upload is reported, and the run goes on without
     /// them.
-    pub async fn upload_effect_cache(
+    pub(crate) async fn upload_effect_cache(
         &self,
         cache_dir: &Path,
         chain_ids: &[i64],
@@ -337,7 +340,11 @@ impl Storage {
     /// Saves every cache holding an output under `cache_dir`. Never fails: a
     /// dump that doesn't finish is reported and leaves the files it would
     /// replace.
-    pub async fn dump_effect_cache(&self, cache_dir: &Path, report: &(dyn Fn(CacheEvent) + Sync)) {
+    pub(crate) async fn dump_effect_cache(
+        &self,
+        cache_dir: &Path,
+        report: &(dyn Fn(CacheEvent) + Sync),
+    ) {
         let dumped = async {
             let caches = self
                 .postgres
@@ -371,7 +378,7 @@ impl Storage {
     /// ClickHouse first, and it refuses a database it may not empty before
     /// Postgres is touched. Failing after it, Postgres keeps data ClickHouse
     /// no longer holds, which the next start refuses until a reset finishes.
-    pub async fn reset(&self) -> Result<()> {
+    pub(crate) async fn reset(&self) -> Result<()> {
         if let Some(clickhouse) = &self.clickhouse {
             clickhouse.reset().await?;
         }
@@ -391,7 +398,7 @@ impl Storage {
     ///
     /// Never `Gated`: a store told not to commit is reported as the other
     /// store's failure.
-    pub async fn write_batch(
+    pub(crate) async fn write_batch(
         &self,
         batch: Batch,
     ) -> std::result::Result<Vec<(Store, f64)>, WriteError> {
@@ -469,7 +476,7 @@ impl Storage {
         outcome.map_err(WriteError::Failed)
     }
 
-    pub fn close(&self) {
+    pub(crate) fn close(&self) {
         self.postgres.client.close();
     }
 }

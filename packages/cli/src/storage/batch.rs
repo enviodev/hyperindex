@@ -8,7 +8,7 @@ use super::changes::ChangeSet;
 use super::types::{Addresses, Bounds, ChainMeta, Checkpoints, DiffCheckpoint, Frontier, Progress};
 use crate::columnar::Arena;
 
-pub struct RollbackWrite {
+pub(crate) struct RollbackWrite {
     pub bounds: Bounds,
     /// Where the rollback left each chain it moved.
     pub progress: Vec<Progress>,
@@ -18,7 +18,7 @@ pub struct RollbackWrite {
     pub diff_checkpoints: Vec<DiffCheckpoint>,
 }
 
-pub struct EffectCacheWrite {
+pub(crate) struct EffectCacheWrite {
     pub table: String,
     /// The first write to a cache creates its table.
     pub create: bool,
@@ -27,7 +27,7 @@ pub struct EffectCacheWrite {
 
 /// An empty list is nothing to write.
 #[derive(Default)]
-pub struct Batch {
+pub(crate) struct Batch {
     pub rollback: Option<RollbackWrite>,
     pub progress: Vec<Progress>,
     pub raw_events: Option<Arena>,
@@ -44,7 +44,7 @@ impl Batch {
     /// The checkpoint a rollback stamped a scope's diff with. A cross-chain
     /// scope exists only under one shared sequence, where the diff's ids were
     /// handed out in a single run and the scope's is the last of them.
-    pub fn diff_checkpoint(&self, chain_id: Option<i64>) -> Option<i64> {
+    pub(crate) fn diff_checkpoint(&self, chain_id: Option<i64>) -> Option<i64> {
         let diffs = &self.rollback.as_ref()?.diff_checkpoints;
         match chain_id {
             Some(chain_id) => diffs
@@ -57,7 +57,7 @@ impl Batch {
 
     /// The checkpoints ClickHouse maps its history rows to blocks with: the
     /// batch's, and the diff's a rollback wrote rows at.
-    pub fn checkpoints_with_diff(&self) -> Checkpoints {
+    pub(crate) fn checkpoints_with_diff(&self) -> Checkpoints {
         let mut checkpoints = self.checkpoints.clone();
         for diff in self
             .rollback

@@ -6,7 +6,7 @@ use super::ch_type::ChType;
 use crate::mock_http;
 use crate::storage::rows::{Cell, ReadKind};
 
-pub type StatementFn = dyn Fn(&str) -> (u16, String) + Send + Sync;
+pub(super) type StatementFn = dyn Fn(&str) -> (u16, String) + Send + Sync;
 
 #[derive(Default)]
 struct State {
@@ -30,21 +30,25 @@ struct State {
     keep_alive: Option<String>,
 }
 
-pub struct MockClickHouse {
+pub(super) struct MockClickHouse {
     pub url: String,
     state: Arc<Mutex<State>>,
 }
 
 impl MockClickHouse {
-    pub async fn start(reject_next: usize) -> Self {
+    pub(super) async fn start(reject_next: usize) -> Self {
         Self::rejecting_with(reject_next, "Code: 241. DB::Exception: mock rejection").await
     }
 
-    pub async fn rejecting_with(reject_next: usize, rejection: &str) -> Self {
+    pub(super) async fn rejecting_with(reject_next: usize, rejection: &str) -> Self {
         Self::rejecting_with_status(reject_next, 500, rejection).await
     }
 
-    pub async fn rejecting_with_status(reject_next: usize, status: u16, rejection: &str) -> Self {
+    pub(super) async fn rejecting_with_status(
+        reject_next: usize,
+        status: u16,
+        rejection: &str,
+    ) -> Self {
         Self::serving(State {
             reject_next,
             rejection: rejection.to_string(),
@@ -57,7 +61,7 @@ impl MockClickHouse {
     /// Records the next `n` insert bodies as accepted, then answers them with
     /// `rejection`. The case a timeout or unknown-status error is: the server
     /// took the rows and the client was told it did not.
-    pub async fn accepting_then_erroring(n: usize, rejection: &str) -> Self {
+    pub(super) async fn accepting_then_erroring(n: usize, rejection: &str) -> Self {
         Self::serving(State {
             accept_then_error: n,
             rejection: rejection.to_string(),
@@ -67,7 +71,7 @@ impl MockClickHouse {
         .await
     }
 
-    pub async fn answering_statements(statements: Arc<StatementFn>) -> Self {
+    pub(super) async fn answering_statements(statements: Arc<StatementFn>) -> Self {
         Self::serving(State {
             statements: Some(statements),
             ..Default::default()
@@ -75,7 +79,7 @@ impl MockClickHouse {
         .await
     }
 
-    pub async fn dropping_reads(n: usize, statements: Arc<StatementFn>) -> Self {
+    pub(super) async fn dropping_reads(n: usize, statements: Arc<StatementFn>) -> Self {
         Self::serving(State {
             statements: Some(statements),
             drop_next_reads: n,
@@ -84,7 +88,7 @@ impl MockClickHouse {
         .await
     }
 
-    pub async fn rejecting_reads(
+    pub(super) async fn rejecting_reads(
         n: usize,
         status: u16,
         rejection: &str,
@@ -116,7 +120,7 @@ impl MockClickHouse {
     /// Accepts connections and reads whatever is sent, but never answers —
     /// a server or load balancer that black-holes an established connection.
     /// Nothing short of a client-side timeout ends a request against this.
-    pub async fn start_unresponsive() -> Self {
+    pub(super) async fn start_unresponsive() -> Self {
         let mut held = Vec::new();
         let url = listening(move |stream| held.push(stream)).await;
         Self {
@@ -125,36 +129,36 @@ impl MockClickHouse {
         }
     }
 
-    pub fn accepted(&self) -> Vec<Vec<u8>> {
+    pub(super) fn accepted(&self) -> Vec<Vec<u8>> {
         self.state.lock().unwrap().accepted.clone()
     }
 
-    pub fn inserts_seen(&self) -> usize {
+    pub(super) fn inserts_seen(&self) -> usize {
         self.state.lock().unwrap().seen
     }
 
-    pub fn queries_seen(&self) -> usize {
+    pub(super) fn queries_seen(&self) -> usize {
         self.state.lock().unwrap().queries
     }
 
-    pub fn statements_seen(&self) -> Vec<String> {
+    pub(super) fn statements_seen(&self) -> Vec<String> {
         self.state.lock().unwrap().statements_seen.clone()
     }
 
     /// Answers with a `Keep-Alive` header, as a ClickHouse server does.
-    pub fn keep_alive(&self, value: &str) {
+    pub(super) fn keep_alive(&self, value: &str) {
         self.state.lock().unwrap().keep_alive = Some(value.to_string());
     }
 
-    pub fn serve_as(&self, display_name: &str) {
+    pub(super) fn serve_as(&self, display_name: &str) {
         self.state.lock().unwrap().display_name = Some(display_name.to_string());
     }
 
-    pub fn heads(&self) -> Vec<String> {
+    pub(super) fn heads(&self) -> Vec<String> {
         self.state.lock().unwrap().heads.clone()
     }
 
-    pub fn accepted_batches(&self) -> Vec<Vec<String>> {
+    pub(super) fn accepted_batches(&self) -> Vec<Vec<String>> {
         self.accepted()
             .iter()
             .map(|body| {
@@ -170,7 +174,7 @@ impl MockClickHouse {
             .collect()
     }
 
-    pub fn accepted_strings(&self) -> Vec<String> {
+    pub(super) fn accepted_strings(&self) -> Vec<String> {
         self.accepted_batches().into_iter().flatten().collect()
     }
 }

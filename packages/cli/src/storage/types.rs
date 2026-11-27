@@ -3,13 +3,13 @@ use std::collections::BTreeMap;
 /// The names both stores give the indexer's own tables and the columns an
 /// entity's history adds to its fields. Tests and tools on the JavaScript side
 /// read them by these names too.
-pub const CHECKPOINT_ID_COLUMN: &str = "envio_checkpoint_id";
-pub const CHANGE_COLUMN: &str = "envio_change";
-pub const SET: &str = "SET";
-pub const DELETE: &str = "DELETE";
-pub const CHAINS_TABLE: &str = "envio_chains";
-pub const INFO_TABLE: &str = "envio_info";
-pub const CHECKPOINTS_TABLE: &str = "envio_checkpoints";
+pub(crate) const CHECKPOINT_ID_COLUMN: &str = "envio_checkpoint_id";
+pub(crate) const CHANGE_COLUMN: &str = "envio_change";
+pub(crate) const SET: &str = "SET";
+pub(crate) const DELETE: &str = "DELETE";
+pub(crate) const CHAINS_TABLE: &str = "envio_chains";
+pub(crate) const INFO_TABLE: &str = "envio_info";
+pub(crate) const CHECKPOINTS_TABLE: &str = "envio_checkpoints";
 
 /// How checkpoint ids are handed out. Under one shared counter a row's id is
 /// comparable with any other chain's, so a bound is a single id; with a counter
@@ -22,12 +22,12 @@ pub enum Sequence {
 }
 
 /// A checkpoint id per chain.
-pub type Frontier = BTreeMap<i64, i64>;
+pub(crate) type Frontier = BTreeMap<i64, i64>;
 
 /// Which rows a bounded operation reaches: the chains and the checkpoint each
 /// is held to.
 #[derive(Clone, Debug)]
-pub struct Bounds {
+pub(crate) struct Bounds {
     pub sequence: Sequence,
     pub frontier: Frontier,
 }
@@ -35,7 +35,7 @@ pub struct Bounds {
 impl Bounds {
     /// Under one shared sequence every chain is held to the lowest of the ids:
     /// a higher one would leave another chain's rows above its own bound.
-    pub fn shared_id(&self) -> i64 {
+    pub(crate) fn shared_id(&self) -> i64 {
         self.frontier.values().min().copied().unwrap_or(0)
     }
 }
@@ -75,7 +75,7 @@ pub struct ChainMeta {
 
 /// Address rows, column by column. A key leaves the registration blocks out.
 #[derive(Clone, Debug, Default)]
-pub struct Addresses {
+pub(crate) struct Addresses {
     pub chain_ids: Vec<i64>,
     pub addresses: Vec<Vec<u8>>,
     pub contract_ids: Vec<i32>,
@@ -83,7 +83,7 @@ pub struct Addresses {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Checkpoints {
+pub(crate) struct Checkpoints {
     pub ids: Vec<i64>,
     pub chain_ids: Vec<i64>,
     pub block_numbers: Vec<i32>,
@@ -96,12 +96,12 @@ pub struct Checkpoints {
 }
 
 impl Checkpoints {
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.ids.len()
     }
 
     /// The ones anchoring history, in the same order.
-    pub fn keeping_history(&self) -> Checkpoints {
+    pub(crate) fn keeping_history(&self) -> Checkpoints {
         let keeps = &self.keeps_history;
         Checkpoints {
             ids: kept(&self.ids, keeps),
@@ -126,14 +126,14 @@ fn kept<T: Clone>(values: &[T], keeps: &[bool]) -> Vec<T> {
 /// The checkpoint a rollback's diff rows are stamped with, one per chain the
 /// rollback moved.
 #[derive(Clone, Debug)]
-pub struct DiffCheckpoint {
+pub(crate) struct DiffCheckpoint {
     pub chain_id: i64,
     pub checkpoint_id: i64,
     /// Where the rollback left the chain.
     pub block_number: i32,
 }
 
-pub struct StoredConfig {
+pub(crate) struct StoredConfig {
     /// None for a schema an older envio wrote, without the record.
     pub envio_info: Option<String>,
     pub contract_names: Option<Vec<String>>,
@@ -141,7 +141,7 @@ pub struct StoredConfig {
 }
 
 #[derive(Clone, Debug)]
-pub struct ResumedChain {
+pub(crate) struct ResumedChain {
     pub id: i64,
     pub start_block: i32,
     pub end_block: Option<i32>,
@@ -157,14 +157,14 @@ pub struct ResumedChain {
     pub checkpoint_id: i64,
 }
 
-pub struct ReorgCheckpoint {
+pub(crate) struct ReorgCheckpoint {
     pub id: i64,
     pub chain_id: i64,
     pub block_number: i32,
     pub block_hash: String,
 }
 
-pub struct ProgressDiff {
+pub(crate) struct ProgressDiff {
     pub chain_id: i64,
     pub events_processed: i64,
     pub progress_block: i32,

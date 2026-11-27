@@ -9,13 +9,13 @@ use crate::evm_hypersync_source::topic_filter::{TopicFilter, TopicFilters};
 /// One log selection of a built query: the emitters it reaches, and the
 /// 4-position topic filter (empty position = match any).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BuiltLogSelection {
+pub(crate) struct BuiltLogSelection {
     pub emitters: Emitters,
     pub topics: Vec<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Emitters {
+pub(crate) enum Emitters {
     /// Only these addresses.
     Listed(Vec<String>),
     /// Any address, with the registrations the selection was built from, so
@@ -26,7 +26,7 @@ pub enum Emitters {
 /// The registrations an address-free selection was built from, by whether a
 /// registered address can stand in for them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct AddressFreeOrigin {
+pub(crate) struct AddressFreeOrigin {
     /// Selected by their topics alone, so only ever asked for address-free.
     pub topic_only_registrations: Vec<i64>,
     /// Address-dependent registrations of client-filtered contracts, whose
@@ -36,7 +36,7 @@ pub struct AddressFreeOrigin {
 
 impl BuiltLogSelection {
     /// The emitter filter as a query sends it: empty for any address.
-    pub fn addresses(&self) -> &[String] {
+    pub(crate) fn addresses(&self) -> &[String] {
         match &self.emitters {
             Emitters::Listed(addresses) => addresses,
             Emitters::Any(_) => &[],

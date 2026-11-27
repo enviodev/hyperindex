@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Result;
 use strum::IntoEnumIterator;
 
-pub fn prompt_template_init_flow(args: TemplateArgs) -> Result<InitFlow> {
+pub(super) fn prompt_template_init_flow(args: TemplateArgs) -> Result<InitFlow> {
     let chosen_template = match args.template {
         Some(template) => template,
         None => {

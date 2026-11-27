@@ -212,7 +212,7 @@ mod sig_parser {
     use super::{AlloyEvent, AlloyEventParam, AlloyParam};
     use anyhow::{anyhow, bail, Context, Result};
 
-    pub fn parse(sig: &str) -> Result<AlloyEvent> {
+    pub(super) fn parse(sig: &str) -> Result<AlloyEvent> {
         let mut p = Cursor::new(sig);
         p.skip_ws();
         if p.try_keyword("event") {

@@ -9,7 +9,7 @@ use crate::{
     },
 };
 
-pub mod path_utils;
+pub(crate) mod path_utils;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ParsedProjectPaths {

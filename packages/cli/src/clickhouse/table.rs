@@ -10,7 +10,7 @@ use crate::storage::types::CHANGE_COLUMN;
 /// An entity as ClickHouse keeps it: every change a row of its history table.
 /// Its columns are the entity's fields in order, then the chain a per-chain
 /// entity appends.
-pub struct Table {
+pub(crate) struct Table {
     pub entity: EntitySpec,
     pub insert_query: String,
     chain_id_mode: ChainIdMode,
@@ -40,7 +40,7 @@ impl Field {
 }
 
 impl Table {
-    pub fn new(entity: &Entity, database: &str, chain_id_mode: ChainIdMode) -> Result<Self> {
+    pub(crate) fn new(entity: &Entity, database: &str, chain_id_mode: ChainIdMode) -> Result<Self> {
         let context = format!("ClickHouse table `{}`", entity.name);
         let options = entity.clickhouse.clone().unwrap_or_default();
         let chain_id = entity.chain_id.as_ref().map(|chain_id| chain_id.field());
@@ -75,17 +75,17 @@ impl Table {
         })
     }
 
-    pub fn columns(&self) -> &[Column] {
+    pub(crate) fn columns(&self) -> &[Column] {
         &self.entity.columns
     }
 
-    pub fn column(&self, row_name: &str) -> Option<&Column> {
+    pub(crate) fn column(&self, row_name: &str) -> Option<&Column> {
         self.columns()
             .iter()
             .find(|column| column.row_name() == row_name)
     }
 
-    pub fn key_columns(&self) -> Result<Vec<&Column>> {
+    pub(crate) fn key_columns(&self) -> Result<Vec<&Column>> {
         self.entity
             .key()
             .iter()
@@ -100,12 +100,12 @@ impl Table {
 
     /// What a value of the column reads back as — a list's elements, for a
     /// list.
-    pub fn read_kind(&self, column: &Column) -> ReadKind {
+    pub(crate) fn read_kind(&self, column: &Column) -> ReadKind {
         column.field.read_kind(self.chain_id_mode)
     }
 
     /// How a row of the table's columns decodes, and what it reads as.
-    pub fn reads(&self) -> (Vec<(ChType, ReadKind)>, Vec<ColumnRead>) {
+    pub(crate) fn reads(&self) -> (Vec<(ChType, ReadKind)>, Vec<ColumnRead>) {
         self.columns()
             .iter()
             .map(|column| {
@@ -121,7 +121,7 @@ impl Table {
     }
 
     /// [`Self::reads`] of a history row, which carries its change too.
-    pub fn history_reads(&self) -> (Vec<(ChType, ReadKind)>, Vec<ColumnRead>) {
+    pub(crate) fn history_reads(&self) -> (Vec<(ChType, ReadKind)>, Vec<ColumnRead>) {
         let (mut types, mut reads) = self.reads();
         types.push((ddl::change_type(), ReadKind::Text));
         reads.push(ColumnRead::scalar(CHANGE_COLUMN, ReadKind::Text));
@@ -135,7 +135,7 @@ pub(crate) mod test_support {
     use crate::clickhouse::ch_type::test_support::field;
     use crate::storage::schema::{test_support::entity, ChainIdColumn};
 
-    pub fn column(name: &str, field_type: &str) -> Field {
+    pub(crate) fn column(name: &str, field_type: &str) -> Field {
         Field {
             name: name.to_string(),
             schema_name: name.to_string(),
@@ -145,13 +145,13 @@ pub(crate) mod test_support {
         }
     }
 
-    pub fn entity_input(name: &str, fields: Vec<Field>) -> Entity {
+    pub(crate) fn entity_input(name: &str, fields: Vec<Field>) -> Entity {
         entity(name, fields, None)
     }
 
     /// An entity whose owner column is renamed, and whose balance is an
     /// unbounded BigInt kept as text.
-    pub fn account() -> Table {
+    pub(crate) fn account() -> Table {
         Table::new(
             &entity_input(
                 "Account",
@@ -170,7 +170,7 @@ pub(crate) mod test_support {
         .unwrap()
     }
 
-    pub fn per_chain_account() -> Table {
+    pub(crate) fn per_chain_account() -> Table {
         Table::new(
             &Entity {
                 chain_id: Some(ChainIdColumn {

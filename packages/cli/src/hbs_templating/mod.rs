@@ -1,4 +1,4 @@
-pub mod codegen_templates;
-pub mod contract_import_templates;
-pub mod env_template;
-pub mod init_templates;
+pub(crate) mod codegen_templates;
+pub(crate) mod contract_import_templates;
+pub(crate) mod env_template;
+pub(crate) mod init_templates;

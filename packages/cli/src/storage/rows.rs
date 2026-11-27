@@ -12,7 +12,7 @@ use crate::columnar::{Arena, ColumnKind, ColumnSpec};
 
 /// A decoded column value, in the shape it will take in JavaScript.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Cell<'a> {
+pub(crate) enum Cell<'a> {
     Null,
     Bool(bool),
     Num(f64),
@@ -25,7 +25,7 @@ pub enum Cell<'a> {
 
 impl Cell<'_> {
     #[cfg(test)]
-    pub fn into_owned(self) -> Cell<'static> {
+    pub(crate) fn into_owned(self) -> Cell<'static> {
         match self {
             Cell::Null => Cell::Null,
             Cell::Bool(value) => Cell::Bool(value),
@@ -77,14 +77,14 @@ impl ReadKind {
 /// One column of a result: its name, what it becomes, and for a list what its
 /// elements become.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ColumnRead {
+pub(crate) struct ColumnRead {
     pub name: String,
     pub kind: ReadKind,
     pub element: Option<ReadKind>,
 }
 
 impl ColumnRead {
-    pub fn scalar(name: impl Into<String>, kind: ReadKind) -> Self {
+    pub(crate) fn scalar(name: impl Into<String>, kind: ReadKind) -> Self {
         Self {
             name: name.into(),
             kind,
@@ -92,7 +92,7 @@ impl ColumnRead {
         }
     }
 
-    pub fn list(name: impl Into<String>, element: ReadKind) -> Self {
+    pub(crate) fn list(name: impl Into<String>, element: ReadKind) -> Self {
         Self {
             name: name.into(),
             kind: ReadKind::List,
@@ -102,7 +102,7 @@ impl ColumnRead {
 }
 
 /// A result laid out column by column, ready to be lent to JavaScript.
-pub struct ResultSet {
+pub(crate) struct ResultSet {
     pub columns: Vec<ColumnRead>,
     pub arena: Arena,
 }
@@ -138,7 +138,7 @@ fn write_element(arena: &mut Arena, column: usize, element: usize, cell: &Cell<'
 /// result still says what it would have held and the other side builds the
 /// same views over it as for a full one. A list column cannot be sized until
 /// its elements have been counted, which is why the values are decoded first.
-pub fn lay_out(cells: &[Cell<'_>], columns: Vec<ColumnRead>) -> Result<ResultSet> {
+pub(crate) fn lay_out(cells: &[Cell<'_>], columns: Vec<ColumnRead>) -> Result<ResultSet> {
     let width = columns.len();
     let rows = if width == 0 {
         0
@@ -213,13 +213,13 @@ pub fn lay_out(cells: &[Cell<'_>], columns: Vec<ColumnRead>) -> Result<ResultSet
 
 /// Cells as a store decoded them, every row's in turn, before they are laid
 /// out.
-pub struct Decoded<'a> {
+pub(crate) struct Decoded<'a> {
     pub cells: Vec<Cell<'a>>,
     pub columns: Vec<ColumnRead>,
 }
 
 impl Decoded<'_> {
-    pub fn lay_out(self) -> Result<ResultSet> {
+    pub(crate) fn lay_out(self) -> Result<ResultSet> {
         lay_out(&self.cells, self.columns)
     }
 }
@@ -227,7 +227,10 @@ impl Decoded<'_> {
 /// What rolling an entity back does, from the keys created past the target
 /// and the last history row of each key changed past it: the keys it removes,
 /// and the rows it restores. A last row that is a delete removes its key too.
-pub fn rollback(removed: Decoded<'_>, restored: Decoded<'_>) -> Result<(ResultSet, ResultSet)> {
+pub(crate) fn rollback(
+    removed: Decoded<'_>,
+    restored: Decoded<'_>,
+) -> Result<(ResultSet, ResultSet)> {
     let position = |name: &str| {
         restored
             .columns

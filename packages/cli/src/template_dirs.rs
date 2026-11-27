@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub trait Template: Display {
+pub(crate) trait Template: Display {
     fn to_dir_name(&self) -> String;
 }
 
@@ -49,7 +49,7 @@ type TemplateDir<'a> = &'a Dir<'a>;
 ///Used to attach a reference to a parent path for "Dir" type from include_dir module
 ///The dir.extract() method only works from the top level extracted dir as it always references
 ///the full path from the top. Relative allows you to extract nested dir somewhere
-pub struct RelativeDir<'a> {
+pub(crate) struct RelativeDir<'a> {
     //Any "Dir" entry from TEMPLATES_DIR, for eg TEMPLATES_DIR.get_dir("static/codegen"), the
     //.path() method on this obect would yield "static/codegen"
     dir: TemplateDir<'a>,
@@ -77,7 +77,7 @@ impl<'a> RelativeDir<'a> {
 
     ///Creates a child of current relative dir where parent_path is preserved
     ///in the child
-    pub fn new_child(&self, dir: TemplateDir<'a>) -> Self {
+    pub(crate) fn new_child(&self, dir: TemplateDir<'a>) -> Self {
         Self {
             dir,
             parent_path: self.parent_path,
@@ -87,7 +87,7 @@ impl<'a> RelativeDir<'a> {
     ///Returns the diff between the given path and the current RelativeDir's
     ///parent path. Ie RelativeDir with parent_path static/codegen diffed with
     ///static/codegen/src/bindings yields src/bindings
-    pub fn diff_path_from_parent(&self, path: &Path) -> Result<PathBuf> {
+    pub(crate) fn diff_path_from_parent(&self, path: &Path) -> Result<PathBuf> {
         diff_paths(path, self.parent_path).ok_or_else(|| {
             anyhow!(
                 "Expeted a valid path diff between parent {:?} and child {:?}",
@@ -111,7 +111,7 @@ impl<'a> RelativeDir<'a> {
     ///Iterate over the dir entries. DirEntry does not
     ///have a RelativeDir equivalent yet so the entries don't have
     ///special relative functions
-    pub fn entries(&self) -> &'a [DirEntry<'a>] {
+    pub(crate) fn entries(&self) -> &'a [DirEntry<'a>] {
         self.dir.entries()
     }
 
@@ -122,7 +122,7 @@ impl<'a> RelativeDir<'a> {
     /// If RelativedDir is at path static/codegen/src with parsent static/codegen it will
     /// extract to {base_path}/src not {base_path}/static/codegen/src like the regular
     /// Dir.extract() method
-    pub fn extract<S: AsRef<Path>>(&self, base_path: S) -> Result<()> {
+    pub(crate) fn extract<S: AsRef<Path>>(&self, base_path: S) -> Result<()> {
         let base_path = base_path.as_ref();
 
         for entry in self.dir.entries() {
@@ -149,7 +149,7 @@ impl<'a> RelativeDir<'a> {
 }
 
 ///A Client object for interfacing with the templates directory
-pub struct TemplateDirs<'a> {
+pub(crate) struct TemplateDirs<'a> {
     dir: TemplateDir<'a>,
 }
 
@@ -162,7 +162,7 @@ enum TemplateType {
 
 impl<'a> TemplateDirs<'a> {
     ///Instantiates the client that interacts with the templates dir
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             dir: &TEMPLATES_DIR,
         }
@@ -177,7 +177,7 @@ impl<'a> TemplateDirs<'a> {
     }
 
     ///Gets the templates/static/shared directory
-    pub fn get_shared_static_dir(&self) -> Result<RelativeDir<'a>> {
+    pub(crate) fn get_shared_static_dir(&self) -> Result<RelativeDir<'a>> {
         let template_dir = self
             .get_template_dir(TemplateType::Static)
             .context("Failed getting template dir")?;
@@ -191,7 +191,7 @@ impl<'a> TemplateDirs<'a> {
     ///Gets templates/static/shared/.claude/skills — the canonical set of
     ///skills shipped by this CLI version. Reused by `envio init` (extracted
     ///as part of the shared dir) and `envio skills update`.
-    pub fn get_shared_skills_dir(&self) -> Result<RelativeDir<'a>> {
+    pub(crate) fn get_shared_skills_dir(&self) -> Result<RelativeDir<'a>> {
         self.get_shared_static_dir()?
             .get_dir(".claude/skills")
             .ok_or_else(|| anyhow!("Unexpected, shared .claude/skills dir does not exist"))
@@ -258,7 +258,7 @@ impl<'a> TemplateDirs<'a> {
 
     ///Extracts static template for language and shared folder for a given template and language
     ///Extracts to the given project_root
-    pub fn get_and_extract_template<T: Template>(
+    pub(crate) fn get_and_extract_template<T: Template>(
         &self,
         template: &T,
         lang: &Language,
@@ -291,7 +291,7 @@ impl<'a> TemplateDirs<'a> {
     }
 
     ///Extracts static blank_template for a language to the given project_root
-    pub fn get_and_extract_blank_template(
+    pub(crate) fn get_and_extract_blank_template(
         &self,
         lang: &Language,
         project_root: &PathBuf,

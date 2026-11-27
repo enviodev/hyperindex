@@ -14,7 +14,7 @@ pub(crate) mod types;
 
 pub(crate) mod mod_helpers {
     use anyhow::Result;
-    pub fn hex_to_bytes(input: &str) -> Result<Vec<u8>> {
+    pub(crate) fn hex_to_bytes(input: &str) -> Result<Vec<u8>> {
         crate::hex::decode_optionally_prefixed(input, "hex string")
     }
 }

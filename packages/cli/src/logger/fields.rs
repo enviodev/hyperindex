@@ -5,7 +5,7 @@ use std::fmt;
 /// An object's entries in the order written, each value left as the JSON text
 /// it arrived as: a line's fields are only ever copied into the output, so
 /// nothing parses them unless a format has to look inside.
-pub type Fields = Vec<(String, Box<RawValue>)>;
+pub(super) type Fields = Vec<(String, Box<RawValue>)>;
 
 struct Entries(Fields);
 
@@ -31,7 +31,7 @@ impl<'de> Deserialize<'de> for Entries {
 
 /// JSON a caller handed over as an object; `null` is no fields, and anything
 /// else is kept under `params`, so a line never loses what it was given.
-pub fn parse_object_fields(json: &str) -> Result<Fields, serde_json::Error> {
+pub(super) fn parse_object_fields(json: &str) -> Result<Fields, serde_json::Error> {
     match json.trim_start().as_bytes().first() {
         Some(b'{') => serde_json::from_str::<Entries>(json).map(|entries| entries.0),
         _ => {
@@ -47,7 +47,7 @@ pub fn parse_object_fields(json: &str) -> Result<Fields, serde_json::Error> {
 
 /// Every layer's entries, a later layer's value replacing an earlier one's
 /// under the same key while the key keeps the place it was first given.
-pub fn merge_later_wins<'a>(
+pub(super) fn merge_later_wins<'a>(
     layers: &[&'a [(String, Box<RawValue>)]],
 ) -> Vec<(&'a str, &'a RawValue)> {
     let mut merged: Vec<(&str, &RawValue)> =

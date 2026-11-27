@@ -9,7 +9,7 @@ use serde_json::Value;
 // Reached only through the addon's C ABI, which the test target does not build.
 #[allow(dead_code)]
 #[napi]
-pub fn encode_indexed_topic(abi_type: String, value: Value) -> napi::Result<String> {
+pub(crate) fn encode_indexed_topic(abi_type: String, value: Value) -> napi::Result<String> {
     encode_indexed_topic_inner(&abi_type, value)
         .map_err(|error| napi::Error::from_reason(format!("{error:#}")))
 }

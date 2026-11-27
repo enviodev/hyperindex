@@ -7,7 +7,7 @@ use ratatui::{
 use std::io::{self, Write};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Size {
+pub(super) struct Size {
     pub width: u16,
     pub height: u16,
 }
@@ -16,7 +16,7 @@ impl Size {
     /// A PTY can report zero for a size its client hasn't sent yet, as
     /// `docker run -t` does until the first resize: assume the classic width,
     /// and no limit on the height rather than a frame of none.
-    pub fn reported(columns: u16, rows: u16) -> Self {
+    pub(super) fn reported(columns: u16, rows: u16) -> Self {
         Size {
             width: if columns == 0 { 80 } else { columns },
             height: if rows == 0 { u16::MAX } else { rows },
@@ -40,7 +40,7 @@ impl Size {
 /// what's above off the top; anchored at the bottom, that's the output,
 /// while a frame higher up would lose its own top rows to the scrollback,
 /// where no redraw can erase them.
-pub struct Session<W: Write> {
+pub(super) struct Session<W: Write> {
     out: W,
     palette: Palette,
     /// The frame on screen, kept to erase it and to skip redrawing it as is.
@@ -56,7 +56,7 @@ pub struct Session<W: Write> {
 }
 
 impl<W: Write> Session<W> {
-    pub fn new(out: W, palette: Palette) -> Self {
+    pub(super) fn new(out: W, palette: Palette) -> Self {
         Session {
             out,
             palette,
@@ -69,7 +69,7 @@ impl<W: Write> Session<W> {
 
     /// Lets the first draw keep what the terminal shows right above the frame
     /// instead of scrolling it off the screen.
-    pub fn started_at(&mut self, cursor: (u16, u16)) {
+    pub(super) fn started_at(&mut self, cursor: (u16, u16)) {
         self.started_at = Some(cursor);
     }
 
@@ -209,7 +209,7 @@ impl<W: Write> Session<W> {
         Ok(())
     }
 
-    pub fn render(
+    pub(super) fn render(
         &mut self,
         printed: Option<&str>,
         state: &State,
@@ -240,7 +240,7 @@ impl<W: Write> Session<W> {
     /// terminal may have echoed the keys that ended the run, such as `^C`,
     /// onto it, and in full: it's not redrawn again, so what runs past the
     /// top of a short screen can stay in the scrollback.
-    pub fn finish(
+    pub(super) fn finish(
         &mut self,
         printed: Option<&str>,
         state: &State,
@@ -254,7 +254,7 @@ impl<W: Write> Session<W> {
         self.out.flush()
     }
 
-    pub fn hide_cursor(&mut self) -> io::Result<()> {
+    pub(super) fn hide_cursor(&mut self) -> io::Result<()> {
         self.out.write_all(b"\x1b[?25l")?;
         self.out.flush()
     }

@@ -8,10 +8,10 @@ use crate::{
     utils::text::Capitalize,
 };
 
-pub const TRANSFER_EVENT_NAME: &str = "Transfer";
-pub const MINT_EVENT_NAME: &str = "Mint";
-pub const BURN_EVENT_NAME: &str = "Burn";
-pub const CALL_EVENT_NAME: &str = "Call";
+pub(crate) const TRANSFER_EVENT_NAME: &str = "Transfer";
+pub(crate) const MINT_EVENT_NAME: &str = "Mint";
+pub(crate) const BURN_EVENT_NAME: &str = "Burn";
+pub(crate) const CALL_EVENT_NAME: &str = "Call";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FuelType {

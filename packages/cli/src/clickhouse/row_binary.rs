@@ -435,17 +435,17 @@ fn encode_cell(
 }
 
 #[derive(Debug)]
-pub struct EncodedRows {
+pub(crate) struct EncodedRows {
     pub body: Bytes,
     pub row_offsets: Vec<usize>,
 }
 
 impl EncodedRows {
-    pub fn rows(&self) -> usize {
+    pub(crate) fn rows(&self) -> usize {
         self.row_offsets.len()
     }
 
-    pub fn slice(&self, start: usize, end: usize) -> Bytes {
+    pub(crate) fn slice(&self, start: usize, end: usize) -> Bytes {
         let from = self.row_offsets[start];
         let to = match self.row_offsets.get(end) {
             Some(offset) => *offset,
@@ -458,7 +458,7 @@ impl EncodedRows {
 /// A value of one of the indexer's own tables, which Rust writes itself rather
 /// than having JavaScript stage it.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Value {
+pub(crate) enum Value {
     Null,
     Int(i128),
     Text(String),
@@ -503,7 +503,7 @@ fn encode_value(out: &mut Vec<u8>, ch_type: &ChType, value: &Value) -> Result<()
     Ok(())
 }
 
-pub fn encode_values(types: &[ChType], rows: &[Vec<Value>]) -> Result<EncodedRows> {
+pub(crate) fn encode_values(types: &[ChType], rows: &[Vec<Value>]) -> Result<EncodedRows> {
     let mut body = Vec::with_capacity(rows.len() * types.len() * 8);
     let mut row_offsets = Vec::with_capacity(rows.len());
     for (index, row) in rows.iter().enumerate() {
@@ -687,7 +687,7 @@ fn decode_value<'a>(reader: &mut Reader<'a>, ch_type: &ChType, kind: ReadKind) -
 /// Reads a RowBinary answer whose columns are `columns`: each a type and what
 /// its values read as — a list's elements, for an `Array`. Returns every row's
 /// cells in turn.
-pub fn decode<'a>(body: &'a [u8], columns: &[(ChType, ReadKind)]) -> Result<Vec<Cell<'a>>> {
+pub(crate) fn decode<'a>(body: &'a [u8], columns: &[(ChType, ReadKind)]) -> Result<Vec<Cell<'a>>> {
     let mut reader = Reader { bytes: body, at: 0 };
     let mut cells = Vec::new();
     let mut row = 0usize;
@@ -723,7 +723,7 @@ fn documents(list: &[u8]) -> Result<serde_json::Value> {
 /// A delete names the entity it removed and nothing else: every other field
 /// is stored as its column's null or default. A document field a set left
 /// empty is the document `null`, which is how the column says nothing.
-pub fn encode_changes(
+pub(crate) fn encode_changes(
     body: &mut Vec<u8>,
     row_offsets: &mut Vec<usize>,
     table: &Table,

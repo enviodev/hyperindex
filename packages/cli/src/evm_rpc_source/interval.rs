@@ -7,7 +7,7 @@ use std::sync::Mutex;
 /// `pollingInterval` stay JS-side scheduling, and `queryTimeoutMillis` bounds
 /// each request in the client rather than the range a page asks for.
 #[derive(Clone, Copy)]
-pub struct SyncConfig {
+pub(super) struct SyncConfig {
     pub initial_block_interval: u64,
     pub backoff_multiplicative: f64,
     pub acceleration_additive: u64,
@@ -20,13 +20,13 @@ pub struct SyncConfig {
 /// ("limited to N blocks"). A partition's own entry can go stale when
 /// partitions merge/split — acceptable, it re-adapts.
 /// See: <https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease>
-pub struct IntervalState {
+pub(super) struct IntervalState {
     partitions: Mutex<HashMap<String, u64>>,
     source_max: Mutex<Option<u64>>,
 }
 
 impl IntervalState {
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             partitions: Mutex::new(HashMap::new()),
             source_max: Mutex::new(None),
@@ -40,7 +40,7 @@ impl IntervalState {
     /// Reads this partition's suggested interval, clamped to the source-wide
     /// ceiling. Returns the clamped interval alongside the ceiling it was
     /// clamped to, so callers can reuse the ceiling without a second lock.
-    pub fn suggested_interval(&self, partition_id: &str, cfg: &SyncConfig) -> (u64, u64) {
+    pub(super) fn suggested_interval(&self, partition_id: &str, cfg: &SyncConfig) -> (u64, u64) {
         let source_max = self.source_max_interval(cfg.interval_ceiling);
         let partition = self
             .partitions
@@ -53,7 +53,7 @@ impl IntervalState {
     }
 
     /// Additive increase: grows this partition's interval, capped at `source_max`.
-    pub fn grow(
+    pub(super) fn grow(
         &self,
         partition_id: &str,
         executed_interval: u64,
@@ -66,7 +66,7 @@ impl IntervalState {
         );
     }
 
-    pub fn set_partition(&self, partition_id: &str, interval: u64) {
+    pub(super) fn set_partition(&self, partition_id: &str, interval: u64) {
         self.partitions
             .lock()
             .unwrap()
@@ -79,7 +79,7 @@ impl IntervalState {
     /// concurrently, and one holding a copy read before another's write would
     /// otherwise raise a cap that was just lowered. `ceiling` is only the
     /// configured default, for when nothing has capped the source yet.
-    pub fn tighten_source_max(&self, ceiling: u64, interval: u64) -> u64 {
+    pub(super) fn tighten_source_max(&self, ceiling: u64, interval: u64) -> u64 {
         let mut source_max = self.source_max.lock().unwrap();
         let capped = source_max.unwrap_or(ceiling).min(interval);
         *source_max = Some(capped);
@@ -89,7 +89,7 @@ impl IntervalState {
 
 /// Multiplicative decrease: shrink the executed interval, floored at 1 so a
 /// failing single-block query can't wedge into a zero-width range.
-pub fn shrink(executed_interval: u64, backoff_multiplicative: f64) -> u64 {
+pub(super) fn shrink(executed_interval: u64, backoff_multiplicative: f64) -> u64 {
     ((executed_interval as f64) * backoff_multiplicative).max(1.0) as u64
 }
 

@@ -21,7 +21,7 @@ const BITMAP: [&str; 12] = [
 ];
 
 /// The braille dot for the pixel at `[row][column]` of a cell.
-pub const DOTS: [[u32; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
+pub(super) const DOTS: [[u32; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
 
 const GRADIENT: [(u8, u8, u8); 3] = [(0xFF, 0x82, 0x67), (0xFF, 0xA1, 0x52), (0xFD, 0xD7, 0x00)];
 
@@ -29,13 +29,13 @@ const GRADIENT: [(u8, u8, u8); 3] = [(0xFF, 0x82, 0x67), (0xFF, 0xA1, 0x52), (0x
 const FLOW_TICKS: f64 = 40.;
 
 /// The cell under the point of the V.
-pub const V_POINT: usize = 14;
+pub(super) const V_POINT: usize = 14;
 
-pub fn width() -> usize {
+pub(super) fn width() -> usize {
     BITMAP[0].len() / 2
 }
 
-pub fn gradient(position: f64) -> (u8, u8, u8) {
+pub(super) fn gradient(position: f64) -> (u8, u8, u8) {
     let scaled = position.clamp(0., 1.) * (GRADIENT.len() - 1) as f64;
     let index = (scaled.floor() as usize).min(GRADIENT.len() - 2);
     let t = scaled - index as f64;
@@ -54,7 +54,7 @@ fn lit(row: usize, column: usize) -> bool {
     BITMAP[row].as_bytes()[column] == b'#' && (row + column).is_multiple_of(2)
 }
 
-pub fn lines(tick: usize, rgb: impl Fn((u8, u8, u8)) -> Color) -> Vec<Line<'static>> {
+pub(super) fn lines(tick: usize, rgb: impl Fn((u8, u8, u8)) -> Color) -> Vec<Line<'static>> {
     let columns = width();
     let phase = tick as f64 / FLOW_TICKS;
     (0..BITMAP.len() / 4)

@@ -25,20 +25,20 @@ const MILLIS_PER_DAY: i64 = 86_400_000;
 /// The OIDs decoded as something other than text. The ones absent here are the
 /// reason `int8` and `numeric` come back as strings.
 mod oid {
-    pub const BOOL: u32 = 16;
-    pub const BYTEA: u32 = 17;
-    pub const INT8: u32 = 20;
-    pub const INT2: u32 = 21;
-    pub const INT4: u32 = 23;
-    pub const JSON: u32 = 114;
-    pub const OID: u32 = 26;
-    pub const FLOAT4: u32 = 700;
-    pub const FLOAT8: u32 = 701;
-    pub const DATE: u32 = 1082;
-    pub const TIMESTAMP: u32 = 1114;
-    pub const TIMESTAMPTZ: u32 = 1184;
-    pub const NUMERIC: u32 = 1700;
-    pub const JSONB: u32 = 3802;
+    pub(super) const BOOL: u32 = 16;
+    pub(super) const BYTEA: u32 = 17;
+    pub(super) const INT8: u32 = 20;
+    pub(super) const INT2: u32 = 21;
+    pub(super) const INT4: u32 = 23;
+    pub(super) const JSON: u32 = 114;
+    pub(super) const OID: u32 = 26;
+    pub(super) const FLOAT4: u32 = 700;
+    pub(super) const FLOAT8: u32 = 701;
+    pub(super) const DATE: u32 = 1082;
+    pub(super) const TIMESTAMP: u32 = 1114;
+    pub(super) const TIMESTAMPTZ: u32 = 1184;
+    pub(super) const NUMERIC: u32 = 1700;
+    pub(super) const JSONB: u32 = 3802;
 }
 use oid::*;
 
@@ -78,7 +78,7 @@ fn be_i64(raw: &[u8], at: usize) -> Result<i64> {
 /// to carry. That last one is why this cannot go through a float — `1.50` and
 /// `1.5` are the same number and different values, and the column stores which
 /// one it was.
-pub fn numeric_to_string(raw: &[u8]) -> Result<String> {
+pub(crate) fn numeric_to_string(raw: &[u8]) -> Result<String> {
     let digit_count = be_i16(raw, 0)? as usize;
     let weight = be_i16(raw, 2)? as i32;
     let sign = be_i16(raw, 4)? as u16;
@@ -166,7 +166,7 @@ fn decode_array<'a>(raw: &'a [u8], element: &Type) -> Result<Cell<'a>> {
     Ok(Cell::Arr(flat))
 }
 
-pub fn decode<'a>(ty: &Type, raw: &'a [u8]) -> Result<Cell<'a>> {
+pub(crate) fn decode<'a>(ty: &Type, raw: &'a [u8]) -> Result<Cell<'a>> {
     if let Kind::Array(element) = ty.kind() {
         return decode_array(raw, element);
     }
@@ -256,7 +256,7 @@ fn column_read(column: &Column) -> ColumnRead {
 ///
 /// The columns come from the statement rather than from the rows, so an empty
 /// result still describes them.
-pub fn decode_rows<'a>(rows: &'a [Row], columns: &[Column]) -> Result<Decoded<'a>> {
+pub(crate) fn decode_rows<'a>(rows: &'a [Row], columns: &[Column]) -> Result<Decoded<'a>> {
     // One run of cells for the whole result rather than a `Vec` per row: the
     // cells borrow the bytes the rows already hold, so this is the only
     // allocation the decode makes, and `int8` and `numeric` the only values in
@@ -277,7 +277,7 @@ pub fn decode_rows<'a>(rows: &'a [Row], columns: &[Column]) -> Result<Decoded<'a
     })
 }
 
-pub fn into_result(rows: &[Row], columns: &[Column]) -> Result<ResultSet> {
+pub(crate) fn into_result(rows: &[Row], columns: &[Column]) -> Result<ResultSet> {
     decode_rows(rows, columns)?.lay_out()
 }
 

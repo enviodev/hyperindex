@@ -6,7 +6,7 @@ use super::internal::quote_ident;
 use super::param::Param;
 use super::storage::array_literal;
 
-pub fn load_query(
+pub(crate) fn load_query(
     pg_schema: &str,
     table_name: &str,
     conditions: Vec<Condition>,

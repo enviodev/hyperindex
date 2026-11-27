@@ -23,14 +23,14 @@ use tokio_rustls::TlsConnector;
 /// operator installed the usual way is trusted too. Nothing here depends on
 /// where a C library was told to look at build time.
 #[derive(Clone)]
-pub struct MakeRustlsConnect {
+pub(super) struct MakeRustlsConnect {
     config: Arc<ClientConfig>,
 }
 
 impl MakeRustlsConnect {
     /// `extra_ca_file` is where `NODE_EXTRA_CA_CERTS` points, passed in rather
     /// than read here so a test can name its own CA.
-    pub fn new(verify: bool, extra_ca_file: Option<&Path>) -> Result<Self> {
+    pub(super) fn new(verify: bool, extra_ca_file: Option<&Path>) -> Result<Self> {
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let builder = ClientConfig::builder_with_provider(provider.clone())
             .with_safe_default_protocol_versions()
@@ -135,7 +135,7 @@ where
     }
 }
 
-pub struct RustlsConnect {
+pub(super) struct RustlsConnect {
     connector: TlsConnector,
     server_name: ServerName<'static>,
 }
@@ -158,7 +158,7 @@ where
     }
 }
 
-pub struct RustlsStream<S>(TlsStream<S>);
+pub(super) struct RustlsStream<S>(TlsStream<S>);
 
 impl<S> tokio_postgres::tls::TlsStream for RustlsStream<S>
 where

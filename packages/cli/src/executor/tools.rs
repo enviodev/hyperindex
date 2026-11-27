@@ -6,7 +6,7 @@ use std::time::Duration;
 const MCP_ENDPOINT: &str = "https://docs.envio.dev/mcp";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub async fn run(subcommand: ToolsSubcommand) -> Result<()> {
+pub(super) async fn run(subcommand: ToolsSubcommand) -> Result<()> {
     match run_to_string(subcommand).await {
         Ok(text) => {
             println!("{text}");

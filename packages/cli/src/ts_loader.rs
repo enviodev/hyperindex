@@ -129,7 +129,7 @@ fn index_candidates(url: &str) -> Vec<String> {
 }
 
 /// Specifiers to hand Node's resolver, in order, before the specifier itself.
-pub fn resolve_candidates(specifier: &str, parent_url: Option<&str>) -> Vec<String> {
+pub(crate) fn resolve_candidates(specifier: &str, parent_url: Option<&str>) -> Vec<String> {
     let project = project();
     // A dependency resolves as Node resolves it, apart from the retry after a
     // miss. Probing TypeScript siblings first, as tsx does under `allowJs`,
@@ -201,7 +201,7 @@ fn existing(candidates: Vec<String>, parent: Option<&Url>) -> Vec<String> {
 
 /// Specifiers to retry after Node rejected one, built from the path its error
 /// names.
-pub fn not_found_candidates(code: &str, url: Option<&str>, message: &str) -> Vec<String> {
+pub(crate) fn not_found_candidates(code: &str, url: Option<&str>, message: &str) -> Vec<String> {
     let Some(missing) = url
         .map(str::to_string)
         .or_else(|| missing_from_message(message))
@@ -245,7 +245,7 @@ fn missing_from_message(message: &str) -> Option<String> {
     Some(url.join(&main).ok()?.to_string())
 }
 
-pub fn load(path: &Path) -> Result<String, String> {
+pub(crate) fn load(path: &Path) -> Result<String, String> {
     let file = path.display();
     if path.extension().is_some_and(|extension| extension == "cts") {
         return Err(format!(
@@ -277,7 +277,7 @@ pub fn load(path: &Path) -> Result<String, String> {
 /// Handlers have to be ES modules. A module they import doesn't: it loads as
 /// one whatever its package.json says, as a workspace package often says
 /// nothing.
-pub fn check_handler_format(path: &Path) -> Result<(), String> {
+pub(crate) fn check_handler_format(path: &Path) -> Result<(), String> {
     if path.extension().is_some_and(|extension| extension == "mts") {
         return Ok(());
     }

@@ -16,7 +16,7 @@ use crate::request_stats::{RequestStat, Stats};
 /// failures that say the provider could not deliver the answer it was asked
 /// for, rather than that it is unreachable, have their own variants.
 #[derive(Debug)]
-pub enum RpcError {
+pub(crate) enum RpcError {
     JsonRpc {
         code: i64,
         message: String,
@@ -78,7 +78,7 @@ struct JsonRpcResponse {
     error: Option<JsonRpcErrorObject>,
 }
 
-pub struct JsonRpcClient {
+pub(crate) struct JsonRpcClient {
     http: reqwest::Client,
     url: String,
     /// Reported back on a timeout, where naming the limit that was hit is the
@@ -99,7 +99,7 @@ pub struct JsonRpcClient {
 impl JsonRpcClient {
     /// High enough to keep a healthy provider's pipe full, low enough that the
     /// burst above stays a queue rather than a stampede.
-    pub const fn default_max_concurrent_requests() -> usize {
+    pub(crate) const fn default_max_concurrent_requests() -> usize {
         100
     }
 
@@ -111,7 +111,7 @@ impl JsonRpcClient {
             .expect("the request semaphore is never closed")
     }
 
-    pub fn new(
+    pub(crate) fn new(
         url: String,
         request_timeout_millis: u64,
         max_concurrent_requests: usize,
@@ -142,13 +142,13 @@ impl JsonRpcClient {
 
     /// The requests that finished since the last call, for the caller to
     /// report.
-    pub fn take_stats(&self) -> Vec<RequestStat> {
+    pub(crate) fn take_stats(&self) -> Vec<RequestStat> {
         self.stats.take()
     }
 
     /// Every request is timed here, whether or not it answered: it was made,
     /// and is billed.
-    pub async fn request<T: DeserializeOwned>(
+    pub(crate) async fn request<T: DeserializeOwned>(
         &self,
         method: &str,
         params: serde_json::Value,
@@ -159,7 +159,7 @@ impl JsonRpcClient {
     /// A request whose timing is reported under `stat_method` rather than the
     /// JSON-RPC method, so a request made for a reason of its own is counted
     /// apart from the ones it shares a method with.
-    pub async fn request_recorded_as<T: DeserializeOwned>(
+    pub(crate) async fn request_recorded_as<T: DeserializeOwned>(
         &self,
         stat_method: &str,
         method: &str,
@@ -293,13 +293,13 @@ impl JsonRpcClient {
         }
     }
 
-    pub async fn get_height(&self) -> Result<u64, RpcError> {
+    pub(crate) async fn get_height(&self) -> Result<u64, RpcError> {
         let result: String = self.request("eth_blockNumber", json!([])).await?;
         parse_hex_u64(&result).map_err(RpcError::Other)
     }
 }
 
-pub fn parse_hex_u64(s: &str) -> Result<u64> {
+pub(crate) fn parse_hex_u64(s: &str) -> Result<u64> {
     let hex = s
         .strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
