@@ -803,6 +803,7 @@ impl ChainPlan {
         // A group holding other contracts' addresses too carries on with them;
         // the switched ones split off into a group of their own that ends.
         let mut ending: Vec<(Vec<Id>, Option<u32>, i64, u32)> = Vec::new();
+        let mut ended: Vec<u32> = Vec::new();
         for group in 0..self.groups.ids.len() {
             let need = self.groups.need[group];
             if !self.needs.live[need as usize] || self.needs.is_finished(need) {
@@ -824,6 +825,7 @@ impl ChainPlan {
             if others.is_empty() || ends_at.is_some_and(|to| to <= through) {
                 self.needs.to_block[need as usize] =
                     Some(ends_at.map_or(through, |to| to.min(through)));
+                ended.push(need);
                 continue;
             }
             let contract_of_all = |ids: &[Id]| {
@@ -865,9 +867,16 @@ impl ChainPlan {
             self.groups.contract.push(contract);
             self.groups.sealed.push(true);
             self.groups.need.push(need);
+            ended.push(need);
         }
         if let Some(from_block) = from_block {
             lowest = lowest.min(from_block - 1);
+        }
+        // The address-free need reads every ended group's addresses from
+        // `lowest` on, so none of them asks by address past it again.
+        for need in ended {
+            let to_block = &mut self.needs.to_block[need as usize];
+            *to_block = Some(to_block.map_or(lowest, |to| to.min(lowest)));
         }
         // With no group to end, a contract switched at the head joins the head
         // stream where it has been asked through; its addresses owe what lies

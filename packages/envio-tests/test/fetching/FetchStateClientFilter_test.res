@@ -4,9 +4,9 @@ open ItemsQueryView.AddressFree
 // A contract whose registered address count crosses the threshold is fetched
 // client-side: its address groups end at the block they were requested
 // through, and one address-free need, whose queries name it in
-// `addressFreeContracts`, goes on from there. Its addresses below that block
-// are caught up by address. These scenarios stay far from the head, so the
-// near-head switch never takes part.
+// `addressFreeContracts`, reads it from the earliest start of the addresses
+// that crossed it. These scenarios stay far from the head, so the near-head
+// switch never takes part.
 let gravatarConfigAddress = "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 let nftFactoryConfigAddress = "0x00000000000000000000000000000000000000ff"
 
@@ -68,7 +68,7 @@ indexer.onEvent({ contract: "SimpleNft", event: "NftEvent" }, async () => {});
     ),
   )
 
-// Gravatar and NftFactory's config addresses share one sealed group.
+// Gravatar and NftFactory's config addresses share one group.
 let scenario = scenarioOf(~name="fetch-state-client-filter")
 
 let address = n => `0x${n->Int.toString->String.padStart(40, "0")}`->Address.unsafeFromString
@@ -76,6 +76,8 @@ let lowercaseGravatarConfigAddress = gravatarConfigAddress->String.toLowerCase
 
 let isConfigGroupQuery = (query: ItemsQueryView.AddressFree.t) =>
   query.addresses->Array.includes(nftFactoryConfigAddress)
+let isConfigAddressQuery = (query: ItemsQueryView.AddressFree.t) =>
+  query->isConfigGroupQuery || query.addresses->Array.includes(lowercaseGravatarConfigAddress)
 let isAddressFree = (query: MockSource.pendingItemsQuery) =>
   (query->MockSource.selection).addressFreeContracts != []
 
@@ -113,10 +115,9 @@ let upTo = (~items=[], block) => MockSource.Respond({items, latestFetchedBlockNu
 
 // The config group registers two dynamic Gravatar addresses at block 3, so
 // with a threshold of 1 Gravatar's three addresses switch it to client-side
-// filtering. The group's query from block 6, out before the registration and
-// open-ended at a head of 1000, still carries Gravatar's config address, so
-// Gravatar goes address-free past 1000 and the two addresses are caught up by
-// address over [3, 1000].
+// filtering: the address-free need reads it from the registration block, 3.
+// The group had covered blocks 1 to 5 already, and its query from block 6,
+// out before the registration, still carries Gravatar's config address.
 let collapseGravatar = async (sourceMock: MockSource.t) => {
   sourceMock.resolveGetHeightOrThrow(1000)
   await sourceMock.expectItemsQueries([
@@ -127,19 +128,7 @@ let collapseGravatar = async (sourceMock: MockSource.t) => {
   ])
 }
 
-// Both reach 1000, and the chain learns a head of 2000: from 1001 the config
-// group fetches NftFactory's address alone and Gravatar is fetched
-// address-free.
-let reachAddressFree = async (sourceMock: MockSource.t, ~catchUpItems=[]) => {
-  await sourceMock->collapseGravatar
-  await sourceMock.expectItemsQueries([
-    {fromBlock: 6, reply: upTo(1000)},
-    {fromBlock: 3, toBlock: Bounded(1000), reply: upTo(~items=catchUpItems, 1000)},
-  ])
-  sourceMock.resolveGetHeightOrThrow(2000)
-}
-
-let addressFreeGravatar = (~contracts=["Gravatar"], fromBlock, toBlock) => {
+let addressFreeQuery = (~contracts=["Gravatar"], fromBlock, toBlock) => {
   fromBlock,
   toBlock,
   addresses: [],
@@ -159,46 +148,16 @@ describe("FetchState client-side address filtering", () => {
         {fromBlock: 6, reply: LeavePending},
         {fromBlock: 3, reply: LeavePending},
       ])
-      let afterSwitch = sourceMock->pendingQueries
 
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 6, reply: upTo(1000)},
-        {fromBlock: 3, reply: upTo(1000)},
+      t.expect(sourceMock->pendingQueries).toEqual([
+        {
+          fromBlock: 6,
+          toBlock: Unbounded,
+          addresses: [nftFactoryConfigAddress, lowercaseGravatarConfigAddress],
+          addressFreeContracts: [],
+        },
+        addressFreeQuery(3, Unbounded),
       ])
-      sourceMock.resolveGetHeightOrThrow(2000)
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 1001, address: nftFactoryConfigAddress, reply: LeavePending},
-        {fromBlock: 1001, where: isAddressFree, reply: LeavePending},
-      ])
-
-      t.expect(
-        (afterSwitch, sourceMock->pendingQueries),
-        ~message="the dynamic addresses are caught up by address, then Gravatar is one address-free query",
-      ).toEqual((
-        [
-          {
-            fromBlock: 6,
-            toBlock: Unbounded,
-            addresses: [nftFactoryConfigAddress, lowercaseGravatarConfigAddress],
-            addressFreeContracts: [],
-          },
-          {
-            fromBlock: 3,
-            toBlock: Bounded(1000),
-            addresses: [address(1)->Address.toString, address(2)->Address.toString],
-            addressFreeContracts: [],
-          },
-        ],
-        [
-          {
-            fromBlock: 1001,
-            toBlock: Unbounded,
-            addresses: [nftFactoryConfigAddress],
-            addressFreeContracts: [],
-          },
-          addressFreeGravatar(1001, Unbounded),
-        ],
-      ))
     },
   )
 
@@ -276,7 +235,7 @@ describe("FetchState client-side address filtering", () => {
       ).toEqual([
         (1, 1, [], []),
         (6, 0, [nftFactoryConfigAddress, lowercaseGravatarConfigAddress], []),
-        (3, 0, [address(1)->Address.toString, address(2)->Address.toString], []),
+        (3, 0, [], ["Gravatar"]),
       ])
     },
   )
@@ -298,7 +257,7 @@ describe("FetchState client-side address filtering", () => {
       await sourceMock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
 
       t.expect(sourceMock->pendingQueries, ~message="one address-free query").toEqual([
-        addressFreeGravatar(1, Unbounded),
+        addressFreeQuery(1, Unbounded),
       ])
     },
   )
@@ -323,7 +282,7 @@ describe("FetchState client-side address filtering", () => {
         sourceMock->pendingQueries,
         ~message="Gravatar's addresses leave the shared group, and the address-free query fetches Gravatar",
       ).toEqual([
-        addressFreeGravatar(1, Unbounded),
+        addressFreeQuery(1, Unbounded),
         {
           fromBlock: 1,
           toBlock: Unbounded,
@@ -342,32 +301,39 @@ describe("FetchState client-side address filtering", () => {
     ~maxAddrInPartition=10,
     async (~t, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
-      await sourceMock->reachAddressFree
+      await sourceMock->collapseGravatar
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1001, where: isAddressFree, reply: upTo(1050)},
+        {fromBlock: 3, where: isAddressFree, reply: upTo(50)},
+        {fromBlock: 6, reply: LeavePending},
+      ])
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 51, where: isAddressFree, reply: LeavePending},
         {
-          fromBlock: 1001,
-          address: nftFactoryConfigAddress,
-          reply: upTo(~items=[registerAt(~contract="NftFactory", 1008, [address(11)])], 1010),
+          fromBlock: 6,
+          reply: upTo(~items=[registerAt(~contract="NftFactory", 8, [address(11)])], 10),
         },
       ])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1051, where: isAddressFree, reply: LeavePending},
+        {fromBlock: 51, where: isAddressFree, reply: upTo(100)},
+        {fromBlock: 8, address: address(11)->Address.toString, reply: LeavePending},
         {address: nftFactoryConfigAddress, reply: LeavePending},
-        {fromBlock: 1008, reply: LeavePending},
+      ])
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 101, where: isAddressFree, reply: LeavePending},
+        {reply: LeavePending},
       ])
 
       t.expect(
-        sourceMock->pendingQueries->Array.filter(query => !isConfigGroupQuery(query)),
-        ~message="the address-free query goes on from 1051; NftFactory's new address is fetched server-side",
+        sourceMock->pendingQueries->Array.filter(query => !isConfigAddressQuery(query)),
+        ~message="the address-free query goes on from 101; NftFactory's new address is fetched server-side",
       ).toEqual([
-        addressFreeGravatar(1051, Unbounded),
         {
-          fromBlock: 1008,
+          fromBlock: 8,
           toBlock: Unbounded,
           addresses: [address(11)->Address.toString],
           addressFreeContracts: [],
         },
+        addressFreeQuery(101, Unbounded),
       ])
     },
   )
@@ -380,56 +346,44 @@ describe("FetchState client-side address filtering", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let handled = []
-      await sourceMock->reachAddressFree
+      await sourceMock->collapseGravatar
 
       // NftFactory crosses the threshold while Gravatar's address-free query
-      // is out.
+      // is out, and is read address-free from its registration block, 8.
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1001, where: isAddressFree, reply: LeavePending},
+        {fromBlock: 3, where: isAddressFree, reply: LeavePending},
         {
-          fromBlock: 1001,
-          address: nftFactoryConfigAddress,
-          reply: upTo(~items=[registerAt(~contract="NftFactory", 1008, [address(11)])], 1010),
+          fromBlock: 6,
+          reply: upTo(~items=[registerAt(~contract="NftFactory", 8, [address(11)])], 10),
         },
       ])
-      // Its groups end at 1028, the block they were requested through, where
-      // its own address-free need starts; address 11 is caught up below it.
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1001, where: isAddressFree, reply: LeavePending},
-        {fromBlock: 1008, reply: LeavePending},
-        {fromBlock: 1029, reply: LeavePending},
+        {fromBlock: 3, where: isAddressFree, reply: LeavePending},
+        {fromBlock: 8, where: isAddressFree, reply: LeavePending},
         {address: nftFactoryConfigAddress, reply: LeavePending},
       ])
-      let afterSwitch =
-        sourceMock->pendingQueries->Array.filter(query => !isConfigGroupQuery(query))
+      let afterSwitch = sourceMock->pendingQueries->Array.filter(query => query.addresses == [])
 
+      // The first query lands, but NftFactory hasn't been read over that
+      // range yet.
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1001, where: isAddressFree, reply: upTo(~items=[handled->eventAt(1200)], 1500)},
-        {reply: LeavePending},
+        {fromBlock: 3, where: isAddressFree, reply: upTo(~items=[handled->eventAt(200)], 500)},
+        {fromBlock: 8, where: isAddressFree, reply: LeavePending},
+        {address: nftFactoryConfigAddress, reply: LeavePending},
       ])
       await indexer.waitUntilIdle()
       let handledAfterFirst = handled->Array.copy
 
-      await sourceMock.respondUpTo(2000, ~items=[handled->eventAt(1200)])
+      await sourceMock.respondUpTo(1000)
       await indexer.getBatchWritePromise()
 
       t.expect(
-        (afterSwitch, handledAfterFirst, handled, sourceMock->pendingQueries),
-        ~message="nothing is processed before NftFactory's address-free need covers it, and the re-delivered event is processed once",
+        (afterSwitch, handledAfterFirst, handled),
+        ~message="nothing is processed below NftFactory's address-free frontier, and the event is processed once",
       ).toEqual((
-        [
-          addressFreeGravatar(1001, Unbounded),
-          {
-            fromBlock: 1008,
-            toBlock: Bounded(1028),
-            addresses: [address(11)->Address.toString],
-            addressFreeContracts: [],
-          },
-          addressFreeGravatar(~contracts=["NftFactory"], 1029, Unbounded),
-        ],
+        [addressFreeQuery(3, Unbounded), addressFreeQuery(~contracts=["NftFactory"], 8, Unbounded)],
         [],
-        [1200],
-        [],
+        [200],
       ))
     },
   )
@@ -442,7 +396,7 @@ describe("FetchState client-side address filtering", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let handled = []
-      await sourceMock->reachAddressFree
+      await sourceMock->collapseGravatar
 
       // Two dense responses teach the address-free need to fetch in chunks.
       let dense = from =>
@@ -451,17 +405,17 @@ describe("FetchState client-side address filtering", () => {
           (i): MockSource.itemMock => {blockNumber: from + i, logIndex: 0},
         )
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1001, where: isAddressFree, reply: upTo(~items=dense(1010), 1050)},
-        {fromBlock: 1001, address: nftFactoryConfigAddress, reply: LeavePending},
+        {fromBlock: 3, where: isAddressFree, reply: upTo(~items=dense(10), 50)},
+        {fromBlock: 6, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1051, where: isAddressFree, reply: upTo(~items=dense(1060), 1100)},
-        {fromBlock: 1001, address: nftFactoryConfigAddress, reply: LeavePending},
+        {fromBlock: 51, where: isAddressFree, reply: upTo(~items=dense(60), 100)},
+        {fromBlock: 6, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1911, toBlock: Bounded(2000), reply: LeavePending},
+        {fromBlock: 971, toBlock: Bounded(1000), reply: LeavePending},
         {where: isAddressFree, reply: LeavePending},
-        {fromBlock: 1001, address: nftFactoryConfigAddress, reply: LeavePending},
+        {fromBlock: 6, reply: LeavePending},
       ])
       let chunks =
         sourceMock.pendingItemsQueries
@@ -470,84 +424,76 @@ describe("FetchState client-side address filtering", () => {
 
       await sourceMock.expectItemsQueries([
         {
-          fromBlock: 1001,
-          address: nftFactoryConfigAddress,
-          reply: upTo(~items=[registerAt(~contract="NftFactory", 1008, [address(11)])], 1010),
+          fromBlock: 6,
+          reply: upTo(~items=[registerAt(~contract="NftFactory", 8, [address(11)])], 10),
         },
       ])
-      await sourceMock.respondUpTo(2000, ~items=[handled->eventAt(1950)])
+      await sourceMock.respondUpTo(1000, ~items=[handled->eventAt(950)])
       await indexer.getBatchWritePromise()
 
       t.expect(
         (chunks->Array.length, handled, sourceMock->pendingQueries),
-        ~message="ten chunks in flight; the last one's event is processed once and nothing else is asked",
-      ).toEqual((10, [1950], []))
+        ~message="eleven chunks in flight; the last one's event is processed once and nothing else is asked",
+      ).toEqual((11, [950], []))
     },
   )
 
   scenario->Scenario.it(
-    "accepts a catch-up's response after a later switch widens the selection again",
+    "accepts a backfill's response after a later switch widens the selection again",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
     ~maxAddrInPartition=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let handled = []
-      await sourceMock->reachAddressFree
+      await sourceMock->collapseGravatar
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1001, where: isAddressFree, reply: upTo(1050)},
-        {fromBlock: 1001, address: nftFactoryConfigAddress, reply: LeavePending},
+        {fromBlock: 3, where: isAddressFree, reply: upTo(50)},
+        {fromBlock: 6, reply: LeavePending},
       ])
 
-      // NftFactory crosses the threshold too, at block 1008, below what the
-      // address-free need has fetched, so address 11 is caught up by address.
+      // NftFactory crosses the threshold too, at block 8, below Gravatar's
+      // address-free frontier, so it is read address-free from 8.
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1051, where: isAddressFree, reply: LeavePending},
+        {fromBlock: 51, where: isAddressFree, reply: LeavePending},
         {
-          fromBlock: 1001,
-          address: nftFactoryConfigAddress,
-          reply: upTo(~items=[registerAt(~contract="NftFactory", 1008, [address(11)])], 1010),
+          fromBlock: 6,
+          reply: upTo(~items=[registerAt(~contract="NftFactory", 8, [address(11)])], 10),
         },
       ])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1051, where: isAddressFree, reply: LeavePending},
-        {fromBlock: 1008, reply: LeavePending},
-        {fromBlock: 1029, reply: LeavePending},
+        {fromBlock: 51, where: isAddressFree, reply: LeavePending},
+        {fromBlock: 8, where: isAddressFree, reply: LeavePending},
         {address: nftFactoryConfigAddress, reply: LeavePending},
       ])
-      let withCatchUp =
-        sourceMock->pendingQueries->Array.filter(query => !isConfigGroupQuery(query))
+      let withBackfill = sourceMock->pendingQueries->Array.filter(query => query.addresses == [])
 
-      // SimpleNft crosses the threshold while the catch-up is mid-query.
+      // SimpleNft crosses the threshold while NftFactory's backfill is
+      // mid-query.
       await sourceMock.expectItemsQueries([
         {
-          fromBlock: 1051,
+          fromBlock: 51,
           where: isAddressFree,
           reply: upTo(
-            ~items=[registerAt(~contract="SimpleNft", 1060, [address(21), address(22)])],
-            1100,
+            ~items=[registerAt(~contract="SimpleNft", 60, [address(21), address(22)])],
+            100,
           ),
         },
-        {reply: LeavePending},
+        {fromBlock: 8, where: isAddressFree, reply: LeavePending},
+        {address: nftFactoryConfigAddress, reply: LeavePending},
       ])
-      await sourceMock.respondUpTo(2000, ~items=[handled->eventAt(1012), handled->eventAt(1070)])
+      await sourceMock.respondUpTo(1000, ~items=[handled->eventAt(12), handled->eventAt(70)])
       await indexer.getBatchWritePromise()
 
       t.expect(
-        (withCatchUp, handled, sourceMock->pendingQueries),
-        ~message="the catch-up's response still lands after the second switch, and every event is processed once",
+        (withBackfill, handled, sourceMock->pendingQueries),
+        ~message="the backfill's response still lands after the second switch, and every event is processed once",
       ).toEqual((
         [
-          addressFreeGravatar(1051, Unbounded),
-          {
-            fromBlock: 1008,
-            toBlock: Bounded(1028),
-            addresses: [address(11)->Address.toString],
-            addressFreeContracts: [],
-          },
-          addressFreeGravatar(~contracts=["NftFactory"], 1029, Unbounded),
+          addressFreeQuery(51, Unbounded),
+          addressFreeQuery(~contracts=["NftFactory"], 8, Unbounded),
         ],
-        [1012, 1070],
+        [12, 70],
         [],
       ))
     },
@@ -586,7 +532,7 @@ describe("FetchState client-side address filtering", () => {
       await sourceMock.expectItemsQueries([
         {fromBlock: 1, address: gravatarConfigAddress, reply: LeavePending},
         {fromBlock: 3, address: address(1)->Address.toString, reply: LeavePending},
-        {fromBlock: 8, address: address(2)->Address.toString, reply: LeavePending},
+        {where: isAddressFree, reply: LeavePending},
         {address: nftFactoryConfigAddress, reply: LeavePending},
       ])
       let afterSwitch =
@@ -611,12 +557,9 @@ describe("FetchState client-side address filtering", () => {
             addresses: [address(1)->Address.toString],
             addressFreeContracts: [],
           },
-          {
-            fromBlock: 8,
-            toBlock: Bounded(1000),
-            addresses: [address(2)->Address.toString],
-            addressFreeContracts: [],
-          },
+          // From address 2's registration block: the ended groups' in-flight
+          // queries still cover the older addresses.
+          addressFreeQuery(8, Unbounded),
         ],
         [2, 9],
       ))
