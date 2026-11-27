@@ -1,88 +1,45 @@
-- Use `pnpm` over `npm`/`npx`.
-- Edit `.res`/`.resi` and Rust files with Write/Edit, never a Bash heredoc or `sed`. The formatter runs on what those tools write; a push carrying an unformatted file is refused.
-- Always use single assert to check the whole value instead of multiple asserts for every field.
+# HyperIndex
 
-## Naming
+The contributor guide, for people and agents. A rule that a tool checks is not written here: the compiler, `pnpm lint`, clippy, the formatter and the push check each say what they want and how to fix it.
 
-- Name a function for what it does, spelled out: `entityIdToKey`, not `idKey`. No abbreviations, no noun-only names that hide the input and output.
+## Direction
 
-## Comments
+- The runtime is moving from ReScript (`packages/envio/src`) to Rust (`packages/cli/src`). New runtime logic goes in Rust. ReScript changes are bindings, wiring and deletion.
+- The napi boundary (`#[napi]` exports and `Core.addon`) is internal, not a published API. Change both sides for the better shape.
+- No in-place migrations: on a schema or config change the user resyncs from scratch. The one exception is a chain added to config.yaml, which `envio start --chain <id>` adds to an existing schema when it names only that chain (`ResumePlan`). `packages/envio-tests/test/Migration_test.res` states what a restart does with each kind of config change.
 
-- Default to writing no comments. A comment earns its place only when it explains something the code itself cannot show.
-- Write a comment when it captures: a non-obvious constraint, a subtle invariant, a workaround for a specific bug, or behavior that would surprise a reader.
-- Don't write a comment that restates what the code already says — module purpose, what a function does, which callers use a value, history of a refactor, or pointers to where something is "now defined".
-- Never narrate the refactor itself ("previously lived in X", "centralized here", "now imports from Y"). That belongs in the commit message, not the code.
-- When refactoring, keep comments that still explain non-obvious behavior; drop or rewrite comments that described the old shape.
+## Where things are
 
-## Plan Mode
+- Rust CLI: `packages/cli`, entry `src/lib.rs`, commands `src/commands.rs`.
+- Config pipeline: `human_config.rs` → `system_config.rs` → internal JSON → `hbs_templating/codegen_templates.rs` → `Config.res`.
+- Runtime: `packages/envio`. Its tests: `packages/envio-tests`.
+- Scenario projects: `scenarios/` (`test_codegen`, `e2e_test`, `fuel_test`, `svm_test`).
+- Edit `packages/cli/templates/` or `packages/envio/`, never the output under `<project>/.envio/`.
+- Read `.res` modules; ignore compiled `.js`.
+
+## Commands
+
+- `pnpm`, not `npm` or `npx`.
+- A Rust change needs no manual build: the tests and the `envio` bin run `cargo build --lib` themselves before they load the addon.
+- One test: `cd packages/envio-tests && pnpm rescript && pnpm vitest run -t "name"`. CI runs the full suite; locally run only what the change touches.
+
+## A change
+
+- Ships with a test that fails without it, driven from outside: real `config.yaml`, `schema.graphql` and handler source. If it can't be reached from outside, say so before fixing.
+- Link the issue above the case: `// https://github.com/enviodev/hyperindex/issues/N`.
+- Name every new metric, env var, exported type, log line and config key in the PR body.
+- Names say what the thing does, spelled out: `entityIdToKey`, not `idKey`.
+- A test checks the whole value with one assert.
+- A comment is for what the code cannot show: a constraint, an invariant, a quirk of something we don't own.
+
+## Skills
+
+- `testing`: the three test rungs, virtual time, captured logs.
+- `config-option`: adding or changing a `config.yaml` option end to end.
+- `planted-bugs`: proving a test suite catches what it claims.
+
+## Plan mode
 
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.
-- At the end of each plan, give me a list of unresolved questions to answer, if any.
+- End each plan with unresolved questions, if any.
 - Finish every plan by running tests.
-
-## Navigation
-
-- Rust CLI: `packages/cli`, entry at `lib.rs`, commands at `commands.rs`.
-- Config parsing pipeline: `human_config.rs` → `system_config.rs` → internal JSON → `hbs_templating/codegen_templates.rs` → `Config.res`.
-- Shared runtime library: `packages/envio`. Its tests: `packages/envio-tests`.
-- Scenario projects: `scenarios/` — `test_codegen`, `e2e_test`, `fuel_test`, `svm_test`.
-- To edit runtime code, edit templates under `packages/cli/templates/` or `packages/envio/`, not the codegen output under `<project>/.envio/`.
-- Prefer reading `.res` modules directly; ignore compiled `.js` artifacts.
-- The napi boundary between the Rust addon (`#[napi]` exports) and ReScript (`Core.addon`) is internal, not a published API. Change both sides freely to get the better shape — don't keep an awkward export for compatibility. The addon must be rebuilt for ReScript tests to see the change (see below).
-
-### Building the native addon
-
-ReScript tests call into the Rust addon, so a Rust change needs a rebuild before they see it:
-
-```
-SVM_TARGET_PLATFORM=linux-amd64 cargo build --lib
-mkdir -p node_modules/envio-linux-x64
-cp target/debug/libenvio.so node_modules/envio-linux-x64/envio.node
-printf '{"name":"envio-linux-x64","version":"0.0.1-dev","main":"envio.node"}\n' > node_modules/envio-linux-x64/package.json
-```
-
-`Core.loadAddon` resolves the platform package by name, which is why the debug build is staged into `node_modules` rather than loaded from `target/`.
-
-## Storage
-
-- No in-place migrations: on schema or config changes the user is expected to resync from scratch. The one exception is a chain added to config.yaml, which `envio start --chain <id>` adds to an existing schema when it names only that chain (`ResumePlan`). `packages/envio-tests/test/Migration_test.res` states what a restart does with each kind of config change. Don't design or propose other migration paths for existing deployments.
-
-## Testing and Development
-
-Every change starts with a failing reproduction — bug fix, review finding, or new feature. Write it before touching the source, watch it fail, then fix. No change without one.
-
-Reproduce from the outside in — real `config.yaml`, real `schema.graphql`, real handler source. Never reach into an internal module to trigger a bug. If it can't be reached from the outside, that's the finding: say so before writing a fix.
-
-Pick the highest rung that reproduces:
-
-1. **User API** — `packages/envio-tests`, via `InternalTestIndexer.fromUserApi(~configYaml, ~schema, ~handlers, ~test)`. User YAML, schema and handler source, type-checked and executed, with `createTestIndexer()` in the test. No codegen, no database. See `TokenIndexer_test.res`. Default — start here.
-   `cd packages/envio-tests && pnpm rescript && pnpm vitest run -t "name"`
-2. **Mock indexer** — `scenarios/test_codegen`, via `test/helpers/MockIndexer.res`. Real indexer loop over the generated config with `Source` and `Storage` mocked, Postgres included. Use when the bug is in the loop itself: fetching, reorgs, batching, writes. The config can still come from `fromUserApi` — see `YamlConfigIndexer_test.res`.
-   `cd scenarios/test_codegen && pnpm exec envio codegen && pnpm rescript && pnpm vitest run test/X_test.res`
-3. **End to end** — `scenarios/e2e_test`. For what the rungs above can't mock: ClickHouse, Hasura, and the CLI itself. CI runs it against real services, so anything beyond the local smoke test lands here.
-   `cd scenarios/e2e_test && pnpm exec envio codegen && pnpm test`
-
-Logs never reach the test output. A run's logger is passed in explicitly (there is no global one) and captures every line in memory: assert on them with `indexer.infoAndAboveLogs()` (as `{msg, params}`) or `indexer.allLogsAsJson()` (every line, trace included). Domain modules such as `FetchState` don't log: they report typed notices through `~onNotice`, and the chain that owns them logs. A failing run's message ends with `Logs: <path>`, a `.test-logs/*.jsonl` file holding all of them. Read it only when the failure needs it.
-
-Scenarios run the indexer's timers — stall, polling cadence, backoff, retries, height-stream reconnects, effect rate limits, throttled writes — on virtual time: nothing the indexer schedules fires until `await indexer.advanceTime(ms)`, so no timer can land between two steps; a zero delay is not time and runs on its own. `~virtualTime=false` (on `Scenario.it`, or on `Scenario.make` for a whole file) opts out, with a comment saying why — a real source against a local server, say — and the lint refuses `~sourceTiming` there. Work off the clock (a slow handler or effect body, events from the addon's threads, a database poll) still takes real time; mark such a wait with a `// Real time: <why>` comment, which covers the lines below it that are indented at least as deep, up to the next blank line. Vitest's fake timers are refused: step the clock the code was given instead. Name each height call where the test causes it with `expectNewHeightCalls(n)` (`expectNewHeightCallsAtLeast(n)` where jitter decides the count); once a test does, a call it never named fails the run. Answer a chain's first height with `Scenario.resolveInitialHeight`. A failure prints the clock's pending timers, its timeline and how far to advance; `ENVIO_TEST_SEED=<seed>` replays a run's jitter. Source-layer code reads time and arms timers only through its `Clock`, in ReScript and Rust alike: the lint and clippy hold it to that, and a virtual-time run refuses `Clock.real` once startup is done.
-
-Durations the indexer reports (handler, preload and effect call time, storage loads, stalls, a source's idle, waiting and querying time) read the run's clock too (`clock->Clock.readTimeRef`, then `Clock.secondsSince`), never `Performance`: the lint allows `Performance` only in the files it lists, each with its reason. A test sets such a duration exactly: the handler waits `await indexer.delay(ms)` and the test passes it with `await indexer.advanceTime(ms)`, then asserts the exact value. Never make a handler "take a while" with a real `Utils.delay`, and never assert a duration as `> 0.`: a 1ms timer can fire well under 1ms in, and metrics export rounded to the millisecond, so both flake.
-
-Link the issue above the case when there is one: `// https://github.com/enviodev/hyperindex/issues/N`
-
-Run only the tests relevant to your change — never the full suite locally. CI runs it on push.
-
-`pnpm vitest run` skips the checks that guard test inputs, so a green local run can
-still fail CI. Run `pnpm lint` in `packages/envio-tests` before you push: it takes
-under a second, and CI runs it ahead of every test. A CI failure whose closing line
-is `Test failed` while naming no test is this lint, not a test.
-
-## ReScript
-
-- When using `Utils.magic` for type casting, always add explicit type annotations: `value->(Utils.magic: inputType => outputType)`
-- Always use ReScript 12 documentation. Never suggest ReasonML syntax.
-- Never use `[| item |]` to create an array. Use `[ item ]` instead.
-- Must always use `=` for setting value to a field. Use `:=` only for ref values created using `ref` function.
-- Never use `%raw` to access object fields if you know the type.
-- In tests, never log — use `Assert` module for all verifications.
-- Use try/catch as expressions instead of refs for tracking success/failure.

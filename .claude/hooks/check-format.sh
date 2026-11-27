@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Blocks `git push` while a file this branch touches is unformatted. Edits made
-# through Bash bypass the PostToolUse formatter, so without this the first
-# anyone hears of the formatting is a CI failure.
+# Blocks `git push` while a file this branch touches is unformatted, or while
+# `pnpm lint` fails. Edits made through Bash bypass the PostToolUse formatter,
+# and nothing runs the lint on an edit, so without this the first anyone hears
+# of either is a CI failure.
 set -uo pipefail
 
 cmd=$(jq -r '.tool_input.command // ""')
@@ -37,8 +38,15 @@ if printf '%s\n' "$changed" | grep -q '^packages/cli/'; then
   fi
 fi
 
+# The lint reads the whole working tree in about a second, so it runs on every
+# push rather than only when a file it covers changed.
+if ! out=$(cd packages/envio-tests && pnpm --silent lint 2>&1); then
+  failures=$(printf '%s\n' "$out" | grep -E '^([^ ]+:[0-9]+: |not ok )' || printf '%s\n' "$out" | tail -n 20)
+  problems="$problems"$'\n'"Lint failed (rerun: cd packages/envio-tests && pnpm lint). Each line ends with its fix:"$'\n'"$failures"
+fi
+
 if [ -n "$problems" ]; then
-  jq -n --arg r "Formatting check failed, so the push was not run.$problems" \
+  jq -n --arg r "The push check failed, so the push was not run.$problems" \
     '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
 fi
 exit 0
