@@ -73,11 +73,33 @@ describe("A contract with an end block", () => {
       ])
       sync.resolveGetHeightOrThrow(1100)
       await sync.expectItemsQueries([{fromBlock: 1001, reply: LeavePending}])
+      await indexer.getBatchWritePromise()
       let rows: array<seen> = await indexer.query("Seen")
       t.expect((
         sync.pendingItemsQueries->Array.map(query => query->MockSource.addresses),
         rows->Array.map(row => row.id),
       )).toEqual(([[]], ["40"]))
+    },
+  )
+
+  scenario->Scenario.it(
+    "handles none of its events past the end block that a head request brings back",
+    ~sources=[{chain: 1337}],
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [gravatarEvent(~blockNumber=40), gravatarEvent(~blockNumber=60)],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+      let rows: array<seen> = await indexer.query("Seen")
+      t.expect(rows->Array.map(row => row.id)).toEqual(["40"])
     },
   )
 })

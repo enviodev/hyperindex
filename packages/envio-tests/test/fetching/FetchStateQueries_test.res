@@ -283,7 +283,11 @@ chains:
     ~maxAddrInPartition=1,
     async (~t, ~indexer as _, ~source) => {
       t.expect(
-        await proposesPastFullBuffer(~source=chain => source(chain), ~head=30, ~toBlock=Bounded(25)),
+        await proposesPastFullBuffer(
+          ~source=chain => source(chain),
+          ~head=30,
+          ~toBlock=Bounded(25),
+        ),
       ).toEqual([
         {
           fromBlock: 0,
@@ -305,7 +309,11 @@ chains:
     ~maxAddrInPartition=1,
     async (~t, ~indexer as _, ~source) => {
       t.expect(
-        await proposesPastFullBuffer(~source=chain => source(chain), ~head=1000, ~toBlock=Unbounded),
+        await proposesPastFullBuffer(
+          ~source=chain => source(chain),
+          ~head=1000,
+          ~toBlock=Unbounded,
+        ),
       ).toEqual([
         {
           fromBlock: 0,

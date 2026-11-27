@@ -15,8 +15,6 @@ type eventRegistration = {
 
 type blockRegistration = {index: int, startBlock?: int}
 
-type contractEndBlock = {contractName: string, endBlock: int}
-
 type chainConfig = {
   chainId: ChainId.t,
   startBlock: int,
@@ -34,7 +32,6 @@ type chainConfig = {
   onEventRegistrations: array<eventRegistration>,
   fetchedBlockRegistrations: array<blockRegistration>,
   onTransactionRegistrations: array<blockRegistration>,
-  contractEndBlocks: array<contractEndBlock>,
   isResumed: bool,
 }
 
@@ -166,12 +163,8 @@ module Request = {
     addresses?: array<Address.t>,
   }
   @send
-  external standaloneRaw: (
-    Core.fetchRequestCtor,
-    standalone,
-    AddressStore.t,
-    array<string>,
-  ) => t = "standalone"
+  external standaloneRaw: (Core.fetchRequestCtor, standalone, AddressStore.t, array<string>) => t =
+    "standalone"
 
   // A request built outside a plan, for a source driven on its own: the
   // addresses the store holds for `contractNames`. No plan completes it.

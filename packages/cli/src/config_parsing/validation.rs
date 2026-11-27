@@ -136,6 +136,35 @@ pub fn validate_no_contract_start_block_with_latest<T>(
     Ok(())
 }
 
+/// A contract's end block below the block it starts at would leave it nothing
+/// to index. A `latest` chain start can't be checked statically, as for the
+/// chain's own end block.
+pub fn validate_contract_end_blocks<T>(
+    chain_id: u64,
+    start_block: StartBlock,
+    contracts: Option<&Vec<human_config::ChainContract<T>>>,
+) -> anyhow::Result<()> {
+    for contract in contracts.into_iter().flatten() {
+        let Some(end_block) = contract.end_block else {
+            continue;
+        };
+        let starts_at = match (contract.start_block, start_block) {
+            (Some(start), _) | (None, StartBlock::Number(start)) => start,
+            (None, StartBlock::Tag(_)) => continue,
+        };
+        if end_block < starts_at {
+            return Err(anyhow!(
+                "Contract {:?} on chain {} has an end_block smaller than the block it starts \
+                 at, {starts_at}. A contract's end_block must be greater than or equal to its \
+                 start_block.",
+                contract.name,
+                chain_id
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_deserialized_fuel_config_yaml(
     fuel_config: &human_config::fuel::HumanConfig,
 ) -> anyhow::Result<()> {
@@ -145,6 +174,7 @@ pub fn validate_deserialized_fuel_config_yaml(
             chain.start_block,
             chain.contracts.as_ref(),
         )?;
+        validate_contract_end_blocks(chain.id, chain.start_block, chain.contracts.as_ref())?;
     }
     Ok(())
 }
@@ -194,6 +224,7 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
         // validate endblock is a greater than the startblock
         chain.validate_endblock_lte_startblock()?;
         chain.validate_no_contract_start_block_with_latest()?;
+        validate_contract_end_blocks(chain.id, chain.start_block, chain.contracts.as_ref())?;
         chain.validate_finite_endblock_networks()?;
 
         // Addresses are compared case-insensitively: checksum and lowercase
@@ -524,6 +555,37 @@ mod tests {
             .is_ok());
     }
 
+    // https://github.com/enviodev/hyperindex/issues/316
+    #[test]
+    fn rejects_a_contract_end_block_below_where_the_contract_starts() {
+        let contract = |start_block, end_block| super::human_config::ChainContract::<()> {
+            name: "C".to_string(),
+            address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+                .to_string()
+                .into(),
+            start_block,
+            end_block: Some(end_block),
+            config: None,
+        };
+        let check = |chain_start, contract| {
+            super::validate_contract_end_blocks(
+                1,
+                super::StartBlock::Number(chain_start),
+                Some(&vec![contract]),
+            )
+            .is_ok()
+        };
+        assert_eq!(
+            [
+                check(100, contract(None, 50)),
+                check(0, contract(Some(100), 50)),
+                check(100, contract(None, 100)),
+                check(100, contract(Some(10), 50)),
+            ],
+            [false, false, true, true]
+        );
+    }
+
     #[test]
     fn latest_start_block_rejects_a_contract_level_start_block() {
         let contracts = Some(vec![super::human_config::ChainContract {
@@ -532,6 +594,7 @@ mod tests {
                 .to_string()
                 .into(),
             start_block: Some(100),
+            end_block: None,
             config: None,
         }]);
 

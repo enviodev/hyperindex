@@ -511,8 +511,7 @@ module Ledger = {
   external unclaimedHeightCallsMessage: t => Nullable.t<string> = "unclaimedHeightCallsMessage"
   @send external unclaimedAnswersMessage: t => Nullable.t<string> = "unclaimedAnswersMessage"
   @send
-  external takeItemsQuery: (t, int, Null.t<int>, int, array<string>, int) => int =
-    "takeItemsQuery"
+  external takeItemsQuery: (t, int, Null.t<int>, int, array<string>, int) => int = "takeItemsQuery"
   @send external settleItemsQuery: (t, int) => unit = "settleItemsQuery"
   @send external entryCandidates: (t, array<expected>) => array<array<int>> = "entryCandidates"
   @send external matchItemsQueries: (t, array<expected>) => itemsMatch = "matchItemsQueries"

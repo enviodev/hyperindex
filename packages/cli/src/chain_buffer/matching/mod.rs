@@ -96,6 +96,7 @@ impl EvmRegistration {
         let block_number = log.block_number as i64;
         log.topic_count() == self.topic_count
             && has_started(self.start_block, block_number)
+            && !store.has_ended(self.contract, block_number)
             && self.filters.iter().any(|filter| {
                 filter.0.iter().zip(log.topics).all(|(constraint, topic)| {
                     constraint.matches(topic, self.contract, block_number, store)
@@ -349,7 +350,7 @@ fn compile(input: &OnEventRegistrationInput, store: &StoreInner) -> Result<EvmRe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::address_store::test_support::evm_store;
+    use crate::address_store::test_support::{evm_store, evm_store_ending};
     use crate::chain_buffer::decode::evm::EvmDecoder;
     use crate::ecosystems::evm::registration::ParamMeta;
     use crate::js_value::test_value::JsValue;
@@ -509,5 +510,39 @@ mod tests {
                 ]),
             )
         );
+    }
+
+    // https://github.com/enviodev/hyperindex/issues/316
+    #[test]
+    fn matches_no_log_of_a_contract_past_its_end_block() {
+        let store = evm_store_ending(&[("Token", &[TOKEN])], &[("Token", 100)]);
+        let inputs = vec![
+            registration(0, "Token", false, None, vec![filter(Some(vec![]))]),
+            registration(1, "Token", true, None, vec![filter(Some(vec![]))]),
+        ];
+        let matcher = EvmMatcher::new(&inputs, ContractRegisters::default(), &store).unwrap();
+        let matched: Vec<Vec<u32>> = [100, 101]
+            .into_iter()
+            .map(|block_number| {
+                let log = log(TOKEN, SENDER, block_number, None);
+                let address = bytes(log.address);
+                let view = LogView {
+                    block_number: log.block_number,
+                    address: &address,
+                    topics: [
+                        Some(log.topics[0].as_slice()),
+                        Some(log.topics[1].as_slice()),
+                        Some(log.topics[2].as_slice()),
+                        None,
+                    ],
+                };
+                let mut matched = Vec::new();
+                matcher.for_each_match(&view, &matcher.read_store(), |registration| {
+                    matched.push(registration.index)
+                });
+                matched
+            })
+            .collect();
+        assert_eq!(matched, vec![vec![0, 1], vec![]]);
     }
 }

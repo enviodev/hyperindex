@@ -56,7 +56,8 @@ let registering = (
   params: dict{"addresses": addresses->(Utils.magic: array<string> => unknown)},
 }
 
-let pendingShapes = (source: MockSource.t) => source.pendingItemsQueries->ItemsQueryView.Summary.summarize
+let pendingShapes = (source: MockSource.t) =>
+  source.pendingItemsQueries->ItemsQueryView.Summary.summarize
 
 let upTo = latestFetchedBlockNumber => MockSource.Respond({items: [], latestFetchedBlockNumber})
 
@@ -107,7 +108,10 @@ describe("FetchState group joins over the indexer loop", () => {
 
       // The group has a density by now, so it goes on in chunks; the first
       // one shows who is in it.
-      t.expect((afterFirstRegistrations, sync->pendingShapes->Array.slice(~start=0, ~end=2))).toEqual((
+      t.expect((
+        afterFirstRegistrations,
+        sync->pendingShapes->Array.slice(~start=0, ~end=2),
+      )).toEqual((
         [{fromBlock: 11, toBlock: Unbounded, addresses: [staticAddress]}],
         [
           {fromBlock: 2, toBlock: Unbounded, addresses: [address3]},
@@ -167,7 +171,10 @@ describe("FetchState group joins over the indexer loop", () => {
         {where: query => query.fromBlock > 600, reply: LeavePending},
       ])
 
-      t.expect((afterFirstRegistration, sync->pendingShapes->Array.slice(~start=0, ~end=3))).toEqual((
+      t.expect((
+        afterFirstRegistration,
+        sync->pendingShapes->Array.slice(~start=0, ~end=3),
+      )).toEqual((
         [
           {fromBlock: 100, toBlock: Bounded(600), addresses: [address1]},
           {fromBlock: 601, toBlock: Bounded(780), addresses: [address1, staticAddress]},

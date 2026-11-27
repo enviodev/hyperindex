@@ -147,6 +147,7 @@ pub mod evm {
                         address,
                         config: config.clone(),
                         start_block: None,
+                        end_block: None,
                     };
 
                     chain.contracts.get_or_insert_with(Vec::new).push(contract);
@@ -302,6 +303,7 @@ pub mod fuel {
                                         events: selected_contract.selected_events.clone(),
                                     }),
                                     start_block: None,
+                                    end_block: None,
                                 })
                                 .collect(),
                         ),

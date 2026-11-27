@@ -250,7 +250,8 @@ let sortForBatch = (
     switch (a->hasFullBatch, b->hasFullBatch) {
     | (true, false) => Ordering.less
     | (false, true) => Ordering.greater
-    | (true, true) | (false, false) => Float.compare(a->progressPercentageOf, b->progressPercentageOf)
+    | (true, true) | (false, false) =>
+      Float.compare(a->progressPercentageOf, b->progressPercentageOf)
     }
   )
 }
@@ -322,8 +323,7 @@ let make = async (
         let blockNumber = item->Internal.getItemBlockNumber
         // Items are built in order, so a log's items are consecutive: the first
         // of them is the only one that counts as an event.
-        let isNewEvent =
-          idx === 0 || !(chainItems->Array.getUnsafe(idx - 1)->isSameLog(item))
+        let isNewEvent = idx === 0 || !(chainItems->Array.getUnsafe(idx - 1)->isSameLog(item))
         if isNewEvent {
           chainEventsProcessed := chainEventsProcessed.contents + 1
         }

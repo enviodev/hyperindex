@@ -50,12 +50,6 @@ pub struct PlanBlockRegistration {
 }
 
 #[napi(object)]
-pub struct PlanContractEndBlock {
-    pub contract_name: String,
-    pub end_block: i64,
-}
-
-#[napi(object)]
 pub struct PlanChainConfig {
     pub chain_id: i64,
     pub start_block: i64,
@@ -76,7 +70,6 @@ pub struct PlanChainConfig {
     /// Block handlers that read block fields.
     pub fetched_block_registrations: Vec<PlanBlockRegistration>,
     pub on_transaction_registrations: Vec<PlanBlockRegistration>,
-    pub contract_end_blocks: Vec<PlanContractEndBlock>,
     pub is_resumed: bool,
 }
 
@@ -499,12 +492,9 @@ impl IndexingPlan {
                     start_block: reg.start_block,
                 });
             }
-            let mut contract_end_blocks = vec![None; store.contract_names().len()];
-            for end in &config.contract_end_blocks {
-                if let Some(contract) = store.contract_idx(&end.contract_name) {
-                    contract_end_blocks[contract as usize] = Some(end.end_block);
-                }
-            }
+            let contract_end_blocks = (0..store.contract_names().len() as u32)
+                .map(|contract| store.contract_end_block(contract))
+                .collect();
             (events, contract_end_blocks)
         };
         let blocks = |regs: &[PlanBlockRegistration]| {

@@ -125,7 +125,7 @@ let fetchOutcome = (
   source.getItems(
     ~request=TestSources.request(
       ~fromBlock,
-      ~toBlock=?toBlock,
+      ~toBlock?,
       ~addressStore=addressing->Pair.first,
       ~contractNames=addressing->Pair.second,
       ~onBlockRegistrations=onBlockRegistrations->Array.filter(BlockItem.isFetched),

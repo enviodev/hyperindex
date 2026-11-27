@@ -348,6 +348,8 @@ struct ChainContractConfig {
     addresses: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     start_block: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end_block: Option<u64>,
 }
 
 #[derive(Serialize, Debug)]
@@ -569,6 +571,7 @@ impl SystemConfig {
                             ChainContractConfig {
                                 addresses: nc.addresses.clone(),
                                 start_block: nc.start_block,
+                                end_block: nc.end_block,
                             },
                         )
                     })

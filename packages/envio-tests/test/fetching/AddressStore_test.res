@@ -67,10 +67,7 @@ describe("An address registered for one contract from several blocks", () => {
                 ? "added"
                 : "duplicate",
           )
-        t.expect((verdicts, describeStore(store))).toEqual((
-          expectedVerdicts,
-          indexedFromTheLowest,
-        ))
+        t.expect((verdicts, describeStore(store))).toEqual((expectedVerdicts, indexedFromTheLowest))
       },
     )
 

@@ -124,12 +124,14 @@ describe("Dynamic registration next to a mixed-contract group", () => {
       }
       let summarize = queries =>
         queries
-        ->Array.map((query: MockSource.pendingItemsQuery) => (
-          query.fromBlock,
-          query->MockSource.addresses->Array.length,
-        ))
-        ->Array.toSorted(((a, aCount), (b, bCount)) =>
-          a === b ? Int.compare(aCount, bCount) : Int.compare(a, b)
+        ->Array.map(
+          (query: MockSource.pendingItemsQuery) => (
+            query.fromBlock,
+            query->MockSource.addresses->Array.length,
+          ),
+        )
+        ->Array.toSorted(
+          ((a, aCount), (b, bCount)) => a === b ? Int.compare(aCount, bCount) : Int.compare(a, b),
         )
 
       sourceMock.resolveGetHeightOrThrow(100_000)
@@ -233,8 +235,11 @@ describe("Dynamic registration next to a mixed-contract group", () => {
       while sourceMock.pendingItemsQueries->Array.some(isBehind) && rounds.contents < 50 {
         rounds := rounds.contents + 1
         await sourceMock.expectItemsQueries(
-          sourceMock.pendingItemsQueries->Array.map(query =>
-            query->isBehind ? respondInFull(query) : {where: pending => pending === query, reply: LeavePending}
+          sourceMock.pendingItemsQueries->Array.map(
+            query =>
+              query->isBehind
+                ? respondInFull(query)
+                : {where: pending => pending === query, reply: LeavePending},
           ),
         )
         await indexer.waitUntilIdle()

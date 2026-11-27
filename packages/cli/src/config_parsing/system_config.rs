@@ -1107,6 +1107,7 @@ impl SystemConfig {
                                 name: c.name,
                                 addresses,
                                 start_block: c.start_block,
+                                end_block: c.end_block,
                             })
                         })
                         .collect::<Result<_>>()?;
@@ -1268,6 +1269,7 @@ impl SystemConfig {
                             name: c.name,
                             addresses: c.address.into(),
                             start_block: c.start_block,
+                            end_block: c.end_block,
                         })
                         .collect();
 
@@ -1357,6 +1359,7 @@ impl SystemConfig {
                                 name: program.name.clone(),
                                 addresses: vec![address.clone()],
                                 start_block: None,
+                                end_block: None,
                             });
                     }
                 }
@@ -1692,6 +1695,7 @@ pub struct ChainContract {
     pub name: ContractNameKey,
     pub addresses: Vec<String>,
     pub start_block: Option<u64>,
+    pub end_block: Option<u64>,
 }
 
 impl ChainContract {

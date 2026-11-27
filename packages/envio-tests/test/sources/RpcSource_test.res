@@ -182,7 +182,7 @@ describe("RpcSource - field selection end to end", () => {
       ~request=TestSources.request(
         ~fromBlock=100,
         ~toBlock=100,
-        ~addressStore=addressStore,
+        ~addressStore,
         ~contractNames=[registration.eventConfig.contractName],
         ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
       ),
@@ -712,7 +712,7 @@ describe("RpcSource - getItems on response-too-large", () => {
           ~request=TestSources.request(
             ~fromBlock=0,
             ~toBlock=1_000_000,
-            ~addressStore=addressStore,
+            ~addressStore,
             ~contractNames=[eventConfig.eventConfig.contractName],
             ~onEventRegistrations=[(eventConfig :> Internal.onEventRegistration)],
           ),
@@ -832,7 +832,7 @@ describe("RpcSource - getItems classifies real provider block-range errors", () 
           ~request=TestSources.request(
             ~fromBlock=0,
             ~toBlock=1_000_000,
-            ~addressStore=addressStore,
+            ~addressStore,
             ~contractNames=[eventConfig.eventConfig.contractName],
             ~onEventRegistrations=[(eventConfig :> Internal.onEventRegistration)],
           ),
@@ -950,7 +950,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
         ~request=TestSources.request(
           ~fromBlock=0,
           ~toBlock=100,
-          ~addressStore=addressStore,
+          ~addressStore,
           ~contractNames=[addressBound.eventConfig.contractName],
           ~onEventRegistrations=selectedRegistrations->Array.map(
             reg => (reg :> Internal.onEventRegistration),

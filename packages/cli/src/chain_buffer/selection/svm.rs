@@ -215,6 +215,7 @@ impl Registration {
     ) -> bool {
         let slot = call.slot as i64;
         has_started(self.start_block, slot)
+            && !store.has_ended(instruction.contract_idx, slot)
             && (self.is_wildcard
                 || store.is_indexed_at(call.program_id.as_bytes(), instruction.contract_idx, slot))
             && self
@@ -1012,6 +1013,7 @@ mod tests {
         let store = AddressStore::new_svm(vec![crate::address_store::AddressStoreContract {
             name: "Owned".to_string(),
             start_block: None,
+            end_block: None,
             depends_on_addresses: true,
         }])
         .unwrap();

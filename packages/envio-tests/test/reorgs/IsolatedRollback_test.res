@@ -243,9 +243,7 @@ let reorgAt = async (
       prevRangeLastBlock: {blockNumber: atBlock, blockHash: `0x${atBlock->Int.toString}a`},
     }),
   }
-  await source.expectItemsQueries(
-    chunksAbove ? [reorg, {reply: LeavePending}] : [reorg],
-  )
+  await source.expectItemsQueries(chunksAbove ? [reorg, {reply: LeavePending}] : [reorg])
   // The depth search drops the source's orphaned-chain state before it reads
   // any hash, so this is the one point both shapes of the search pass through —
   // and the only thing separating "the rollback hasn't started" from "there is

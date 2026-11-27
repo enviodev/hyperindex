@@ -311,7 +311,15 @@ let makeInternal = (
   // the addresses in it, and every source client holds the same handle.
   let addressStore = AddressStore.make(
     ~ecosystem=config.ecosystem.name,
-    ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractMapping),
+    ~contracts=AddressStore.contractsOf(
+      ~onEventRegistrations,
+      ~contractMapping,
+      ~endBlocks=chainConfig.contracts
+      ->Array.filterMap(contract =>
+        contract.endBlock->Option.map(endBlock => (contract.name, endBlock))
+      )
+      ->Dict.fromArray,
+    ),
   )
   // Every address the chain indexes goes into the store, including ones whose
   // contract has no address-dependent events, so the address is still persisted
@@ -369,7 +377,7 @@ let makeInternal = (
     {
       chainId: chainConfig.id,
       startBlock,
-      endBlock: ?endBlock,
+      ?endBlock,
       blockLag,
       blockThrottle: chainConfig.blockThrottle,
       knownHeight,
@@ -405,12 +413,6 @@ let makeInternal = (
       onTransactionRegistrations: onTransactionRegistrations->Array.map((
         registration
       ): IndexingPlan.blockRegistration => {index: registration.index}),
-      contractEndBlocks: chainConfig.contracts->Array.filterMap(contract =>
-        contract.endBlock->Option.map((endBlock): IndexingPlan.contractEndBlock => {
-          contractName: contract.name,
-          endBlock,
-        })
-      ),
       isResumed,
     },
     addressStore,
@@ -624,7 +626,8 @@ let readyCountFrom = (cs: t, ~processingBlockNumber) =>
     ~fromBlock=processingBlockNumber + 1,
     ~toBlock=cs->readyThroughBlock,
   )
-let bufferReadyCount = (cs: t) => cs->readyCountFrom(~processingBlockNumber=cs.processingBlockNumber)
+let bufferReadyCount = (cs: t) =>
+  cs->readyCountFrom(~processingBlockNumber=cs.processingBlockNumber)
 
 // Whether the chain still has something to index: past its end block only a
 // contractRegister backlog or buffered items before the end block count.
@@ -756,8 +759,7 @@ let isFetchingAtHead = (cs: t) => {
 
 // Reached head on a chain with no configured endBlock - used by auto-exit to
 // detect that no events were found in the start..head range.
-let isAtHeadWithoutEndBlock = (cs: t) =>
-  cs.isProgressAtHead && cs.endBlock->Option.isNone
+let isAtHeadWithoutEndBlock = (cs: t) => cs.isProgressAtHead && cs.endBlock->Option.isNone
 
 // --- State transitions. The chain state is mutated only through these; each
 // owns a cohesive update so callers don't juggle individual fields. ---

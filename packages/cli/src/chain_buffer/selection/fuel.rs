@@ -115,6 +115,7 @@ impl Registration {
         };
         kind_matches
             && has_started(self.start_block, block)
+            && !store.has_ended(self.contract_idx, block)
             && (self.is_wildcard || store.is_indexed_at(emitter, self.contract_idx, block))
     }
 }
@@ -681,6 +682,7 @@ mod tests {
         let store = AddressStore::new_fuel(vec![crate::address_store::AddressStoreContract {
             name: "Owned".to_string(),
             start_block: None,
+            end_block: None,
             depends_on_addresses: true,
         }])
         .unwrap();

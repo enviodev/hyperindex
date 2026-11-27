@@ -1,6 +1,11 @@
 type t
 
-type contract = {name: string, startBlock: option<int>, dependsOnAddresses: bool}
+type contract = {
+  name: string,
+  startBlock: option<int>,
+  endBlock?: int,
+  dependsOnAddresses: bool,
+}
 
 type registration = {
   address: Address.t,
@@ -52,6 +57,7 @@ let make = (~ecosystem: Ecosystem.name, ~contracts: array<contract>): t => {
 let contractsOf = (
   ~onEventRegistrations: array<Internal.onEventRegistration>,
   ~contractMapping: ContractMapping.t,
+  ~endBlocks: dict<int>=Dict.make(),
 ): array<contract> => {
   // Only ever holds a declared start block, so a missing key is unambiguous.
   // Storing None in a dict would be indistinguishable from "not seen yet".
@@ -85,6 +91,7 @@ let contractsOf = (
     startBlock: unrestricted->Utils.Set.has(name)
       ? None
       : startBlocks->Utils.Dict.dangerouslyGetNonOption(name),
+    endBlock: ?(endBlocks->Utils.Dict.dangerouslyGetNonOption(name)),
     dependsOnAddresses: addressDependent->Utils.Set.has(name),
   })
 }
@@ -143,4 +150,3 @@ let toVerdict = (raw: rawVerdict): verdict =>
 // An unknown contract name throws with none of the batch applied.
 let registerBatch = (store: t, registrations: array<registration>): array<verdict> =>
   store->registerBatchRaw(registrations)->Array.map(toVerdict)
-

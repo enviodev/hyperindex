@@ -414,6 +414,15 @@
           "format": "uint64",
           "minimum": 0
         },
+        "end_block": {
+          "description": "The last block the indexer ingests data for this specific contract. Its events after it are neither fetched nor handled, while the rest of the chain keeps going.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
         "abi_file_path": {
           "description": "Relative path (from config) to a json abi.",
           "type": "string"

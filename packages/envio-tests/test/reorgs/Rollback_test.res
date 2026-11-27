@@ -3070,8 +3070,9 @@ describe("E2E rollback tests", () => {
       t.expect(
         (
           pending->Array.filter(query => query.fromBlock == 116 && query.toBlock == Bounded(118)),
-          pending->Array.every(query =>
-            query->MockSource.addresses == pending->Array.getUnsafe(0)->MockSource.addresses
+          pending->Array.every(
+            query =>
+              query->MockSource.addresses == pending->Array.getUnsafe(0)->MockSource.addresses,
           ),
         ),
         ~message="Should create exactly one gap-fill query for the partial chunk range, every query asking for the same addresses",

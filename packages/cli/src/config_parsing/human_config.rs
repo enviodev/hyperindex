@@ -395,6 +395,13 @@ pub struct ChainContract<T> {
                        greater than the chain start_block for more specific indexing."
     )]
     pub start_block: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "The last block the indexer ingests data for this specific contract. Its \
+                       events after it are neither fetched nor handled, while the rest of the \
+                       chain keeps going."
+    )]
+    pub end_block: Option<u64>,
     #[serde(flatten)]
     //If this is "None" it should be expected that
     //there is a global config for the contract
@@ -2035,6 +2042,7 @@ events: []
                 "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()
             ]),
             start_block: None,
+            end_block: None,
             config: Some(ContractConfig {
                 abi_file_path: None,
                 handler: Some("./src/EventHandler.js".to_string()),
@@ -2058,6 +2066,7 @@ events: []
             name: "Contract1".to_string(),
             address: vec![].into(),
             start_block: None,
+            end_block: None,
             config: Some(ContractConfig {
                 abi_file_path: None,
                 handler: Some("./src/EventHandler.js".to_string()),
@@ -2082,6 +2091,7 @@ events: []
             name: "Contract1".to_string(),
             address: vec!["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()].into(),
             start_block: None,
+            end_block: None,
             config: Some(ContractConfig {
                 abi_file_path: None,
                 handler: Some("./src/EventHandler.js".to_string()),
@@ -2106,6 +2116,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()
             ]),
             start_block: None,
+            end_block: None,
             config: None,
         };
 
@@ -2242,6 +2253,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                         .to_string()
                         .into(),
                     start_block: None,
+                    end_block: None,
                     config: Some(fuel::ContractConfig {
                         abi_file_path: "../abis/greeter-abi.json".to_string(),
                         handler: Some("./src/EventHandlers.js".to_string()),

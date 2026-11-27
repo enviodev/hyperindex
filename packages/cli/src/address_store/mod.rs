@@ -237,6 +237,7 @@ pub struct StoreInner {
     ecosystem: Ecosystem,
     contract_names: Vec<String>,
     contract_start_blocks: Vec<i64>,
+    contract_end_blocks: Vec<Option<i64>>,
     contract_depends_on_addresses: Vec<bool>,
     contract_idx_by_name: HashMap<String, u32>,
     entries: Entries,
@@ -290,6 +291,16 @@ impl StoreInner {
     pub fn is_indexed_at(&self, key: &[u8], contract_idx: u32, block_number: i64) -> bool {
         self.live_id_for(key, contract_idx)
             .is_some_and(|id| self.entry(id).effective_start_block <= block_number)
+    }
+
+    /// A contract's events after its end block are not indexed, whatever
+    /// request brought them back: at the head one request serves every need.
+    pub fn has_ended(&self, contract_idx: u32, block_number: i64) -> bool {
+        self.contract_end_blocks[contract_idx as usize].is_some_and(|end| block_number > end)
+    }
+
+    pub(crate) fn contract_end_block(&self, contract_idx: u32) -> Option<i64> {
+        self.contract_end_blocks[contract_idx as usize]
     }
 
     pub fn contract_idx(&self, name: &str) -> Option<u32> {
@@ -470,6 +481,7 @@ fn check_registration_block(registration_block: i64) -> napi::Result<()> {
 pub struct AddressStoreContract {
     pub name: String,
     pub start_block: Option<i64>,
+    pub end_block: Option<i64>,
     pub depends_on_addresses: bool,
 }
 
@@ -749,9 +761,9 @@ impl AddressStore {
             .sum()
     }
 
-    /// Whether an address is registered for a contract and already started at
-    /// `block_number` — the chain-wide gate, exposed for the simulate source,
-    /// which has no real query boundary to gate at.
+    /// Whether an address is registered for a contract, already started and not
+    /// yet ended at `block_number` — the chain-wide gate, exposed for the
+    /// simulate source, which has no real query boundary to gate at.
     #[napi]
     pub fn is_indexed_at(&self, address: String, contract_name: String, block_number: i64) -> bool {
         let store = self.read();
@@ -762,6 +774,7 @@ impl AddressStore {
             return false;
         };
         store.is_indexed_at(&key, contract_idx, block_number)
+            && !store.has_ended(contract_idx, block_number)
     }
 
     /// Drops every address registered after `target_block`, returning the
@@ -829,6 +842,7 @@ impl AddressStore {
         }
         let mut contract_names = Vec::with_capacity(contracts.len());
         let mut contract_start_blocks = Vec::with_capacity(contracts.len());
+        let mut contract_end_blocks = Vec::with_capacity(contracts.len());
         let mut contract_idx_by_name = HashMap::with_capacity(contracts.len());
         let mut contract_depends_on_addresses = Vec::with_capacity(contracts.len());
         for contract in contracts {
@@ -841,6 +855,7 @@ impl AddressStore {
             contract_idx_by_name.insert(contract.name.clone(), contract_names.len() as u32);
             contract_names.push(contract.name);
             contract_start_blocks.push(contract.start_block.unwrap_or(0).max(0));
+            contract_end_blocks.push(contract.end_block);
             contract_depends_on_addresses.push(contract.depends_on_addresses);
         }
         let live_count_by_contract = vec![0u32; contract_names.len()];
@@ -849,6 +864,7 @@ impl AddressStore {
                 ecosystem,
                 contract_names,
                 contract_start_blocks,
+                contract_end_blocks,
                 contract_depends_on_addresses,
                 contract_idx_by_name,
                 entries: Entries::new(key_width(ecosystem)),
@@ -961,6 +977,7 @@ impl AddressSet {
             return false;
         };
         store.is_indexed_at(&key, contract_idx, block_number)
+            && !store.has_ended(contract_idx, block_number)
             && self.ids.iter().any(|&id| {
                 store.entries.contract_idx(id) == contract_idx && store.entries.key(id) == &*key
             })
@@ -1030,6 +1047,14 @@ pub(crate) mod test_support {
     use super::*;
 
     fn store_of(ecosystem: Ecosystem, entries: &[(&str, &[&str])]) -> AddressStore {
+        store_ending(ecosystem, entries, &[])
+    }
+
+    fn store_ending(
+        ecosystem: Ecosystem,
+        entries: &[(&str, &[&str])],
+        end_blocks: &[(&str, i64)],
+    ) -> AddressStore {
         let store = AddressStore::with_ecosystem(
             ecosystem,
             entries
@@ -1037,6 +1062,10 @@ pub(crate) mod test_support {
                 .map(|(name, _)| AddressStoreContract {
                     name: name.to_string(),
                     start_block: None,
+                    end_block: end_blocks
+                        .iter()
+                        .find(|(ending, _)| ending == name)
+                        .map(|&(_, end_block)| end_block),
                     depends_on_addresses: true,
                 })
                 .collect(),
@@ -1064,6 +1093,13 @@ pub(crate) mod test_support {
     /// registered as config addresses.
     pub(crate) fn evm_store(entries: &[(&str, &[&str])]) -> AddressStore {
         store_of(Ecosystem::Evm, entries)
+    }
+
+    pub(crate) fn evm_store_ending(
+        entries: &[(&str, &[&str])],
+        end_blocks: &[(&str, i64)],
+    ) -> AddressStore {
+        store_ending(Ecosystem::Evm, entries, end_blocks)
     }
 
     pub(crate) fn fuel_store(entries: &[(&str, &[&str])]) -> AddressStore {

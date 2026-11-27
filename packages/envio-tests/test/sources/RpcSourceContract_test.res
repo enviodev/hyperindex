@@ -97,12 +97,12 @@ let invoke = (
     ~request=TestSources.request(
       ~fromBlock=100,
       ~toBlock=100,
-      ~addressStore=addressStore,
+      ~addressStore,
       ~contractNames=[registration.eventConfig.contractName],
       ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
     ),
     ~toBlock=Some(100),
-    ~retry=retry,
+    ~retry,
     ~reorgableFrom=None,
     // Far below the head, where a page's blocks aren't checked one by one.
     ~knownHeight=1_100,
@@ -598,7 +598,7 @@ describe("RPC source public contract", () => {
                 ~request=TestSources.request(
                   ~fromBlock=0,
                   ~toBlock=1_000_000,
-                  ~addressStore=addressStore,
+                  ~addressStore,
                   ~contractNames=[registration.eventConfig.contractName],
                   ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
                 ),
@@ -708,7 +708,7 @@ describe("RPC source public contract", () => {
               ~request=TestSources.request(
                 ~fromBlock=0,
                 ~toBlock=100,
-                ~addressStore=addressStore,
+                ~addressStore,
                 ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
               ),
               ~toBlock=Some(100),
@@ -831,7 +831,7 @@ describe("RPC source public contract", () => {
               ~request=TestSources.request(
                 ~fromBlock=100,
                 ~toBlock=100,
-                ~addressStore=addressStore,
+                ~addressStore,
                 ~contractNames=["ContractA", "ContractB"],
                 ~onEventRegistrations=[
                   (eventA :> Internal.onEventRegistration),
@@ -930,7 +930,7 @@ describe("RPC source public contract", () => {
                 ~request=TestSources.request(
                   ~fromBlock=100,
                   ~toBlock=100,
-                  ~addressStore=addressStore,
+                  ~addressStore,
                   ~onEventRegistrations=[
                     (clientFiltered :> Internal.onEventRegistration),
                     (wildcard :> Internal.onEventRegistration),

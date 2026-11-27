@@ -132,18 +132,8 @@ describe("SimulateSource routing", () => {
       item(~registration=regA, ~blockNumber=10, ~srcAddress=addr(1)),
     ]
 
-    let first = await getItems(
-      ~items,
-      ~store,
-      ~addresses=[addr(0)],
-      ~registrations,
-    )
-    let second = await getItems(
-      ~items,
-      ~store,
-      ~addresses=[addr(1)],
-      ~registrations,
-    )
+    let first = await getItems(~items, ~store, ~addresses=[addr(0)], ~registrations)
+    let second = await getItems(~items, ~store, ~addresses=[addr(1)], ~registrations)
 
     t.expect({"first": first, "second": second}).toEqual({
       "first": [(0, 10, addr(0))],
@@ -196,12 +186,7 @@ describe("SimulateSource routing", () => {
     )
     // Without the address-free marker the same request simply asks for no
     // addresses, so it routes nothing.
-    let normal = await getItems(
-      ~items,
-      ~store,
-      ~addresses,
-      ~registrations=[regA],
-    )
+    let normal = await getItems(~items, ~store, ~addresses, ~registrations=[regA])
 
     t.expect({"clientFiltered": clientFiltered, "normal": normal}).toEqual({
       "clientFiltered": [(0, 50, addr(0))],
@@ -250,12 +235,7 @@ describe("SimulateSource routing", () => {
       ),
     ]
 
-    let requestScoped = await getItems(
-      ~items,
-      ~store,
-      ~addresses=[addr(0)],
-      ~registrations,
-    )
+    let requestScoped = await getItems(~items, ~store, ~addresses=[addr(0)], ~registrations)
     let clientFiltered = await getItems(
       ~items,
       ~store,
@@ -312,18 +292,8 @@ describe("SimulateSource routing", () => {
       item(~registration=regSecond, ~blockNumber=10, ~srcAddress=addr(0)),
     ]
 
-    let first = await getItems(
-      ~items,
-      ~store,
-      ~addresses,
-      ~registrations=[regFirst],
-    )
-    let both = await getItems(
-      ~items,
-      ~store,
-      ~addresses,
-      ~registrations=[regFirst, regSecond],
-    )
+    let first = await getItems(~items, ~store, ~addresses, ~registrations=[regFirst])
+    let both = await getItems(~items, ~store, ~addresses, ~registrations=[regFirst, regSecond])
 
     t.expect({"first": first, "both": both}).toEqual({
       "first": [(0, 10, addr(0))],

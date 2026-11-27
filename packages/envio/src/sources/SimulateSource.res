@@ -186,11 +186,7 @@ let make = (
           ->Array.filter(registration =>
             selection.onBlockRegistrationIndexes->Array.includes(registration.index)
           )
-          ->blockItems(
-            ~fromBlock,
-            ~toBlock=toBlockQueried,
-            ~getBlock,
-          ),
+          ->blockItems(~fromBlock, ~toBlock=toBlockQueried, ~getBlock),
         ),
         ~blocks=[],
         ~ecosystem,

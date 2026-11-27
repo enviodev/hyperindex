@@ -242,10 +242,7 @@ describe("Dynamic contract registration", () => {
         ],
       )
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
-        [
-          {fromBlock: 5, toBlock: Bounded(800), addresses: [address1]},
-          staticGroupQuery([]),
-        ],
+        [{fromBlock: 5, toBlock: Bounded(800), addresses: [address1]}, staticGroupQuery([])],
         [(address2, "UnknownContract", 5), (address1, "Gravatar", 5)],
       ))
     },
@@ -289,10 +286,7 @@ describe("Dynamic contract registration", () => {
         ],
       )
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
-        [
-          {fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
-          staticGroupQuery([]),
-        ],
+        [{fromBlock: 10, toBlock: Bounded(800), addresses: [address1]}, staticGroupQuery([])],
         [(address1, "UnknownContract", 10), (address1, "Gravatar", 10)],
       ))
     },
@@ -338,10 +332,7 @@ describe("Dynamic contract registration", () => {
         ],
       )
       t.expect((queries, await fetchPendingAndReadRows(sourceMock, indexer))).toEqual((
-        [
-          {fromBlock: 10, toBlock: Bounded(800), addresses: [address1]},
-          staticGroupQuery([]),
-        ],
+        [{fromBlock: 10, toBlock: Bounded(800), addresses: [address1]}, staticGroupQuery([])],
         [(address1, "Gravatar", 10)],
       ))
     },
