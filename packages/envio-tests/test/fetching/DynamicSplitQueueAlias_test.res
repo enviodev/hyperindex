@@ -110,18 +110,6 @@ describe("Dynamic registration next to a mixed-contract group", () => {
           query => {items: query->itemsFor(~toBlock), latestFetchedBlockNumber: toBlock},
         ),
       }
-      let respondInFull = (query: MockSource.pendingItemsQuery): MockSource.expectedItemsQuery => {
-        where: pending => pending === query,
-        reply: RespondWith(
-          query => {
-            let toBlock = switch query.toBlock {
-            | Bounded(toBlock) => toBlock
-            | Unbounded => 199_800
-            }
-            {items: query->itemsFor(~toBlock), latestFetchedBlockNumber: toBlock}
-          },
-        ),
-      }
       let summarize = queries =>
         queries
         ->Array.map(
@@ -230,20 +218,21 @@ describe("Dynamic registration next to a mixed-contract group", () => {
       // Resolve every remaining query to its full range, delivering whatever
       // world events it legitimately covers, until the chain only asks past
       // 199,800.
-      let isBehind = (query: MockSource.pendingItemsQuery) => query.fromBlock <= 199_800
-      let rounds = ref(0)
-      while sourceMock.pendingItemsQueries->Array.some(isBehind) && rounds.contents < 50 {
-        rounds := rounds.contents + 1
-        await sourceMock.expectItemsQueries(
-          sourceMock.pendingItemsQueries->Array.map(
-            query =>
-              query->isBehind
-                ? respondInFull(query)
-                : {where: pending => pending === query, reply: LeavePending},
-          ),
-        )
-        await indexer.waitUntilIdle()
-      }
+      let simpleNft = "0x1111111111111111111111111111111111111111"
+      let registeredNftFactory = "0x2222222222222222222222222222222222222222"
+      await sourceMock.expectItemsQueries([
+        respondTo(~address=simpleNft, ~fromBlock=80_985, ~toBlock=99_800),
+        respondTo(~address=registeredNftFactory, ~fromBlock=20_050, ~toBlock=99_800),
+        respondTo(~address=simpleNft, ~fromBlock=99_801, ~toBlock=144_800),
+        respondTo(~address=simpleNft, ~fromBlock=144_801, ~toBlock=189_800),
+        respondTo(~address=simpleNft, ~fromBlock=189_801, ~toBlock=199_800),
+        respondTo(~address=gravatarAddress->Address.toString, ~fromBlock=140_001, ~toBlock=199_800),
+      ])
+      await indexer.waitUntilIdle()
+      await sourceMock.expectItemsQueries([
+        respondTo(~address=registeredNftFactory, ~fromBlock=99_801, ~toBlock=199_800),
+      ])
+      await indexer.waitUntilIdle()
       await indexer.getBatchWritePromise()
 
       t.expect((afterRegistration, processed->Array.toSorted(String.compare))).toEqual((

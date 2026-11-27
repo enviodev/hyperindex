@@ -40,6 +40,9 @@ let heldRegister = (~blockNumber, ~gate: MockSource.Gate.t, addresses): MockSour
   },
 }
 
+let pendingFromBlocks = (sourceMock: MockSource.t) =>
+  sourceMock.pendingItemsQueries->Array.map(query => query.fromBlock)
+
 let dynamicAddresses = async (indexer: IndexerRunner.t) =>
   (await indexer.queryAddresses())
   ->Array.filter(row => row.registrationBlock !== -1)
@@ -64,7 +67,7 @@ describe("contractRegister loop", () => {
       ])
       // Real time: the held contractRegister runs off the clock.
       await Scenario.waitUntil(() => gate.entered.contents > 0, ~message="the contractRegister")
-      let pendingWhileHeld = sourceMock.pendingItemsQueries->Array.map(query => query.fromBlock)
+      let pendingWhileHeld = sourceMock->pendingFromBlocks
       gate.release()
       t.expect(pendingWhileHeld).toEqual([6])
     },

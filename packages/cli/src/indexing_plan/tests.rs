@@ -80,8 +80,10 @@ fn tick(target_block: i64) -> Tick {
     }
 }
 
-/// The started requests as (needs, from, to).
-fn start(plan: &mut ChainPlan, target_block: i64) -> Vec<(u32, u32, Vec<u32>, i64, Option<i64>)> {
+/// A started request: slot, generation, needs, from, to.
+type Started = (u32, u32, Vec<u32>, i64, Option<i64>);
+
+fn start(plan: &mut ChainPlan, target_block: i64) -> Vec<Started> {
     match plan.plan_requests(&tick(target_block)) {
         Planned::Start(started) => started
             .into_iter()

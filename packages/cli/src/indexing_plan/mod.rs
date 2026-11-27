@@ -184,8 +184,8 @@ pub struct FetchRequest {
 
 #[napi]
 impl FetchRequest {
-    #[napi(getter)]
-    pub fn from_block(&self) -> i64 {
+    #[napi(getter, js_name = "fromBlock")]
+    pub fn requested_from_block(&self) -> i64 {
         self.from_block
     }
 
@@ -333,10 +333,6 @@ impl FetchRequest {
 
     pub(crate) fn is_head(&self) -> bool {
         self.head
-    }
-
-    pub(crate) fn requested_from_block(&self) -> i64 {
-        self.from_block
     }
 
     /// Only block fields: the source picks the blocks to read within its range
