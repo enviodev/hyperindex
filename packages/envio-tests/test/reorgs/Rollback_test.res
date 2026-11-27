@@ -1366,13 +1366,13 @@ describe("E2E rollback tests", () => {
   This might be wrong after we start exposing a block hash for progress block.`,
       ).toEqual(2)
 
-      // The fetch state is rolled back and both the base and the
-      // dynamic-contract partition re-request from 103.
+      // The plan is rolled back and the one request the chain asks at the
+      // head with, the config address and the dynamic contracts address-free,
+      // re-requests from 103.
       await sourceMock.expectItemsQueries([
         {
-          // Normal partition, re-requested in the chunks its history sizes.
           fromBlock: 103,
-          toBlock: Bounded(104),
+          toBlock: Unbounded,
           retryCount: 0,
           reply: Respond({
             items: [
@@ -1385,25 +1385,13 @@ describe("E2E rollback tests", () => {
             latestFetchedBlockNumber: 104,
           }),
         },
-        {
-          // The address-free partition the dynamic contracts are fetched in
-          // near the head.
-          fromBlock: 103,
-          toBlock: Unbounded,
-          retryCount: 0,
-          reply: Respond({items: [], latestFetchedBlockNumber: 104}),
-        },
-        // The base partition's later chunks, and the address-free partition's
-        // chunks voided by the rollback.
-        {reply: LeavePending},
-        {reply: LeavePending},
       ])
 
       await indexer.getBatchWritePromise()
 
       t.expect(
         await queryDynamicAddresses(indexer),
-        ~message="Should have only one dynamic contract in the db. The second one rollbacked from db, the third one rollbacked from fetch state",
+        ~message="Should have only one dynamic contract in the db. The second one rollbacked from db, the third one rollbacked from the plan",
       ).toEqual([
         {
           IndexerRunner.address: Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
@@ -1412,12 +1400,8 @@ describe("E2E rollback tests", () => {
           contractName: "SimpleNft",
         },
       ])
-      // After the db rollback, the address-free partition continues from block 105.
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 105, reply: LeavePending},
-        {reply: LeavePending},
-        {reply: LeavePending},
-      ])
+      // After the db rollback, the chain continues from block 105.
+      await sourceMock.expectItemsQueries([{fromBlock: 105, reply: LeavePending}])
     },
   )
 
@@ -2400,8 +2384,8 @@ describe("E2E rollback tests", () => {
         },
       ])
       await indexer.getBatchWritePromise()
-      // The registration only reaches storage once the partition created for it
-      // has fetched the block that registered it.
+      // The registration only reaches storage once the catch-up for its
+      // address has fetched the block that registered it.
       await sourceMock.expectItemsQueries([
         {
           coversBlock: 102,
@@ -2410,7 +2394,7 @@ describe("E2E rollback tests", () => {
             latestFetchedBlockNumber: 102,
           }),
         },
-        // The base partition's chunks above, voided by the rollback.
+        // The chunks above, voided by the rollback.
         {reply: LeavePending},
       ])
       await indexer.getBatchWritePromise()
@@ -2423,11 +2407,15 @@ describe("E2E rollback tests", () => {
       // registration and hands its row over for deletion.
       await sourceMock.expectItemsQueries([
         {
+          fromBlock: 103,
+          toBlock: Bounded(104),
           reply: Respond({
             items: [],
             prevRangeLastBlock: {blockNumber: 102, blockHash: "0x102a"},
           }),
         },
+        // The rest of the address's catch-up, voided by the rollback.
+        {fromBlock: 103, toBlock: Bounded(126), reply: LeavePending},
       ])
       await sourceMock.expectBlockHashLookup({
         blockNumbers: [101],
@@ -2437,7 +2425,7 @@ describe("E2E rollback tests", () => {
 
       // Second reorg before any batch is written: the store has already
       // tombstoned the registration, so it reports nothing this time round.
-      // The address-free partition stays, though no address is left for it.
+      // The address-free need stays, though no address is left for it.
       let reorgsBefore = sourceMock.reorgCallCount()
       await sourceMock.expectItemsQueries([
         {
@@ -2457,10 +2445,7 @@ describe("E2E rollback tests", () => {
       )
       await indexer.getRollbackReadyPromise()
 
-      await sourceMock.expectItemsQueries([
-        {coversBlock: 101, reply: Respond({items: []})},
-        {coversBlock: 101, reply: Respond({items: []})},
-      ])
+      await sourceMock.expectItemsQueries([{coversBlock: 101, reply: Respond({items: []})}])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -3085,9 +3070,11 @@ describe("E2E rollback tests", () => {
       t.expect(
         (
           pending->Array.filter(query => query.fromBlock == 116 && query.toBlock == Bounded(118)),
-          pending->Array.every(query => query.partitionId == "0"),
+          pending->Array.every(query =>
+            query->MockSource.addresses == pending->Array.getUnsafe(0)->MockSource.addresses
+          ),
         ),
-        ~message="Should create exactly one gap-fill query for the partial chunk range in the same partition, with no duplicate partition",
+        ~message="Should create exactly one gap-fill query for the partial chunk range, every query asking for the same addresses",
       ).toEqual(([{fromBlock: 116, toBlock: Bounded(118), retryCount: 0}], true))
 
       // 8. Trigger rollback via reorg detection to block 116

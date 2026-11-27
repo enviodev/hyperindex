@@ -1,10 +1,10 @@
 open Vitest
 
-// A chain at head with a partition query in flight while a reorg on a sibling
-// chain triggers a rollback: the epoch bump drops the in-flight response and
-// prepareReorg/rollback rebuild the chain's partitions. Afterwards the chain
-// must keep fetching — the incident on chain 42161 froze here: waits kept
-// resolving block after block while getNextQuery never produced a query again.
+// A chain at head with a query in flight while a reorg on a sibling chain
+// triggers a rollback: the epoch bump drops the in-flight response and the
+// rollback drops the request. Afterwards the chain must keep fetching — the
+// incident on chain 42161 froze here: waits kept resolving block after block
+// while the planner never produced a query again.
 let configYaml = (~name, ~extra="") =>
   `
 name: ${name}${extra}
@@ -55,8 +55,8 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, contex
 
 // Registers a dynamic Pool address, like the factory events the incident
 // chain indexed. Re-runs when the block is re-fetched after a rollback. A
-// contract of its own, so the config Token addresses stay in their partitions
-// once the chain fetches its dynamic contracts address-free at the head.
+// contract of its own, so the config Token addresses stay in their group once
+// the chain fetches its dynamic contracts address-free at the head.
 indexer.contractRegister({ contract: "Token", event: "Deployed" }, async ({ context }) => {
   context.chain.Pool.add("0x0000000000000000000000000000000000000003");
 });
@@ -116,9 +116,10 @@ describe("Sibling-chain rollback with an in-flight query", () => {
     victim.resolveGetHeightOrThrow(300)
     sibling.resolveGetHeightOrThrow(300)
 
-    // Pre-threshold queries stop at 100 (head - maxReorgDepth).
+    // Pre-threshold queries stop at 100 (head - maxReorgDepth). Within 200
+    // blocks of the head it can fetch, each chain asks for both of its
+    // addresses in one request.
     await victim.expectItemsQueries([
-      {fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: []})},
       {fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: []})},
     ])
     await sibling.expectItemsQueries([
@@ -127,19 +128,15 @@ describe("Sibling-chain rollback with an in-flight query", () => {
     await indexer.getBatchWritePromise()
 
     // Post-threshold queries reach the head. The victim's response also
-    // registers a dynamic Pool address at block 250, spawning a catch-up
-    // partition mid-response like the incident chain's factory events. Both
-    // partitions get the same response, the way the incident chain saw the
-    // same factory events through every address partition.
-    let victimItems = [setCounter(~block=200, ~count=1n), registerPool(~block=250)]
+    // registers a dynamic Pool address at block 250, like the incident
+    // chain's factory events.
     await victim.expectItemsQueries([
       {
         fromBlock: 101,
-        reply: Respond({items: victimItems, latestFetchedBlockNumber: 300}),
-      },
-      {
-        fromBlock: 101,
-        reply: Respond({items: victimItems, latestFetchedBlockNumber: 300}),
+        reply: Respond({
+          items: [setCounter(~block=200, ~count=1n), registerPool(~block=250)],
+          latestFetchedBlockNumber: 300,
+        }),
       },
     ])
     await sibling.expectItemsQueries([
@@ -153,7 +150,7 @@ describe("Sibling-chain rollback with an in-flight query", () => {
     ])
     await indexer.getBatchWritePromise()
 
-    // The dynamic partition catches up to the head.
+    // The Pool contract is fetched address-free from its address's start.
     await victim.expectItemsQueries([
       {
         fromBlock: 250,
@@ -162,19 +159,11 @@ describe("Sibling-chain rollback with an in-flight query", () => {
     ])
     await indexer.waitUntilReady()
 
-    // New block on the victim chain. The first partition queries it; its
-    // response lands, which schedules the tick that sends the second
-    // partition's query — that one stays in flight through the rollback,
-    // like partition 7 in the incident.
-    // The chain re-polls at its own cadence through the rollback, so give it a
-    // standing answer rather than one answer per poll.
+    // New block on the victim chain. Its query stays in flight through the
+    // rollback, like partition 7 in the incident. The chain re-polls at its
+    // own cadence through the rollback, so give it a standing answer rather
+    // than one answer per poll.
     victim.setAutoHeight(301)
-    await victim.expectItemsQueries([
-      {
-        fromBlock: 301,
-        reply: Respond({items: [], latestFetchedBlockNumber: 301}),
-      },
-    ])
     await victim.expectItemsQueries([{fromBlock: 301, reply: LeavePending}])
 
     // Reorg on the sibling chain: block 300 comes back with a different hash.
@@ -194,13 +183,9 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       () => sibling.reorgCallCount() > reorgsBefore,
       ~message="the sibling's reorg to be detected",
     )
-    // The victim's in-flight responses land inside the rollback window —
+    // The victim's in-flight response lands inside the rollback window —
     // after the reorg was detected but before the rollback applied.
     await victim.expectItemsQueries([
-      {
-        fromBlock: 301,
-        reply: Respond({items: [], latestFetchedBlockNumber: 301}),
-      },
       {
         fromBlock: 301,
         reply: Respond({items: [], latestFetchedBlockNumber: 301}),
@@ -226,9 +211,6 @@ describe("Sibling-chain rollback with an in-flight query", () => {
   scenario->Scenario.it(
     "chain keeps fetching after its in-flight response is dropped by a sibling rollback",
     ~sources,
-    // Two addresses on chain 1 -> two partitions, so one partition's query
-    // can stay in flight while the other's response lands.
-    ~maxAddrInPartition=1,
     ~sourceTiming={reducedPollingInterval: 1},
     async (~t, ~indexer, ~source) => {
       let progressAfterRollback = await runIncident(~indexer, ~source)
@@ -249,20 +231,12 @@ describe("Sibling-chain rollback with an in-flight query", () => {
           reply: Respond({items: [], latestFetchedBlockNumber: 302}),
         },
       ])
+      // The re-registered Pool address owes the range the request it came in
+      // had already asked for without it.
       await victim.expectItemsQueries([
         {
           fromBlock: 250,
-          reply: Respond({items: [registerPool(~block=250)], latestFetchedBlockNumber: 302}),
-        },
-        // The address-free partition the Pool contract is fetched in.
-        {
-          fromBlock: 250,
-          reply: Respond({items: [], latestFetchedBlockNumber: 302}),
-        },
-        // The re-registered Pool address catches up on its own, since the
-        // address-free partition's query went out before it was registered.
-        {
-          fromBlock: 250,
+          toBlock: Bounded(302),
           reply: Respond({items: [], latestFetchedBlockNumber: 302}),
         },
       ])
@@ -278,7 +252,6 @@ describe("Sibling-chain rollback with an in-flight query", () => {
   perChainScenario->Scenario.it(
     "chain keeps fetching and is never rolled back when the reorg stays isolated",
     ~sources,
-    ~maxAddrInPartition=1,
     ~sourceTiming={reducedPollingInterval: 1},
     async (~t, ~indexer, ~source) => {
       let progressAfterRollback = await runIncident(~indexer, ~source)
@@ -291,20 +264,10 @@ describe("Sibling-chain rollback with an in-flight query", () => {
           reply: Respond({items: [], latestFetchedBlockNumber: 302}),
         },
       ])
-      // Only the queries the rollback dropped are re-issued.
+      // Only the query the rollback dropped is re-issued.
       await victim.expectItemsQueries([
         {
           fromBlock: 301,
-          reply: Respond({items: [], latestFetchedBlockNumber: 302}),
-        },
-        {
-          fromBlock: 301,
-          reply: Respond({items: [], latestFetchedBlockNumber: 302}),
-        },
-      ])
-      await victim.expectItemsQueries([
-        {
-          fromBlock: 302,
           reply: Respond({items: [], latestFetchedBlockNumber: 302}),
         },
       ])

@@ -654,6 +654,20 @@ impl ChainPlan {
         })
     }
 
+    /// The block every need of the head stream has been asked through. None
+    /// while an open-ended request of it is out, or with no such need.
+    fn head_requested_through(&self) -> Option<i64> {
+        let mut through: Option<i64> = None;
+        for need in self.unfinished_needs() {
+            if self.needs.is_list(need) {
+                continue;
+            }
+            let need_through = self.requested_through(need)?;
+            through = Some(through.map_or(need_through, |t| t.min(need_through)));
+        }
+        through
+    }
+
     pub fn unfinished_needs(&self) -> impl Iterator<Item = u32> + '_ {
         (0..self.needs.len()).filter(|&need| !self.needs.is_finished(need))
     }
@@ -782,14 +796,23 @@ impl ChainPlan {
                 *to_block = Some(to_block.map_or(through, |to| to.min(through)));
             }
         }
+        drop(store);
+        // With no group to end, a contract switched at the head joins the head
+        // stream where it has been asked through; its addresses owe what lies
+        // below as catch-ups.
+        if lowest == i64::MAX && self.head_mode {
+            if let Some(through) = self.head_requested_through() {
+                lowest = through;
+            }
+        }
         if lowest == i64::MAX {
+            let store = self.store.read().unwrap();
             for &contract in contracts {
                 if let Some(&id) = store.live_ids_of_contract(contract, 0).first() {
                     lowest = lowest.min(store.effective_start_block_of(id) - 1);
                 }
             }
         }
-        drop(store);
         if lowest == i64::MAX || registrations.is_empty() {
             return;
         }

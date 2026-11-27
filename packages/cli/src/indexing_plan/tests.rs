@@ -338,3 +338,33 @@ fn at_the_head_one_request_carries_every_need() {
         )
     );
 }
+
+#[test]
+fn a_contract_going_address_free_at_the_head_ends_its_group_and_owes_a_catch_up() {
+    let mut plan = chain(&[PAIR1], |_| {});
+    for (slot, generation, ..) in start(&mut plan, 1000) {
+        complete(&mut plan, slot, generation, 1000);
+    }
+    plan.set_known_height(1001);
+    let out = start(&mut plan, 1001);
+    let free_contracts_before = plan.needs.len();
+    plan.register(vec![AddressRegistration {
+        address: PAIR2.to_string(),
+        contract_name: "Pair".to_string(),
+        registration_block: 990,
+    }])
+    .unwrap();
+    let new_needs: Vec<(bool, i64, Option<i64>)> = (free_contracts_before..plan.needs.len())
+        .map(|need| {
+            (
+                plan.needs.is_list(need),
+                plan.needs.coverage[need as usize].covered_through,
+                plan.needs.to_block[need as usize],
+            )
+        })
+        .collect();
+    assert_eq!(
+        (out.len(), plan.head_mode, new_needs),
+        (1, true, vec![(false, 1001, None), (true, 989, Some(1001))])
+    );
+}
