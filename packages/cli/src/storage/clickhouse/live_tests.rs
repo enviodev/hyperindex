@@ -113,8 +113,7 @@ impl Live {
     }
 
     async fn drop_database(&self) {
-        self.execute(format!("DROP DATABASE IF EXISTS `{}` SYNC", self.database))
-            .await;
+        drop_database_on(&connection("").url, &self.database).await;
     }
 
     async fn execute(&self, statement: String) -> String {
@@ -255,6 +254,22 @@ fn post(url: &str) -> reqwest::RequestBuilder {
     reqwest::Client::new()
         .post(url)
         .basic_auth(username, Some(password))
+}
+
+/// A table the server was still creating when the drop arrived (one it went on
+/// to refuse, say) makes it answer DATABASE_NOT_EMPTY and ask to try again.
+pub(crate) async fn drop_database_on(url: &str, database: &str) {
+    let statement = format!("DROP DATABASE IF EXISTS `{database}` SYNC");
+    for _ in 0..20 {
+        let response = post(url).body(statement.clone()).send().await.unwrap();
+        if response.status().is_success() {
+            return;
+        }
+        let body = response.text().await.unwrap();
+        assert!(body.contains("DATABASE_NOT_EMPTY"), "{body}");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("`{database}` still had tables appearing after 20 drops");
 }
 
 pub(crate) async fn execute_on(url: &str, statement: String) -> String {

@@ -109,8 +109,11 @@ impl Live {
     }
 
     async fn drop_clickhouse(&self) {
-        self.clickhouse_statement(format!("DROP DATABASE IF EXISTS `{}` SYNC", self.name))
-            .await;
+        clickhouse::live_tests::drop_database_on(
+            &clickhouse::live_tests::connection("").url,
+            &self.name,
+        )
+        .await;
     }
 
     async fn drop_all(&self) {
