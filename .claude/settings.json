@@ -28,7 +28,7 @@
           },
           {
             "type": "command",
-            "command": "jq -r '.tool_response.filePath // .tool_input.file_path' | { read -r f; case \"$f\" in *.res|*.resi) cd \"$CLAUDE_PROJECT_DIR\" && pnpx rescript@12.3.1 format \"$f\" || true ;; esac; }",
+            "command": "jq -r '.tool_response.filePath // .tool_input.file_path' | { read -r f; case \"$f\" in *.res|*.resi) cd \"$CLAUDE_PROJECT_DIR\" && { if [ -x packages/envio/node_modules/.bin/rescript ]; then packages/envio/node_modules/.bin/rescript format \"$f\"; else pnpx \"rescript@$(jq -r '.. | .rescript? // empty' packages/envio/package.json | head -1)\" format \"$f\"; fi; } || true ;; esac; }",
             "timeout": 60,
             "statusMessage": "Running rescript format..."
           }

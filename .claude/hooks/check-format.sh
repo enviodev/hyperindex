@@ -25,9 +25,14 @@ problems=""
 
 res=$(printf '%s\n' "$changed" | grep -E '\.resi?$' || true)
 if [ -n "$res" ]; then
-  out=$(printf '%s\n' "$res" | xargs pnpx rescript@12.2.0 format --check 2>&1 | grep '^\[format check\]' || true)
+  if [ -x packages/envio/node_modules/.bin/rescript ]; then
+    rescript=(packages/envio/node_modules/.bin/rescript)
+  else
+    rescript=(pnpx "rescript@$(jq -r '.. | .rescript? // empty' packages/envio/package.json | head -1)")
+  fi
+  out=$(printf '%s\n' "$res" | xargs "${rescript[@]}" format --check 2>&1 | grep '^\[format check\]' || true)
   if [ -n "$out" ]; then
-    problems="$problems"$'\n'"Unformatted ReScript (fix: pnpx rescript@12.2.0 format <files>):"$'\n'"$out"
+    problems="$problems"$'\n'"Unformatted ReScript (fix: ${rescript[*]} format <files>):"$'\n'"$out"
   fi
 fi
 

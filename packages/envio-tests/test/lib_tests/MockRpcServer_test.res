@@ -2,7 +2,11 @@ open Vitest
 
 type httpResponse = {status: int, body: string}
 
-let post: (string, string, dict<string>) => promise<httpResponse> = %raw(`async function(url, body, headers) {
+let post: (
+  string,
+  string,
+  dict<string>,
+) => promise<httpResponse> = %raw(`async function(url, body, headers) {
   var response = await fetch(url, {
     method: "POST",
     headers: Object.assign({"content-type": "application/json"}, headers),
@@ -131,72 +135,78 @@ describe("MockRpcServer scripted scenarios", () => {
     t.expect((response.status, response->resultOf)).toEqual((200, Some(JSON.String("0x3"))))
   })
 
-  Async.it("reports both unexpected and unconsumed calls without throwing in the HTTP callback", async t => {
-    let mock = await MockRpcServer.startScenario(
-      ~name="verification report",
-      ~calls=[
-        MockRpcServer.expectCall(
-          ~label="expected height",
-          ~method="eth_blockNumber",
-          ~params=JSON.Array([]),
-          ~reply=RpcResult(JSON.String("0x1")),
-        ),
-      ],
-    )
+  Async.it(
+    "reports both unexpected and unconsumed calls without throwing in the HTTP callback",
+    async t => {
+      let mock = await MockRpcServer.startScenario(
+        ~name="verification report",
+        ~calls=[
+          MockRpcServer.expectCall(
+            ~label="expected height",
+            ~method="eth_blockNumber",
+            ~params=JSON.Array([]),
+            ~reply=RpcResult(JSON.String("0x1")),
+          ),
+        ],
+      )
 
-    let response = await post(
-      mock.url,
-      requestBody(~method="eth_chainId", ~params=JSON.Array([])),
-      Dict.make(),
-    )
-    let verification = mock.verify()
-    await mock.closeAsync()
+      let response = await post(
+        mock.url,
+        requestBody(~method="eth_chainId", ~params=JSON.Array([])),
+        Dict.make(),
+      )
+      let verification = mock.verify()
+      await mock.closeAsync()
 
-    t.expect((response.status, verification.failures->Array.length, verification.pending)).toEqual((
-      500,
-      1,
-      ["expected height"],
-    ))
-  })
+      t.expect((
+        response.status,
+        verification.failures->Array.length,
+        verification.pending,
+      )).toEqual((500, 1, ["expected height"]))
+    },
+  )
 
-  Async.it("force-closes a deliberately hanging response without leaving an open handle", async t => {
-    let mock = await MockRpcServer.startScenario(
-      ~name="hanging response cleanup",
-      ~calls=[
-        MockRpcServer.expectCall(
-          ~method="eth_blockNumber",
-          ~params=JSON.Array([]),
-          ~reply=NoResponse,
-        ),
-      ],
-    )
-    let pendingRequest = post(
-      mock.url,
-      requestBody(~method="eth_blockNumber", ~params=JSON.Array([])),
-      Dict.make(),
-    )
-    // Wait for the request to actually reach the server rather than for a fixed
-    // delay — under load it can take longer than any constant worth picking.
-    let deadline = Date.now() +. 5000.
-    let verification = ref(mock.verify())
-    while verification.contents.pending->Utils.Array.notEmpty && Date.now() < deadline {
-      await Utils.delay(1)
-      verification := mock.verify()
-    }
-    let verification = verification.contents
-    await mock.closeAsync()
-    let requestWasRejected = try {
-      let _ = await pendingRequest
-      false
-    } catch {
-    | _ => true
-    }
+  Async.it(
+    "force-closes a deliberately hanging response without leaving an open handle",
+    async t => {
+      let mock = await MockRpcServer.startScenario(
+        ~name="hanging response cleanup",
+        ~calls=[
+          MockRpcServer.expectCall(
+            ~method="eth_blockNumber",
+            ~params=JSON.Array([]),
+            ~reply=NoResponse,
+          ),
+        ],
+      )
+      let pendingRequest = post(
+        mock.url,
+        requestBody(~method="eth_blockNumber", ~params=JSON.Array([])),
+        Dict.make(),
+      )
+      // Wait for the request to actually reach the server rather than for a fixed
+      // delay — under load it can take longer than any constant worth picking.
+      let deadline = Date.now() +. 5000.
+      let verification = ref(mock.verify())
+      while verification.contents.pending->Utils.Array.notEmpty && Date.now() < deadline {
+        await Utils.delay(1)
+        verification := mock.verify()
+      }
+      let verification = verification.contents
+      await mock.closeAsync()
+      let requestWasRejected = try {
+        let _ = await pendingRequest
+        false
+      } catch {
+      | _ => true
+      }
 
-    t.expect((verification, requestWasRejected)).toEqual((
-      {MockRpcServer.failures: [], pending: []},
-      true,
-    ))
-  })
+      t.expect((verification, requestWasRejected)).toEqual((
+        {MockRpcServer.failures: [], pending: []},
+        true,
+      ))
+    },
+  )
 
   Async.it("closes the server and preserves an exception thrown by the test callback", async t => {
     let message = try {

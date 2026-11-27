@@ -98,6 +98,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: ReScript format
+        run: git ls-files '*.res' '*.resi' | xargs packages/envio/node_modules/.bin/rescript format --check
+
       - name: Build linux-x64 platform npm package
         run: |
           node packages/build-envio/build-platform-package.ts \
