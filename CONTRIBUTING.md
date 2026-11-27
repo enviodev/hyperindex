@@ -73,7 +73,7 @@ Top-level folders:
   - `src/config_parsing/` – configuration loading pipeline:
     - `human_config.rs` → reads user `config.yaml`.
     - `system_config.rs` → converts user config into the internal representation.
-  - `src/hbs_templating/codegen_templates.rs` – emits `<project>/.envio/types.d.ts`,
+  - `src/codegen/codegen_templates.rs` – emits `<project>/.envio/types.d.ts`,
     `<project>/envio-env.d.ts`, and (for ReScript projects) `<project>/src/Indexer.res`.
   - `templates/` – code scaffold used during `envio init` / contract import
     (`dynamic/` for Handlebars, `static/` for raw files).
@@ -102,8 +102,8 @@ Navigation cheat-sheet (useful for code search / AI):
 - CLI entry point: `packages/cli/src/lib.rs`
 - Command definitions: `packages/cli/src/commands.rs`
 - Arg parsing: `packages/cli/src/cli_args/`
-- EVM helpers: `packages/cli/src/evm/`
-- Fuel helpers: `packages/cli/src/fuel/`
+- Ecosystem helpers (EVM, Fuel, SVM): `packages/cli/src/ecosystems/`
+- Fetching: `ARCHITECTURE.md`
 
 ## Indexer Runtime Architecture
 
@@ -129,7 +129,7 @@ Configuration layer:
 
 - `Config.res` – strongly typed runtime config. Parsed from the JSON the Rust CLI embeds in the `Command` payload (primed via `Config.prime` in `Bin.res`), or, when called outside the CLI (worker threads, test harnesses), lazy-loaded via the `getConfigJson` NAPI call.
 - Handler registrations (`indexer.onEvent(...)`) land in `HandlerRegister.res` at module load time and are merged into `Config.t` on the next `Config.load()` (see `buildContractEvents`).
-- Environment variables (`.env`) feed `Env.res`, consumed by `Storage` / `ClickHouse` for connection settings.
+- Environment variables (`.env` included) are read and validated in Rust (`packages/cli/src/indexer_env.rs`) and reach the runtime as `config.env` (`IndexerEnv.res`).
 
 Persistence layer:
 
@@ -162,7 +162,7 @@ Monitoring & health:
 Quick dev tips:
 
 - Library code under `packages/envio` → hot-recompile with `pnpm rescript -w`.
-- Changes that affect emitted types (`packages/cli/src/hbs_templating/codegen_templates.rs`, schema, config) require rerunning `pnpm codegen` in the consuming scenario.
+- Changes that affect emitted types (`packages/cli/src/codegen/codegen_templates.rs`, schema, config) require rerunning `pnpm codegen` in the consuming scenario.
 
 ### Case study: per-address `startBlock`
 
@@ -173,8 +173,8 @@ Need to expose a `startBlock` setting for every contract address in `config.yaml
 3.  Run `cargo test` – unit tests in `test/configs/*` should cover happy & failure cases.
 4.  Regenerate JSON-schemas for docs & validation: `make update-schemas`.
 5.  Mirror the new field in `system_config.rs`; convert it to an internal type that is easier for templates (e.g., `IndexingContract { address, start_block, abi, events }`).
-6.  Pass the enriched contract structs into `hbs_templating/codegen_templates.rs`.
-7.  Update the codegen output in `hbs_templating/codegen_templates.rs` (the `Indexer.res` builder for ReScript projects, the `.envio/types.d.ts` augmentation block for TypeScript) so per-address `startBlock` flows into the runtime.
+6.  Pass the enriched contract structs into `codegen/codegen_templates.rs`.
+7.  Update the codegen output in `codegen/codegen_templates.rs` (the `Indexer.res` builder for ReScript projects, the `.envio/types.d.ts` augmentation block for TypeScript) so per-address `startBlock` flows into the runtime.
 8.  Add the field to `Config.res`.
 9.  Compress the two previous arrays passed to `FetchState.res` `make` function (static vs dynamic contracts) into a single `array<IndexingContract>` that already contains `startBlock`.
 10. Inside `FetchState.res` in `make` function create the initial block-partitions from the `startBlock` of each contract.

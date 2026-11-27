@@ -33,15 +33,9 @@ type chain = {
 @send external setMessages: (t, Null.t<array<InitApi.message>>) => unit = "setMessages"
 @send external stop: t => unit = "stop"
 
-// Whether this process draws the progress display: `ENVIO_TUI` first, then
-// whether anything is watching. A supervisor asks the same question its
-// workers would have, since it is the one drawing for the run.
-let shouldUse = (~suppressed=false, ~explicitTui=Env.tuiEnvVar) =>
-  switch (suppressed, explicitTui) {
-  | (true, _) => false
-  | (_, Some(tui)) => tui
-  | (_, None) => !Envio.isNonInteractive()
-  }
+// A supervisor asks the same question its workers would have, since it is the
+// one drawing for the run.
+let shouldUse = (~suppressed=false, ~config: Config.t) => !suppressed && config.env.tui
 
 let toChain = (m: Metrics.chainMetrics): chain => {
   chainId: m.chainId->ChainId.toString,
@@ -79,10 +73,10 @@ let start = (~config: Config.t, ~logger, ~getMetrics: unit => Metrics.t) => {
     version: Utils.EnvioPackage.value.version,
     projectDir: NodeJs.Process.cwd(),
     startTime: metrics.startTime->Date.getTime,
-    graphqlUrl: Env.Hasura.url,
-    graphqlPassword: Env.Hasura.secret === "testing" ? Some("testing") : None,
-    devConsoleUrl: config.isDev ? Some(`${Env.envioAppUrl}/console`) : None,
-    clickhouseUrl: switch (config.storage.clickhouse, Env.ClickHouse.host()) {
+    graphqlUrl: config.env.hasura.url,
+    graphqlPassword: config.env.hasura.secret === "testing" ? Some("testing") : None,
+    devConsoleUrl: config.isDev ? Some(`${config.env.envioAppUrl}/console`) : None,
+    clickhouseUrl: switch (config.storage.clickhouse, config.env.clickHouse.host) {
     | (true, Some(host)) => Some(`${host}/play`)
     | _ => None
     },

@@ -65,8 +65,6 @@ let messageSchema = S.object(s => {
   content: s.field("content", S.string),
 })
 
-let client = Rest.client(Env.envioAppUrl ++ "/api")
-
 let route = Rest.route(() => {
   method: Post,
   path: "/hyperindex/init",
@@ -74,11 +72,11 @@ let route = Rest.route(() => {
   responses: [s => s.field("messages", S.array(messageSchema))],
 })
 
-let getMessages = async (~config) => {
+let getMessages = async (~config: Config.t) => {
   let envioVersion = Utils.EnvioPackage.value.version
-  let body = makeBody(~envioVersion, ~envioApiToken=Env.envioApiToken, ~config)
+  let body = makeBody(~envioVersion, ~envioApiToken=config.env.envioApiToken, ~config)
 
-  switch await route->Rest.fetch(body, ~client) {
+  switch await route->Rest.fetch(body, ~client=Rest.client(config.env.envioAppUrl ++ "/api")) {
   | exception exn => Error(exn)
   | messages => Ok(messages)
   }

@@ -535,7 +535,7 @@ fn apply_substitution(
     substitution_name: &str,
     output: &mut String,
 ) {
-    if let Ok(environment_value) = std::env::var(substitution_name) {
+    if let Some(environment_value) = crate::env::var(substitution_name) {
         output.push_str(&environment_value);
     } else {
         let stored_value = substitution_data

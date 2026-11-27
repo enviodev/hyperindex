@@ -1,0 +1,113 @@
+//! A chain's Fuel registrations compiled once, and which of them a receipt
+//! belongs to. Like EVM matching, it reads the address store and nothing else.
+
+use std::sync::{Arc, RwLock, RwLockReadGuard};
+
+use anyhow::Result;
+
+use super::ContractRegisters;
+use crate::address_store::{AddressStore, StoreInner};
+use crate::chain_buffer::selection::fuel::{
+    parse_registrations, FuelOnEventRegistrationInput, Registration,
+};
+use crate::chain_buffer::tables::fuel::ReceiptView;
+
+pub(crate) struct FuelRegistration {
+    pub(crate) registration: Registration,
+}
+
+impl FuelRegistration {
+    pub(crate) fn index(&self) -> u32 {
+        self.registration.index as u32
+    }
+}
+
+pub(crate) struct FuelMatcher {
+    /// In registration index order.
+    registrations: Vec<FuelRegistration>,
+    pub(crate) contract_registers: ContractRegisters,
+    store: Arc<RwLock<StoreInner>>,
+}
+
+impl FuelMatcher {
+    pub(crate) fn new(
+        inputs: &[FuelOnEventRegistrationInput],
+        contract_registers: ContractRegisters,
+        address_store: &AddressStore,
+    ) -> Result<Self> {
+        let store = address_store.handle();
+        let mut registrations: Vec<FuelRegistration> = {
+            let inner = store.read().unwrap();
+            parse_registrations(inputs, &inner)?
+        }
+        .into_iter()
+        .map(|registration| FuelRegistration { registration })
+        .collect();
+        anyhow::ensure!(
+            registrations
+                .iter()
+                .all(|registration| registration.registration.index >= 0),
+            "registration index is negative"
+        );
+        registrations.sort_unstable_by_key(|registration| registration.registration.index);
+        Ok(FuelMatcher {
+            registrations,
+            contract_registers,
+            store,
+        })
+    }
+
+    pub(crate) fn read_store(&self) -> RwLockReadGuard<'_, StoreInner> {
+        self.store.read().unwrap()
+    }
+
+    /// Calls `f` with every registration the receipt belongs to, in index
+    /// order.
+    pub(crate) fn for_each_match(
+        &self,
+        receipt: &ReceiptView,
+        store: &StoreInner,
+        f: impl FnMut(&FuelRegistration),
+    ) {
+        self.for_each_match_of_fields(&ReceiptMatchFields::of_view(receipt), store, f)
+    }
+
+    /// `for_each_match` over just the fields matching reads.
+    pub(crate) fn for_each_match_of_fields(
+        &self,
+        receipt: &ReceiptMatchFields,
+        store: &StoreInner,
+        mut f: impl FnMut(&FuelRegistration),
+    ) {
+        for registration in &self.registrations {
+            if registration.registration.matches(
+                receipt.receipt_type,
+                receipt.rb,
+                receipt.root_contract_id,
+                receipt.block_height as i64,
+                store,
+            ) {
+                f(registration);
+            }
+        }
+    }
+}
+
+/// What a registration matches a receipt on.
+pub(crate) struct ReceiptMatchFields<'a> {
+    pub(crate) receipt_type: u8,
+    pub(crate) rb: Option<u64>,
+    pub(crate) root_contract_id: &'a [u8],
+    pub(crate) block_height: u64,
+}
+
+impl<'a> ReceiptMatchFields<'a> {
+    fn of_view(receipt: &ReceiptView<'a>) -> Self {
+        ReceiptMatchFields {
+            receipt_type: receipt.receipt_type,
+            rb: receipt.rb,
+            root_contract_id: receipt.root_contract_id,
+            block_height: receipt.block_height,
+        }
+    }
+}

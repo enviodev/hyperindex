@@ -7,4 +7,8 @@ disallowed-methods = [
   { path = "tokio::time::interval_at", reason = "loop over `clock::Clock` sleeps, so a test on virtual time sees and moves each tick" },
   { path = "std::thread::sleep", reason = "sleep on the `clock::Clock` the source was given, so a test on virtual time sees and moves the timer" },
   { path = "std::time::SystemTime::now", reason = "read `clock::Clock::now_ms`, so a test on virtual time controls it; `Instant::now` stays for measuring how long real work took" },
+  { path = "std::env::var", reason = "read the environment through `crate::env`, where the indexer starts, and pass the value on as config" },
+  { path = "std::env::var_os", reason = "read the environment through `crate::env`, where the indexer starts, and pass the value on as config" },
+  { path = "std::env::vars", reason = "read the environment through `crate::env`, where the indexer starts, and pass the value on as config" },
+  { path = "std::env::vars_os", reason = "read the environment through `crate::env`, where the indexer starts, and pass the value on as config" },
 ]

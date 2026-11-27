@@ -10,7 +10,7 @@ use super::to_napi;
 
 use super::decoded::{DecodedEvent, DecodedEventInput, DecodedEvents};
 use super::merge::{first_hash_mismatch, HashMismatch};
-use super::table::{block_of_key, Chunk, Table};
+use super::tables::table::{block_of_key, Chunk, Table};
 use super::Ecosystem;
 
 pub(crate) struct PageData {
@@ -123,7 +123,7 @@ impl PageData {
     pub(crate) fn first_row_block_number(&self) -> Option<u64> {
         let event = self
             .events
-            .rows_in_block_range(0, super::table::LAST_BLOCK)
+            .rows_in_block_range(0, super::tables::table::LAST_BLOCK)
             .next()
             .map(|row| block_of_key(row.key()));
         [event, self.decoded.first_block()]
@@ -134,7 +134,7 @@ impl PageData {
 
     pub(crate) fn hash(&self, block_number: u64) -> Option<&[u8]> {
         self.blocks
-            .find(super::table::make_key(block_number, 0), 0)
+            .find(super::tables::table::make_key(block_number, 0), 0)
             .and_then(|row| row.bytes_at(self.ecosystem.hash_column()))
     }
 }
@@ -216,15 +216,15 @@ impl Page {
     /// ones do.
     #[napi(factory)]
     pub fn from_svm_js(
-        transactions: Vec<crate::chain_buffer::svm::SvmTxInput>,
-        activities: Vec<crate::chain_buffer::svm::SvmActivityInput>,
+        transactions: Vec<crate::chain_buffer::tables::svm::SvmTxInput>,
+        activities: Vec<crate::chain_buffer::tables::svm::SvmActivityInput>,
         blocks: Vec<ObservedBlock>,
     ) -> napi::Result<Self> {
         let page = Page::from_js("svm".to_string(), blocks, None)?;
         {
             let mut data = page.data.lock().unwrap();
             let mut rows = data.transactions.builder();
-            crate::chain_buffer::svm::push_simulated_transactions(
+            crate::chain_buffer::tables::svm::push_simulated_transactions(
                 &mut rows,
                 transactions,
                 activities,

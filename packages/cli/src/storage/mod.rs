@@ -5,7 +5,7 @@
 //!   [`effect_cache`] is kept between runs, none of it knowing a database;
 //! - the [`service`], which keeps every configured store in step: Postgres as
 //!   the store of record, ClickHouse beside it;
-//! - the stores themselves, in `crate::postgres` and `crate::clickhouse`, each
+//! - the stores themselves, [`postgres`] and [`clickhouse`], each
 //!   reading what it keeps off the same domain values.
 //!
 //! JavaScript reaches all of it through [`js`], which only converts.
@@ -17,8 +17,11 @@
 
 pub mod batch;
 pub mod changes;
+pub mod clickhouse;
+pub mod columnar;
 pub mod effect_cache;
 pub mod handoff;
+pub mod postgres;
 pub mod rows;
 pub mod schema;
 pub mod service;

@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
-use crate::chain_buffer::svm::{decode_path, InstructionView};
+use crate::chain_buffer::selection::svm::{Instruction, Registration};
+use crate::chain_buffer::tables::svm::{decode_path, InstructionView};
 use crate::chain_buffer::walk::Item;
 use crate::js_value::JsTape;
-use crate::svm_hypersync_source::selection::{Instruction, Registration};
 
 /// The logs as a registration selected them: each of `kind` and `message`
 /// it chose, absent ones left out.

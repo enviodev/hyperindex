@@ -28,7 +28,8 @@ let makeProbeSources = (chainConfig: Config.chain, ~logger, ~lowercaseAddresses)
       ~addressStore,
     ),
     ~logger,
-    ~maxAddressesPerRequest=Env.maxAddrInPartition,
+    // Probe sources only read the height, never an address-filtered range.
+    ~maxAddressesPerRequest=1,
   )
 }
 
@@ -76,13 +77,14 @@ let readHeadOnceOrThrow = async (chainConfig: Config.chain, ~sources): int => {
   for i in 0 to candidates->Array.length - 1 {
     if head.contents->Option.isNone {
       let source = candidates->Array.getUnsafe(i)
-      switch await source.getHeightOrThrow() {
-      | {height} => head := Some(height)
-      | exception exn =>
-        failures
-        ->Array.push(`${source.name}: ${exn->Utils.exnMessage->Option.getOr("unknown error")}`)
-        ->ignore
+      let failure = switch await source.getHeight() {
+      | {result: Ok(height)} =>
+        head := Some(height)
+        None
+      | {result: Error(failure)} => Some(failure->Source.failureMessage)
+      | exception exn => Some(exn->Utils.exnMessage->Option.getOr("unknown error"))
       }
+      failure->Option.forEach(message => failures->Array.push(`${source.name}: ${message}`)->ignore)
     }
   }
   switch head.contents {

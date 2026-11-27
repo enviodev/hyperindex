@@ -580,7 +580,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_url_ending_in_a_slash_reaches_the_same_path() {
-        let server = crate::mock_hypersync_server::MockHyperSyncServer::new(Some(7), None).unwrap();
+        let server =
+            crate::sources::testing::mock_hypersync_server::MockHyperSyncServer::new(Some(7), None)
+                .unwrap();
         let client = HttpClient::new(
             &format!("{}/", server.url()),
             None,
