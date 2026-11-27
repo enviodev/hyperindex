@@ -800,13 +800,13 @@ impl GraphQLEnum {
     }
 
     fn check_duplicate_values(self) -> anyhow::Result<Self> {
-        let mut value_set: HashSet<String> = self.values.clone().into_iter().collect();
+        let mut value_set: HashSet<String> = HashSet::new();
 
         let duplicate_values = self
             .values
             .clone()
             .into_iter()
-            .filter(|value| value_set.insert(value.clone()))
+            .filter(|value| !value_set.insert(value.clone()))
             .collect::<Vec<_>>();
 
         if !duplicate_values.is_empty() {
@@ -3095,6 +3095,24 @@ type User { id: ID! }
         assert!(
             message.contains("collide when capitalized")
                 && message.contains("User (from User, user)"),
+            "unexpected error: {message}"
+        );
+    }
+
+    // https://github.com/enviodev/hyperindex/issues/1868
+    #[test]
+    fn rejects_enum_with_duplicate_values() {
+        let schema_str = r#"
+enum Status { ACTIVE ACTIVE PAUSED }
+type Order { id: ID! status: Status! }
+        "#;
+        let err = Schema::from_string(schema_str, DefaultChainScope::CrossChain, BytesType::Hex)
+            .expect_err("expected a duplicate enum value error");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains(
+                "Schema enum has duplicate values. Enum: Status, duplicate values: ACTIVE"
+            ),
             "unexpected error: {message}"
         );
     }

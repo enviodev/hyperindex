@@ -211,6 +211,7 @@ let run = async (
   // `envio local db-migrate` runs with.
   ~startBlockRetry=?,
   ~targetBufferSize=?,
+  ~inMemoryObjectsTarget=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
   ~reorgThresholdReadyTolerance=?,
@@ -317,6 +318,7 @@ let run = async (
     ~clock?,
     ~startBlockRetry?,
     ~targetBufferSize?,
+    ~inMemoryObjectsTarget?,
     ~holdRealtime?,
     ~superviseRun?,
     ~onError?,
@@ -388,6 +390,7 @@ let it = (
   // Runs the source layer on a clock only `indexer.advanceTime` moves. See `run`.
   ~virtualTime=?,
   ~targetBufferSize=?,
+  ~inMemoryObjectsTarget=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
   ~reorgThresholdReadyTolerance=?,
@@ -422,6 +425,7 @@ let it = (
           ~sourceTiming?,
           ~virtualTime?,
           ~targetBufferSize?,
+          ~inMemoryObjectsTarget?,
           ~maxAddrInPartition?,
           ~clientFilterAddressThreshold?,
           ~reorgThresholdReadyTolerance?,

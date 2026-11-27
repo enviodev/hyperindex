@@ -59,10 +59,11 @@ let handlerErrorMessage = (item: Internal.item) =>
     | Transaction({onTransactionRegistration: {name}}) => `"${name}" transaction`
     }} handler. Please handle the error to keep the indexer running smoothly.`
 
-let runHandlerOrThrow = async (item: Internal.item, ~checkpointId, ~runtime) =>
+let runHandlerOrThrow = async (item: Internal.item, ~checkpointId, ~runtime: HandlerRuntime.t) =>
   if item->hasHandler {
     //Include the load in time before handler
-    let timeBeforeHandler = Performance.now()
+    let clock = runtime.params.indexerState->IndexerState.clock
+    let timeBeforeHandler = clock->Clock.readTimeRef
     let scope = runtime->handlerScope(~item, ~checkpointId, ~isPreload=false)
     switch await RunScope.enter(scope, invokeHandler, runtime, item) {
     | exception exn =>
@@ -73,7 +74,7 @@ let runHandlerOrThrow = async (item: Internal.item, ~checkpointId, ~runtime) =>
       switch runtime->eventStat(item) {
       | Some(stat) =>
         stat->IndexerState.recordHandlerDuration(
-          ~duration=timeBeforeHandler->Performance.secondsSince,
+          ~duration=clock->Clock.secondsSince(timeBeforeHandler),
         )
       | None => ()
       }
@@ -176,22 +177,24 @@ let processEventBatch = async (~batch: Batch.t, ~runtime: HandlerRuntime.t) => {
   })
 
   try {
-    // Backpressure: keep processing within keepLatestChangesLimit of the cycle.
+    // Backpressure: wait while the store holds as many changes as the in-memory
+    // objects target allows.
     await indexerState->Writing.awaitCapacity
 
-    let timeRef = Performance.now()
+    let clock = indexerState->IndexerState.clock
+    let timeRef = clock->Clock.readTimeRef
 
     if batch.items->Utils.Array.notEmpty {
       await batch->preloadBatchOrThrow(~runtime)
     }
 
-    let elapsedTimeAfterLoaders = timeRef->Performance.secondsSince
+    let elapsedTimeAfterLoaders = clock->Clock.secondsSince(timeRef)
 
     if batch.items->Utils.Array.notEmpty {
       await batch->runBatchHandlersOrThrow(~runtime)
     }
 
-    let elapsedTimeAfterProcessing = timeRef->Performance.secondsSince
+    let elapsedTimeAfterProcessing = clock->Clock.secondsSince(timeRef)
 
     if (indexerState->IndexerState.config).enableRawEvents {
       batch.items

@@ -85,6 +85,9 @@ type rec t = {
   // Moves a virtual-time run's clock forward, firing every source timer due
   // on the way. Only a run on virtual time has a clock to move.
   advanceTime: int => promise<unit>,
+  // Waits on the run's virtual clock, so a handler can take an exact amount of
+  // the time the indexer measures it by. Resolves once `advanceTime` passes it.
+  delay: int => promise<unit>,
   waitUntilReady: unit => promise<unit>,
   query: 'entity. string => promise<array<'entity>>,
   queryHistory: 'entity. string => promise<array<Change.t<'entity>>>,
@@ -238,6 +241,9 @@ let run = async (
   ~clock: option<VirtualClock.t>=?,
   ~startBlockRetry=?,
   ~targetBufferSize=?,
+  // Uncommitted changes at which processing waits for writes. The default,
+  // read from the environment, is more than any scenario makes.
+  ~inMemoryObjectsTarget=?,
   // Runs the indexer the way a supervised worker runs: it waits to be released
   // before entering the reorg threshold or switching to realtime.
   ~holdRealtime=false,
@@ -409,6 +415,7 @@ let run = async (
       ~registrationsByChainId,
       ~sourceTiming?,
       ~targetBufferSize?,
+      ~inMemoryObjectsTarget?,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
       ~holdRealtime={holdRealtime || superviseRun},
@@ -751,6 +758,14 @@ let run = async (
         | None =>
           JsError.throwWithMessage(
             "advanceTime needs a run on virtual time, and this one opted out of it.",
+          )
+        },
+      delay: millis =>
+        switch clock {
+        | Some(clock) => clock->VirtualClock.toClock->Clock.delay(~label="test delay", millis)
+        | None =>
+          JsError.throwWithMessage(
+            "indexer.delay waits on virtual time, and this run opted out of it.",
           )
         },
       releaseRealtime: () => state->IndexerState.releaseRealtime,

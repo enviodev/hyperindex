@@ -5,7 +5,7 @@
 // unnecessary: `expectItemsQueries` waits for the queries it names, and a height
 // answer with no call pending is held for the next one.
 
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -111,23 +111,25 @@ const realClock = /\bDate\.now\(/;
 const pollSnapshot = /\bgetHeightOrThrowCalls->Array\.length\b(?!\s*-\s*1)/;
 const scenarioStart = /\bScenario\.(?:it|run)\(/;
 
+// Work off the source clock (a handler or effect taking time, events from the
+// addon's threads, throttled writes) still takes real time, and says so: a
+// `// Real time:` comment covers the statement it sits on or above, the lines
+// below it indented at least as deep, up to the next blank line.
+const indentOf = (line: string) => line.length - line.trimStart().length;
+const isRealTimeAt = (lines: string[], index: number) => {
+  for (let at = index; at >= 0 && lines[at].trim() !== ""; at--) {
+    if (/\/\/\s*Real time:/.test(lines[at])) {
+      const indent = indentOf(lines[at]);
+      return lines.slice(at + 1, index + 1).every((line) => indentOf(line) >= indent);
+    }
+  }
+  return false;
+};
+
 for (const path of resFiles(testRoot)) {
   const file = relative(repoRoot, path);
   const lines = readFileSync(path, "utf8").split("\n");
-  // Work off the source clock (a handler or effect taking time, events from the
-  // addon's threads, throttled writes) still takes real time, and says so: a
-  // `// Real time:` comment covers the statement it sits on or above, the lines
-  // below it indented at least as deep, up to the next blank line.
-  const indentOf = (line: string) => line.length - line.trimStart().length;
-  const realTimeAt = (index: number) => {
-    for (let at = index; at >= 0 && lines[at].trim() !== ""; at--) {
-      if (/\/\/\s*Real time:/.test(lines[at])) {
-        const indent = indentOf(lines[at]);
-        return lines.slice(at + 1, index + 1).every((line) => indentOf(line) >= indent);
-      }
-    }
-    return false;
-  };
+  const realTimeAt = (index: number) => isRealTimeAt(lines, index);
   // Scenarios run on virtual time unless `~virtualTime=false` takes them off it,
   // on `Scenario.make` for every test of that scenario or on one test.
   const realTimeScenarios = new Set<string>();
@@ -334,6 +336,99 @@ for (const path of [...resFiles(sourcesRoot), ...clockedModules]) {
     });
 }
 
+// A duration the indexer reports reads the run's clock, so a scenario controls
+// it exactly: a handler that waits 5ms on virtual time accrues 0.005s, every
+// run. One read off `Performance` measures the scheduler instead, and a test of
+// it can only ask for "more than zero", which the metrics' millisecond rounding
+// turns into a coin flip. The files below still time on `Performance`, each for
+// the reason given; a new one needs a reason as good.
+const performanceRead = /\bPerformance\.(?:now|secondsSince)\b/;
+const realWork = "it times real I/O or CPU work, which virtual time would report as instant";
+const performanceAllowed: Record<string, string> = {
+  "utils/Clock.res": "it is the real clock",
+  "processing/Batch.res": realWork,
+  "storage/Storage.res": realWork,
+  "processing/Rollback.res": realWork,
+  "storage/PruneStaleHistory.res": realWork,
+  "sources/SourceManager.res": realWork,
+  "run/Supervisor.res": "it reports the process's uptime",
+};
+const runtimeRoot = fileURLToPath(new URL("../../envio/src", import.meta.url));
+// A moved or deleted module would otherwise leave its entry allowing nothing.
+for (const module of Object.keys(performanceAllowed)) {
+  if (!existsSync(join(runtimeRoot, module))) {
+    sourceViolations.push({
+      file: relative(repoRoot, fileURLToPath(import.meta.url)),
+      line: 1,
+      title: `No such module: ${module}`,
+      fix: "Point the entry in performanceAllowed at the module's current path, or remove it.",
+    });
+  }
+}
+for (const path of resFiles(runtimeRoot)) {
+  const module = relative(runtimeRoot, path).split("\\").join("/");
+  if (module.startsWith("bindings/") || module in performanceAllowed) continue;
+  const file = relative(repoRoot, path);
+  readFileSync(path, "utf8")
+    .split("\n")
+    .forEach((line, index) => {
+      const match = line.replace(/\/\/.*$/, "").match(performanceRead);
+      if (match) {
+        sourceViolations.push({
+          file,
+          line: index + 1,
+          title: `${match[0]} times on the real clock`,
+          fix:
+            "Time it on the run's clock (`clock->Clock.readTimeRef`, then `Clock.secondsSince`), so a scenario sets the " +
+            "duration with `indexer.delay` and `advanceTime` and asserts it exactly.",
+        });
+      }
+    });
+}
+
+for (const path of resFiles(testRoot)) {
+  if (path.includes(`${join("test", "helpers")}`)) continue;
+  const file = relative(repoRoot, path);
+  const lines = readFileSync(path, "utf8").split("\n");
+  lines.forEach((line, index) => {
+    const code = line.replace(/(?<!:)\/\/.*$/, "");
+    // A real wait as a handler's whole body is there to take time, and the time
+    // a handler takes is measured on the run's clock: on virtual time it adds
+    // nothing, on real time it adds whatever the scheduler gives, which can
+    // round to zero. A `// Real time:` comment doesn't change that.
+    const handlerDelay = code.match(
+      /\b(?:preloadHandler|handler|contractRegister)\s*:\s*async\b.*\bUtils\.delay\((?!0\))([^)]*)\)/,
+    );
+    if (handlerDelay) {
+      violations.push({
+        file,
+        line: index + 1,
+        title: `A handler that takes time with Utils.delay(${handlerDelay[1]})`,
+        fix:
+          `Wait with \`await indexer.delay(${handlerDelay[1]})\` and let the test pass it with ` +
+          `\`await indexer.advanceTime(${handlerDelay[1]})\`: the handler then takes exactly that long.`,
+      });
+    }
+    // A duration only has to be more than zero when nothing set it, and a metric
+    // exported to the millisecond reads zero whenever the scheduler was quick.
+    const statement = lines.slice(Math.max(0, index - 2), index + 1).join("\n");
+    if (
+      />\s*0\.?(?![\d.])/.test(code) &&
+      /_seconds(?:_total)?"/.test(statement) &&
+      !isRealTimeAt(lines, index)
+    ) {
+      violations.push({
+        file,
+        line: index + 1,
+        title: "A duration metric asserted as more than zero",
+        fix:
+          "Assert its exact value: make the time pass with `indexer.delay` and `advanceTime`. " +
+          "For a metric of real work that virtual time can't set, say why on a `// Real time:` line above.",
+      });
+    }
+  });
+}
+
 const report = (list: violation[], heading: string) => {
   // An annotation puts the rule on the line that broke it, in the PR diff. The log
   // alone is prose under a step named for the tests, which a reader reaches only
@@ -354,7 +449,7 @@ if (violations.length > 0) {
   report(violations, "These tests guess at how long the indexer takes to ask the source:");
 }
 if (sourceViolations.length > 0) {
-  report(sourceViolations, "The source layer reads time the tests can't control:");
+  report(sourceViolations, "The runtime reads time the tests can't control:");
 }
 if (violations.length > 0 || sourceViolations.length > 0) {
   process.exit(1);

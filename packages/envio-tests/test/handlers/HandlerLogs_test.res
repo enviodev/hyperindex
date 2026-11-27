@@ -537,13 +537,13 @@ describe("console in a handler", () => {
             reply: Respond({
               items: [
                 {blockNumber: 5, logIndex: 1, handler: async _ => logLater("from the first")},
-                // Real time: a handler that takes a while to run.
-                {blockNumber: 6, logIndex: 2, handler: async _ => await Utils.delay(5)},
+                {blockNumber: 6, logIndex: 2, handler: async _ => await indexer.delay(5)},
               ],
               latestFetchedBlockNumber: 100,
             }),
           },
         ])
+        await indexer.advanceTime(5)
         await indexer.getBatchWritePromise()
         t.expect(
           indexer.allLogsAsJson()

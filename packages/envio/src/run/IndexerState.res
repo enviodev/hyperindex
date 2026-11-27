@@ -19,7 +19,8 @@ type handlerStat = {
   // Cumulative per-call preload time; exceeds preloadSeconds under parallel execution.
   mutable preloadSecondsTotal: float,
   mutable preloadPendingCount: int,
-  mutable preloadPendingTimerRef: Performance.timeRef,
+  mutable preloadPendingTimerRef: Clock.timeRef,
+  clock: Clock.t,
 }
 
 // Per-(storage, operation) load counters rendered into the
@@ -34,7 +35,7 @@ type storageLoadStat = {
   mutable whereSize: float,
   mutable size: float,
   mutable pendingCount: int,
-  mutable pendingTimerRef: Performance.timeRef,
+  mutable pendingTimerRef: Clock.timeRef,
 }
 
 type storageWriteStat = {
@@ -53,6 +54,8 @@ type t = {
   logger: Logger.t,
   clock: Clock.t,
   storage: Persistence.storage,
+  // Processing waits for writes once the store holds this many changes.
+  inMemoryObjectsTarget: float,
   // --- In-memory store: entity/effect tables and the pending-write queue. ---
   // Cross-chain entities only; each ChainState holds its own partition for the
   // per-chain ones.
@@ -100,10 +103,10 @@ type t = {
   crossChainState: CrossChainState.t,
   mutable rollbackState: rollbackState,
   indexerStartTime: Date.t,
-  // Monotonic peer of indexerStartTime. Elapsed run time is derived from this so
-  // an NTP correction can't move it out of step with the Performance-based
-  // counters that get divided by it.
-  indexerStartTimeRef: Performance.timeRef,
+  // Monotonic peer of indexerStartTime, on the run's clock. Elapsed run time is
+  // derived from this so an NTP correction can't move it out of step with the
+  // clock-based counters that get divided by it.
+  indexerStartTimeRef: Clock.timeRef,
   // When an entity's history was last pruned. No key = never pruned yet,
   // which counts as overdue.
   lastPrunedAtMillis: dict<float>,
@@ -144,7 +147,7 @@ type t = {
   // Set while the processing loop is idle after starving on an empty buffer;
   // None while processing or when the loop stopped for a reorg/shutdown. The
   // getter folds the in-progress interval in so a scrape mid-stall isn't stale.
-  mutable processingStalledOnFetchSince: option<Performance.timeRef>,
+  mutable processingStalledOnFetchSince: option<Clock.timeRef>,
   mutable processingStalledOnStorageWriteSeconds: float,
   // One stat per contract/event metric series. Per-chain event configs share a
   // series, so the by-config map only spares a run from building the key.
@@ -165,6 +168,7 @@ let make = (
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
   ~targetBufferSize=config.env.indexingMaxBufferSize,
+  ~inMemoryObjectsTarget=config.env.inMemoryObjectsTarget->Int.toFloat,
   ~holdRealtime=false,
   ~committedFrontier=Frontier.empty(),
   ~storedEffectCaches=Dict.make(),
@@ -193,6 +197,7 @@ let make = (
     logger,
     clock,
     storage,
+    inMemoryObjectsTarget,
     entities: EntityTables.make(config.userEntities->EntityTables.crossChain),
     effectState: EffectState.make(~clock, ()),
     storedEffectCaches,
@@ -218,7 +223,7 @@ let make = (
       ~holdRealtime,
     ),
     indexerStartTime: Date.make(),
-    indexerStartTimeRef: Performance.now(),
+    indexerStartTimeRef: clock->Clock.readTimeRef,
     rollbackState: NoRollback,
     lastPrunedAtMillis: Dict.make(),
     scheduleProcessing: () => (),
@@ -269,6 +274,7 @@ let makeFromDbState = (
   ~exitAfterFirstEventBlock=false,
   ~sourceTiming=?,
   ~targetBufferSize=config.env.indexingMaxBufferSize,
+  ~inMemoryObjectsTarget=?,
   // A process driving part of a split run waits for its supervisor before
   // entering the reorg threshold or switching to realtime.
   ~holdRealtime=false,
@@ -322,6 +328,7 @@ let makeFromDbState = (
     ~chainStates,
     ~isRealtime,
     ~targetBufferSize,
+    ~inMemoryObjectsTarget?,
     ~holdRealtime,
     ~committedFrontier=initialState.checkpointFrontier,
     ~storedEffectCaches=initialState.cache,
@@ -367,7 +374,7 @@ settleStalledOnFetch = (state: t) =>
   switch state.processingStalledOnFetchSince {
   | Some(since) =>
     state.processingStalledOnFetchSeconds =
-      state.processingStalledOnFetchSeconds +. since->Performance.secondsSince
+      state.processingStalledOnFetchSeconds +. state.clock->Clock.secondsSince(since)
     state.processingStalledOnFetchSince = None
   | None => ()
   }
@@ -503,7 +510,7 @@ let takeProcessingRequest = (state: t) => {
 // so only genuine buffer starvation is counted.
 let markProcessingStalledOnFetch = (state: t) =>
   if state.processingStalledOnFetchSince->Option.isNone {
-    state.processingStalledOnFetchSince = Some(Performance.now())
+    state.processingStalledOnFetchSince = Some(state.clock->Clock.readTimeRef)
   }
 
 let recordStalledOnStorageWrite = (state: t, ~seconds) =>
@@ -521,6 +528,7 @@ let recordProcessedBatch = (state: t) =>
 let config = (state: t) => state.config
 let logger = (state: t) => state.logger
 let clock = (state: t) => state.clock
+let inMemoryObjectsTarget = (state: t) => state.inMemoryObjectsTarget
 let storage = (state: t) => state.storage
 let entities = (state: t) => state.entities
 
@@ -687,7 +695,7 @@ let toMetrics = (state: t): Metrics.t => {
   {
     startTime: state.indexerStartTime,
     metricTime: Date.make(),
-    elapsedSeconds: state.indexerStartTimeRef->Performance.secondsSince,
+    elapsedSeconds: state.clock->Clock.secondsSince(state.indexerStartTimeRef),
     targetBufferSize: state.crossChainState->CrossChainState.targetBufferSize,
     isInReorgThreshold: state.crossChainState->CrossChainState.isInReorgThreshold,
     hasArrivedAtHead: state.crossChainState->CrossChainState.hasArrivedAtHead,
@@ -697,7 +705,7 @@ let toMetrics = (state: t): Metrics.t => {
     processingSeconds: state.processingSeconds,
     processingStalledOnFetchSeconds: state.processingStalledOnFetchSeconds +.
     switch state.processingStalledOnFetchSince {
-    | Some(since) => since->Performance.secondsSince
+    | Some(since) => state.clock->Clock.secondsSince(since)
     | None => 0.
     },
     processingStalledOnStorageWriteSeconds: state.processingStalledOnStorageWriteSeconds,
@@ -765,6 +773,7 @@ let getHandlerStat = (state: t, ~contract, ~event) => {
       preloadSecondsTotal: 0.,
       preloadPendingCount: 0,
       preloadPendingTimerRef: %raw(`null`),
+      clock: state.clock,
     }
     state.handlerStatBySeries->Dict.set(key, stat)
     stat
@@ -786,7 +795,7 @@ let recordHandlerDuration = (stat: handlerStat, ~duration) => {
 }
 
 let startPreloadHandler = (stat: handlerStat) => {
-  let timerRef = Performance.now()
+  let timerRef = stat.clock->Clock.readTimeRef
   if stat.preloadPendingCount === 0 {
     stat.preloadPendingTimerRef = timerRef
   }
@@ -798,9 +807,9 @@ let endPreloadHandler = (stat: handlerStat, timerRef) => {
   stat.preloadPendingCount = stat.preloadPendingCount - 1
   if stat.preloadPendingCount === 0 {
     stat.preloadSeconds =
-      stat.preloadSeconds +. stat.preloadPendingTimerRef->Performance.secondsSince
+      stat.preloadSeconds +. stat.clock->Clock.secondsSince(stat.preloadPendingTimerRef)
   }
-  stat.preloadSecondsTotal = stat.preloadSecondsTotal +. timerRef->Performance.secondsSince
+  stat.preloadSecondsTotal = stat.preloadSecondsTotal +. stat.clock->Clock.secondsSince(timerRef)
   stat.preloadCount = stat.preloadCount +. 1.
 }
 
@@ -829,19 +838,19 @@ let getStorageLoadStat = (state: t, ~storage, ~operation) => {
 let startStorageLoad = (state: t, ~storage, ~operation) => {
   let stat = state->getStorageLoadStat(~storage, ~operation)
   if stat.pendingCount === 0 {
-    stat.pendingTimerRef = Performance.now()
+    stat.pendingTimerRef = state.clock->Clock.readTimeRef
   }
   stat.pendingCount = stat.pendingCount + 1
-  Performance.now()
+  state.clock->Clock.readTimeRef
 }
 
 let endStorageLoad = (state: t, timerRef, ~storage, ~operation, ~whereSize, ~size) => {
   let stat = state->getStorageLoadStat(~storage, ~operation)
   stat.pendingCount = stat.pendingCount - 1
   if stat.pendingCount === 0 {
-    stat.seconds = stat.seconds +. stat.pendingTimerRef->Performance.secondsSince
+    stat.seconds = stat.seconds +. state.clock->Clock.secondsSince(stat.pendingTimerRef)
   }
-  stat.secondsTotal = stat.secondsTotal +. timerRef->Performance.secondsSince
+  stat.secondsTotal = stat.secondsTotal +. state.clock->Clock.secondsSince(timerRef)
   stat.count = stat.count +. 1.
   stat.whereSize = stat.whereSize +. whereSize->Int.toFloat
   stat.size = stat.size +. size->Int.toFloat
