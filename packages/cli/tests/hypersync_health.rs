@@ -6,9 +6,7 @@
     reason = "a test against live endpoints, backing off on the real clock"
 )]
 
-use envio::config_parsing::chain_helpers::HypersyncChain;
-use envio::config_parsing::hypersync_endpoints::network_to_hypersync_url;
-use envio::scripts::print_missing_networks::{format_extra_chain, Diff};
+use envio::{format_extra_chain, network_to_hypersync_url, Diff, HypersyncChain};
 use strum::IntoEnumIterator;
 
 async fn fetch_hypersync_health(hypersync_endpoint: &str) -> anyhow::Result<bool> {

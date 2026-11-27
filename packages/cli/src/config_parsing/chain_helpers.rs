@@ -3,7 +3,6 @@ use anyhow::anyhow;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use strum::IntoEnumIterator;
 use subenum::subenum;
 
 #[derive(strum::Display)]
@@ -636,10 +635,6 @@ impl Network {
 }
 
 impl HypersyncChain {
-    pub fn iter_hypersync_chains() -> impl Iterator<Item = HypersyncChain> {
-        HypersyncChain::iter()
-    }
-
     pub fn get_plain_name(&self) -> String {
         Network::from(*self).to_string()
     }
@@ -657,7 +652,7 @@ impl fmt::Display for NetworkWithExplorer {
     }
 }
 
-pub fn get_max_reorg_depth_from_id(id: u64) -> Option<u32> {
+pub(crate) fn get_max_reorg_depth_from_id(id: u64) -> Option<u32> {
     Network::from_network_id(id)
         .ok()
         .and_then(|n| n.get_max_reorg_depth())

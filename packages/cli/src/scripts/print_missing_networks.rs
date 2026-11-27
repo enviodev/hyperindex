@@ -1,7 +1,6 @@
 use crate::config_parsing::chain_helpers::{GraphNetwork, HypersyncChain, NetworkWithExplorer};
 use anyhow::Result;
 use convert_case::{Case, Casing};
-use reqwest;
 use serde::Deserialize;
 use std::collections::HashSet;
 use strum::IntoEnumIterator;
@@ -15,7 +14,7 @@ const UNLISTED_BUT_SERVED: &[u64] = &[HypersyncChain::Arc as u64, HypersyncChain
 
 #[derive(Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum Ecosystem {
+pub(crate) enum Ecosystem {
     Evm,
     Fuel,
     Solana,
@@ -137,7 +136,7 @@ pub fn format_extra_chain(chain: &HypersyncChain) -> String {
     format!("{} (ID: {})", chain.get_plain_name(), *chain as u64)
 }
 
-pub async fn run() -> Result<()> {
+pub(crate) async fn run() -> Result<()> {
     Diff::get().await?.print_message();
     Ok(())
 }

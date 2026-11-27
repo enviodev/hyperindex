@@ -9,7 +9,7 @@ use super::init_config::{self};
 
 #[derive(Debug, Parser)]
 #[clap(author, version, about)]
-pub struct CommandLineArgs {
+pub(crate) struct CommandLineArgs {
     #[clap(subcommand)]
     pub command: CommandType,
     #[command(flatten)]
@@ -17,7 +17,7 @@ pub struct CommandLineArgs {
 }
 
 impl CommandLineArgs {
-    pub fn generate_markdown_help() -> String {
+    pub(crate) fn generate_markdown_help() -> String {
         let options = MarkdownOptions::new()
             .show_footer(false)
             .title("Command-Line Help for `envio`".to_string());
@@ -26,7 +26,7 @@ impl CommandLineArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-pub struct ProjectPaths {
+pub(crate) struct ProjectPaths {
     ///The directory of the project. Defaults to current dir ("./")
     #[arg(global = true, short, long)]
     pub directory: Option<String>,
@@ -37,7 +37,7 @@ pub struct ProjectPaths {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum CommandType {
+pub(crate) enum CommandType {
     ///Create a new indexer
     #[command(before_long_help = crate::executor::init::init_help_preamble())]
     Init(InitArgs),
@@ -80,13 +80,13 @@ pub enum CommandType {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum ConfigSubcommand {
+pub(crate) enum ConfigSubcommand {
     ///Print the resolved indexer config as JSON
     View,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum ToolsSubcommand {
+pub(crate) enum ToolsSubcommand {
     ///Full-text search over Envio docs; prints matching titles, URLs, and snippets. Pair with `fetch-docs` to read a hit in full.
     SearchDocs(SearchDocsArgs),
     ///Print the full markdown of a docs page by URL. Use a URL returned by `search-docs`.
@@ -94,19 +94,19 @@ pub enum ToolsSubcommand {
 }
 
 #[derive(Debug, Args)]
-pub struct SearchDocsArgs {
+pub(crate) struct SearchDocsArgs {
     ///The search query
     pub query: String,
 }
 
 #[derive(Debug, Args)]
-pub struct FetchDocsArgs {
+pub(crate) struct FetchDocsArgs {
     ///The full URL of the documentation page to fetch
     pub url: String,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum SkillsSubcommand {
+pub(crate) enum SkillsSubcommand {
     ///Re-extract every skill shipped by this CLI version, overwriting the
     ///matching directories under `<cwd>/.claude/skills/`. Skills not shipped
     ///by envio are left untouched.
@@ -114,7 +114,11 @@ pub enum SkillsSubcommand {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum Script {
+#[allow(
+    clippy::enum_variant_names,
+    reason = "each variant name is the subcommand a developer types"
+)]
+pub(crate) enum Script {
     ///Print missing networks from the API
     PrintMissingNetworks,
     ///Print help into a markdown file
@@ -125,21 +129,21 @@ pub enum Script {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum JsonSchema {
+pub(crate) enum JsonSchema {
     Evm,
     Fuel,
     Svm,
 }
 
 #[derive(Debug, Args)]
-pub struct DevArgs {
+pub(crate) struct DevArgs {
     ///Force restart: clear all indexed data and re-index from scratch. Required when config/schema/ABI changes are incompatible with the existing indexer state.
     #[arg(short = 'r', long, action)]
     pub restart: bool,
 }
 
 #[derive(Debug, Args)]
-pub struct StartArgs {
+pub(crate) struct StartArgs {
     ///Clear all indexed data and restart indexing from scratch
     #[arg(short = 'r', long, action)]
     pub restart: bool,
@@ -155,19 +159,19 @@ pub struct StartArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct MetricsArgs {
+pub(crate) struct MetricsArgs {
     #[command(subcommand)]
     pub subcommand: Option<MetricsSubcommand>,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum MetricsSubcommand {
+pub(crate) enum MetricsSubcommand {
     ///Fetch runtime metrics from the running indexer's /metrics/runtime endpoint
     Runtime,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum LocalCommandTypes {
+pub(crate) enum LocalCommandTypes {
     /// Local Envio environment commands
     #[command(subcommand)]
     Docker(LocalDockerSubcommands),
@@ -177,7 +181,7 @@ pub enum LocalCommandTypes {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-pub enum LocalDockerSubcommands {
+pub(crate) enum LocalDockerSubcommands {
     ///Start Docker containers (Postgres + Hasura) for local environment
     Up,
     ///Stop and remove Docker containers for local environment
@@ -185,7 +189,7 @@ pub enum LocalDockerSubcommands {
 }
 
 #[derive(Subcommand, Debug)]
-pub enum DbMigrateSubcommands {
+pub(crate) enum DbMigrateSubcommands {
     ///Migrate latest schema to database
     Up,
     ///Drop all indexed data
@@ -195,7 +199,7 @@ pub enum DbMigrateSubcommands {
 }
 
 #[derive(Args, Debug, Clone)]
-pub struct InitArgs {
+pub(crate) struct InitArgs {
     ///The name of your project
     #[arg(global = true, short, long)]
     pub name: Option<String>,
@@ -225,7 +229,7 @@ pub struct InitArgs {
 
 #[subenum(EvmInitFlowInteractive)]
 #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
-pub enum InitFlow {
+pub(crate) enum InitFlow {
     ///[Advanced] Initialize Evm indexer by importing config from a contract for a given chain
     #[subenum(EvmInitFlowInteractive)]
     #[strum(serialize = "Contract Import")]
@@ -245,7 +249,7 @@ pub enum InitFlow {
     },
 }
 
-pub mod evm {
+pub(crate) mod evm {
     use crate::{
         config_parsing::chain_helpers::{Network, NetworkWithExplorer},
         evm, init_config,
@@ -257,7 +261,7 @@ pub mod evm {
     use strum::{Display, EnumIter, EnumString};
 
     #[derive(Args, Debug, Default, Clone)]
-    pub struct ContractImportArgs {
+    pub(crate) struct ContractImportArgs {
         ///Choose to import a contract from a local abi or
         ///using get values from an explorer using a contract address
         #[command(subcommand)]
@@ -277,7 +281,7 @@ pub mod evm {
     }
 
     #[derive(Args, Debug, Default, Clone)]
-    pub struct TemplateArgs {
+    pub(crate) struct TemplateArgs {
         ///Name of the template to be used in initialization
         #[arg(short, long)]
         #[clap(value_enum)]
@@ -285,7 +289,7 @@ pub mod evm {
     }
 
     #[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
-    pub enum LocalOrExplorerImport {
+    pub(crate) enum LocalOrExplorerImport {
         ///Initialize by pulling the contract ABI from a block explorer
         #[strum(serialize = "Block Explorer")]
         Explorer(ExplorerImportArgs),
@@ -296,7 +300,7 @@ pub mod evm {
 
     impl LocalOrExplorerImport {
         // Helper method to get flags from either variant
-        pub fn get_flags(&self) -> (bool, bool) {
+        pub(crate) fn get_flags(&self) -> (bool, bool) {
             match self {
                 LocalOrExplorerImport::Explorer(args) => (args.all_events, args.single_contract),
                 LocalOrExplorerImport::Local(args) => (args.all_events, args.single_contract),
@@ -305,7 +309,7 @@ pub mod evm {
     }
 
     #[derive(Args, Debug, Default, Clone)]
-    pub struct ExplorerImportArgs {
+    pub(crate) struct ExplorerImportArgs {
         ///Network to import the contract from
         #[arg(short, long)]
         pub blockchain: Option<NetworkWithExplorer>,
@@ -355,7 +359,7 @@ pub mod evm {
     }
 
     #[derive(Args, Debug, Default, Clone)]
-    pub struct LocalImportArgs {
+    pub(crate) struct LocalImportArgs {
         ///The path to a json abi file
         #[arg(short, long)]
         pub abi_file: Option<String>,
@@ -385,14 +389,14 @@ pub mod evm {
     }
 }
 
-pub mod fuel {
+pub(crate) mod fuel {
     use clap::{Args, Subcommand};
     use strum::{Display, EnumIter, EnumString};
 
     use crate::{fuel, init_config};
 
     #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
-    pub enum InitFlow {
+    pub(crate) enum InitFlow {
         ///Initialize Fuel indexer by importing config from a contract for a given chain
         #[strum(serialize = "Contract Import")]
         ContractImport(ContractImportArgs),
@@ -401,7 +405,7 @@ pub mod fuel {
     }
 
     #[derive(Args, Debug, Default, Clone)]
-    pub struct ContractImportArgs {
+    pub(crate) struct ContractImportArgs {
         ///Choose to import a contract from a local abi or
         ///using get values from an explorer using a contract address
         #[command(subcommand)]
@@ -421,7 +425,7 @@ pub mod fuel {
     }
 
     #[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
-    pub enum LocalOrExplorerImport {
+    pub(crate) enum LocalOrExplorerImport {
         // Not supported https://forum.fuel.network/t/get-abi-by-contract-address/5535
         // ///Initialize by pulling the contract ABI from a block explorer
         // #[strum(serialize = "Block Explorer")]
@@ -433,7 +437,7 @@ pub mod fuel {
     }
 
     #[derive(Args, Debug, Default, Clone)]
-    pub struct LocalImportArgs {
+    pub(crate) struct LocalImportArgs {
         ///The path to a json abi file
         #[arg(short, long)]
         pub abi_file: Option<String>,
@@ -452,7 +456,7 @@ pub mod fuel {
     }
 
     #[derive(Args, Debug, Default, Clone)]
-    pub struct TemplateArgs {
+    pub(crate) struct TemplateArgs {
         ///Name of the template to be used in initialization
         #[arg(short, long)]
         #[clap(value_enum)]
@@ -460,20 +464,20 @@ pub mod fuel {
     }
 }
 
-pub mod svm {
+pub(crate) mod svm {
     use clap::{Args, Subcommand};
     use strum::{Display, EnumIter, EnumString};
 
     use crate::init_config;
 
     #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
-    pub enum InitFlow {
+    pub(crate) enum InitFlow {
         ///Initialize Svm indexer from an example template
         Template(TemplateArgs),
     }
 
     #[derive(Args, Debug, Default, Clone)]
-    pub struct TemplateArgs {
+    pub(crate) struct TemplateArgs {
         ///Name of the template to be used in initialization
         #[arg(short, long)]
         #[clap(value_enum)]

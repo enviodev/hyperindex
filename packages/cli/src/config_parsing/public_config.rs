@@ -499,7 +499,7 @@ fn chain_id_to_name(chain_id: u64, ecosystem: &Ecosystem) -> String {
 }
 
 impl SystemConfig {
-    pub fn to_public_config_json(&self, is_dev: bool) -> Result<String> {
+    pub(crate) fn to_public_config_json(&self, is_dev: bool) -> Result<String> {
         let cfg = self;
 
         // An array rather than a map keyed by name: JS iterates numeric keys
@@ -782,7 +782,6 @@ impl SystemConfig {
                                     ("bigdecimal".into(), None, None, p, s)
                                 }
                                 Primitive::Number => ("float".into(), None, None, None, None),
-                                Primitive::Serial => ("serial".into(), None, None, None, None),
                                 Primitive::Json => ("json".into(), None, None, None, None),
                                 Primitive::Date => ("date".into(), None, None, None, None),
                                 Primitive::Enum(name) => {
@@ -928,7 +927,7 @@ impl SystemConfig {
         Ok(serde_json::to_string_pretty(&config)? + "\n")
     }
 
-    pub fn to_view_json(&self) -> Result<String> {
+    pub(crate) fn to_view_json(&self) -> Result<String> {
         let view = ConfigView {
             version: system_config::VERSION,
             storage: ViewStorageConfig {

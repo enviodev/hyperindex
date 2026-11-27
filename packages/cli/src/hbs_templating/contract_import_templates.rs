@@ -827,7 +827,7 @@ impl Event {
 ///Param is used both in the context of an entity and an event for the generating
 ///schema and handlers.
 #[derive(Serialize, Clone)]
-pub struct Param {
+pub(crate) struct Param {
     res_name: String,
     js_name: String,
     ///Entity column name. Matches the param name, except for `id` which is

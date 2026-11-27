@@ -7,7 +7,7 @@ use super::human_config::ColumnNameFormat;
 use crate::utils::text::Capitalize;
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Primitive {
+pub(crate) enum Primitive {
     Boolean,
     String,
     Bytes,
@@ -15,14 +15,13 @@ pub enum Primitive {
     BigInt { precision: Option<u32> },
     BigDecimal(Option<(u32, u32)>), // (precision, scale)
     Number,
-    Serial,
     Json,
     Date,
     Enum(String),
 }
 
 impl Primitive {
-    pub fn get_res_field_type_variant(&self) -> String {
+    pub(crate) fn get_res_field_type_variant(&self) -> String {
         match &self {
             Self::Boolean => "Boolean".to_string(),
             Self::String => "String".to_string(),
@@ -38,7 +37,6 @@ impl Primitive {
             Self::BigDecimal(Some((precision, scale))) => {
                 format!("BigDecimal({{config: ({precision}, {scale})}})")
             }
-            Self::Serial => "Serial".to_string(),
             Self::Json => "Json".to_string(),
             Self::Date => "Date".to_string(),
             Self::Number => "Number".to_string(),
@@ -69,7 +67,7 @@ impl Display for Primitive {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct Field {
+pub(crate) struct Field {
     pub field_name: String,
     pub linked_entity: Option<String>,
     pub is_index: bool,
@@ -81,7 +79,7 @@ pub struct Field {
 }
 
 impl Field {
-    pub fn db_column_name(&self, column_name_format: ColumnNameFormat) -> String {
+    pub(crate) fn db_column_name(&self, column_name_format: ColumnNameFormat) -> String {
         let base = match column_name_format {
             ColumnNameFormat::Original => self.field_name.clone(),
             ColumnNameFormat::SnakeCase => to_snake_case(&self.field_name),
@@ -101,7 +99,7 @@ impl Field {
 // balance_erc20 (not balance_erc_20), field1 -> field1, while still
 // splitting before a word that starts after a digit: erc20Balance ->
 // erc20_balance.
-pub fn to_snake_case(name: &str) -> String {
+pub(crate) fn to_snake_case(name: &str) -> String {
     name.with_boundaries(&[
         Boundary::LowerUpper,
         Boundary::Acronym,

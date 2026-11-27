@@ -9,7 +9,7 @@ use super::system_config::yaml_arg_to_named_field;
 use super::validation::validate_svm_args;
 
 /// What one configured instruction dispatches on and decodes into.
-pub struct ResolvedInstruction {
+pub(crate) struct ResolvedInstruction {
     /// `None` matches every instruction of the program.
     pub discriminator: Option<Vec<u8>>,
     pub accounts: Vec<AccountSlot>,
@@ -114,7 +114,7 @@ fn overwrite_missing_fields(
     ))
 }
 
-pub fn instruction_catalog(
+pub(crate) fn instruction_catalog(
     program: &human_config::svm::Program,
     idl: &ProgramIdl,
 ) -> Result<Vec<(String, ResolvedInstruction)>> {
@@ -148,7 +148,7 @@ pub fn instruction_catalog(
     Ok(catalog)
 }
 
-pub fn warn_about_unindexable(program: &human_config::svm::Program, unusable: &Unusable) {
+pub(crate) fn warn_about_unindexable(program: &human_config::svm::Program, unusable: &Unusable) {
     let yaml_names: HashSet<&str> = program
         .instructions
         .iter()

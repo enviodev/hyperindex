@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use std::fmt::{self, Display};
 
 /// Normalizes a contract name by replacing spaces, hyphens, and dots with underscores.
-pub fn normalize_contract_name(name: String) -> String {
+pub(crate) fn normalize_contract_name(name: String) -> String {
     name.replace([' ', '-', '.'], "_")
 }
 
@@ -18,7 +18,7 @@ pub fn normalize_contract_name(name: String) -> String {
 /// entity name is a Postgres table name. Cut the contract name just enough for
 /// the longest event to fit. When the cut isn't a valid contract name, the name
 /// stays whole and codegen reports the long entity name instead.
-pub fn fit_contract_name_to_events(
+pub(crate) fn fit_contract_name_to_events(
     name: String,
     event_names: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> String {
@@ -48,14 +48,14 @@ pub fn fit_contract_name_to_events(
 ///the selection of a contract you can add more addresses or
 ///chains
 #[derive(Clone, Debug)]
-pub struct SelectedContract {
+pub(crate) struct SelectedContract {
     pub name: String,
     pub chains: Vec<ContractImportNetworkSelection>,
     pub events: Vec<Event>,
 }
 
 impl SelectedContract {
-    pub fn new(
+    pub(crate) fn new(
         name: String,
         network_selection: ContractImportNetworkSelection,
         events: Vec<Event>,
@@ -70,13 +70,13 @@ impl SelectedContract {
         }
     }
 
-    pub fn get_last_chain_mut(&mut self) -> Result<&mut ContractImportNetworkSelection> {
+    pub(crate) fn get_last_chain_mut(&mut self) -> Result<&mut ContractImportNetworkSelection> {
         self.chains
             .last_mut()
             .context("Failed to get the last select contract chain")
     }
 
-    pub fn get_last_chain_name(&self) -> Result<String> {
+    pub(crate) fn get_last_chain_name(&self) -> Result<String> {
         let network_selection = self
             .chains
             .last()
@@ -84,7 +84,7 @@ impl SelectedContract {
         Ok(network_selection.network.to_string())
     }
 
-    pub fn get_chain_ids(&self) -> Vec<u64> {
+    pub(crate) fn get_chain_ids(&self) -> Vec<u64> {
         self.chains
             .iter()
             .map(|n| n.network.get_network_id())
@@ -93,7 +93,7 @@ impl SelectedContract {
 }
 
 #[derive(Clone, Debug)]
-pub enum NetworkKind {
+pub(crate) enum NetworkKind {
     Supported(HypersyncChain),
     Unsupported {
         network_id: u64,
@@ -103,19 +103,19 @@ pub enum NetworkKind {
 }
 
 impl NetworkKind {
-    pub fn get_network_id(&self) -> u64 {
+    pub(crate) fn get_network_id(&self) -> u64 {
         match self {
             Self::Supported(n) => *n as u64,
             Self::Unsupported { network_id, .. } => *network_id,
         }
     }
-    pub fn get_start_block(&self) -> u64 {
+    pub(crate) fn get_start_block(&self) -> u64 {
         match self {
             Self::Supported(_) => 0,
             Self::Unsupported { start_block, .. } => *start_block,
         }
     }
-    pub fn uses_hypersync(&self) -> bool {
+    pub(crate) fn uses_hypersync(&self) -> bool {
         match self {
             Self::Supported(_) => true,
             Self::Unsupported { .. } => false,
@@ -133,27 +133,27 @@ impl Display for NetworkKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct ContractImportNetworkSelection {
+pub(crate) struct ContractImportNetworkSelection {
     pub network: NetworkKind,
     pub addresses: Vec<Address>,
 }
 
 impl ContractImportNetworkSelection {
-    pub fn new(network: NetworkKind, address: Address) -> Self {
+    pub(crate) fn new(network: NetworkKind, address: Address) -> Self {
         Self {
             network,
             addresses: vec![address],
         }
     }
 
-    pub fn new_without_addresses(network: NetworkKind) -> Self {
+    pub(crate) fn new_without_addresses(network: NetworkKind) -> Self {
         Self {
             network,
             addresses: vec![],
         }
     }
 
-    pub fn uses_hypersync(&self) -> bool {
+    pub(crate) fn uses_hypersync(&self) -> bool {
         self.network.uses_hypersync()
     }
 }

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{fmt::Display, str::FromStr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Address(B256);
+pub(crate) struct Address(B256);
 
 impl<'de> Deserialize<'de> for Address {
     fn deserialize<D>(deserializer: D) -> Result<Address, D::Error>
@@ -24,16 +24,6 @@ impl Serialize for Address {
     {
         // Serialize as a checksummed string
         self.to_string().serialize(serializer)
-    }
-}
-
-impl Address {
-    pub fn new(address: &str) -> Result<Self> {
-        address.parse()
-    }
-
-    pub fn as_b256(&self) -> &B256 {
-        &self.0
     }
 }
 
@@ -69,7 +59,7 @@ mod test {
     #[test]
     fn convert_address_to_string() {
         let address_str = "0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b";
-        let address = Address::new(address_str).unwrap();
+        let address: Address = address_str.parse().unwrap();
         assert_eq!(address_str, address.to_string());
     }
 
@@ -79,8 +69,9 @@ mod test {
         let deserialized_map: HashMap<&str, Address> = serde_json::from_str(address_json).unwrap();
         let deserialized = deserialized_map.get("test_field").unwrap();
 
-        let expected_address =
-            Address::new("0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b")
+        let expected_address: Address =
+            "0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b"
+                .parse()
                 .unwrap();
 
         assert_eq!(&expected_address, deserialized);

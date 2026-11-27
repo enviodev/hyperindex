@@ -7,7 +7,6 @@
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::{Event as AlloyEvent, EventParam as AlloyEventParam, Param as AlloyParam};
 use anyhow::{anyhow, Context, Result};
-use std::str::FromStr;
 
 /// Recursive representation of an ABI type that preserves named struct components.
 ///
@@ -15,7 +14,7 @@ use std::str::FromStr;
 /// the component names from the JSON ABI, so struct params can be rendered as records
 /// with named fields.
 #[derive(Debug, Clone, PartialEq)]
-pub enum AbiType {
+pub(crate) enum AbiType {
     Bool,
     Uint(usize),
     Int(usize),
@@ -31,7 +30,7 @@ pub enum AbiType {
 
 /// A named (or unnamed) field of a tuple/struct ABI type.
 #[derive(Debug, Clone, PartialEq)]
-pub struct AbiTupleField {
+pub(crate) struct AbiTupleField {
     /// The component name from the JSON ABI. `None` if the ABI did not provide one
     /// (e.g. when parsing a bare event signature string).
     pub name: Option<String>,
@@ -41,7 +40,7 @@ pub struct AbiTupleField {
 impl AbiType {
     /// Build an `AbiType` from an `alloy_json_abi::Param`, walking components to
     /// preserve named struct fields.
-    pub fn from_alloy_param(param: &AlloyParam) -> Result<Self> {
+    pub(crate) fn from_alloy_param(param: &AlloyParam) -> Result<Self> {
         Self::from_ty_and_components(&param.ty, &param.components).with_context(|| {
             format!(
                 "Failed to parse ABI type '{}' for parameter '{}'",
@@ -51,7 +50,7 @@ impl AbiType {
     }
 
     /// Build an `AbiType` from an `alloy_json_abi::EventParam`.
-    pub fn from_alloy_event_param(param: &AlloyEventParam) -> Result<Self> {
+    pub(crate) fn from_alloy_event_param(param: &AlloyEventParam) -> Result<Self> {
         Self::from_ty_and_components(&param.ty, &param.components).with_context(|| {
             format!(
                 "Failed to parse ABI type '{}' for event parameter '{}'",
@@ -106,7 +105,7 @@ impl AbiType {
 
     /// Convert a `DynSolType` (no component names) into an `AbiType` with all tuple
     /// fields unnamed. Used as a fallback for bare signature strings.
-    pub fn from_dyn_sol_type(ty: &DynSolType) -> Result<Self> {
+    pub(crate) fn from_dyn_sol_type(ty: &DynSolType) -> Result<Self> {
         Ok(match ty {
             DynSolType::Bool => AbiType::Bool,
             DynSolType::Uint(n) => AbiType::Uint(*n),
@@ -136,7 +135,7 @@ impl AbiType {
 
     /// Drop tuple component names. Used by call sites that still operate on
     /// `DynSolType` (topic encoding, contract-import flattening).
-    pub fn to_dyn_sol_type(&self) -> DynSolType {
+    pub(crate) fn to_dyn_sol_type(&self) -> DynSolType {
         match self {
             AbiType::Bool => DynSolType::Bool,
             AbiType::Uint(n) => DynSolType::Uint(*n),
@@ -158,14 +157,14 @@ impl AbiType {
 
     /// Canonical Solidity signature string for this type (tuple components expanded).
     /// E.g. `(address,uint256,(bool,string)[])`.
-    pub fn to_signature_string(&self) -> String {
+    pub(crate) fn to_signature_string(&self) -> String {
         self.to_dyn_sol_type().to_string()
     }
 }
 
 /// A wrapper around an event parameter that provides a similar API to the old ethers EventParam.
 #[derive(Debug, Clone, PartialEq)]
-pub struct EventParam {
+pub(crate) struct EventParam {
     /// The parameter's name
     pub name: String,
     /// The parameter's type (preserves struct component names)
@@ -176,7 +175,7 @@ pub struct EventParam {
 
 impl EventParam {
     /// Create a new EventParam from alloy's EventParam, preserving component names.
-    pub fn try_from_alloy(param: &AlloyEventParam) -> Result<Self> {
+    pub(crate) fn try_from_alloy(param: &AlloyEventParam) -> Result<Self> {
         Ok(EventParam {
             name: param.name.clone(),
             kind: AbiType::from_alloy_event_param(param)?,
@@ -187,7 +186,8 @@ impl EventParam {
 
 /// Parse an event signature string (e.g., "event Transfer(address indexed from, address indexed to, uint256 value)")
 /// into an Event struct.
-pub fn parse_event(sig: &str) -> Result<Event> {
+#[cfg(test)]
+pub(crate) fn parse_event(sig: &str) -> Result<Event> {
     let alloy_event = parse_event_signature_to_alloy(sig)?;
     Event::try_from_alloy(&alloy_event)
         .with_context(|| format!("Failed to convert event '{}'", alloy_event.name))
@@ -198,7 +198,7 @@ pub fn parse_event(sig: &str) -> Result<Event> {
 /// Accepts component names inside tuple types (`event E((uint a, uint b) data)`),
 /// which alloy's own signature parser rejects. `components` are populated so
 /// downstream selector and ABI consumers see the named fields.
-pub fn parse_event_signature_to_alloy(sig: &str) -> Result<AlloyEvent> {
+pub(crate) fn parse_event_signature_to_alloy(sig: &str) -> Result<AlloyEvent> {
     sig_parser::parse(sig)
 }
 
@@ -441,19 +441,19 @@ mod sig_parser {
 }
 
 /// An event with parsed parameters.
+#[cfg(test)]
 #[derive(Debug, Clone)]
-pub struct Event {
+pub(crate) struct Event {
     /// The event's name
     pub name: String,
     /// The event's parameters with parsed types
     pub inputs: Vec<EventParam>,
-    /// Whether the event is anonymous
-    pub anonymous: bool,
 }
 
+#[cfg(test)]
 impl Event {
     /// Create an Event from alloy's Event, returning an error if any parameter fails to parse.
-    pub fn try_from_alloy(event: &AlloyEvent) -> Result<Self> {
+    pub(crate) fn try_from_alloy(event: &AlloyEvent) -> Result<Self> {
         let inputs: Result<Vec<EventParam>> = event
             .inputs
             .iter()
@@ -466,17 +466,8 @@ impl Event {
         Ok(Event {
             name: event.name.clone(),
             inputs: inputs?,
-            anonymous: event.anonymous,
         })
     }
-}
-
-/// Parse an event parameter from a type string.
-///
-/// Example: "uint256" -> DynSolType::Uint(256)
-pub fn parse_param_type(type_str: &str) -> Result<DynSolType> {
-    DynSolType::from_str(type_str)
-        .with_context(|| format!("Failed to parse parameter type '{}'", type_str))
 }
 
 #[cfg(test)]
@@ -746,17 +737,5 @@ mod tests {
         }
         assert_eq!(event.inputs[1].name, "trader");
         assert!(event.inputs[1].indexed);
-    }
-
-    #[test]
-    fn test_parse_param_type() {
-        let uint_type = parse_param_type("uint256").unwrap();
-        assert!(matches!(uint_type, DynSolType::Uint(256)));
-
-        let address_type = parse_param_type("address").unwrap();
-        assert!(matches!(address_type, DynSolType::Address));
-
-        let tuple_type = parse_param_type("(uint256,bool)").unwrap();
-        assert!(matches!(tuple_type, DynSolType::Tuple(_)));
     }
 }

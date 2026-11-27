@@ -210,7 +210,7 @@ impl EntityParamTypeTemplate {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct DerivedFieldTemplate {
+pub(crate) struct DerivedFieldTemplate {
     pub field_name: String,
     pub derived_from_entity: String,
     pub derived_from_field: String,

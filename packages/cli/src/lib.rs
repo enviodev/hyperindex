@@ -12,16 +12,16 @@ mod client_filtered_contracts;
 mod clock;
 mod columnar;
 mod entity_filter;
-pub use cli_args::clap_definitions;
-pub use cli_args::init_config;
+pub(crate) use cli_args::clap_definitions;
+pub(crate) use cli_args::init_config;
 mod commands;
-pub mod config_parsing;
-pub mod constants;
-pub mod docker_env;
+mod config_parsing;
+mod constants;
+mod docker_env;
 mod evm;
 mod evm_hypersync_source;
 mod evm_rpc_source;
-pub mod executor;
+mod executor;
 mod fuel;
 mod fuel_hypersync_source;
 mod hbs_templating;
@@ -37,7 +37,7 @@ mod postgres;
 mod project_paths;
 mod registration_start_block;
 mod request_stats;
-pub mod scripts;
+mod scripts;
 mod service_health;
 mod storage;
 mod svm;
@@ -50,3 +50,13 @@ mod ts_loader;
 mod tui;
 mod type_schema;
 mod utils;
+
+// The crate's whole Rust API: what `examples/script.rs` and
+// `tests/hypersync_health.rs` link against. Everything else reaches its
+// callers through `#[napi]`. `dead_code` cannot check an exported item or the
+// methods of an exported type, so nothing joins this list without a caller
+// outside the crate.
+pub use config_parsing::chain_helpers::HypersyncChain;
+pub use config_parsing::hypersync_endpoints::network_to_hypersync_url;
+pub use executor::run_script_from_process_args;
+pub use scripts::print_missing_networks::{format_extra_chain, Diff};

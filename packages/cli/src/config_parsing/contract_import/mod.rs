@@ -3,7 +3,7 @@
     reason = "real time outside the source layer: the `envio init` contract import"
 )]
 
-pub mod converters;
+pub(crate) mod converters;
 
 use std::env;
 
@@ -18,12 +18,12 @@ use async_recursion::async_recursion;
 use serde::Deserialize;
 use tokio::time::Duration;
 
-pub struct ContractData {
+pub(crate) struct ContractData {
     pub abi: JsonAbi,
     pub name: Option<String>,
 }
 
-pub enum ContractImportResult {
+pub(crate) enum ContractImportResult {
     Contract(ContractData),
     NotVerified,
     UnsupportedChain,
@@ -46,7 +46,7 @@ enum ContractImportResponse {
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub async fn contract_import(
+pub(crate) async fn contract_import(
     network: &NetworkWithExplorer,
     address: &Address,
     retry: u64,
@@ -169,7 +169,9 @@ mod tests {
     }
 
     fn address() -> Address {
-        Address::new("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap()
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+            .parse()
+            .unwrap()
     }
 
     /// A stalled API used to hang `envio init` indefinitely: the default client

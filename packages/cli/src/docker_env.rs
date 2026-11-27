@@ -804,7 +804,7 @@ async fn ensure_container_with_post_create(
 /// only need to construct one value and the signature can grow without
 /// touching every call site.
 #[derive(Debug, Clone, Copy)]
-pub struct UpOptions<'a> {
+pub(crate) struct UpOptions<'a> {
     pub project_root: &'a Path,
     pub clickhouse: bool,
 }
@@ -812,13 +812,12 @@ pub struct UpOptions<'a> {
 /// Return value from `up()` so callers know which services are active and
 /// get any env vars the indexer subprocess must see (e.g. credentials for a
 /// ClickHouse container we just booted).
-pub struct UpResult {
+pub(crate) struct UpResult {
     pub hasura_enabled: bool,
-    pub clickhouse_enabled: bool,
     pub indexer_env: Vec<(String, String)>,
 }
 
-pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
+pub(crate) async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     let env = EnvConfig::from_project(opts.project_root);
     let pg_host_port: u16 = env.pg_port.parse().with_context(|| {
         format!(
@@ -956,7 +955,6 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     if !need_pg && !need_hasura && !need_ch {
         return Ok(UpResult {
             hasura_enabled: env.hasura_enabled,
-            clickhouse_enabled: opts.clickhouse,
             indexer_env,
         });
     }
@@ -1298,12 +1296,11 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
 
     Ok(UpResult {
         hasura_enabled: env.hasura_enabled,
-        clickhouse_enabled: opts.clickhouse,
         indexer_env,
     })
 }
 
-pub async fn down() -> anyhow::Result<()> {
+pub(crate) async fn down() -> anyhow::Result<()> {
     let docker = connect_docker().await?;
 
     println!("Stopping containers...");

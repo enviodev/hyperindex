@@ -12,7 +12,7 @@ use crate::{
 pub(crate) mod path_utils;
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct ParsedProjectPaths {
+pub(crate) struct ParsedProjectPaths {
     pub project_root: PathBuf,
     pub config: PathBuf,
     /// Project-root + `.envio/` — holds ephemeral codegen output and cache.
@@ -20,7 +20,7 @@ pub struct ParsedProjectPaths {
 }
 
 impl ParsedProjectPaths {
-    pub fn new(project_root: &str, config: &str) -> anyhow::Result<ParsedProjectPaths> {
+    pub(crate) fn new(project_root: &str, config: &str) -> anyhow::Result<ParsedProjectPaths> {
         let project_root = PathBuf::from(&project_root);
         let envio_dir = path_utils::normalize_path(project_root.join(ENVIO_DIR));
 
@@ -54,30 +54,30 @@ impl ParsedProjectPaths {
         })
     }
 
-    pub fn default_with_root(project_root: &str) -> anyhow::Result<ParsedProjectPaths> {
+    pub(crate) fn default_with_root(project_root: &str) -> anyhow::Result<ParsedProjectPaths> {
         Self::new(project_root, DEFAULT_CONFIG_PATH)
     }
 
     /// The form consumers need when the project root acts as cwd. `None` when
     /// the path sits outside the root, which has no such form.
-    pub fn relative_to_root(&self, path: &Path) -> Option<PathBuf> {
+    pub(crate) fn relative_to_root(&self, path: &Path) -> Option<PathBuf> {
         let normalized_root = path_utils::normalize_path(self.project_root.clone());
         pathdiff::diff_paths(path, &normalized_root).filter(|relative| !relative.starts_with(".."))
     }
 
     /// The form consumers need when the project root acts as cwd.
-    pub fn config_relative_to_root(&self) -> PathBuf {
+    pub(crate) fn config_relative_to_root(&self) -> PathBuf {
         self.relative_to_root(&self.config)
             .expect("config is validated to live under the project root")
     }
 
     /// Path to the codegen-emitted `.envio/types.d.ts` file.
-    pub fn envio_types_dts(&self) -> PathBuf {
+    pub(crate) fn envio_types_dts(&self) -> PathBuf {
         self.envio_dir.join(ENVIO_TYPES_FILE)
     }
 
     /// Path to the user-facing `envio-env.d.ts` glue file at the project root.
-    pub fn envio_env_dts(&self) -> PathBuf {
+    pub(crate) fn envio_env_dts(&self) -> PathBuf {
         self.project_root.join(ENVIO_ENV_DTS_FILE)
     }
 }

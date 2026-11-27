@@ -8,12 +8,12 @@ use regex::Regex;
 // It must start with a letter or underscore.
 // It can contain letters, numbers, and underscores.
 // It must have a maximum length of 63 characters (the first character + 62 subsequent characters)
-pub fn is_valid_postgres_db_name(name: &str) -> bool {
+pub(crate) fn is_valid_postgres_db_name(name: &str) -> bool {
     let re = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$").unwrap();
     re.is_match(name)
 }
 
-pub fn is_valid_ethereum_address(address: &str) -> bool {
+pub(crate) fn is_valid_ethereum_address(address: &str) -> bool {
     crate::address_store::parse_evm_address(address).is_some()
 }
 
@@ -66,7 +66,7 @@ fn is_valid_identifier(s: &str) -> bool {
 }
 
 // Check if all names in the config file are valid.
-pub fn validate_names_valid_rescript(
+pub(crate) fn validate_names_valid_rescript(
     names_from_config: &[String],
     part_of_config: String,
 ) -> anyhow::Result<()> {
@@ -112,7 +112,7 @@ pub fn validate_names_valid_rescript(
 // only known once the indexer first runs - so any contract-level start_block is
 // guaranteed to be in the past relative to it. Shared by the ecosystems whose
 // chains carry contracts; svm programs have no start_block of their own.
-pub fn validate_no_contract_start_block_with_latest<T>(
+pub(crate) fn validate_no_contract_start_block_with_latest<T>(
     chain_id: u64,
     start_block: StartBlock,
     contracts: Option<&Vec<human_config::ChainContract<T>>>,
@@ -136,7 +136,7 @@ pub fn validate_no_contract_start_block_with_latest<T>(
     Ok(())
 }
 
-pub fn validate_deserialized_fuel_config_yaml(
+pub(crate) fn validate_deserialized_fuel_config_yaml(
     fuel_config: &human_config::fuel::HumanConfig,
 ) -> anyhow::Result<()> {
     for chain in &fuel_config.chains {
@@ -150,11 +150,11 @@ pub fn validate_deserialized_fuel_config_yaml(
 }
 
 impl human_config::evm::Chain {
-    pub fn validate_finite_endblock_networks(&self) -> anyhow::Result<()> {
+    pub(crate) fn validate_finite_endblock_networks(&self) -> anyhow::Result<()> {
         Ok(())
     }
 
-    pub fn validate_endblock_lte_startblock(&self) -> anyhow::Result<()> {
+    pub(crate) fn validate_endblock_lte_startblock(&self) -> anyhow::Result<()> {
         // A `latest` start block isn't known until runtime, so it can't be
         // checked here - the indexer re-validates once it resolves "latest"
         // to a concrete block (see StartBlockResolver.res).
@@ -172,7 +172,7 @@ impl human_config::evm::Chain {
         Ok(())
     }
 
-    pub fn validate_no_contract_start_block_with_latest(&self) -> anyhow::Result<()> {
+    pub(crate) fn validate_no_contract_start_block_with_latest(&self) -> anyhow::Result<()> {
         validate_no_contract_start_block_with_latest(
             self.id,
             self.start_block,
@@ -181,7 +181,7 @@ impl human_config::evm::Chain {
     }
 }
 
-pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Result<()> {
+pub(crate) fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Result<()> {
     let mut contract_names = Vec::new();
 
     if let Some(global_contracts) = &evm_config.contracts {
@@ -247,14 +247,14 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
     Ok(())
 }
 
-pub fn is_valid_solana_pubkey(s: &str) -> bool {
+pub(crate) fn is_valid_solana_pubkey(s: &str) -> bool {
     let mut decoded = [0_u8; 32];
     bs58::decode(s)
         .onto(&mut decoded)
         .is_ok_and(|decoded_len| decoded_len == decoded.len())
 }
 
-pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
+pub(crate) fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
     // The prefix is what a handler reads back, so a config that carries it too
     // compares equal to `instruction.discriminator` rather than off by "0x".
     let Some(hex) = crate::hex::strip_prefix(s) else {
@@ -298,7 +298,7 @@ fn validate_svm_name(name: &str, what: &str) -> anyhow::Result<()> {
 /// walk by dropping the instruction — so a config that can never decode must
 /// not get past parsing. IDL-declared args come with their own checks in
 /// `svm_idl`, which set the instruction aside with a reason instead.
-pub fn validate_svm_args(args: &[ArgDef]) -> anyhow::Result<()> {
+pub(crate) fn validate_svm_args(args: &[ArgDef]) -> anyhow::Result<()> {
     validate_svm_named_fields(args, "an arg name", "args")
 }
 
@@ -388,7 +388,7 @@ fn validate_svm_arg_type(ty: &ArgType, path: &str) -> anyhow::Result<()> {
     }
 }
 
-pub fn validate_deserialized_svm_config_yaml(
+pub(crate) fn validate_deserialized_svm_config_yaml(
     svm_config: &super::human_config::svm::HumanConfig,
 ) -> anyhow::Result<()> {
     use super::human_config::svm::{ChainProgramId, ProgramId};
@@ -457,18 +457,8 @@ pub fn validate_deserialized_svm_config_yaml(
     Ok(())
 }
 
-pub fn check_names_from_schema_for_reserved_words(schema_words: Vec<String>) -> Vec<String> {
+pub(crate) fn check_names_from_schema_for_reserved_words(schema_words: Vec<String>) -> Vec<String> {
     check_reserved_words(&schema_words)
-}
-
-pub fn check_schema_enums_are_valid_postgres(enum_names: &Vec<String>) -> Vec<String> {
-    let mut detected_enum_not_valid = Vec::new();
-    for name in enum_names {
-        if !is_valid_postgres_db_name(name.as_str()) {
-            detected_enum_not_valid.push(name.clone());
-        }
-    }
-    detected_enum_not_valid
 }
 
 #[cfg(test)]

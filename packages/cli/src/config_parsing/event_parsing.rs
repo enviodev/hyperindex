@@ -1,21 +1,19 @@
 use crate::config_parsing::abi_compat::{AbiType, EventParam};
 use crate::type_schema::{RecordField, TypeIdent};
 
-pub struct EvmEventParam<'a> {
-    pub name: &'a str,
+pub(crate) struct EvmEventParam<'a> {
     abi_type: &'a AbiType,
 }
 
 impl<'a> From<&'a EventParam> for EvmEventParam<'a> {
     fn from(abi_param: &'a EventParam) -> EvmEventParam<'a> {
         EvmEventParam {
-            name: &abi_param.name,
             abi_type: &abi_param.kind,
         }
     }
 }
 
-pub fn abi_to_rescript_type(param: &EvmEventParam) -> TypeIdent {
+pub(crate) fn abi_to_rescript_type(param: &EvmEventParam) -> TypeIdent {
     abi_type_to_rescript(param.abi_type)
 }
 
@@ -26,7 +24,7 @@ pub fn abi_to_rescript_type(param: &EvmEventParam) -> TypeIdent {
 /// shape regardless of ABI naming. The rendered type is still a JS object
 /// (`{"0": ..., "1": ...}`) so it remains inlinable inside generics and
 /// optional fields without needing a lifted alias.
-pub fn abi_to_rescript_type_positional(param: &EvmEventParam) -> TypeIdent {
+pub(crate) fn abi_to_rescript_type_positional(param: &EvmEventParam) -> TypeIdent {
     abi_type_to_rescript_positional(param.abi_type)
 }
 
@@ -106,7 +104,6 @@ mod tests {
         let array_string_type = AbiType::Array(Box::new(AbiType::String));
         let param = EvmEventParam {
             abi_type: &array_string_type,
-            name: "myArray",
         };
 
         let parsed_rescript_string = abi_to_rescript_type(&param);
@@ -122,7 +119,6 @@ mod tests {
         let array_fixed_arr_type = AbiType::FixedArray(Box::new(AbiType::String), 1);
         let param = EvmEventParam {
             abi_type: &array_fixed_arr_type,
-            name: "myArrayFixed",
         };
         let parsed_rescript_string = abi_to_rescript_type(&param);
 
@@ -150,7 +146,6 @@ mod tests {
         ]);
         let param = EvmEventParam {
             abi_type: &tuple_type,
-            name: "myTuple",
         };
 
         let parsed = abi_to_rescript_type(&param);
@@ -178,7 +173,6 @@ mod tests {
         ]);
         let param = EvmEventParam {
             abi_type: &tuple_type,
-            name: "myTuple",
         };
 
         let parsed = abi_to_rescript_type(&param);
@@ -210,7 +204,6 @@ mod tests {
         ]);
         let param = EvmEventParam {
             abi_type: &tuple_type,
-            name: "commonParams",
         };
 
         let parsed = abi_to_rescript_type(&param);
@@ -266,7 +259,6 @@ mod tests {
         ]);
         let param = EvmEventParam {
             abi_type: &tuple_type,
-            name: "commonParams",
         };
 
         let parsed = abi_to_rescript_type(&param);

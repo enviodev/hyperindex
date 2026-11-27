@@ -27,7 +27,7 @@ impl<T: Clone + JsonSchema> JsonSchema for SingleOrList<T> {
     }
 }
 
-pub type Addresses = NormalizedList<String>;
+pub(crate) type Addresses = NormalizedList<String>;
 
 impl JsonSchema for Addresses {
     fn schema_name() -> Cow<'static, str> {
@@ -69,14 +69,14 @@ type ChainId = u64;
 /// opposite: recovering from a crash or process restart without `-r`.
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, JsonSchema)]
 #[serde(untagged)]
-pub enum StartBlock {
+pub(crate) enum StartBlock {
     Number(u64),
     Tag(StartBlockTag),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-pub enum StartBlockTag {
+pub(crate) enum StartBlockTag {
     Latest,
 }
 
@@ -141,7 +141,7 @@ impl<'de> serde::Deserialize<'de> for StartBlock {
 
 /// Base configuration fields shared across all ecosystems
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
-pub struct BaseConfig {
+pub(crate) struct BaseConfig {
     #[schemars(description = "Name of the project")]
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -186,7 +186,7 @@ impl BaseConfig {
     /// Entities and effect caches are shared across chains unless the config
     /// opts out. Decides which entities get an appended chain-id column, so the
     /// schema parser and the validators have to agree on it.
-    pub fn default_chain_scope(&self) -> DefaultChainScope {
+    pub(crate) fn default_chain_scope(&self) -> DefaultChainScope {
         if self.disable_default_cross_chain.unwrap_or(false) {
             DefaultChainScope::PerChain
         } else {
@@ -197,7 +197,7 @@ impl BaseConfig {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct StorageConfig {
+pub(crate) struct StorageConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub postgres: Option<StorageBackendConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -206,7 +206,7 @@ pub struct StorageConfig {
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(untagged)]
-pub enum StorageBackendConfig {
+pub(crate) enum StorageBackendConfig {
     Enabled(bool),
     // The object form implies the backend is enabled.
     Options(StorageBackendOptions),
@@ -214,7 +214,7 @@ pub enum StorageBackendConfig {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct StorageBackendOptions {
+pub(crate) struct StorageBackendOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -222,7 +222,7 @@ pub struct StorageBackendOptions {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
-pub enum ColumnNameFormat {
+pub(crate) enum ColumnNameFormat {
     #[serde(rename = "original")]
     Original,
     #[serde(rename = "snake_case")]
@@ -232,7 +232,7 @@ pub enum ColumnNameFormat {
 /// How the schema.graphql `Bytes` scalar reaches handlers and storage.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-pub enum BytesType {
+pub(crate) enum BytesType {
     /// `0x`-prefixed hex strings, stored as text.
     #[default]
     Hex,
@@ -278,21 +278,21 @@ impl<'de> Deserialize<'de> for StorageBackendConfig {
 }
 
 impl StorageBackendConfig {
-    pub fn is_enabled(&self) -> bool {
+    pub(crate) fn is_enabled(&self) -> bool {
         match self {
             Self::Enabled(enabled) => *enabled,
             Self::Options(_) => true,
         }
     }
 
-    pub fn entity_default(&self) -> Option<bool> {
+    pub(crate) fn entity_default(&self) -> Option<bool> {
         match self {
             Self::Enabled(_) => None,
             Self::Options(options) => options.default,
         }
     }
 
-    pub fn column_name_format(&self) -> Option<ColumnNameFormat> {
+    pub(crate) fn column_name_format(&self) -> Option<ColumnNameFormat> {
         match self {
             Self::Enabled(_) => None,
             Self::Options(options) => options.column_name_format,
@@ -366,7 +366,7 @@ impl JsonSchema for StorageConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct GlobalContract<T> {
+pub(crate) struct GlobalContract<T> {
     #[schemars(description = "A unique project-wide name for this contract (no spaces)")]
     pub name: String,
     #[serde(flatten)]
@@ -375,7 +375,7 @@ pub struct GlobalContract<T> {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ChainContract<T> {
+pub(crate) struct ChainContract<T> {
     #[schemars(
         description = "A unique project-wide name for this contract if events and handler are \
                        defined OR a reference to the name of contract defined globally at the top \
@@ -402,7 +402,7 @@ pub struct ChainContract<T> {
 }
 
 #[derive(Deserialize)]
-pub struct ConfigDiscriminant {
+pub(crate) struct ConfigDiscriminant {
     pub ecosystem: Option<String>,
 }
 
@@ -415,7 +415,10 @@ pub struct ConfigDiscriminant {
 /// Must only run on the init write path — `Display` feeds the persisted
 /// `config_hash` and quoting there would force a spurious re-migration
 /// on every existing user.
-pub fn quote_known_addresses(yaml: String, addresses: impl IntoIterator<Item = String>) -> String {
+pub(crate) fn quote_known_addresses(
+    yaml: String,
+    addresses: impl IntoIterator<Item = String>,
+) -> String {
     let mut unique: Vec<String> = addresses.into_iter().collect();
     unique.sort();
     unique.dedup();
@@ -451,14 +454,14 @@ fn replace_address_at_scalar_boundary(yaml: &str, addr: &str) -> String {
 }
 
 #[derive(Debug)]
-pub enum HumanConfig {
+pub(crate) enum HumanConfig {
     Evm(evm::HumanConfig),
     Fuel(fuel::HumanConfig),
     Svm(svm::HumanConfig),
 }
 
 impl HumanConfig {
-    pub fn get_base_config(&self) -> &BaseConfig {
+    pub(crate) fn get_base_config(&self) -> &BaseConfig {
         match &self {
             HumanConfig::Evm(human_config) => &human_config.base,
             HumanConfig::Fuel(human_config) => &human_config.base,
@@ -469,7 +472,7 @@ impl HumanConfig {
     /// Only EVM and Fuel can pick: their existing projects predate raw bytes and
     /// keep hex strings unless they opt in. SVM shipped with `Uint8Array` and has
     /// nothing to keep compatible with.
-    pub fn bytes_type(&self) -> BytesType {
+    pub(crate) fn bytes_type(&self) -> BytesType {
         match &self {
             HumanConfig::Evm(human_config) => human_config.bytes_type.unwrap_or_default(),
             HumanConfig::Fuel(human_config) => human_config.bytes_type.unwrap_or_default(),
@@ -477,7 +480,7 @@ impl HumanConfig {
         }
     }
 
-    pub fn strict_hex_type(&self) -> bool {
+    pub(crate) fn strict_hex_type(&self) -> bool {
         match &self {
             HumanConfig::Evm(human_config) => human_config.strict_hex_type.unwrap_or_default(),
             HumanConfig::Fuel(human_config) => human_config.strict_hex_type.unwrap_or_default(),
@@ -500,7 +503,7 @@ impl Display for HumanConfig {
     }
 }
 
-pub mod evm {
+pub(crate) mod evm {
     use super::{ChainContract, ChainId, GlobalContract, StartBlock};
     use crate::config_parsing::human_config::{BaseConfig, BytesType};
     use schemars::JsonSchema;
@@ -514,7 +517,7 @@ pub mod evm {
         description = "Schema for a YAML config for an envio indexer"
     )]
     #[serde(deny_unknown_fields)]
-    pub struct HumanConfig {
+    pub(crate) struct HumanConfig {
         #[serde(flatten)]
         pub base: BaseConfig,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -583,7 +586,7 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
     #[serde(rename_all = "lowercase")]
-    pub enum AddressFormat {
+    pub(crate) enum AddressFormat {
         Checksum,
         Lowercase,
     }
@@ -600,7 +603,7 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct FieldSelection {
+    pub(crate) struct FieldSelection {
         #[schemars(
             description = "The transaction fields to include in the event, or in all events if \
                            applied globally"
@@ -627,7 +630,7 @@ pub mod evm {
     )]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     #[strum(serialize_all = "camelCase")]
-    pub enum TransactionField {
+    pub(crate) enum TransactionField {
         TransactionIndex,
         Hash,
         From,
@@ -682,7 +685,7 @@ pub mod evm {
     )]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     #[strum(serialize_all = "camelCase")]
-    pub enum BlockField {
+    pub(crate) enum BlockField {
         ParentHash,
         Nonce,
         Sha3Uncles,
@@ -713,13 +716,13 @@ pub mod evm {
     // Workaround for https://github.com/serde-rs/serde/issues/2231
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[serde(rename_all = "lowercase", deny_unknown_fields)]
-    pub enum EcosystemTag {
+    pub(crate) enum EcosystemTag {
         Evm,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct HypersyncConfig {
+    pub(crate) struct HypersyncConfig {
         #[serde(alias = "endpoint_url")] // TODO: Remove the alias in v3
         #[schemars(
             description = "URL of the HyperSync endpoint (default: The most performant HyperSync \
@@ -730,7 +733,7 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(rename_all = "lowercase")]
-    pub enum For {
+    pub(crate) enum For {
         #[schemars(
             description = "Use RPC as the main data-source for both historical sync and real-time \
                            chain indexing."
@@ -762,7 +765,7 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct Rpc {
+    pub(crate) struct Rpc {
         #[schemars(
             description = "The RPC endpoint URL. An entry whose url is empty, for example \
                            `${RPC_URL:-}` with the variable unset, is ignored."
@@ -830,7 +833,7 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(untagged)]
-    pub enum RpcSelection {
+    pub(crate) enum RpcSelection {
         Url(String),
         Single(Rpc),
         List(Vec<Rpc>),
@@ -838,7 +841,7 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct Chain {
+    pub(crate) struct Chain {
         #[schemars(description = "The public blockchain chain ID.")]
         pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -896,7 +899,7 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct ContractConfig {
+    pub(crate) struct ContractConfig {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Relative path (from config) to a json abi. If this is used then each \
@@ -914,7 +917,7 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct EventConfig {
+    pub(crate) struct EventConfig {
         #[schemars(description = "The human readable signature of an event 'eg. \
                                   Transfer(address indexed from, address indexed to, uint256 \
                                   value)' OR a reference to the name of an event in a json ABI \
@@ -936,7 +939,7 @@ pub mod evm {
     }
 }
 
-pub mod fuel {
+pub(crate) mod fuel {
     use std::fmt::Display;
 
     use crate::config_parsing::human_config::{BaseConfig, BytesType};
@@ -952,7 +955,7 @@ pub mod fuel {
         description = "Schema for a YAML config for an envio indexer"
     )]
     #[serde(deny_unknown_fields)]
-    pub struct HumanConfig {
+    pub(crate) struct HumanConfig {
         #[serde(flatten)]
         pub base: BaseConfig,
         #[schemars(description = "Ecosystem of the project.")]
@@ -1006,13 +1009,13 @@ pub mod fuel {
     // Workaround for https://github.com/serde-rs/serde/issues/2231
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[serde(rename_all = "lowercase", deny_unknown_fields)]
-    pub enum EcosystemTag {
+    pub(crate) enum EcosystemTag {
         Fuel,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct HyperfuelConfig {
+    pub(crate) struct HyperfuelConfig {
         #[schemars(
             description = "URL of the HyperFuel endpoint (default: The most stable HyperFuel \
                            endpoint for the network)"
@@ -1022,7 +1025,7 @@ pub mod fuel {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct Chain {
+    pub(crate) struct Chain {
         #[schemars(description = "Public chain id")]
         pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1073,7 +1076,7 @@ pub mod fuel {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct ContractConfig {
+    pub(crate) struct ContractConfig {
         #[schemars(description = "Relative path (from config) to a json abi.")]
         pub abi_file_path: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1087,7 +1090,7 @@ pub mod fuel {
 
     #[derive(Debug, Serialize, Clone, Deserialize, PartialEq, JsonSchema, Display)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
-    pub enum EventType {
+    pub(crate) enum EventType {
         LogData,
         Mint,
         Burn,
@@ -1097,7 +1100,7 @@ pub mod fuel {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
-    pub struct EventConfig {
+    pub(crate) struct EventConfig {
         #[schemars(description = "Name of the event in the generated types")]
         pub name: String,
         #[serde(rename = "type")]
@@ -1117,7 +1120,7 @@ pub mod fuel {
     }
 }
 
-pub mod svm {
+pub(crate) mod svm {
     use std::borrow::Cow;
     use std::fmt::Display;
 
@@ -1127,7 +1130,7 @@ pub mod svm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct HypersyncConfig {
+    pub(crate) struct HypersyncConfig {
         #[schemars(
             description = "URL of the HyperSync endpoint (defaults to the public endpoint of the \
                            chain id: https://solana.hypersync.xyz for `solana`, \
@@ -1139,14 +1142,14 @@ pub mod svm {
     /// Svm clusters have no native numeric chain id, so Envio assigns its own.
     /// These are the ids HyperSync already stamps onto usage rows (HOS-1682);
     /// they are Envio-internal, not a cross-vendor standard.
-    pub const SOLANA_MAINNET_CHAIN_ID: u64 = 7565164;
-    pub const SOLANA_DEVNET_CHAIN_ID: u64 = 7565165;
+    pub(crate) const SOLANA_MAINNET_CHAIN_ID: u64 = 7565164;
+    pub(crate) const SOLANA_DEVNET_CHAIN_ID: u64 = 7565165;
 
     /// The chain id of an Svm chain: either a known cluster label or an
     /// explicit number (for private chains, rollups, or custom clusters).
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(untagged)]
-    pub enum ChainId {
+    pub(crate) enum ChainId {
         Label(ChainLabel),
         // The ceiling matches ChainIdMode::resolve: chain ids live in JS
         // numbers downstream, so anything above MAX_SAFE_INTEGER is rejected.
@@ -1155,7 +1158,7 @@ pub mod svm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema)]
     #[serde(rename_all = "kebab-case")]
-    pub enum ChainLabel {
+    pub(crate) enum ChainLabel {
         Solana,
         SolanaDevnet,
     }
@@ -1163,7 +1166,7 @@ pub mod svm {
     impl ChainId {
         /// Reads the token a `program_id` mapping key carries. Mirrors the
         /// `id` grammar: a cluster label, or a plain number.
-        pub fn parse(token: &str) -> Option<Self> {
+        pub(crate) fn parse(token: &str) -> Option<Self> {
             match token {
                 "solana" => Some(Self::Label(ChainLabel::Solana)),
                 "solana-devnet" => Some(Self::Label(ChainLabel::SolanaDevnet)),
@@ -1173,7 +1176,7 @@ pub mod svm {
 
         /// How this chain is named back to the user: the label they can write,
         /// or the number.
-        pub fn token(&self) -> String {
+        pub(crate) fn token(&self) -> String {
             match self {
                 Self::Label(ChainLabel::Solana) => "solana".to_string(),
                 Self::Label(ChainLabel::SolanaDevnet) => "solana-devnet".to_string(),
@@ -1181,7 +1184,7 @@ pub mod svm {
             }
         }
 
-        pub fn to_u64(&self) -> u64 {
+        pub(crate) fn to_u64(&self) -> u64 {
             match self {
                 ChainId::Label(ChainLabel::Solana) => SOLANA_MAINNET_CHAIN_ID,
                 ChainId::Label(ChainLabel::SolanaDevnet) => SOLANA_DEVNET_CHAIN_ID,
@@ -1192,7 +1195,7 @@ pub mod svm {
 
     /// The public HyperSync endpoint for a cluster Envio knows by id, so
     /// `hypersync_config` can be omitted for Solana mainnet and devnet.
-    pub fn default_hypersync_endpoint(chain_id: u64) -> Option<String> {
+    pub(crate) fn default_hypersync_endpoint(chain_id: u64) -> Option<String> {
         match chain_id {
             SOLANA_MAINNET_CHAIN_ID => Some("https://solana.hypersync.xyz".to_string()),
             SOLANA_DEVNET_CHAIN_ID => Some("https://solana-devnet.hypersync.xyz".to_string()),
@@ -1202,7 +1205,7 @@ pub mod svm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct Chain {
+    pub(crate) struct Chain {
         #[schemars(
             description = "Identifies the Svm cluster: the label \"solana\" (7565164) or \
                            \"solana-devnet\" (7565165), or an explicit number of your choosing \
@@ -1261,7 +1264,7 @@ pub mod svm {
     /// The program id of one chain: a base58 pubkey, or `_` for a chain the
     /// program is not deployed on.
     #[derive(Debug, Clone, PartialEq)]
-    pub enum ChainProgramId {
+    pub(crate) enum ChainProgramId {
         NotDeployed,
         Address(String),
     }
@@ -1296,7 +1299,7 @@ pub mod svm {
     /// which is not the `chains` order — resolution walks `chains` instead, so
     /// diagnostics keep the order the user wrote their chains in.
     #[derive(Debug, Clone, PartialEq)]
-    pub enum ProgramId {
+    pub(crate) enum ProgramId {
         Single(String),
         PerChain(std::collections::BTreeMap<String, ChainProgramId>),
     }
@@ -1402,7 +1405,7 @@ pub mod svm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct Program {
+    pub(crate) struct Program {
         #[schemars(
             description = "A unique project-wide name for this program (used in the generated types)."
         )]
@@ -1439,7 +1442,7 @@ pub mod svm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct Instruction {
+    pub(crate) struct Instruction {
         #[schemars(
             description = "Name of the instruction in the generated types. Should be \
                            unique per program."
@@ -1487,7 +1490,7 @@ pub mod svm {
 
     /// One positional account slot of an instruction.
     #[derive(Debug, Clone, PartialEq)]
-    pub enum AccountSlot {
+    pub(crate) enum AccountSlot {
         /// Holds a position without naming it: never surfaced to a handler,
         /// never filterable. The slots after it keep their positions.
         Unnamed,
@@ -1499,14 +1502,14 @@ pub mod svm {
     }
 
     impl AccountSlot {
-        pub fn name(&self) -> Option<&str> {
+        pub(crate) fn name(&self) -> Option<&str> {
             match self {
                 Self::Unnamed => None,
                 Self::Required(name) | Self::Optional(name) => Some(name),
             }
         }
 
-        pub fn is_optional(&self) -> bool {
+        pub(crate) fn is_optional(&self) -> bool {
             matches!(self, Self::Optional(_))
         }
 
@@ -1627,7 +1630,7 @@ pub mod svm {
     /// `hypersync_client_solana::decode::NamedField`.
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct ArgDef {
+    pub(crate) struct ArgDef {
         #[schemars(description = "Field name as it appears on the decoded args object.")]
         pub name: String,
         #[serde(rename = "type")]
@@ -1638,11 +1641,11 @@ pub mod svm {
     /// Elements an `array` may declare. The decoder preallocates from this
     /// length rather than from the bytes on the wire, so an unbounded one is an
     /// out-of-memory abort on every matched instruction, not a decode failure.
-    pub const MAX_ARRAY_LEN: usize = 65_536;
+    pub(crate) const MAX_ARRAY_LEN: usize = 65_536;
 
     /// Borsh selects an enum variant with a one-byte tag, so a variant past
     /// this many is unreachable.
-    pub const MAX_ENUM_VARIANTS: usize = 256;
+    pub(crate) const MAX_ENUM_VARIANTS: usize = 256;
 
     /// The names a bare string may take, in the order they are offered back
     /// when one is misspelled.
@@ -1663,7 +1666,7 @@ pub mod svm {
     /// `idl` to the program when its types are shared between instructions.
     #[derive(Debug, Serialize, Clone, PartialEq, JsonSchema)]
     #[serde(untagged)]
-    pub enum ArgType {
+    pub(crate) enum ArgType {
         Primitive(ArgPrimitive),
         Composite(ArgComposite),
     }
@@ -1735,7 +1738,7 @@ pub mod svm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(rename_all = "lowercase")]
-    pub enum ArgPrimitive {
+    pub(crate) enum ArgPrimitive {
         Bool,
         U8,
         U16,
@@ -1759,7 +1762,7 @@ pub mod svm {
     // Deserialized through `ArgTypeVisitor` rather than by serde, so the
     // variant names here only drive serialization and the JSON schema.
     #[derive(Debug, Serialize, Clone, PartialEq, JsonSchema)]
-    pub enum ArgComposite {
+    pub(crate) enum ArgComposite {
         #[serde(rename = "option")]
         Option(Box<ArgType>),
         #[serde(rename = "vec")]
@@ -1788,7 +1791,7 @@ pub mod svm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct ArgEnumVariant {
+    pub(crate) struct ArgEnumVariant {
         pub name: String,
         /// `None` for unit variants; `Some([])` for struct variants with no
         /// fields. The Borsh wire format is identical in both cases (the
@@ -1803,7 +1806,7 @@ pub mod svm {
         description = "Schema for a YAML config for an envio Svm indexer"
     )]
     #[serde(deny_unknown_fields)]
-    pub struct HumanConfig {
+    pub(crate) struct HumanConfig {
         #[serde(flatten)]
         pub base: BaseConfig,
         #[schemars(description = "Ecosystem of the project.")]
@@ -1833,7 +1836,7 @@ pub mod svm {
     // Workaround for https://github.com/serde-rs/serde/issues/2231
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[serde(rename_all = "lowercase", deny_unknown_fields)]
-    pub enum EcosystemTag {
+    pub(crate) enum EcosystemTag {
         Svm,
     }
 }

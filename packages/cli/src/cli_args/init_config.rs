@@ -2,7 +2,7 @@ use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumIter, EnumString};
 
-pub mod evm {
+pub(crate) mod evm {
     use std::collections::HashMap;
 
     use anyhow::{Context, Result};
@@ -27,7 +27,7 @@ pub mod evm {
     use super::InitConfig;
 
     #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
-    pub enum Template {
+    pub(crate) enum Template {
         Greeter,
         Erc20,
         #[strum(serialize = "Feature: External Calls")]
@@ -40,14 +40,14 @@ pub mod evm {
     ///the auto config generation. Values can come from etherscan or
     ///abis etc.
     #[derive(Clone, Debug)]
-    pub struct ContractImportSelection {
+    pub(crate) struct ContractImportSelection {
         pub selected_contracts: Vec<SelectedContract>,
     }
 
     ///Converts the selection object into a human config
     type ContractName = String;
     impl ContractImportSelection {
-        pub fn to_human_config(&self, init_config: &InitConfig) -> Result<HumanConfig> {
+        pub(crate) fn to_human_config(&self, init_config: &InitConfig) -> Result<HumanConfig> {
             let mut chains_map: HashMap<u64, Chain> = HashMap::new();
             let mut global_contracts: HashMap<ContractName, GlobalContract<ContractConfig>> =
                 HashMap::new();
@@ -195,13 +195,13 @@ pub mod evm {
     }
 
     #[derive(Clone, Debug, Display)]
-    pub enum InitFlow {
+    pub(crate) enum InitFlow {
         Template(Template),
         ContractImport(ContractImportSelection),
     }
 
     impl InitFlow {
-        pub fn uses_hypersync(&self) -> bool {
+        pub(crate) fn uses_hypersync(&self) -> bool {
             match self {
                 Self::Template(_) => true,
                 Self::ContractImport(selection) => selection.uses_hypersync(),
@@ -210,7 +210,7 @@ pub mod evm {
     }
 }
 
-pub mod fuel {
+pub(crate) mod fuel {
     use std::collections::HashMap;
 
     use clap::ValueEnum;
@@ -228,18 +228,18 @@ pub mod fuel {
     use super::InitConfig;
 
     #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
-    pub enum Template {
+    pub(crate) enum Template {
         Greeter,
     }
 
     #[derive(Clone, Debug, Display, Eq, Hash, PartialEq, EnumIter, EnumString, ValueEnum)]
-    pub enum Network {
+    pub(crate) enum Network {
         Mainnet = 9889,
         Testnet = 0,
     }
 
     #[derive(Clone, Debug)]
-    pub struct SelectedContract {
+    pub(crate) struct SelectedContract {
         pub name: String,
         pub addresses: Vec<Address>,
         pub abi: FuelAbi,
@@ -248,18 +248,18 @@ pub mod fuel {
     }
 
     impl SelectedContract {
-        pub fn get_vendored_abi_file_path(&self) -> String {
+        pub(crate) fn get_vendored_abi_file_path(&self) -> String {
             format!("abis/{}-abi.json", self.name.to_lowercase())
         }
     }
 
     #[derive(Clone, Debug)]
-    pub struct ContractImportSelection {
+    pub(crate) struct ContractImportSelection {
         pub contracts: Vec<SelectedContract>,
     }
 
     impl ContractImportSelection {
-        pub fn to_human_config(&self, init_config: &InitConfig) -> HumanConfig {
+        pub(crate) fn to_human_config(&self, init_config: &InitConfig) -> HumanConfig {
             let mut contracts_by_network: HashMap<Network, Vec<SelectedContract>> = HashMap::new();
 
             for contract in self.contracts.clone() {
@@ -332,38 +332,38 @@ pub mod fuel {
     }
 
     #[derive(Clone, Debug, Display)]
-    pub enum InitFlow {
+    pub(crate) enum InitFlow {
         Template(Template),
         ContractImport(ContractImportSelection),
     }
 }
 
-pub mod svm {
+pub(crate) mod svm {
     use clap::ValueEnum;
     use serde::{Deserialize, Serialize};
     use strum::{Display, EnumIter, EnumString};
 
     #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
-    pub enum Template {
+    pub(crate) enum Template {
         #[strum(serialize = "USDC Transfers (SPL Token instructions)")]
         UsdcTransfers,
     }
 
     #[derive(Clone, Debug, Display)]
-    pub enum InitFlow {
+    pub(crate) enum InitFlow {
         Template(Template),
     }
 }
 
 #[derive(Clone, Debug, Display)]
-pub enum Ecosystem {
+pub(crate) enum Ecosystem {
     Evm { init_flow: evm::InitFlow },
     Svm { init_flow: svm::InitFlow },
     Fuel { init_flow: fuel::InitFlow },
 }
 
 impl Ecosystem {
-    pub fn uses_hypersync(&self) -> bool {
+    pub(crate) fn uses_hypersync(&self) -> bool {
         match self {
             Self::Evm { init_flow } => init_flow.uses_hypersync(),
             Self::Svm { .. } => true,
@@ -376,7 +376,7 @@ impl Ecosystem {
     Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, PartialEq, Eq, Display,
 )]
 ///Which language do you want to write in?
-pub enum Language {
+pub(crate) enum Language {
     #[clap(name = "typescript")]
     TypeScript,
     #[clap(name = "rescript")]
@@ -396,7 +396,7 @@ pub enum Language {
     Eq,
     Display,
 )]
-pub enum PackageManager {
+pub(crate) enum PackageManager {
     #[clap(name = "pnpm")]
     #[strum(serialize = "pnpm")]
     Pnpm,
@@ -413,7 +413,7 @@ pub enum PackageManager {
 
 impl PackageManager {
     /// Shell command used for `install` and `run <script>` invocations.
-    pub fn cmd(&self) -> &'static str {
+    pub(crate) fn cmd(&self) -> &'static str {
         match self {
             PackageManager::Pnpm => "pnpm",
             PackageManager::Npm => "npm",
@@ -424,19 +424,19 @@ impl PackageManager {
 
     /// What a user types to run a package.json script. npm and bun only run
     /// custom scripts through `run`.
-    pub fn run_script_command(&self, script: &str) -> String {
+    pub(crate) fn run_script_command(&self, script: &str) -> String {
         match self {
             PackageManager::Pnpm | PackageManager::Yarn => format!("{} {script}", self.cmd()),
             PackageManager::Npm | PackageManager::Bun => format!("{} run {script}", self.cmd()),
         }
     }
 
-    pub fn install_command(&self) -> String {
+    pub(crate) fn install_command(&self) -> String {
         format!("{} install", self.cmd())
     }
 
     /// Runs a binary installed in the project's node_modules.
-    pub fn exec_command(&self, binary: &str) -> String {
+    pub(crate) fn exec_command(&self, binary: &str) -> String {
         match self {
             PackageManager::Pnpm | PackageManager::Yarn => format!("{} {binary}", self.cmd()),
             PackageManager::Npm => format!("npx {binary}"),
@@ -445,7 +445,7 @@ impl PackageManager {
     }
 
     /// The package manager whose lockfile the project has.
-    pub fn detect(project_root: &std::path::Path) -> Option<Self> {
+    pub(crate) fn detect(project_root: &std::path::Path) -> Option<Self> {
         [
             ("pnpm-lock.yaml", PackageManager::Pnpm),
             ("package-lock.json", PackageManager::Npm),
@@ -461,7 +461,7 @@ impl PackageManager {
     /// The templates' docs spell commands with pnpm. This rewrites the ones
     /// they use, scripts, `install` and `tsc`, and leaves any other `pnpm`
     /// command as written.
-    pub fn rewrite_commands(&self, text: &str) -> String {
+    pub(crate) fn rewrite_commands(&self, text: &str) -> String {
         let mut out = String::with_capacity(text.len());
         let mut rest = text;
         while let Some(at) = rest.find("pnpm ") {
@@ -500,7 +500,7 @@ impl PackageManager {
     /// Default when `--package-manager` isn't given: `pnpm` if it's on the
     /// PATH, otherwise `npm`. Node.js ships with `npm`, so it's always
     /// available as the last-resort fallback.
-    pub fn resolve_default() -> Self {
+    pub(crate) fn resolve_default() -> Self {
         let pnpm_available = std::process::Command::new("pnpm")
             .arg("--version")
             .stdout(std::process::Stdio::null())
@@ -517,7 +517,7 @@ impl PackageManager {
 }
 
 #[derive(Clone, Debug)]
-pub struct InitConfig {
+pub(crate) struct InitConfig {
     pub name: String,
     pub directory: String,
     pub ecosystem: Ecosystem,
