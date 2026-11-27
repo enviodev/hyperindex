@@ -78,10 +78,9 @@ Run only the tests relevant to your change — never the full suite locally. CI 
 
 `pnpm vitest run` skips the checks that guard test inputs, so a green local run can
 still fail CI. `git push` runs that lint and, when Rust changed, clippy, and is
-refused with the findings while either fails, so neither needs a run by hand before
-a push. For a check mid-task: `pnpm lint` in `packages/envio-tests` (under a second)
-and `cargo clippy --all-targets --all-features` in `packages/cli`. A CI failure whose
-closing line is `Test failed` while naming no test is this lint, not a test.
+refused with the findings while either fails: neither needs a run by hand. A CI
+failure whose closing line is `Test failed` while naming no test is this lint, not
+a test.
 
 ## ReScript
 
