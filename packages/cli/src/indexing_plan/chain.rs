@@ -777,7 +777,7 @@ impl ChainPlan {
         if dynamic.is_empty() {
             return Vec::new();
         }
-        self.switch_to_address_free(&dynamic);
+        self.switch_to_address_free(&dynamic, None);
         let names = self.store.read().unwrap().contract_names().to_vec();
         vec![Notice::WentAddressFreeNearHead {
             contract_names: dynamic.iter().map(|&c| names[c as usize].clone()).collect(),
@@ -786,8 +786,11 @@ impl ChainPlan {
 
     /// Rule 6: each of the contracts' groups ends at the block it was
     /// requested through, and one address-free need starts from the lowest of
-    /// those. The overlap above it is deduped when pages merge.
-    fn switch_to_address_free(&mut self, contracts: &[u32]) {
+    /// those. The overlap above it is deduped when pages merge. With
+    /// `from_block`, the need starts no later than it: past the threshold a
+    /// batch's addresses are read address-free from their start, which also
+    /// serves a `where` relating two of the contract's addresses.
+    fn switch_to_address_free(&mut self, contracts: &[u32], from_block: Option<i64>) {
         let mut lowest = i64::MAX;
         let mut registrations = Vec::new();
         for &contract in contracts {
@@ -862,6 +865,9 @@ impl ChainPlan {
             self.groups.contract.push(contract);
             self.groups.sealed.push(true);
             self.groups.need.push(need);
+        }
+        if let Some(from_block) = from_block {
+            lowest = lowest.min(from_block - 1);
         }
         // With no group to end, a contract switched at the head joins the head
         // stream where it has been asked through; its addresses owe what lies
@@ -981,7 +987,18 @@ impl ChainPlan {
             }
         }
         if !switching.is_empty() {
-            self.switch_to_address_free(&switching);
+            // At the head a switched contract joins the head stream instead.
+            let from_block = (!self.head_mode)
+                .then(|| {
+                    let store = self.store.read().unwrap();
+                    switching
+                        .iter()
+                        .flat_map(|&contract| store.live_ids_of_contract(contract, first_new_id))
+                        .map(|id| store.effective_start_block_of(id))
+                        .min()
+                })
+                .flatten();
+            self.switch_to_address_free(&switching, from_block);
         }
         for contract in registering {
             let ids = self
