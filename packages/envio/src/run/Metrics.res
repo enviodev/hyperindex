@@ -22,7 +22,7 @@ type chainMetrics = {
   progressLatencyMs: option<int>,
   progressBlockTime: option<int>,
   concurrency: int,
-  partitionsCount: int,
+  requestStreamCount: int,
   bufferSize: int,
   bufferBytes: float,
   addressStoreBytes: float,
@@ -590,10 +590,10 @@ let renderMetrics = (b: builder, metrics: t) => {
   )
   b->series(
     ~name="envio_indexing_partitions",
-    ~help="The number of partitions used to split fetching logic by addresses and block ranges.",
+    ~help="The number of request streams fetching the chain: one per need being backfilled, one for every need at the head.",
     ~kind="gauge",
     ~entries=chains,
-    ~value=m => m.partitionsCount->Int.toFloat,
+    ~value=m => m.requestStreamCount->Int.toFloat,
   )
   b->series(
     ~name="envio_indexing_idle_seconds",

@@ -212,7 +212,7 @@ impl TransactionMatcher {
     }
 
     /// A query selecting any transaction handler fetches for all of them, as
-    /// they share one partition.
+    /// they share one need.
     pub(crate) fn registrations(&self) -> Vec<&OnTransactionRegistration> {
         self.registrations.iter().collect()
     }

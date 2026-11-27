@@ -1386,8 +1386,8 @@ impl ChainPlan {
             if !self.needs.live[need] {
                 continue;
             }
-            // A need fetched by address starts over from what it measured, as
-            // a partition rebuilt from its surviving addresses did.
+            // A need fetched by address lost the addresses registered past the
+            // target, so what it measured no longer prices its requests.
             let by_address = !matches!(
                 self.needs.what[need],
                 What::Logs {

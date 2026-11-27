@@ -210,8 +210,7 @@ let queryingSeconds = (sourceManager: t) =>
   | _ => 0.
   }
 
-// Partition queries currently in flight on this chain's sources. Summed across
-// chains by CrossChainState to enforce the indexer-wide concurrency budget.
+// Item requests currently in flight on this chain's sources.
 let inFlightCount = sourceManager => sourceManager.requestsInFlight
 
 let getRateLimitTimeMs = sourceManager =>

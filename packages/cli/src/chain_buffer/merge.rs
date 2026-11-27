@@ -41,7 +41,7 @@ pub(crate) fn first_hash_mismatch(
 }
 
 /// The page's transactions a transaction handler runs on that the store holds
-/// no running copy of yet: rows like any other for the density a partition is
+/// no running copy of yet: rows like any other for the density a request is
 /// priced by, counted once however many pages bring them.
 fn count_newly_matched_transactions(shared: &Shared, stored: &Table, incoming: &Table) -> usize {
     let matcher = &shared.transaction_matcher;

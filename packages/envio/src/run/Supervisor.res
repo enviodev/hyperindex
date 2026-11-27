@@ -422,7 +422,7 @@ let resumedChains = (config: Config.t, ~resumed: array<Persistence.chainProgress
       progressLatencyMs: None,
       progressBlockTime: row->Option.flatMap(row => row.progressBlockTime),
       concurrency: 0,
-      partitionsCount: 0,
+      requestStreamCount: 0,
       bufferSize: 0,
       bufferBytes: 0.,
       addressStoreBytes: 0.,

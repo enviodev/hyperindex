@@ -249,7 +249,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           progressLatencyMs: Some(1500),
           progressBlockTime: Some(1700000000),
           concurrency: 2,
-          partitionsCount: 3,
+          requestStreamCount: 3,
           bufferSize: 42,
           bufferBytes: 0.,
           addressStoreBytes: 0.,
@@ -455,7 +455,7 @@ envio_indexing_known_height{chainId="1"} 305
 # TYPE envio_indexing_concurrency gauge
 envio_indexing_concurrency{chainId="1"} 2
 
-# HELP envio_indexing_partitions The number of partitions used to split fetching logic by addresses and block ranges.
+# HELP envio_indexing_partitions The number of request streams fetching the chain: one per need being backfilled, one for every need at the head.
 # TYPE envio_indexing_partitions gauge
 envio_indexing_partitions{chainId="1"} 3
 

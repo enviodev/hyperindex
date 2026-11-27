@@ -859,7 +859,7 @@ mod tests {
 
     #[test]
     fn a_block_the_store_already_covers_is_not_read_again() {
-        // The case several partitions scanning the same range hit: the first
+        // The case several requests scanning the same range hit: the first
         // fetched the block, and the rest must not fetch it again.
         let wanted = block_bit(EvmBlockField::GasUsed);
         let known = TestKnown::default();
@@ -978,7 +978,7 @@ mod tests {
 
     #[test]
     fn one_item_selecting_nothing_does_not_widen_anothers_fetch() {
-        // Masks are unioned per key, not taken across the whole partition, so an
+        // Masks are unioned per key, not taken across the whole request, so an
         // event that selects no transaction fields adds no requests.
         let mut refs = PageRefs::default();
         refs.add(
@@ -1256,7 +1256,7 @@ mod shared_read_tests {
 
     #[tokio::test]
     async fn callers_sharing_one_read_bill_it_once() {
-        // Two partitions at the head read the same block at once. One request
+        // Two requests at the head read the same block at once. One request
         // goes out, and the source's metrics must count exactly one.
         let served = Arc::new(AtomicUsize::new(0));
         let client = client(rpc_server(Duration::from_millis(30), served.clone()).await);

@@ -84,7 +84,7 @@ let runChain = async (state: IndexerState.t, ~chainId, ~runtime, ~stateId) => {
 }
 
 // Runs the chain's backlog until it is empty, one run at a time, kicking
-// fetching (a registration can add partitions) and processing (the ready
+// fetching (a registration can add requests) and processing (the ready
 // frontier moved) after each.
 let rec drainChain = async (
   state: IndexerState.t,

@@ -1,9 +1,9 @@
 //! Contracts a single query fetches address-free even though their
 //! registrations depend on addresses. When a contract's registered address
-//! count grows past the server-side threshold, the fetch state switches it to
+//! count grows past the server-side threshold, the indexing plan switches it to
 //! client-side filtering: its log/receipt selections are built without a
 //! server-side address filter, and routing — which can no longer ask the
-//! partition's set who owns an emitter, since the query carries none of the
+//! request's set who owns an emitter, since the query carries none of the
 //! contract's addresses — gates the over-fetched items on the address store
 //! alone. Shared by every source's selection builder and router so the "is this
 //! registration client-filtered" decision lives in one place.

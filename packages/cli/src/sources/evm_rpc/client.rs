@@ -93,7 +93,7 @@ pub struct JsonRpcClient {
     /// The timing of every request that finished and has not been reported
     /// yet. Requests are billed per source rather than per call, so whichever
     /// call reports next carries what finished since the last one did — a
-    /// read that several partitions shared counts once, whoever issued it.
+    /// read that several requests shared counts once, whoever issued it.
     stats: Stats,
 }
 

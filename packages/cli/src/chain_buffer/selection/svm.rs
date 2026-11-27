@@ -325,7 +325,7 @@ pub(crate) struct SelectedInstruction {
     pub registrations: Vec<Arc<Registration>>,
 }
 
-/// Everything a source query needs that depends on the partition's selection.
+/// Everything a source query needs that depends on the request's selection.
 pub(crate) struct BuiltSelection {
     pub instruction_selections: Vec<net::InstructionSelection>,
     /// Union over the selection's registrations; always contains the

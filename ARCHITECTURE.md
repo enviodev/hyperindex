@@ -10,9 +10,10 @@ imports from a layer above it.
 
 | Layer | Rust (`cli/src/`) | ReScript (`envio/src/`) |
 | --- | --- | --- |
-| Loop and planning | | `run/IndexerLoop`, `run/ChainState`, `fetching/ChainFetching`, `fetching/FetchState` |
+| Loop | | `run/IndexerLoop`, `run/CrossChainState`, `run/ChainState`, `fetching/ChainFetching` |
 | Source control: which source, retries, heights | | `sources/SourceManager`, `sources/heights/` (`HeightFeed`, `HeightStream`, `HyperSyncSSE`, `EvmRpcWs`) |
 | Source contract | `sources/failure.rs`, `sources/source.rs` | `sources/Source`, `sources/ChainSources`, `sources/SimulateSource` |
+| Planning: what to fetch next | `indexing_plan/` (`chain`, `pipeline`, `budget`, `coverage`) | `fetching/IndexingPlan` |
 | Clients | `sources/evm_hypersync/`, `sources/evm_rpc/`, `sources/fuel_hypersync/`, `sources/svm_hypersync/` | |
 | Chain data | `chain_buffer/` (`tables/`, `matching/`, `selection/`, `decode/`), `address_store/` | `chainBuffer/` (`ChainBuffer`, `BufferPage`, `ChainRegistrations`, `AddressStore`) |
 | Ecosystems | `ecosystems/` (`evm/`, `fuel/`, `svm/`) | `ecosystems/` (`Evm`, `Fuel`, `Svm` and their `*EventItem` modules) |
@@ -20,6 +21,38 @@ imports from a layer above it.
 The ecosystem modules import nothing from the runtime above them; the chain
 data imports no source; nothing below the source contract reads the
 environment.
+
+## The indexing plan
+
+One napi `IndexingPlan` per worker plans every chain's fetching, in Rust. Each
+tick it computes the work from three tables per chain, keeping nothing derived:
+
+- **Needs**: what the chain must fetch, and from where. A need reads logs for a
+  group of addresses, a list of addresses or address-free, or reads blocks or
+  transactions. It has a floor, an optional `to_block` (its contract's
+  `end_block`, or the block a catch-up owes up to) and what it has learned:
+  density and each source's range capacity.
+- **Coverage**: per need, every block through `covered_through` plus the
+  ranges that finished ahead of it. It moves only to the block a source
+  reports.
+- **Work in flight**: the requests out, each naming the needs it serves, its
+  range and the items it reserves. A rollback drops them all by bumping a
+  generation, so a stale response is recognised and discarded.
+
+Nothing is merged, split, retired or renumbered. A registration joins its
+contract's open group where that group has been requested through, and owes
+the blocks below as a catch-up by address list. A contract past the
+address-free threshold ends its groups at the block they were requested
+through, and one address-free need takes over from there. Once every need is
+within 200 blocks of the head, one request serves them all, so the chain asks
+for each new block once.
+
+`pipeline.rs` turns the tables into candidate requests (holes first, then
+chunks sized by the learned capacity, or a probe), and `budget.rs` shares the
+cross-chain item budget between chains and accepts candidates in block order.
+The plan answers with a `FetchRequest` handle that the source reads directly:
+its range, selection and addresses. The plan also holds each chain's
+contractRegister backlog and the block the chain is ready through.
 
 ## The source contract
 

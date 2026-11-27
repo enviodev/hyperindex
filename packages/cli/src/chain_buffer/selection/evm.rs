@@ -138,8 +138,8 @@ fn compress<Tag>(
     result
 }
 
-/// Everything a source query needs that depends on the partition's selection
-/// and current addresses.
+/// Everything a source query needs that depends on the request's selection
+/// and addresses.
 pub(crate) struct BuiltSelection {
     pub log_selections: Vec<BuiltLogSelection>,
     /// Union over the selection's registrations; unsorted, deduplicated.
@@ -152,8 +152,8 @@ pub(crate) struct BuiltSelection {
 
 /// Builds per-query log selections from the registrations passed at client
 /// construction. Registrations are keyed by their chain-scoped sequential
-/// index; a query names the indexes of its partition's selection plus the
-/// partition's current addresses per contract.
+/// index; a query names the indexes of its request's selection plus the
+/// request's addresses per contract.
 pub(crate) struct SelectionBuilder {
     registrations: HashMap<i64, RegistrationSelection>,
 }
@@ -295,7 +295,7 @@ impl SelectionBuilder {
 
     /// The logs of an address-free selection, asked for another way: its
     /// topic-only registrations still address-free, and its client-filtered
-    /// ones the way a server-side partition would, once per address chunk.
+    /// ones the way a by-address request would, once per address chunk.
     /// `address_chunks` receives the client-filtered contracts' names.
     pub(crate) fn build_by_address(
         &self,
@@ -389,7 +389,7 @@ mod tests {
         (store, set)
     }
 
-    /// A wildcard partition's set: no addresses, but still a real one.
+    /// A wildcard request's set: no addresses, but still a real one.
     fn no_addresses() -> (crate::address_store::AddressStore, AddressSet) {
         addresses(&[])
     }
@@ -786,7 +786,7 @@ mod tests {
 
     #[test]
     fn selection_subset_excludes_other_registrations() {
-        // A partition's query only includes its own selection's registrations
+        // A request's query only includes its own selection's registrations
         // even though the builder holds the whole chain's.
         let builder = SelectionBuilder::from_registrations(&[
             reg(0, SIGHASH_A, "C", false, true, Some(vec![])),

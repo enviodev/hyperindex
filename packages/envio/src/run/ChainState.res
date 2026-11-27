@@ -963,7 +963,9 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   progressLatencyMs: cs.progressLatencyMs,
   progressBlockTime: cs.committedProgressBlockTime,
   concurrency: cs.sourceManager->SourceManager.inFlightCount,
-  partitionsCount: cs.indexingPlan->IndexingPlan.getRequestStreamCount(~chainId=cs.chainConfig.id),
+  requestStreamCount: cs.indexingPlan->IndexingPlan.getRequestStreamCount(
+    ~chainId=cs.chainConfig.id,
+  ),
   bufferSize: cs->bufferSize,
   bufferBytes: cs.chainBuffer->ChainBuffer.heapBytes,
   addressStoreBytes: cs.addressStore->AddressStore.heapBytes,

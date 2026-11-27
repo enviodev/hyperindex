@@ -1,6 +1,6 @@
 //! A chain's event registrations compiled once, and which of them a fetched
 //! row belongs to. Matching reads the address store and nothing else: which
-//! partition fetched a row plays no part, so every copy of a row matches the
+//! request fetched a row plays no part, so every copy of a row matches the
 //! same registrations. EVM log matching lives here, the other ecosystems and
 //! transactions in the submodules. Must not import sources.
 

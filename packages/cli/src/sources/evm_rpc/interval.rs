@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn tighten_source_max_never_loosens_under_a_stale_read() {
-        // Partitions of one chain fail concurrently, so both read the ceiling
+        // Requests of one chain fail concurrently, so both read the ceiling
         // before either wrote. The later write must not raise a cap the earlier
         // one already lowered — the caller's copy is stale by then.
         let state = IntervalState::new();

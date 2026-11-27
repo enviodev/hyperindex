@@ -252,8 +252,8 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_cancelled_waiter_leaves_the_request_for_the_others_to_join() {
-        // Partitions are address slices, so several of them read the same head
-        // block at once. One page giving up retires only its own claim: the
+        // Requests of one chain can be address slices, so several of them read
+        // the same head block at once. One page giving up retires only its own claim: the
         // request is still being driven by the others, and a page arriving
         // afterwards must join it rather than ask the provider again.
         let inflight = TestInflight::default();

@@ -326,7 +326,7 @@ impl EvmHyperSyncClient {
     }
 }
 
-/// The whole per-query input for `get_items` beside the partition's address
+/// The whole per-query input for `get_items` beside the request's address
 /// set: the block range and what it selects from each table. Log selections,
 /// field selection, and the matching index are all derived internally from the
 /// registrations passed at construction and the set.

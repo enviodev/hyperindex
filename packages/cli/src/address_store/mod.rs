@@ -362,7 +362,7 @@ impl StoreInner {
     /// batch.
     ///
     /// An address is kept from its earliest registration, whatever order
-    /// registrations arrive in: partitions fetch at their own pace, so a later
+    /// registrations arrive in: requests complete at their own pace, so a later
     /// block's registration can land first. An earlier one retires the entry
     /// and adds a fresh one rather than moving its block, because sets are
     /// ordered by start block and must stay so while they hold the retired id.
@@ -931,7 +931,7 @@ pub struct ContractAddresses {
 
 /// A set's addresses by contract, rendered for one query. Rendered per query
 /// rather than kept: a set of thousands renders in about a millisecond, and
-/// keeping the strings would cost every partition hundreds of bytes per
+/// keeping the strings would cost every group hundreds of bytes per
 /// address.
 pub struct RenderedSet {
     by_contract: HashMap<String, ContractAddresses>,

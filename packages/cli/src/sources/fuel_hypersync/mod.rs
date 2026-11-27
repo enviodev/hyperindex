@@ -173,7 +173,7 @@ impl FuelHyperSyncClient {
 }
 
 /// The whole per-query input for `get_event_items`: the block range and the
-/// partition's registration selection (by index). The partition's addresses
+/// request's registration selection (by index). The request's addresses
 /// arrive separately, as the `AddressSet` handle. Receipt selections, field
 /// selection, and matching are all derived internally from the registrations
 /// passed at construction.

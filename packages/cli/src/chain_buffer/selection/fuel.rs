@@ -193,8 +193,8 @@ pub(crate) fn parse_registrations(
     Ok(parsed)
 }
 
-/// Everything a source query needs that depends on the partition's selection
-/// and current addresses.
+/// Everything a source query needs that depends on the request's selection
+/// and addresses.
 pub(crate) struct BuiltSelection {
     pub receipt_selections: Vec<net_types::ReceiptSelection>,
     /// Which receipt columns the selection's kinds read, so the field
@@ -220,8 +220,8 @@ fn push_unique<T: PartialEq + Copy>(values: &mut Vec<T>, value: T) {
 
 /// Builds per-query receipt selections from the registrations passed at client
 /// construction. Registrations are keyed by their chain-scoped sequential
-/// index; a query names the indexes of its partition's selection plus the
-/// partition's current addresses per contract.
+/// index; a query names the indexes of its request's selection plus the
+/// request's addresses per contract.
 pub(crate) struct SelectionBuilder {
     registrations: HashMap<i64, std::sync::Arc<Registration>>,
 }
@@ -564,7 +564,7 @@ mod tests {
         let built = builder.build(&[0, 1, 2], &set, &client_filtered).unwrap();
 
         let regs = parsed(&[reg(0, "C1", FuelEventKind::Mint, false, None)], &store);
-        // The store alone decides: the partition's set holds no C1 address.
+        // The store alone decides: the request's set holds no C1 address.
         let route_forced =
             |key: &Hash| !matched(&regs, &store, RECEIPT_MINT, None, &key[..], 0).is_empty();
         let addr_1 = key_of(ADDR_1);
