@@ -1,9 +1,16 @@
 open Vitest
 
-@val external log: (string, {..}) => unit = "console.log"
-@val external logError: (string, JsError.t) => unit = "console.error"
-@val external warnTwo: (string, {..}, {..}) => unit = "console.warn"
-@val external logFormatted: (string, string, {..}) => unit = "console.log"
+// `console` with the argument shapes a JavaScript handler passes it. A binding
+// looks `console` up on each call, which a test needs: the run routes `console`
+// after the test's body is defined.
+module HandlerConsole = {
+  @val external log: string => unit = "console.log"
+  @val external logWithParams: (string, {..}) => unit = "console.log"
+  @val external logFormatted: (string, string, {..}) => unit = "console.log"
+  @val external errorWithError: (string, JsError.t) => unit = "console.error"
+  @val external warnWithTwoParams: (string, {..}, {..}) => unit = "console.warn"
+  @val external count: string => unit = "console.count"
+}
 
 let scenario = Scenario.make(
   ~configYaml=`
@@ -308,10 +315,10 @@ describe("console in a handler", () => {
                   blockNumber: 5,
                   logIndex: 2,
                   handler: async _ => {
-                    log("transfer", {"amount": 10n, "to": "0x1"})
-                    logError("failed", error)
-                    warnTwo("two objects", {"a": 1}, {"b": 2})
-                    logFormatted("%s seen", "x", {"a": 1})
+                    HandlerConsole.logWithParams("transfer", {"amount": 10n, "to": "0x1"})
+                    HandlerConsole.errorWithError("failed", error)
+                    HandlerConsole.warnWithTwoParams("two objects", {"a": 1}, {"b": 2})
+                    HandlerConsole.logFormatted("%s seen", "x", {"a": 1})
                   },
                 },
               ],
@@ -368,9 +375,6 @@ describe("console in a handler", () => {
   // preload run says nothing, as its run proper says it all again; an effect
   // runs once, usually while preloading, so it's never silenced.
   Async.it("names the event, and stays silent while preloading", async t => {
-    // Looked up on each call: the run routes `console` after this test's body is
-    // defined.
-    let log: string => unit = %raw(`message => console.log(message)`)
     let lookup = Envio.createEffect(
       {
         name: "lookup",
@@ -379,7 +383,7 @@ describe("console in a handler", () => {
         rateLimit: Disable,
       },
       async ({input, context}) => {
-        log("effect ran")
+        HandlerConsole.log("effect ran")
         context.log.info("effect logged")
         input
       },
@@ -396,9 +400,9 @@ describe("console in a handler", () => {
                 {
                   blockNumber: 5,
                   logIndex: 2,
-                  contractRegister: async _ => log("registering"),
+                  contractRegister: async _ => HandlerConsole.log("registering"),
                   preloadHandler: async args => {
-                    log("preloading")
+                    HandlerConsole.log("preloading")
                     let context =
                       args.context->(Utils.magic: Internal.handlerContext => handlerContext)
                     let _ = await context.effect(lookup, "in")
@@ -407,7 +411,7 @@ describe("console in a handler", () => {
                     let context =
                       args.context->(Utils.magic: Internal.handlerContext => handlerContext)
                     let _ = await context.effect(lookup, "in")
-                    log("handled")
+                    HandlerConsole.log("handled")
                   },
                 },
               ],
@@ -443,7 +447,6 @@ describe("console in a handler", () => {
   // The preload run is silent, so it mustn't leave state its run proper then
   // prints, and work it starts that finishes later isn't silenced for good.
   Async.it("leaves no trace of the preload run in later lines", async t => {
-    let count: string => unit = %raw(`label => console.count(label)`)
     let laterLine: ref<option<{"resolve": unit => unit, "logged": promise<unit>}>> = ref(None)
     await scenario->Scenario.run(
       ~sources=[{chain: 1}],
@@ -458,7 +461,7 @@ describe("console in a handler", () => {
                   blockNumber: 5,
                   logIndex: 2,
                   preloadHandler: async _ => {
-                    count("runs")
+                    HandlerConsole.count("runs")
                     laterLine :=
                       Some(
                         %raw(`(() => {
@@ -471,7 +474,7 @@ describe("console in a handler", () => {
                       )
                   },
                   handler: async _ => {
-                    count("runs")
+                    HandlerConsole.count("runs")
                     switch laterLine.contents {
                     | Some(later) =>
                       later["resolve"]()
@@ -496,7 +499,6 @@ describe("console in a handler", () => {
   })
 
   Async.it("names each event of a batch on its own lines", async t => {
-    let log: string => unit = %raw(`message => console.log(message)`)
     await scenario->Scenario.run(
       ~sources=[{chain: 1}],
       async (~indexer, ~source) => {
@@ -506,8 +508,8 @@ describe("console in a handler", () => {
           {
             reply: Respond({
               items: [
-                {blockNumber: 5, logIndex: 1, handler: async _ => log("first")},
-                {blockNumber: 6, logIndex: 2, handler: async _ => log("second")},
+                {blockNumber: 5, logIndex: 1, handler: async _ => HandlerConsole.log("first")},
+                {blockNumber: 6, logIndex: 2, handler: async _ => HandlerConsole.log("second")},
               ],
               latestFetchedBlockNumber: 100,
             }),

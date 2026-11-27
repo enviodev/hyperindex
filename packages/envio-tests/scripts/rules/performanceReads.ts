@@ -6,7 +6,7 @@
 // the reason given; a new one needs a reason as good.
 
 import type { file, violation } from "./shared.ts";
-import { isRescript, runtimeRoot } from "./shared.ts";
+import { isRescript, runtimeRoot, withoutLineComment } from "./shared.ts";
 
 const performanceRead = /\bPerformance\.(?:now|secondsSince)\b/;
 const realWork = "it times real I/O or CPU work, which virtual time would report as instant";
@@ -33,7 +33,7 @@ export const findPerformanceReads = (files: file[]): violation[] =>
     })
     .flatMap(({ path, text }) =>
       text.split("\n").flatMap((line, index) => {
-        const match = line.replace(/\/\/.*$/, "").match(performanceRead);
+        const match = withoutLineComment(line).match(performanceRead);
         return match
           ? [
               {

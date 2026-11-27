@@ -3,7 +3,7 @@
 // schedule, between a test's steps, with nothing in the test to say so.
 
 import type { file, violation } from "./shared.ts";
-import { isRescript, runtimeRoot } from "./shared.ts";
+import { isRescript, runtimeRoot, withoutLineComment } from "./shared.ts";
 
 // `Performance.now()` stays: it measures how long real work took, for request
 // stats, and a virtual clock would report every request as instant.
@@ -28,7 +28,7 @@ export const findRealClockInSources = (files: file[]): violation[] =>
     )
     .flatMap(({ path, text }) =>
       text.split("\n").flatMap((line, index) => {
-        const code = line.replace(/\/\/.*$/, "");
+        const code = withoutLineComment(line);
         return realTime.flatMap(({ pattern, use }) =>
           pattern.test(code)
             ? [

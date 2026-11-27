@@ -4,7 +4,7 @@
 // A zero delay is a turn of the event loop, not time.
 
 import type { file, violation } from "./shared.ts";
-import { isRealTimeAt, testRescriptFiles, withoutLineComment } from "./shared.ts";
+import { isRealTimeAt, isTestHelper, testRescriptFiles, withoutLineComment } from "./shared.ts";
 
 const realDelay = /\bUtils\.delay\((?!0\))([^)]*)\)/;
 const realClock = /\bDate\.now\(/;
@@ -24,7 +24,7 @@ const realTimeScenariosOf = (lines: string[]) => {
     // closing paren, or whatever top-level code follows a one-line call.
     const next = lines.findIndex((later, at) => at > index && /^\S/.test(later));
     const end = next === -1 ? lines.length : /^\)/.test(lines[next]) ? next + 1 : next;
-    const region = lines.slice(index, end).map((line) => line.replace(/\/\/.*$/, ""));
+    const region = lines.slice(index, end).map(withoutLineComment);
     if (
       region.some((line) => /\bScenario\.make\(/.test(line)) &&
       region.some((line) => /~virtualTime=false\b/.test(line))
@@ -39,7 +39,7 @@ export const findRealTimeOnVirtualTime = (files: file[]): violation[] =>
   testRescriptFiles(files).flatMap(({ path, text }) => {
     const found: violation[] = [];
     const lines = text.split("\n");
-    const isHelper = path.includes("/helpers/");
+    const isHelper = isTestHelper(path);
     const realTimeScenarios = realTimeScenariosOf(lines);
     lines.forEach((line, index) => {
       const code = withoutLineComment(line);
@@ -74,7 +74,7 @@ export const findRealTimeOnVirtualTime = (files: file[]): violation[] =>
     starts.forEach((start, position) => {
       const end = starts[position + 1] ?? lines.length;
       const block = lines.slice(start, end);
-      const code = block.map((line) => line.replace(/\/\/.*$/, ""));
+      const code = block.map(withoutLineComment);
       const receiver = block[0].match(/(\w+)\s*->\s*Scenario\.(?:it|run)\(|Scenario\.(?:it|run)\(\s*(\w+)/);
       // `makeScenario(~name=...)->Scenario.it(` spreads the receiver over the
       // lines before the one that names `Scenario.it`.

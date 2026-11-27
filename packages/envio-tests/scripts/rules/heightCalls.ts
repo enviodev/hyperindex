@@ -2,14 +2,14 @@
 // accounting for it, the way answering the first height does.
 
 import type { file, violation } from "./shared.ts";
-import { isTestHelper, testRescriptFiles } from "./shared.ts";
+import { isTestHelper, testRescriptFiles, withoutLineComment } from "./shared.ts";
 
 export const findUnnamedHeightWaits = (files: file[]): violation[] =>
   testRescriptFiles(files)
     .filter(({ path }) => !isTestHelper(path))
     .flatMap(({ path, text }) =>
       text.split("\n").flatMap((line, index) =>
-        /\.waitForHeightCall\(/.test(line.replace(/\/\/.*$/, ""))
+        /\.waitForHeightCall\(/.test(withoutLineComment(line))
           ? [
               {
                 file: path,

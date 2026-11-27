@@ -3,7 +3,7 @@
 // mock's own deadlines) while leaving the virtual clock where it was.
 
 import type { file, violation } from "./shared.ts";
-import { testRoot } from "./shared.ts";
+import { testRoot, withoutLineComment } from "./shared.ts";
 
 const fakeTimers =
   /\b[vV]i\.(?:useFakeTimers|advanceTimers\w*|runAllTimers\w*|runOnlyPendingTimers\w*|runToLastTimer\w*|setSystemTime)\b/;
@@ -13,7 +13,7 @@ export const findFakedTimers = (files: file[]): violation[] =>
     .filter(({ path }) => path.startsWith(testRoot) && /\.(?:res|ts)$/.test(path))
     .flatMap(({ path, text }) =>
       text.split("\n").flatMap((line, index) => {
-        const match = line.replace(/\/\/.*$/, "").match(fakeTimers);
+        const match = withoutLineComment(line).match(fakeTimers);
         return match
           ? [
               {

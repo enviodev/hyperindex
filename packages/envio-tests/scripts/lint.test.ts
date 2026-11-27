@@ -1,5 +1,10 @@
 import { deepEqual } from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { findMissingDocPaths } from "./rules/docReferences.ts";
 import { findFakedTimers } from "./rules/fakeTimers.ts";
 import { findUnnamedHeightWaits } from "./rules/heightCalls.ts";
@@ -508,4 +513,83 @@ test("net ReScript runtime lines against the merge base", () => {
       { path: "packages/envio/src/bindings/EventStore.res", net: 2 },
     ],
   });
+});
+
+// The rules above are called directly. This runs the command a contributor and
+// CI run, on a repo of its own: what it reads (untracked files, never ignored
+// ones), how it groups and prints, and what it exits with.
+test("the lint command on a repo with one violation of each kind, then without", () => {
+  const repo = mkdtempSync(join(tmpdir(), "lint-inputs-"));
+  const write = (path: string, ...lines: string[]) => {
+    mkdirSync(dirname(join(repo, path)), { recursive: true });
+    writeFileSync(join(repo, path), lines.join("\n"));
+  };
+  const lint = (env: Record<string, string | undefined>) => {
+    const { status, stdout, stderr } = spawnSync(
+      process.execPath,
+      [join(repo, "packages/envio-tests/scripts/lint-inputs.ts")],
+      { encoding: "utf8", env: { ...process.env, ...env } },
+    );
+    return {
+      status,
+      annotations: stdout.split("\n").map((line) => line.slice(0, line.lastIndexOf("::"))),
+      report: stderr.split("\n").map((line) => line.split(". ")[0]),
+    };
+  };
+  try {
+    execFileSync("git", ["init", "--quiet", repo]);
+    cpSync(fileURLToPath(new URL(".", import.meta.url)), join(repo, "packages/envio-tests/scripts"), {
+      recursive: true,
+    });
+    write(".gitignore", "build/");
+    write("build/Generated.res", "let cast = value => value->Utils.magic");
+    const violations = [
+      ["packages/envio-tests/test/Planted_test.res", "await mock.waitForHeightCall()", 'Console.log("planted")'],
+      ["packages/envio/src/sources/Planted.res", "let now = Date.now()"],
+      ["packages/envio/src/Cast.res", "let cast = value => value->Utils.magic"],
+      ["CLAUDE.md", "See `packages/envio/src/Gone.res`."],
+    ];
+    violations.forEach(([path, ...lines]) => write(path, ...lines));
+    const withViolations = lint({ GITHUB_ACTIONS: "true" });
+    violations.forEach(([path]) => rmSync(join(repo, path)));
+    const clean = lint({ GITHUB_ACTIONS: undefined });
+    deepEqual(
+      { withViolations, clean },
+      {
+        withViolations: {
+          status: 1,
+          annotations: [
+            "::error file=packages/envio-tests/test/Planted_test.res,line=1,title=waitForHeightCall in a test",
+            "::error file=packages/envio/src/sources/Planted.res,line=1,title=Date.now(...) on the real clock",
+            "::error file=packages/envio/src/Cast.res,line=1,title=Utils.magic without its types",
+            "::error file=packages/envio-tests/test/Planted_test.res,line=2,title=Console.log in a test",
+            "::error file=CLAUDE.md,line=1,title=`packages/envio/src/Gone.res` is not a path in the repo",
+            "",
+          ],
+          report: [
+            "These tests guess at how long the indexer takes to ask the source:",
+            "",
+            "packages/envio-tests/test/Planted_test.res:1: waitForHeightCall in a test",
+            "",
+            "The runtime reads time the tests can't control:",
+            "",
+            "packages/envio/src/sources/Planted.res:1: Date.now(...) on the real clock",
+            "",
+            "This ReScript compiles, and the repo still refuses it:",
+            "",
+            "packages/envio/src/Cast.res:1: Utils.magic without its types",
+            "packages/envio-tests/test/Planted_test.res:2: Console.log in a test",
+            "",
+            "The contributor docs name what isn't in the repo:",
+            "",
+            "CLAUDE.md:1: `packages/envio/src/Gone.res` is not a path in the repo",
+            "",
+          ],
+        },
+        clean: { status: 0, annotations: [""], report: [""] },
+      },
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });

@@ -15,6 +15,11 @@ export const testRescriptFiles = (files: file[]) =>
 
 export const isTestHelper = (path: string) => path.startsWith(`${testRoot}helpers/`);
 
+// The scaffolds under the CLI's templates are user projects: they have no
+// `Utils` of ours to cast with, and a Handlebars file is not ReScript yet.
+export const rescriptFilesOutsideTemplates = (files: file[]) =>
+  files.filter((file) => isRescript(file) && !file.path.startsWith("packages/cli/templates/"));
+
 // `//` after a colon is a URL in a string, not a comment.
 export const withoutLineComment = (line: string) => line.replace(/(?<!:)\/\/.*$/, "");
 
@@ -26,42 +31,6 @@ export const blankComments = (text: string) =>
     .replace(/(?<!:)\/\/.*$/gm, (comment) => " ".repeat(comment.length));
 
 export const lineAtOffset = (text: string, offset: number) => text.slice(0, offset).split("\n").length;
-
-// The scan has to reach the next statement past whatever sits between it and
-// the line it started from. A comment that hid a violation would make the lint
-// quietly useless.
-export const nextCodeLine = (lines: string[], start: number): string | null => {
-  let inBlockComment = false;
-  for (let index = start; index < lines.length; index++) {
-    let rest = lines[index];
-    let code = "";
-    if (inBlockComment) {
-      const close = rest.indexOf("*/");
-      if (close === -1) continue;
-      rest = rest.slice(close + 2);
-      inBlockComment = false;
-    }
-    for (;;) {
-      const open = rest.indexOf("/*");
-      if (open === -1) {
-        code += rest;
-        break;
-      }
-      const close = rest.indexOf("*/", open + 2);
-      if (close === -1) {
-        code += rest.slice(0, open);
-        inBlockComment = true;
-        break;
-      }
-      code += rest.slice(0, open);
-      rest = rest.slice(close + 2);
-    }
-    const trimmed = code.trim();
-    if (trimmed === "" || trimmed.startsWith("//")) continue;
-    return code;
-  }
-  return null;
-};
 
 // Work off the source clock (a handler or effect taking time, events from the
 // addon's threads, throttled writes) still takes real time, and says so: a
