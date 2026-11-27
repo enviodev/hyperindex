@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/check-format.sh",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-push.sh",
             "timeout": 120,
             "statusMessage": "Checking formatting before push..."
           }
