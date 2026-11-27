@@ -25,9 +25,10 @@ problems=""
 
 res=$(printf '%s\n' "$changed" | grep -E '\.resi?$' || true)
 if [ -n "$res" ]; then
-  out=$(printf '%s\n' "$res" | xargs pnpx rescript@12.2.0 format --check 2>&1 | grep '^\[format check\]' || true)
+  rescript_version=$(jq -r .devDependencies.rescript packages/envio/package.json)
+  out=$(printf '%s\n' "$res" | xargs pnpx "rescript@$rescript_version" format --check 2>&1 | grep '^\[format check\]' || true)
   if [ -n "$out" ]; then
-    problems="$problems"$'\n'"Unformatted ReScript (fix: pnpx rescript@12.2.0 format <files>):"$'\n'"$out"
+    problems="$problems"$'\n'"Unformatted ReScript (fix: pnpm format):"$'\n'"$out"
   fi
 fi
 
