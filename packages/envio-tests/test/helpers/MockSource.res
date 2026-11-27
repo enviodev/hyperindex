@@ -416,7 +416,7 @@ type t = {
   resolveGetBlockHashes: array<BufferPage.observedBlock> => unit,
   // Answers every block-hash lookup in flight with a failure the source
   // reported, and throws when there is none. `requestStats` are the requests
-  // the failed lookup made, reported on the response as a native source does.
+  // the failed lookup made, reported on the response as a real source does.
   failGetBlockHashes: (Source.failure, ~requestStats: array<Source.requestStat>=?) => unit,
   // Waits for the rollback's block-hash lookup of exactly `blockNumbers`, then
   // replies with `reply`. A lookup of other blocks, or more than one pending,

@@ -72,7 +72,7 @@ let runQuery = async (
     ~reorgableFrom=None,
     ~knownHeight=toBlock,
     ~partitionId="0",
-    ~selection=NativeDecoder.selectionOf(registrationIndexes),
+    ~selection=LogDecoding.selectionOf(registrationIndexes),
     ~retry=0,
   )
   switch result {

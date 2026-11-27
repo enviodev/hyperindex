@@ -29,7 +29,7 @@ let decodeSingle = async (
       ->Array.joinUnsafe(", ")})`,
   )
   let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
-  let decoded = await NativeDecoder.decodeLogs(
+  let decoded = await LogDecoding.decodeLogs(
     ~eventRegistrations=[
       {
         index: 0,
@@ -69,7 +69,7 @@ describe("EVM event decoding via the RPC source", () => {
     let topicFilters: array<ChainRegistrations.Evm.topicFilterInput> = [
       {topic0: Some([sighash]), topic1: Some([]), topic2: Some([]), topic3: Some([])},
     ]
-    let decoded = await NativeDecoder.decodeLogs(
+    let decoded = await LogDecoding.decodeLogs(
       ~eventRegistrations=[
         {
           index: 0,
@@ -145,7 +145,7 @@ describe("EVM event decoding via the RPC source", () => {
   })
 
   Async.it("handles empty params", async t => {
-    let decoded = await NativeDecoder.decodeLogs(
+    let decoded = await LogDecoding.decodeLogs(
       ~eventRegistrations=[
         {
           index: 0,

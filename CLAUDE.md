@@ -29,7 +29,7 @@
 - To edit runtime code, edit templates under `packages/cli/templates/` or `packages/envio/`, not the codegen output under `<project>/.envio/`.
 - Prefer reading `.res` modules directly; ignore compiled `.js` artifacts.
 - The napi boundary between the Rust addon (`#[napi]` exports) and ReScript (`Core.addon`) is internal, not a published API. Change both sides freely to get the better shape — don't keep an awkward export for compatibility. The addon must be rebuilt for ReScript tests to see the change (see below).
-- Fetching: see `ARCHITECTURE.md` for the layers and where each piece lives. Data sources are Rust (`packages/cli/src/sources/`, one napi class `NativeSource`); ReScript keeps the control around them (`packages/envio/src/sources/SourceManager.res`, `HeightFeed.res`, `FetchState.res`). A source call answers with a `Source.outcome`; expected failures are a `Source.failure`, never an exception.
+- Fetching: see `ARCHITECTURE.md` for the layers and where each piece lives. Data sources are Rust (`packages/cli/src/sources/`, one napi class `Source`, built per chain in `ChainSources.res`); ReScript keeps the control around them (`packages/envio/src/sources/SourceManager.res`, `sources/heights/HeightFeed.res`, `fetching/FetchState.res`). A source call answers with a `Source.outcome`; expected failures are a `Source.failure`, never an exception.
 - ReScript never reads the environment: Rust reads every variable in `src/indexer_env.rs` (via `src/env.rs`) and ReScript gets it as `config.env` (`IndexerEnv.t`). `pnpm lint` (envio-tests), clippy and `layers.rs` refuse new reads elsewhere.
 
 ### Building the native addon

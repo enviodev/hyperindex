@@ -4,7 +4,7 @@
 
 // NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
-type nativeSourceCtor
+type sourceCtor
 type chainBufferCtor
 type pageCtor
 type storageCtor
@@ -41,8 +41,8 @@ type addon = {
   tsCheckHandlerFormat: string => unit,
   tsResolveCandidates: (string, Null.t<string>) => array<string>,
   tsNotFoundCandidates: (string, Null.t<string>, string) => array<string>,
-  @as("NativeSource")
-  nativeSource: nativeSourceCtor,
+  @as("Source")
+  source: sourceCtor,
   @as("ChainBuffer")
   chainBuffer: chainBufferCtor,
   @as("Page")

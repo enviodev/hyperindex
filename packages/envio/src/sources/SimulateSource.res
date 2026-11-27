@@ -26,7 +26,7 @@ let topicAt = (eventConfig: Internal.evmEventConfig, ~params: dict<unknown>, pos
 
 // A block item for every block in [fromBlock, toBlock] a selected registration
 // runs on, each carrying its block inline — the way `block_selection.rs` routes
-// a native source's blocks. One the simulated chain has no block for is skipped.
+// a real source's blocks. One the simulated chain has no block for is skipped.
 let blockItems = (
   onBlockRegistrations: array<Internal.onBlockRegistration>,
   ~fromBlock,

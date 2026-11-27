@@ -12,7 +12,7 @@ imports from a layer above it.
 | --- | --- | --- |
 | Loop and planning | | `run/IndexerLoop`, `run/ChainState`, `fetching/ChainFetching`, `fetching/FetchState` |
 | Source control: which source, retries, heights | | `sources/SourceManager`, `sources/heights/` (`HeightFeed`, `HeightStream`, `HyperSyncSSE`, `EvmRpcWs`) |
-| Source contract | `sources/failure.rs`, `sources/native.rs` | `sources/Source`, `sources/NativeSource`, `sources/ChainSources`, `sources/SimulateSource` |
+| Source contract | `sources/failure.rs`, `sources/source.rs` | `sources/Source`, `sources/ChainSources`, `sources/SimulateSource` |
 | Clients | `sources/evm_hypersync/`, `sources/evm_rpc/`, `sources/fuel_hypersync/`, `sources/svm_hypersync/` | |
 | Chain data | `chain_buffer/` (`tables/`, `matching/`, `selection/`, `decode/`), `address_store/` | `chainBuffer/` (`ChainBuffer`, `BufferPage`, `ChainRegistrations`, `AddressStore`) |
 | Ecosystems | `ecosystems/` (`evm/`, `fuel/`, `svm/`) | `ecosystems/` (`Evm`, `Fuel`, `Svm` and their `*EventItem` modules) |
@@ -23,8 +23,8 @@ environment.
 
 ## The source contract
 
-Every production source is one Rust `NativeSource`, built for a chain by
-`NativeSource.makeChainSources` from the chain's source config. ReScript wraps
+Every production source is one Rust `Source`, built for a chain by
+`ChainSources.fromConfig` from the chain's source config. ReScript wraps
 it as a `Source.t`; tests and the simulate source implement `Source.t` in JS.
 
 A call answers with a `Source.outcome`: a `result` and the `requestStats` the

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 /// The sync-tuning knobs of an RPC source (config.yaml's sync options, with
-/// defaults filled in by `NativeSource`), minus the fields that are not paging
+/// defaults filled in by `Source`), minus the fields that are not paging
 /// concerns: `pollingInterval` is JS-side scheduling, and `queryTimeoutMillis`
 /// bounds each request in the client rather than the range a page asks for.
 #[derive(Clone, Copy)]

@@ -71,7 +71,7 @@ describe("Same-signature event across contracts with different param names", () 
     let allEventRegistrations = ChainRegistrations.Evm.fromOnEventRegistrations([tokenA, tokenB])
 
     let decodeAs = async contractName => {
-      let decoded = await NativeDecoder.decodeLogs(
+      let decoded = await LogDecoding.decodeLogs(
         ~eventRegistrations=allEventRegistrations,
         ~logs=[transferLog],
         ~ownedBy=contractName,

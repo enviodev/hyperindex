@@ -7,7 +7,7 @@ pub(crate) mod evm_hypersync;
 pub(crate) mod evm_rpc;
 pub(crate) mod failure;
 pub(crate) mod fuel_hypersync;
-pub(crate) mod native;
 pub(crate) mod request_stats;
+pub(crate) mod source;
 pub(crate) mod svm_hypersync;
 pub(crate) mod testing;

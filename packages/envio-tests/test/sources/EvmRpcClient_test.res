@@ -266,7 +266,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       // Far below the head, where a page's blocks aren't checked one by one.
       ~knownHeight=toBlockCeiling + 1_000,
       ~partitionId="0",
-      ~selection=NativeDecoder.selectionOf(indexes),
+      ~selection=LogDecoding.selectionOf(indexes),
       ~retry=0,
     )
     switch result {

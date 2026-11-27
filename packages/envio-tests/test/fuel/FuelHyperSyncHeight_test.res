@@ -49,7 +49,7 @@ describe("Fuel HyperSync source - getHeight", () => {
   )
 
   let makeSource = (~url, ~apiToken): Source.t =>
-    NativeSource.makeChainSources(
+    ChainSources.fromConfig(
       {
         chainId: 0,
         ecosystem: Fuel,
@@ -63,7 +63,7 @@ describe("Fuel HyperSync source - getHeight", () => {
         },
         rpcs: [],
         maxAddressesPerRequest: 5_000,
-        userAgent: NativeSource.userAgent,
+        userAgent: ChainSources.userAgent,
       },
       ~chainId=0->ChainId.fromInt,
       ~chainBuffer,

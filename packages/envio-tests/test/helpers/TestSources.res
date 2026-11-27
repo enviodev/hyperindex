@@ -1,9 +1,9 @@
-// Real native sources for tests that talk to a local HyperSync or RPC server.
+// Real sources for tests that talk to a local HyperSync or RPC server.
 
 let chainId = 1
 
-let make = (config: NativeSource.chainSourcesConfig, ~chainBuffer, ~logger) =>
-  NativeSource.makeChainSources(
+let make = (config: ChainSources.config, ~chainBuffer, ~logger) =>
+  ChainSources.fromConfig(
     config,
     ~chainId=chainId->ChainId.fromInt,
     ~chainBuffer,
@@ -31,7 +31,7 @@ let hyperSync = (
       },
       rpcs: [],
       maxAddressesPerRequest: 5_000,
-      userAgent: NativeSource.userAgent,
+      userAgent: ChainSources.userAgent,
     },
     ~chainBuffer,
     ~logger,
@@ -52,7 +52,7 @@ let rpc = (
       ecosystem: Evm,
       rpcs: [{url, sourceFor: Sync, ?headers, ?ws, syncConfig}],
       maxAddressesPerRequest,
-      userAgent: NativeSource.userAgent,
+      userAgent: ChainSources.userAgent,
     },
     ~chainBuffer,
     ~logger,

@@ -3,8 +3,8 @@
 // registrations.
 let mockAddress = "0x000000000000000000000000000000000000abcd"
 
-// A selection naming registrations by index, which is all a native source
-// reads off it.
+// A selection naming registrations by index, which is all a source reads
+// off it.
 let selectionOf = (registrationIndexes: array<int>): FetchState.selection => {
   dependsOnAddresses: true,
   onEventRegistrations: registrationIndexes->Array.map(index =>

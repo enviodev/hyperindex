@@ -25,7 +25,7 @@ let approvalLog = (
 
 describe("Renamed event decoding (issue #1285)", () => {
   Async.it("decodes a renamed event under its real on-chain signature", async t => {
-    let decoded = await NativeDecoder.decodeLogs(
+    let decoded = await LogDecoding.decodeLogs(
       ~eventRegistrations=[
         {
           index: 5,

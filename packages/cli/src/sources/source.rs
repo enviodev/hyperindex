@@ -162,7 +162,7 @@ enum SourceClient {
 }
 
 #[napi]
-pub struct NativeSource {
+pub struct Source {
     client: SourceClient,
     name: String,
     source_for: SourceFor,
@@ -193,7 +193,7 @@ fn timed(method: &str, started: Instant) -> RequestStat {
 }
 
 #[napi]
-impl NativeSource {
+impl Source {
     /// Every source a chain's config names, HyperSync first.
     #[napi]
     pub fn make_chain_sources(
@@ -201,7 +201,7 @@ impl NativeSource {
         buffer: &ChainBuffer,
         logger: &Logger,
         bound_fields_json: Vec<String>,
-    ) -> napi::Result<Vec<NativeSource>> {
+    ) -> napi::Result<Vec<Source>> {
         make_chain_sources(config, buffer, logger, bound_fields_json)
             .map_err(|error| napi::Error::from_reason(format!("{error:#}")))
     }
@@ -457,7 +457,7 @@ impl NativeSource {
     }
 }
 
-impl NativeSource {
+impl Source {
     fn warn_once_if_unauthorized(&self, error: &ClientError) {
         let ClientError::Other(error) = error else {
             return;
@@ -517,7 +517,7 @@ fn make_chain_sources(
     buffer: &ChainBuffer,
     logger: &Logger,
     bound_fields_json: Vec<String>,
-) -> anyhow::Result<Vec<NativeSource>> {
+) -> anyhow::Result<Vec<Source>> {
     let ecosystem = Ecosystem::parse(&config.ecosystem)?;
     let bind = |source: &str| {
         let mut fields = bound_fields_json.clone();
@@ -574,7 +574,7 @@ fn make_chain_sources(
                 true,
             ),
         };
-        sources.push(NativeSource {
+        sources.push(Source {
             client,
             name: name.to_string(),
             source_for: SourceFor::Sync,
@@ -614,7 +614,7 @@ fn make_chain_sources(
                 logger,
                 bound_fields_json.clone(),
             )?;
-            sources.push(NativeSource {
+            sources.push(Source {
                 client: SourceClient::EvmRpc(Box::new(client)),
                 source_for: rpc.source_for,
                 polling_interval: sync.polling_interval.unwrap_or(1_000),
