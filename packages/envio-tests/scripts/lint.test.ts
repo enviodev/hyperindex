@@ -10,12 +10,10 @@ import { findFakedTimers } from "./rules/fakeTimers.ts";
 import { findUnnamedHeightWaits } from "./rules/heightCalls.ts";
 import { findListedPathsThatMoved, listedPaths } from "./rules/listedPaths.ts";
 import { findUnannotatedMagic } from "./rules/magicAnnotation.ts";
-import { findLogicInMigratedDirectories } from "./rules/migratedToRust.ts";
 import { findGuessedWaits } from "./rules/mockSteps.ts";
 import { findPerformanceReads } from "./rules/performanceReads.ts";
 import { findRawFieldPaths } from "./rules/rawFieldPath.ts";
 import { findUnsetDurations } from "./rules/reportedDurations.ts";
-import { summarizeRescriptDirection } from "./rules/rescriptDirection.ts";
 import type { file, violation } from "./rules/shared.ts";
 import { blankComments } from "./rules/shared.ts";
 import { findRealClockInSources } from "./rules/sourceClock.ts";
@@ -665,65 +663,6 @@ test("a path a rule lists that is no longer in the repo", () => {
       good: [],
     },
   );
-});
-
-test("ReScript logic in a directory that moved to Rust", () => {
-  const migrated = ["packages/envio/src/sources"];
-  const logic = fileOf(
-    "packages/envio/src/sources/SourceManager.res",
-    "// The word external in a comment binds nothing.",
-    "let pickSource = sources => sources->Array.get(0)",
-  );
-  const binding = fileOf(
-    "packages/envio/src/sources/ChainBuffer.res",
-    "type t",
-    '@send external make: (ctor, config) => t = "make"',
-    "let emptyRegistrations = () => []",
-  );
-  const outside = fileOf("packages/envio/src/Main.res", "let start = () => ()");
-  deepEqual(
-    {
-      bad: findLogicInMigratedDirectories([logic, binding, outside], migrated),
-      good: findLogicInMigratedDirectories([binding, outside], migrated),
-      nothingMigratedYet: findLogicInMigratedDirectories([logic, binding, outside]),
-    },
-    {
-      bad: [
-        {
-          file: "packages/envio/src/sources/SourceManager.res",
-          line: 1,
-          title: "ReScript logic in a directory that moved to Rust",
-          fix: "Write it in Rust under `packages/cli/src` and keep here only the file that binds it: every `.res` file in `packages/envio/src/sources` declares the `external`s it binds.",
-        },
-      ],
-      good: [],
-      nothingMigratedYet: [],
-    },
-  );
-});
-
-test("net ReScript runtime lines against the merge base", () => {
-  const base = [
-    fileOf("packages/envio/src/FetchState.res", "let a = 1", "", "let b = 2", "let c = 3", ""),
-    fileOf("packages/envio/src/Gone.res", "let x = 1", ""),
-    fileOf("packages/envio/src/Same.res", "let y = 1", ""),
-    fileOf("packages/envio-tests/test/Some_test.res", "let z = 1", ""),
-  ];
-  const head = [
-    fileOf("packages/envio/src/FetchState.res", "let a = 1", ""),
-    fileOf("packages/envio/src/bindings/EventStore.res", "type t", "", '@send external make: unit => t = "make"', ""),
-    fileOf("packages/envio/src/Same.res", "", "let y = 1", ""),
-    fileOf("packages/envio/src/NodeVersion.mjs", "export const minimum = 22", ""),
-    fileOf("packages/envio-tests/test/Some_test.res", "let z = 1", "let w = 2", ""),
-  ];
-  deepEqual(summarizeRescriptDirection(base, head), {
-    net: -1,
-    changed: [
-      { path: "packages/envio/src/FetchState.res", net: -2 },
-      { path: "packages/envio/src/Gone.res", net: -1 },
-      { path: "packages/envio/src/bindings/EventStore.res", net: 2 },
-    ],
-  });
 });
 
 // The rules above are called directly. This runs the command a contributor and

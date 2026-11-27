@@ -11,33 +11,24 @@ import { findFakedTimers } from "./rules/fakeTimers.ts";
 import { findUnnamedHeightWaits } from "./rules/heightCalls.ts";
 import { findListedPathsThatMoved } from "./rules/listedPaths.ts";
 import { findUnannotatedMagic } from "./rules/magicAnnotation.ts";
-import { findLogicInMigratedDirectories } from "./rules/migratedToRust.ts";
 import { findGuessedWaits } from "./rules/mockSteps.ts";
 import { findPerformanceReads } from "./rules/performanceReads.ts";
 import { findRawFieldPaths } from "./rules/rawFieldPath.ts";
 import { findUnsetDurations } from "./rules/reportedDurations.ts";
-import { summarizeRescriptDirection } from "./rules/rescriptDirection.ts";
 import type { file, violation } from "./rules/shared.ts";
-import { runtimeRoot } from "./rules/shared.ts";
 import { findRealClockInSources } from "./rules/sourceClock.ts";
 import { findLoggingInTests } from "./rules/testLogging.ts";
 import { findRealTimeOnVirtualTime } from "./rules/virtualTime.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
-// git's own complaint stays out of the output: the one call that can fail is
-// the merge base, in a clone that never fetched main, and that is not an error.
-const git = (...args: string[]) =>
-  execFileSync("git", args, {
-    cwd: repoRoot,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-
 // Untracked files count: a test written a minute ago is linted before it is
 // ever staged. Ignored ones (build output, `node_modules`) don't.
-const files: file[] = git("ls-files", "--cached", "--others", "--exclude-standard", "-z")
+const files: file[] = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+  cwd: repoRoot,
+  encoding: "utf8",
+  maxBuffer: 64 * 1024 * 1024,
+})
   .split("\0")
   .filter((path) => path !== "" && existsSync(join(repoRoot, path)))
   .map((path) => {
@@ -62,7 +53,7 @@ const groups: { heading: string; rules: ((files: file[]) => violation[])[] }[] =
   },
   {
     heading: "This ReScript compiles, and the repo still refuses it:",
-    rules: [findUnannotatedMagic, findRawFieldPaths, findLoggingInTests, (files) => findLogicInMigratedDirectories(files)],
+    rules: [findUnannotatedMagic, findRawFieldPaths, findLoggingInTests],
   },
   {
     heading: "These name a path that isn't in the repo:",
@@ -92,40 +83,6 @@ const report = (list: violation[], heading: string) => {
   );
 };
 
-// CI checks out one commit, so there is no merge base there and the count is
-// printed only where there is history to count against.
-const printRescriptDirection = () => {
-  let base: string;
-  let changedPaths: string[];
-  try {
-    base = git("merge-base", "HEAD", "origin/main").trim();
-    changedPaths = [
-      ...git("diff", "--name-only", "-z", base, "--", runtimeRoot).split("\0"),
-      ...git("ls-files", "--others", "--exclude-standard", "-z", "--", runtimeRoot).split("\0"),
-    ].filter((path) => path !== "");
-  } catch {
-    return;
-  }
-  const atBase = changedPaths.flatMap((path) => {
-    try {
-      return [{ path, text: git("show", `${base}:${path}`) }];
-    } catch {
-      return [];
-    }
-  });
-  const { net, changed } = summarizeRescriptDirection(
-    atBase,
-    files.filter(({ path }) => changedPaths.includes(path)),
-  );
-  const signed = (count: number) => (count > 0 ? `+${count}` : `${count}`);
-  console.log(
-    [
-      `ReScript runtime against main: ${signed(net)} non-blank lines in ${runtimeRoot}**/*.res (new runtime logic goes in Rust).`,
-      ...changed.map(({ path, net }) => `  ${signed(net)} ${path}`),
-    ].join("\n"),
-  );
-};
-
 let failed = false;
 for (const { heading, rules } of groups) {
   const violations = rules.flatMap((rule) => rule(files));
@@ -135,8 +92,6 @@ for (const { heading, rules } of groups) {
     failed = true;
   }
 }
-
-printRescriptDirection();
 
 if (failed) {
   process.exit(1);
