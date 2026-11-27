@@ -10,7 +10,7 @@ use anyhow::{bail, Result};
 
 use super::schema::Entity;
 use super::types::{CHANGE_COLUMN, CHECKPOINT_ID_COLUMN};
-use crate::columnar::{Arena, Column, ColumnKind};
+use crate::storage::columnar::{Arena, Column, ColumnKind};
 
 /// How a change set is laid out: the entity's fields, the checkpoint each
 /// change was made at, and 1 for a change that deletes the entity.
@@ -170,7 +170,7 @@ impl ChangeSet {
 #[cfg(test)]
 pub mod test_support {
     use super::*;
-    use crate::columnar::ColumnSpec;
+    use crate::storage::columnar::ColumnSpec;
 
     pub enum Change<'a> {
         Set(&'a [Option<&'a str>], i64),

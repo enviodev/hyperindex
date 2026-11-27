@@ -1,0 +1,814 @@
+@@directive("import packageJson from '../../package.json' with { type: 'json' }")
+
+external magic: 'a => 'b = "%identity"
+
+// Force a function to compile to a regular `function` instead of an arrow,
+// so `this` binds to the call-site receiver (needed for prototype getters,
+// methods, etc).
+external toMethod: 'a => 'a = "%unsafe_to_method"
+
+@val external importPath: string => promise<unknown> = "import"
+
+// Clearing a pending timer and forgetting it are one action. A ref left holding
+// a spent id reads as a timer still pending, and the next clear looks like it
+// did something.
+let clearTimeoutRef = timeoutId => {
+  switch timeoutId.contents {
+  | Some(id) => clearTimeout(id)
+  | None => ()
+  }
+  timeoutId := None
+}
+
+// Keeps the doubling from overflowing on something that has been failing for
+// days. Every caller's delay reaches its cap long before this.
+let maxBackoffExponent = 20
+
+let expBackoff = (~base, ~exp, ~maxMillis) =>
+  Pervasives.min(
+    base * Math.pow(2.0, ~exp=Pervasives.min(exp, maxBackoffExponent)->Int.toFloat)->Float.toInt,
+    maxMillis,
+  )
+
+let delay = milliseconds =>
+  Promise.make((resolve, _) => {
+    let _interval = setTimeout(_ => {
+      resolve()
+    }, milliseconds)
+  })
+
+module Object = {
+  // Define a type for the property descriptor
+  type propertyDescriptor<'a> = {
+    configurable?: bool,
+    enumerable?: bool,
+    writable?: bool,
+    value?: 'a,
+    get?: unit => 'a,
+    set?: 'a => unit,
+  }
+
+  @val @scope("Object")
+  external defineProperty: ('obj, string, propertyDescriptor<'a>) => 'obj = "defineProperty"
+
+  // Property descriptor with required value field (no boxing)
+  type enumerablePropertyDescriptor<'a> = {
+    enumerable: bool,
+    value: 'a,
+  }
+
+  @val @scope("Object")
+  external definePropertyWithValue: ('obj, string, enumerablePropertyDescriptor<'a>) => 'obj =
+    "defineProperty"
+
+  @val @scope("Object")
+  external createNullObject: (@as(json`null`) _, unit) => 'a = "create"
+}
+
+module Error = {
+  @new
+  external make: string => exn = "Error"
+}
+
+module Option = {
+  let catchToNone: (unit => 'a) => option<'a> = unsafeFunc => {
+    try {
+      unsafeFunc()->Some
+    } catch {
+    | _ => None
+    }
+  }
+}
+
+module Dict = {
+  include Dict
+
+  /**
+    It's the same as `Js.Dict.get` but it doesn't have runtime overhead to check if the key exists.
+   */
+  @get_index
+  external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
+
+  let incrementBy = (dict, key, count) =>
+    dict->Dict.set(
+      key,
+      switch dict->dangerouslyGetNonOption(key) {
+      | Some(current) => current + count
+      | None => count
+      },
+    )
+
+  let getOrInsertEmptyDict = (dict, key) => {
+    switch dict->dangerouslyGetNonOption(key) {
+    | Some(d) => d
+    | None => {
+        let d = Dict.make()
+        dict->Dict.set(key, d)
+        d
+      }
+    }
+  }
+
+  /**
+    It's the same as `Js.Dict.get` but it doesn't have runtime overhead to check if the key exists.
+   */
+  @get_index
+  external dangerouslyGetByIntNonOption: (dict<'a>, int) => option<'a> = ""
+
+  let push = (dict, key, value) => {
+    switch dict->dangerouslyGetNonOption(key) {
+    | Some(arr) => arr->Array.push(value)
+    | None => dict->Dict.set(key, [value])
+    }
+  }
+
+  let merge: (dict<'a>, dict<'a>) => dict<'a> = %raw(`(dictA, dictB) => ({...dictA, ...dictB})`)
+
+  // Keeps every key either dict has; `pick` decides a key both have.
+  let mergeWith: (dict<'a>, dict<'a>, ('a, 'a) => 'a) => dict<'a> = %raw(`(a, b, pick) => {
+    var merged = {...a}, i;
+    for (i in b) {
+      merged[i] = i in merged ? pick(merged[i], b[i]) : b[i];
+    }
+    return merged;
+  }`)
+
+  // Use %raw to support for..in which is a ~10% faster than .forEach
+  let mapValues: (dict<'a>, 'a => 'b) => dict<'b> = %raw(`(dict, f) => {
+    var target = {}, i;
+    for (i in dict) {
+      target[i] = f(dict[i]);
+    }
+    return target;
+  }`)
+
+  // Use %raw to support for..in which is a ~10% faster than .forEach
+  let mapValuesToArray: (dict<'a>, 'a => 'b) => array<'b> = %raw(`(dict, f) => {
+    var target = [], i;
+    for (i in dict) {
+      target.push(f(dict[i]));
+    }
+    return target;
+  }`)
+
+  // Use %raw to support for..in which is a ~10% faster than .forEach
+  let forEach: (dict<'a>, 'a => unit) => unit = %raw(`(dict, f) => {
+    for (var i in dict) {
+      f(dict[i]);
+    }
+  }`)
+
+  // Use %raw to support for..in which is a ~10% faster than .forEach
+  let forEachWithKey: (dict<'a>, ('a, string) => unit) => unit = %raw(`(dict, f) => {
+    for (var i in dict) {
+      f(dict[i], i);
+    }
+  }`)
+
+  // Use %raw to support for..in which is a ~10% faster than Object.keys
+  let size: dict<'a> => int = %raw(`(dict) => {
+    var size = 0, i;
+    for (i in dict) {
+      size++;
+    }
+    return size;
+  }`)
+
+  // Use %raw to support for..in which is a 2x faster than Object.keys
+  let isEmpty: dict<'a> => bool = %raw(`(dict) => {
+    for (var _ in dict) {
+      return false
+    }
+    return true
+  }`)
+
+  let deleteInPlace: (dict<'a>, string) => unit = %raw(`(dict, key) => {
+      delete dict[key];
+    }
+  `)
+
+  let clearInPlace: dict<'a> => unit = %raw(`(dict) => {
+      for (const key in dict) {
+        delete dict[key];
+      }
+    }
+  `)
+
+  let shallowCopy: dict<'a> => dict<'a> = %raw(`(dict) => ({...dict})`)
+
+  @set_index
+  external setByInt: (dict<'a>, int, 'a) => unit = ""
+}
+
+module Math = {
+  let minOptInt = (a: option<int>, b: option<int>) =>
+    switch (a, b) {
+    | (Some(a), Some(b)) => Some(a < b ? a : b)
+    | (Some(a), None) => Some(a)
+    | (None, Some(b)) => Some(b)
+    | (None, None) => None
+    }
+}
+
+// This is a microoptimization to avoid int32 safeguards
+module UnsafeIntOperators = {
+  external \"*": (int, int) => int = "%mulfloat"
+
+  external \"+": (int, int) => int = "%addfloat"
+
+  external \"-": (int, int) => int = "%subfloat"
+}
+
+type asyncIterator<'a>
+
+module Array = {
+  include Array
+
+  /** Render names for an error message: `"a", "b"`. */
+  let quotedJoin = (names: array<string>) =>
+    names->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
+
+  @send
+  external forEachAsync: (array<'a>, 'a => promise<unit>) => unit = "forEach"
+
+  @val external jsArrayCreate: int => array<'a> = "Array"
+
+  /* Given a comaprator and two sorted lists, combine them into a single sorted list */
+  let mergeSorted = (f: ('a, 'a) => bool, xs: array<'a>, ys: array<'a>) => {
+    if Array.length(xs) == 0 {
+      ys
+    } else if Array.length(ys) == 0 {
+      xs
+    } else {
+      let n = Array.length(xs) + Array.length(ys)
+      let result = jsArrayCreate(n)
+
+      let rec loop = (i, j, k) => {
+        if i < Array.length(xs) && j < Array.length(ys) {
+          if f(xs->Array.getUnsafe(i), ys->Array.getUnsafe(j)) {
+            result->Array.setUnsafe(k, xs->Array.getUnsafe(i))
+            loop(i + 1, j, k + 1)
+          } else {
+            result->Array.setUnsafe(k, ys->Array.getUnsafe(j))
+            loop(i, j + 1, k + 1)
+          }
+        } else if i < Array.length(xs) {
+          result->Array.setUnsafe(k, xs->Array.getUnsafe(i))
+          loop(i + 1, j, k + 1)
+        } else if j < Array.length(ys) {
+          result->Array.setUnsafe(k, ys->Array.getUnsafe(j))
+          loop(i, j + 1, k + 1)
+        }
+      }
+
+      loop(0, 0, 0)
+      result
+    }
+  }
+
+  let clearInPlace: array<'a> => unit = %raw(`(arr) => {
+    arr.length = 0
+  }`)
+
+  /**
+  Creates a shallow copy of the array and sets the value at the given index
+  */
+  /**
+Helper to check if a value exists in an array
+*/
+  let isEmpty = (arr: array<_>) =>
+    switch arr {
+    | [] => true
+    | _ => false
+    }
+
+  let notEmpty = (arr: array<_>) =>
+    switch arr {
+    | [] => false
+    | _ => true
+    }
+
+  // Both ascending and unique; so is the result.
+  let mergeSortedUnique = (a: array<int>, b: array<int>) => {
+    let merged = []
+    let i = ref(0)
+    let j = ref(0)
+    while i.contents < a->Array.length || j.contents < b->Array.length {
+      let next = switch (a->Array.get(i.contents), b->Array.get(j.contents)) {
+      | (Some(x), Some(y)) if x < y =>
+        i := i.contents + 1
+        x
+      | (Some(x), Some(y)) if x > y =>
+        j := j.contents + 1
+        y
+      | (Some(x), Some(_)) =>
+        i := i.contents + 1
+        j := j.contents + 1
+        x
+      | (Some(x), None) =>
+        i := i.contents + 1
+        x
+      | (None, Some(y)) =>
+        j := j.contents + 1
+        y
+      | (None, None) => JsError.throwWithMessage("unreachable")
+      }
+      merged->Array.push(next)
+    }
+    merged
+  }
+
+  let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
+    for i in 0 to arr->Array.length - 1 {
+      let item = arr->Array.getUnsafe(i)
+      await item->fn
+    }
+  }
+
+  /**
+  Creates a new array removing the item at the given index
+
+  Index > array length or < 0 results in a copy of the array
+  */
+  let removeAtIndex = (array, index) => {
+    if index < 0 {
+      array->Array.copy
+    } else {
+      array->Array.slice(~start=0, ~end=index)->Array.concat(array->Array.slice(~start=index + 1))
+    }
+  }
+
+  let last = (arr: array<'a>): option<'a> => arr->Array.get(arr->Array.length - 1)
+
+  let lastUnsafe = (arr: array<'a>): 'a => arr->Array.getUnsafe(arr->Array.length - 1)
+  let firstUnsafe = (arr: array<'a>): 'a => arr->Array.getUnsafe(0)
+
+  /**
+  Interleaves an array with a separator
+
+  interleave([1, 2, 3], 0) -> [1, 0, 2, 0, 3]
+  */
+  let interleave = (arr: array<'a>, separator: 'a) => {
+    let interleaved = []
+    arr->Array.forEachWithIndex((v, i) => {
+      interleaved->Array.push(v)
+      if i < arr->Array.length - 1 {
+        interleaved->Array.push(separator)
+      }
+    })
+    interleaved
+  }
+
+  @send
+  external copy: array<'a> => array<'a> = "slice"
+
+  @send external at: (array<'a>, int) => option<'a> = "at"
+
+  /**
+  Converts an async iterator to an array by iterating through all values
+  */
+  let fromAsyncIterator: asyncIterator<string> => promise<
+    array<string>,
+  > = %raw(`async (iterator) => {
+    const result = [];
+    for await (const item of iterator) {
+      result.push(item);
+    }
+    return result;
+  }`)
+}
+
+module String = {
+  include String
+
+  let capitalize = str => {
+    str->String.slice(~start=0, ~end=1)->String.toUpperCase ++ str->String.slice(~start=1)
+  }
+
+  /**
+`replaceAll(str, substr, newSubstr)` returns a new `string` which is
+identical to `str` except with all matching instances of `substr` replaced
+by `newSubstr`. `substr` is treated as a verbatim string to match, not a
+regular expression.
+See [`String.replaceAll`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replaceAll) on MDN.
+
+## Examples
+
+```rescript
+String.replaceAll("old old string", "old", "new") == "new new string"
+String.replaceAll("the cat and the dog", "the", "this") == "this cat and this dog"
+```
+*/
+  @send
+  external replaceAll: (string, string, string) => string = "replaceAll"
+}
+
+/**
+Useful when an unsafe unwrap is needed on Result type
+and Error holds an exn. This is better than Result.getExn
+because the excepion is not just NOT_FOUND but will rather
+bet the actual underlying exn
+*/
+let unwrapResultExn = res =>
+  switch res {
+  | Ok(v) => v
+  | Error(exn) => exn->throw
+  }
+
+external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
+
+module Bytes = {
+  let asUint8Array: unknown => option<Uint8Array.t> = %raw(`(value) =>
+    value instanceof Uint8Array
+      ? value.constructor === Uint8Array
+        ? value
+        : new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+      : undefined`)
+
+  let toHex = (bytes: Uint8Array.t) =>
+    NodeJs.Buffer.fromArrayBuffer(
+      bytes->TypedArray.buffer,
+      ~byteOffset=bytes->TypedArray.byteOffset,
+      ~length=bytes->TypedArray.byteLength,
+    )->NodeJs.Buffer.toHex
+
+  @get_index external byteAt: (Uint8Array.t, int) => int = ""
+
+  // Bytewise, the order Postgres sorts a bytea in.
+  let compare = (a: Uint8Array.t, b: Uint8Array.t) => {
+    let aLength = a->TypedArray.length
+    let bLength = b->TypedArray.length
+    let rec loop = index =>
+      if index === aLength || index === bLength {
+        Int.compare(aLength, bLength)
+      } else {
+        switch Int.compare(a->byteAt(index), b->byteAt(index)) {
+        | 0. => loop(index + 1)
+        | order => order
+        }
+      }
+    loop(0)
+  }
+}
+
+module Schema = {
+  // A ReScript `option` is `undefined` at runtime, so `S.null`'s serializer
+  // treats only `undefined` as the empty case — a genuine `null`, which a JS
+  // handler writes for a field it doesn't set, reaches the value serializer
+  // and crashes it (`null.toString()` for a BigInt column). Collapse both to
+  // `None` before the value serializer sees them.
+  //
+  // Revisit on the Sury v11 migration: if its nullable handles a `null` value
+  // on the serialize side, this wrapper goes away.
+  let nullTolerant = schema =>
+    S.null(schema)->S.transform(_ => {
+      parser: value => value,
+      serializer: value => value->(magic: option<'a> => Nullable.t<'a>)->Nullable.toOption,
+    })
+
+  // Handlers are promised a plain Uint8Array: a Node Buffer is one too, but its
+  // `slice` and `toString` behave differently.
+  let bytes = S.custom("Bytes", s => {
+    parser: unknown =>
+      switch unknown->Bytes.asUint8Array {
+      | Some(bytes) => bytes
+      | None => s.fail("Expected Uint8Array")
+      },
+    serializer: (bytes: Uint8Array.t) => bytes,
+  })
+
+  // A bytea[] column's value. The parser takes the one level a bytea[] column
+  // returns.
+  let bytesArray = S.custom("BytesArray", s => {
+    parser: unknown =>
+      if unknown->Array.isArray {
+        unknown
+        ->(magic: unknown => array<unknown>)
+        ->Array.map(item =>
+          switch item->Bytes.asUint8Array {
+          | Some(bytes) => bytes
+          | None => s.fail("Expected Uint8Array")
+          }
+        )
+      } else {
+        s.fail("Expected array of Uint8Array")
+      },
+    serializer: (values: array<Uint8Array.t>) => values,
+  })
+
+  // Don't use S.unknown, since it's not serializable to json
+  // In a nutshell, this is completely unsafe.
+  let dbDate =
+    S.json(~validate=false)
+    ->(magic: S.t<JSON.t> => S.t<Date.t>)
+    ->S.preprocess(_ => {serializer: date => date->magic->Date.toISOString})
+
+  // When trying to serialize data to Json pg type, it will fail with
+  // PostgresError: column "params" is of type json but expression is of type boolean
+  // If there's bool or null on the root level. It works fine as object field values.
+  let coerceToJsonPgType = schema => {
+    schema->S.preprocess(s => {
+      switch s.schema->S.classify {
+      // This is a workaround for Fuel Bytes type
+      | Unknown => {serializer: _ => %raw(`"null"`)}
+      | Bool => {
+          serializer: unknown => {
+            if unknown === %raw(`false`) {
+              %raw(`"false"`)
+            } else if unknown === %raw(`true`) {
+              %raw(`"true"`)
+            } else {
+              unknown
+            }
+          },
+        }
+      | _ => {}
+      }
+    })
+  }
+}
+
+module Set = {
+  type t<'value>
+
+  /*
+   * Constructor
+   */
+  @ocaml.doc("Creates a new `Set` object.") @new
+  external make: unit => t<'value> = "Set"
+
+  @ocaml.doc("Creates a new `Set` object.") @new
+  external fromArray: array<'value> => t<'value> = "Set"
+
+  /*
+   * Instance properties
+   */
+  @ocaml.doc("Returns the number of values in the `Set` object.") @get
+  external size: t<'value> => int = "size"
+
+  /*
+   * Instance methods
+   */
+  @ocaml.doc("Appends `value` to the `Set` object. Returns the `Set` object with added value.")
+  @send
+  external add: (t<'value>, 'value) => t<'value> = "add"
+
+  let addMany = (set, values) => values->Array.forEach(value => set->add(value)->ignore)
+
+  @ocaml.doc("Removes all elements from the `Set` object.") @send
+  external clear: t<'value> => unit = "clear"
+
+  @ocaml.doc(
+    "Removes the element associated to the `value` and returns a boolean asserting whether an element was successfully removed or not. `Set.prototype.has(value)` will return `false` afterwards."
+  )
+  @send
+  external delete: (t<'value>, 'value) => bool = "delete"
+
+  @ocaml.doc(
+    "Returns a boolean asserting whether an element is present with the given value in the `Set` object or not."
+  )
+  @send
+  external has: (t<'value>, 'value) => bool = "has"
+
+  external toArray: t<'a> => array<'a> = "Array.from"
+
+  @send
+  external intersection: (t<'value>, t<'value>) => t<'value> = "intersection"
+
+  @send
+  external union: (t<'value>, t<'value>) => t<'value> = "union"
+
+  let immutableAdd: (t<'a>, 'a) => t<'a> = %raw(`(set, value) => {
+    return new Set([...set, value])
+  }`)
+
+  /*
+   * Iteration methods
+   */
+  /*
+/// NOTE - if we need iteration we can add this back - currently it requires the `rescript-js-iterator` library.
+@ocaml.doc(
+  "Returns a new iterator object that yields the **values** for each element in the `Set` object in insertion order."
+)
+@send
+external values: t<'value> => Js_iterator.t<'value> = "values"
+
+@ocaml.doc("An alias for `Set.prototype.values()`.") @send
+external keys: t<'value> => Js_iterator.t<'value> = "values"
+
+@ocaml.doc("Returns a new iterator object that contains **an array of [value, value]** for each element in the `Set` object, in insertion order.
+
+This is similar to the [Map](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map) object, so that each entry's `key` is the same as its `value` for a `Set`.")
+@send
+external entries: t<'value> => Js_iterator.t<('value, 'value)> = "entries"
+*/
+  @ocaml.doc(
+    "Calls `callbackFn` once for each value present in the `Set` object, in insertion order."
+  )
+  @send
+  external forEach: (t<'value>, 'value => unit) => unit = "forEach"
+}
+
+module WeakMap = {
+  type t<'k, 'v> = WeakMap.t<'k, 'v>
+
+  @new external make: unit => t<'k, 'v> = "WeakMap"
+
+  @send external get: (t<'k, 'v>, 'k) => option<'v> = "get"
+  @send external has: (t<'k, 'v>, 'k) => bool = "has"
+  @send external set: (t<'k, 'v>, 'k, 'v) => t<'k, 'v> = "set"
+
+  let memoize = (fn: 'k => 'v): ('k => 'v) => {
+    let cache = make()
+    key =>
+      switch cache->get(key) {
+      | Some(v) => v
+      | None => {
+          let v = fn(key)
+          let _ = cache->set(key, v)
+          v
+        }
+      }
+  }
+}
+
+module Map = {
+  type t<'k, 'v> = Map.t<'k, 'v>
+
+  @new external make: unit => t<'k, 'v> = "Map"
+
+  @send external get: (t<'k, 'v>, 'k) => option<'v> = "get"
+  @send external has: (t<'k, 'v>, 'k) => bool = "has"
+  @send external set: (t<'k, 'v>, 'k, 'v) => t<'k, 'v> = "set"
+  @send external delete: (t<'k, 'v>, 'k) => bool = "delete"
+}
+
+// An object that names the property it doesn't have, for user-facing APIs
+// where `undefined` would only surface later as a confusing error. The check
+// lives on the prototype, so reading a property the object has costs nothing.
+module StrictObject = {
+  type prototype
+
+  let makePrototype: (string => unit) => prototype = %raw(`function (onUnknown) {
+    return new Proxy(Object.create(null), {
+      get(_target, prop) {
+        if (typeof prop === "string") onUnknown(prop);
+        return undefined;
+      },
+    });
+  }`)
+
+  @val @scope("Object") external make: prototype => 'a = "create"
+  @val @scope("Object") external assign: ('a, 'a) => 'a = "assign"
+}
+
+module Proxy = {
+  type propertyDescriptor = {
+    value: unknown,
+    enumerable: bool,
+    configurable: bool,
+  }
+  type traps<'a> = {
+    get?: (~target: 'a, ~prop: unknown) => unknown,
+    ownKeys?: (~target: 'a) => array<string>,
+    getOwnPropertyDescriptor?: (~target: 'a, ~prop: unknown) => option<propertyDescriptor>,
+  }
+
+  @new
+  external make: ('a, traps<'a>) => 'a = "Proxy"
+}
+
+module Hash = {
+  let fail = name => {
+    JsError.throwWithMessage(
+      `Failed to get hash for ${name}. If you're using a custom Sury schema make it based on the string type with a decoder: const myTypeSchema = S.transform(S.string, undefined, (yourType) => yourType.toString())`,
+    )
+  }
+
+  // Hash to JSON string. No specific reason for this,
+  // just to stick to at least some sort of spec.
+  // After Sury v11 is out we'll be able to do it with schema
+  let rec makeOrThrow = (any: 'a): string => {
+    switch any->typeof {
+    | #string => `"${any->magic}"` // Ideally should escape here,
+    // but since we don't parse it back, it's fine to keep it super simple
+    | #number => any->magic->Int.toString
+    | #bigint => `"${any->magic->BigInt.toString}"`
+    | #boolean => any->magic ? "true" : "false"
+    | #undefined => "null"
+    | #object =>
+      if any === %raw(`null`) {
+        "null"
+      } else if any->Array.isArray {
+        let any: array<'a> = any->magic
+        let hash = ref("[")
+        for i in 0 to any->Array.length - 1 {
+          if i !== 0 {
+            hash := hash.contents ++ ","
+          }
+          hash := hash.contents ++ any->Array.getUnsafe(i)->makeOrThrow
+        }
+        hash.contents ++ "]"
+      } else {
+        let any: dict<'a> = any->magic
+        let constructor = any->Dict.getUnsafe("constructor")->magic
+        if constructor === %raw(`Object`) {
+          let hash = ref("{")
+          let keys = any->Dict.keysToArray->Array.toSorted(String.compare)
+          let isFirst = ref(true)
+          for i in 0 to keys->Array.length - 1 {
+            let key = keys->Array.getUnsafe(i)
+            let value = any->Dict.getUnsafe(key)
+            if value !== %raw(`undefined`) {
+              if isFirst.contents {
+                isFirst := false
+              } else {
+                hash := hash.contents ++ ","
+              }
+              // Ideally should escape and wrap the key in double quotes
+              // but since we don't need to decode the hash,
+              // it's fine to keep it super simple
+              hash := hash.contents ++ `"${key}":${any->Dict.getUnsafe(key)->makeOrThrow}`
+            }
+          }
+          hash.contents ++ "}"
+        } else if constructor["name"] === "BigNumber" {
+          `"${(any->magic)["toString"]()}"`
+        } else {
+          fail((constructor->magic)["name"])
+        }
+      }
+    | #symbol
+    | #function =>
+      (any->magic)["toString"]()
+    }
+  }
+}
+
+let prettifyExn = exn => {
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(e) => e->(magic: JsExn.t => exn)
+  | exn => exn
+  }
+}
+
+let exnMessage = exn =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(jsExn) => jsExn->JsExn.message
+  | _ => None
+  }
+
+module EnvioPackage = {
+  type t = {version: string}
+
+  let value = try %raw(`packageJson`)->S.parseJsonOrThrow(
+    S.schema(s => {
+      version: s.matches(S.string),
+    }),
+  ) catch {
+  | S.Raised(error) =>
+    JsError.throwWithMessage(
+      `Failed to get package.json in envio package: ${error->S.Error.message}`,
+    )
+  }
+}
+
+module BigInt = {
+  let schema =
+    S.string
+    ->S.setName("BigInt")
+    ->S.transform(s => {
+      parser: string =>
+        switch string->BigInt.fromString {
+        | Some(bigInt) => bigInt
+        | None => s.fail("The string is not valid BigInt")
+        },
+      serializer: bigint => bigint->BigInt.toString,
+    })
+}
+
+module Promise = {
+  // Async-callback variant of `Promise.make`. The stdlib only ships the
+  // sync variant, but we rely on the async one in a couple of places.
+  @new
+  external makeAsync: ((@uncurry ('a => unit), 'e => unit) => promise<unit>) => promise<'a> =
+    "Promise"
+
+  // Like `catch`, but the callback returns a plain value instead of a new
+  // promise. Used when the fallback is a ready-made default.
+  @send
+  external catchResolve: (promise<'a>, exn => 'a) => promise<'a> = "catch"
+
+  // Drop a promise's resolved value. We can't use `Promise.ignore` for this
+  // because that returns `unit`, not `promise<unit>`.
+  external ignoreValue: promise<'a> => promise<unit> = "%identity"
+}
+
+// `JSON.stringify` writes half a surrogate pair as a `\udXXX` escape, which no
+// JSON parser that decodes to UTF-8 accepts. It becomes the replacement
+// character a text encoder writes for it, as the character rather than its
+// escape: that is how `JSON.stringify` spells the document read back, so a
+// store comparing documents as text finds it. An escape only after an even run
+// of backslashes.
+let replaceLoneSurrogateEscapes = (json: string) =>
+  json->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\ud[89a-f][0-9a-f]{2}/g, "�")

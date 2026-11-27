@@ -155,7 +155,7 @@ indexer.onEvent({ contract: "Gravatar", event: "CustomSelection" }, async ({ eve
   deepEqual(context.chain.id, event.chainId);
 
   // Type checking for custom field selection lives in
-  // packages/envio-tests/test/TypeScriptApiTypes_test.res
+  // packages/envio-tests/test/handlers/EvmHandlersApi_test.res
 
   // Test chain field accessibility in TypeScript
   expectType<
@@ -963,7 +963,7 @@ indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ event, co
 // `result.changes` array). Handlers are no-ops — the value here is
 // validating the registration paths (`where` evaluated per chain, range
 // schema parsed) without throwing. End-to-end block-firing behavior is
-// covered by `lib_tests/FetchState_onBlock_test.res` at the layer below.
+// covered by `packages/envio-tests/test/fetching/FetchStateBlockHandlers_test.res` at the layer below.
 indexer.onBlock(
   { name: "test_onblock_bool", where: ({ chain }) => chain.id === 137 },
   async () => {},

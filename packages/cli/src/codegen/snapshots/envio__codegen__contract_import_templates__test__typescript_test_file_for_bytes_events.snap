@@ -1,0 +1,61 @@
+---
+source: packages/cli/src/codegen/contract_import_templates.rs
+expression: content
+---
+import { describe, it } from "vitest";
+import { createTestIndexer, type L1StandardBridge_ETHDepositInitiated } from "envio";
+import { TestHelpers } from "envio";
+
+describe("L1StandardBridge contract ETHDepositInitiated event tests", () => {
+  it("L1StandardBridge_ETHDepositInitiated is created correctly", async (t) => {
+    const indexer = createTestIndexer();
+
+    // Creating mock for L1StandardBridge contract ETHDepositInitiated event
+    const event = {
+      contract: "L1StandardBridge" as const,
+      event: "ETHDepositInitiated" as const,
+      params: {
+        _from: TestHelpers.Addresses.defaultAddress,
+        _to: TestHelpers.Addresses.defaultAddress,
+        _amount: 0n,
+        _extraData: "0x" as const,
+      },
+    };
+
+    await indexer.process({
+      chains: {
+        1: {
+          simulate: [event],
+        },
+      },
+    });
+
+    // Getting the actual entity from the test indexer
+    let actualL1StandardBridgeETHDepositInitiated = await indexer.L1StandardBridge_ETHDepositInitiated.getOrThrow("1_0_0");
+
+    // Creating the expected entity
+    const expectedL1StandardBridgeETHDepositInitiated = {
+      id: "1_0_0",
+      _from: event.params._from,
+      _to: event.params._to,
+      _amount: event.params._amount,
+      _extraData: event.params._extraData,
+      chainId: 1,
+    };
+    // Asserting that the entity in the mock database is the same as the expected entity
+    t.expect(actualL1StandardBridgeETHDepositInitiated, "Actual L1StandardBridgeETHDepositInitiated should be the same as the expected L1StandardBridgeETHDepositInitiated").toEqual(expectedL1StandardBridgeETHDepositInitiated);
+  });
+});
+
+describe("Indexer smoke test", () => {
+  it("processes the first block with events on chain 1", async (t) => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({ chains: { 1: {} } });
+
+    t.expect(result.changes.length, "Should have at least one change").toBeGreaterThan(0);
+    const firstChange = result.changes[0]!;
+    t.expect(firstChange.chainId).toBe(1);
+    t.expect(firstChange.eventsProcessed).toBeGreaterThan(0);
+  }, 60_000);
+});

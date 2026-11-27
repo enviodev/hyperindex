@@ -3,7 +3,7 @@ use crate::{
         chain_helpers::HypersyncChain, entity_parsing::MAX_PG_IDENTIFIER_LENGTH,
         validation::validate_names_valid_rescript,
     },
-    evm::address::Address,
+    ecosystems::evm::address::Address,
 };
 use alloy_json_abi::Event;
 use anyhow::{Context, Result};

@@ -7,10 +7,11 @@ use hypersync_client::format::{self, Hex};
 use serde_json::{Map, Value};
 use strum::VariantArray;
 
-use super::evm::{push_block, push_transaction, EvmBlockField, EvmTxField};
-use super::table::ChunkBuilder;
-use crate::evm_hypersync_source::query::BlockField;
-use crate::evm_rpc_source::{client::parse_hex_u64, fields::tx_fields_in, responses};
+use super::tables::evm::{push_block, push_transaction};
+use super::tables::table::ChunkBuilder;
+use crate::ecosystems::evm::fields::{BlockField, EvmBlockField, EvmTxField};
+use crate::ecosystems::evm::rpc_fields::{parse_hex_u64, tx_fields_in};
+use crate::ecosystems::evm::rpc_responses;
 
 /// The mask of the fields `object` names; a field's ordinal is its position
 /// in `variants`. A key naming no field is a typo the test would otherwise
@@ -57,7 +58,7 @@ pub(crate) fn push_simulated_block(
         &[],
         "block",
     )?;
-    let decoded = responses::build_block(
+    let decoded = rpc_responses::build_block(
         &Value::Object(block.clone()),
         number,
         &BlockField::in_store_mask(mask),
@@ -85,7 +86,7 @@ pub(crate) fn push_simulated_transaction(
         "transaction",
     )?;
     let response = Value::Object(transaction.clone());
-    let decoded = responses::build_transaction(
+    let decoded = rpc_responses::build_transaction(
         block_number,
         index,
         &hash,

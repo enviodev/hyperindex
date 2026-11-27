@@ -356,7 +356,7 @@ mod test {
                 });
             let workflow = (
                 ".github/workflows/test.yaml".to_string(),
-                crate::hbs_templating::init_templates::render_test_workflow(*pm),
+                crate::codegen::init_templates::render_test_workflow(*pm),
             );
             docs.chain(std::iter::once(workflow))
                 .filter(|(_, text)| text.contains("pnpm"))
