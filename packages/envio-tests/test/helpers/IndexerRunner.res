@@ -82,6 +82,10 @@ type rec t = {
   isIndexedAt: (~chainId: int, Address.t, ~contractName: string, ~blockNumber: int) => bool,
   // A reorg rollback is under way: no chain dispatches a query until it ends.
   isResolvingReorg: unit => bool,
+  // A write or another storage call is in flight. A wait that bounds itself by
+  // ticks counts none of these: slow storage is progress, not a hang, and the
+  // test's own timeout still catches a call that never returns.
+  isWaitingOnStorage: unit => bool,
   // Moves a virtual-time run's clock forward, firing every source timer due
   // on the way. Only a run on virtual time has a clock to move.
   advanceTime: int => promise<unit>,
@@ -641,6 +645,15 @@ let run = async (
       state->IndexerState.writeFiber->Option.isNone &&
       storageCallsInFlight.contents === 0
 
+    // Not the committed frontier catching up with the processed one: a
+    // rollback moves the processed frontier with a diff that is written only
+    // beside the next batch, so after a rollback the two stay apart until the
+    // source answers, and an indexer waiting on the source is idle.
+    let hasUnwrittenBatches = () => state->IndexerState.processedBatches->Utils.Array.notEmpty
+
+    let isWaitingOnStorage = () =>
+      state->IndexerState.writeFiber->Option.isSome || storageCallsInFlight.contents > 0
+
     let waitUntilIdle = async () => {
       await state->Writing.flush
       // Settling takes several ticks: the loop dispatches follow-up actions
@@ -649,14 +662,11 @@ let run = async (
       let settled = ref(0)
       let attempts = ref(0)
       while settled.contents < 5 && attempts.contents < 5000 {
-        attempts := attempts.contents + 1
+        if !isWaitingOnStorage() {
+          attempts := attempts.contents + 1
+        }
         settled := if (
-            isQuiet() &&
-            !(state->IndexerState.shouldFinalizeIndexes) &&
-            Frontier.equals(
-              state->IndexerState.committedFrontier,
-              state->IndexerState.processedFrontier,
-            )
+            isQuiet() && !(state->IndexerState.shouldFinalizeIndexes) && !hasUnwrittenBatches()
           ) {
             settled.contents + 1
           } else {
@@ -672,13 +682,7 @@ let run = async (
             (state->IndexerState.writeFiber->Option.isSome, "writing"),
             (storageCallsInFlight.contents > 0, "waiting on a storage call"),
             (state->IndexerState.shouldFinalizeIndexes, "due to finalize indexes"),
-            (
-              !Frontier.equals(
-                state->IndexerState.committedFrontier,
-                state->IndexerState.processedFrontier,
-              ),
-              "holding processed batches not yet committed",
-            ),
+            (hasUnwrittenBatches(), "holding processed batches not yet written"),
           ]
           ->Array.filter(((isBusy, _)) => isBusy)
           ->Array.map(((_, what)) => what)
@@ -698,12 +702,7 @@ let run = async (
           let idleChecks = ref(0)
           let rec wait = async () => {
             await state->Writing.flush
-            let isIdle =
-              isQuiet() &&
-              Frontier.equals(
-                state->IndexerState.committedFrontier,
-                state->IndexerState.processedFrontier,
-              )
+            let isIdle = isQuiet() && !hasUnwrittenBatches()
 
             // Catching up hands off to the FinalizingIndexes phase, which is
             // where readiness is decided — so a batch isn't settled until that
@@ -737,6 +736,7 @@ let run = async (
         ->ChainState.addressStore
         ->AddressStore.isIndexedAt(address, contractName, blockNumber),
       isResolvingReorg: () => state->IndexerState.isResolvingReorg,
+      isWaitingOnStorage,
       advanceTime: millis =>
         switch clock {
         | Some(clock) =>
