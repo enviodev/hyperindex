@@ -1,0 +1,97 @@
+name: HTTP version A/B
+
+# Temporary: compares HTTP/1.1 and HTTP/2 to HyperSync from a runner with a
+# direct route, on open indexer benchmark cases. Delete with its branch.
+on:
+  push:
+    branches:
+      - claude/http-version-ab
+
+permissions:
+  contents: read
+
+jobs:
+  ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testing
+          POSTGRES_DB: envio-dev
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - uses: ./.github/actions/cargo-cache
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+          run_install: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Build release addon
+        env:
+          SVM_TARGET_PLATFORM: linux-amd64
+        run: cargo build --release --lib
+
+      - name: Compile the envio runtime
+        working-directory: packages/envio
+        run: pnpm install && pnpm rescript
+
+      - name: Clone the benchmark
+        run: git clone --depth 1 https://github.com/enviodev/open-indexer-benchmark "$RUNNER_TEMP/bench"
+
+      - name: Run cases, alternating HTTP versions
+        env:
+          ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
+        run: |
+          set -u
+          bench="$RUNNER_TEMP/bench"
+          summary="$GITHUB_STEP_SUMMARY"
+          echo "| case | http | round | events/s | windows | range s | data |" >> "$summary"
+          echo "|---|---|---|---|---|---|---|" >> "$summary"
+          for case in solana-spl-transfers erc20-transfer-events; do
+            project="$bench/cases/$case/envio"
+            (cd "$project" && pnpm install --frozen-lockfile > /dev/null)
+            pkg=$(readlink -f "$project/node_modules/envio")
+            addon_dir=$(readlink -f "$project/node_modules/.pnpm/envio-linux-x64@3.19.0/node_modules/envio-linux-x64")
+            rm -rf "$pkg/src" && cp -r packages/envio/src "$pkg/src"
+            rm -f "$addon_dir/envio.node" && cp target/release/libenvio.so "$addon_dir/envio.node"
+            for round in 1 2; do
+              for http in h1 h2; do
+                log="$RUNNER_TEMP/$case.$http.$round.log"
+                (cd "$bench" && ENVIO_HTTP_VERSION=$http node "cases/$case/run.ts" envio) > "$log" 2>&1 || true
+                result=$(grep -o 'BENCHMARK_RESULT .*' "$log" | cut -c18-)
+                if [ -z "$result" ]; then
+                  echo "| $case | $http | $round | failed | | | |" >> "$summary"
+                  tail -40 "$log"
+                  continue
+                fi
+                echo "$case $http $round $result"
+                echo "$result" | jq -r --arg c "$case" --arg h "$http" --arg r "$round" \
+                  '"| \($c) | \($h) | \($r) | \(.eventsPerSec|floor) | \([.windowRuns[].eventsPerSec|floor]|join(" / ")) | \(.rangeSeconds*10|floor/10) | \(.correctness) |"' >> "$summary"
+              done
+            done
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs
+          path: ${{ runner.temp }}/*.log

@@ -111,18 +111,16 @@ fn build_http_client(user_agent: &str) -> Result<reqwest::Client> {
 }
 
 fn http_client_builder(user_agent: &str) -> reqwest::ClientBuilder {
-    reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .user_agent(user_agent)
         // Without it a dead address holds the connection in SYN_SENT until the
         // request timeout. Hyper splits it across the resolved addresses and
         // moves on to the next.
-        .connect_timeout(CONNECT_TIMEOUT)
-        // Over HTTP/2 every query in flight shares one connection, and its
-        // throughput caps the source: on the open indexer benchmark it halved
-        // Solana's events/s against HTTP/1.1, whose pool gives each query a
-        // connection of its own, and bought EVM nothing. A larger flow control
-        // window did not recover it.
-        .http1_only()
+        .connect_timeout(CONNECT_TIMEOUT);
+    match std::env::var("ENVIO_HTTP_VERSION").as_deref() {
+        Ok("h2") => builder,
+        _ => builder.http1_only(),
+    }
 }
 
 /// What a query's response status means.

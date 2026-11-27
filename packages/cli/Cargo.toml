@@ -31,6 +31,7 @@ regex = "1.12"
 reqwest = { version = "0.12", default-features = false, features = [
   "json",
   "charset",
+  "http2",
   "macos-system-configuration",
   "rustls-tls-native-roots",
   "rustls-tls-webpki-roots",
