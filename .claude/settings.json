@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_response.filePath // .tool_input.file_path' | { read -r f; case \"$f\" in */packages/cli/*) cd \"${f%%/packages/cli/*}/packages/cli\" && cargo fmt 2>&1 || true ;; esac; }",
+            "command": "jq -r '.tool_response.filePath // .tool_input.file_path' | { read -r f; case \"$f\" in */packages/cli/*.rs) cd \"${f%%/packages/cli/*}/packages/cli\" && cargo fmt 2>&1 || true ;; esac; }",
             "timeout": 30,
             "statusMessage": "Running cargo fmt..."
           },

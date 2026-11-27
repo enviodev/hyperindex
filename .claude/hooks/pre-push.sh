@@ -13,6 +13,10 @@ esac
 
 cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 
+# A session's clone can carry an origin/main days behind the commit the branch
+# started from. Everything main gained since then would count as this branch's
+# change, and a push that touched no Rust would pay for clippy.
+git fetch -q origin +refs/heads/main:refs/remotes/origin/main 2>/dev/null || true
 base=$(git merge-base HEAD origin/main 2>/dev/null || true)
 changed=$(
   {
@@ -33,7 +37,7 @@ if [ -n "$res" ]; then
 fi
 
 if printf '%s\n' "$changed" | grep -q '^packages/cli/'; then
-  if ! out=$(cd packages/cli && cargo fmt --check 2>&1); then
+  if ! out=$(cd packages/cli && cargo fmt --check -- --color never 2>&1); then
     problems="$problems"$'\n'"Unformatted Rust (fix: cd packages/cli && cargo fmt):"$'\n'"$out"
   fi
 
@@ -47,20 +51,15 @@ if printf '%s\n' "$changed" | grep -q '^packages/cli/'; then
       git diff HEAD -- packages/cli
       git ls-files -o --exclude-standard packages/cli
       git ls-files -o --exclude-standard -z packages/cli | xargs -0 git hash-object --
-    } 2>&1 | git hash-object --stdin
+    } | git hash-object --stdin
   )
   if [ "$clippy_stamp" != "$(cat "$clippy_stamp_file" 2>/dev/null)" ]; then
-    if out=$(cd packages/cli && cargo clippy --all-targets --all-features 2>&1); then
+    if out=$(cd packages/cli && cargo clippy --quiet --all-targets --all-features 2>&1); then
       mkdir -p target && printf '%s\n' "$clippy_stamp" >"$clippy_stamp_file"
     else
-      # A diagnostic starts at `error` or `warning` in the first column and
-      # runs to the next blank line; cargo's progress lines sit between them.
-      blocks=$(printf '%s\n' "$out" | awk '/^(error|warning)/ { inBlock = 1 } inBlock { print } /^$/ { inBlock = 0 }')
-      [ -n "$blocks" ] || blocks=$out
-      shown=$(printf '%s\n' "$blocks" | head -n 80)
-      hidden=$(($(printf '%s\n' "$blocks" | wc -l) - 80))
-      if [ "$hidden" -gt 0 ]; then
-        shown="$shown"$'\n'"... $hidden more lines (cd packages/cli && cargo clippy --all-targets --all-features)"
+      shown=$(printf '%s\n' "$out" | head -n 80)
+      if [ "$shown" != "$out" ]; then
+        shown="$shown"$'\n'"... cut at 80 lines (rest: cd packages/cli && cargo clippy --all-targets --all-features)"
       fi
       problems="$problems"$'\n'"Clippy failed (fix, then push again):"$'\n'"$shown"
     fi
