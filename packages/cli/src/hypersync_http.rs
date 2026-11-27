@@ -119,7 +119,88 @@ fn http_client_builder(user_agent: &str) -> reqwest::ClientBuilder {
         .connect_timeout(CONNECT_TIMEOUT);
     match std::env::var("ENVIO_HTTP_VERSION").as_deref() {
         Ok("h2") => builder,
+        Ok("h2big") => builder
+            .http2_initial_stream_window_size(16 << 20)
+            .http2_initial_connection_window_size(64 << 20),
         _ => builder.http1_only(),
+    }
+}
+
+/// Experiment only: one line per query to `ENVIO_HTTP_TRACE`, tab separated:
+/// http version, queries in flight when it was sent, ms to response headers,
+/// ms to read the body, body bytes.
+pub(crate) mod trace {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{LazyLock, Mutex};
+    use std::time::Instant;
+
+    static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+    static FILE: LazyLock<Option<Mutex<std::fs::File>>> = LazyLock::new(|| {
+        let path = std::env::var("ENVIO_HTTP_TRACE").ok()?;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()?;
+        Some(Mutex::new(file))
+    });
+
+    #[derive(Clone)]
+    pub(crate) struct Span {
+        sent: Instant,
+        in_flight: usize,
+        headers_ms: f64,
+    }
+
+    struct InFlight;
+    impl Drop for InFlight {
+        fn drop(&mut self) {
+            IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) async fn send(
+        request: reqwest::RequestBuilder,
+    ) -> reqwest::Result<reqwest::Response> {
+        let in_flight = IN_FLIGHT.fetch_add(1, Ordering::Relaxed) + 1;
+        let _guard = InFlight;
+        let sent = Instant::now();
+        let mut response = request.send().await?;
+        response.extensions_mut().insert(Span {
+            sent,
+            in_flight,
+            headers_ms: sent.elapsed().as_secs_f64() * 1e3,
+        });
+        Ok(response)
+    }
+
+    pub(crate) trait TracedSend {
+        fn traced_send(
+            self,
+        ) -> impl std::future::Future<Output = reqwest::Result<reqwest::Response>>;
+    }
+
+    impl TracedSend for reqwest::RequestBuilder {
+        fn traced_send(
+            self,
+        ) -> impl std::future::Future<Output = reqwest::Result<reqwest::Response>> {
+            send(self)
+        }
+    }
+
+    pub(crate) fn finish(span: Option<Span>, version: reqwest::Version, bytes: usize) {
+        let (Some(span), Some(file)) = (span, FILE.as_ref()) else {
+            return;
+        };
+        let total_ms = span.sent.elapsed().as_secs_f64() * 1e3;
+        let line = format!(
+            "{version:?}\t{}\t{:.1}\t{:.1}\t{bytes}\n",
+            span.in_flight,
+            span.headers_ms,
+            total_ms - span.headers_ms
+        );
+        let _ = file.lock().unwrap().write_all(line.as_bytes());
     }
 }
 
@@ -174,6 +255,8 @@ pub(crate) async fn read_packed_message(
 /// The whole body in one buffer, sized up front when the server says how
 /// long it is.
 pub(crate) async fn read_body(mut response: reqwest::Response) -> Result<Buffer> {
+    let span = response.extensions().get::<trace::Span>().cloned();
+    let version = response.version();
     // The announced length is the server's word: past this, the body grows as
     // it arrives rather than reserving whatever was announced.
     const MAX_PREALLOCATION: u64 = 64 << 20;
@@ -186,6 +269,7 @@ pub(crate) async fn read_body(mut response: reqwest::Response) -> Result<Buffer>
     while let Some(chunk) = response.chunk().await.context("read response body bytes")? {
         body.extend_from_slice(&chunk);
     }
+    trace::finish(span, version, body.len());
     Ok(Buffer::from_vec(body))
 }
 

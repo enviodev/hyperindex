@@ -1,6 +1,6 @@
 name: HTTP version A/B
 
-# Temporary: compares HTTP/1.1 and HTTP/2 to HyperSync from a runner with a
+# Temporary: compares HTTP/1.1 and HTTP/2 to HyperSync from runners with a
 # direct route, on open indexer benchmark cases. Delete with its branch.
 on:
   push:
@@ -11,9 +11,40 @@ permissions:
   contents: read
 
 jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: sudo apt-get install -y -qq nghttp2-client > /dev/null
+      - name: What the servers negotiate and announce
+        env:
+          ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
+        run: |
+          for host in solana.hypersync.xyz 1.hypersync.xyz eth.hypersync.xyz; do
+            echo "::group::$host"
+            echo "--- DNS"; getent ahosts "$host" | awk '{print $1}' | sort -u
+            echo "--- curl HTTP/2"
+            curl -sS -o /dev/null -D - --http2 -H "Authorization: Bearer $ENVIO_API_TOKEN" \
+              -w 'negotiated=%{http_version} ip=%{remote_ip} connect=%{time_connect}s tls=%{time_appconnect}s ttfb=%{time_starttransfer}s\n' \
+              "https://$host/height"
+            echo "--- curl HTTP/1.1"
+            curl -sS -o /dev/null -D - --http1.1 -H "Authorization: Bearer $ENVIO_API_TOKEN" \
+              -w 'negotiated=%{http_version} ip=%{remote_ip} connect=%{time_connect}s tls=%{time_appconnect}s ttfb=%{time_starttransfer}s\n' \
+              "https://$host/height"
+            echo "--- server SETTINGS and WINDOW_UPDATE frames"
+            nghttp -nv -H "authorization: Bearer $ENVIO_API_TOKEN" "https://$host/height" 2>&1 \
+              | grep -E "SETTINGS|SETTINGS_|WINDOW_UPDATE|window_size_increment|ALPN|recv \(stream_id=[0-9]+\) (server|via|alt-svc|cf-|x-)" | head -40
+            echo "::endgroup::"
+          done
+
   ab:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [solana-spl-transfers, erc20-transfer-events]
+        job: [1, 2, 3, 4]
     services:
       postgres:
         image: postgres:16
@@ -57,41 +88,13 @@ jobs:
       - name: Clone the benchmark
         run: git clone --depth 1 https://github.com/enviodev/open-indexer-benchmark "$RUNNER_TEMP/bench"
 
-      - name: Run cases, alternating HTTP versions
+      - name: Warm-up, then h1 h2 h2big h2big h2 h1
         env:
           ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
-        run: |
-          set -u
-          bench="$RUNNER_TEMP/bench"
-          summary="$GITHUB_STEP_SUMMARY"
-          echo "| case | http | round | events/s | windows | range s | data |" >> "$summary"
-          echo "|---|---|---|---|---|---|---|" >> "$summary"
-          for case in solana-spl-transfers erc20-transfer-events; do
-            project="$bench/cases/$case/envio"
-            (cd "$project" && pnpm install --frozen-lockfile > /dev/null)
-            pkg=$(readlink -f "$project/node_modules/envio")
-            addon_dir=$(readlink -f "$project/node_modules/.pnpm/envio-linux-x64@3.19.0/node_modules/envio-linux-x64")
-            rm -rf "$pkg/src" && cp -r packages/envio/src "$pkg/src"
-            rm -f "$addon_dir/envio.node" && cp target/release/libenvio.so "$addon_dir/envio.node"
-            for round in 1 2; do
-              for http in h1 h2; do
-                log="$RUNNER_TEMP/$case.$http.$round.log"
-                (cd "$bench" && ENVIO_HTTP_VERSION=$http node "cases/$case/run.ts" envio) > "$log" 2>&1 || true
-                result=$(grep -o 'BENCHMARK_RESULT .*' "$log" | cut -c18-)
-                if [ -z "$result" ]; then
-                  echo "| $case | $http | $round | failed | | | |" >> "$summary"
-                  tail -40 "$log"
-                  continue
-                fi
-                echo "$case $http $round $result"
-                echo "$result" | jq -r --arg c "$case" --arg h "$http" --arg r "$round" \
-                  '"| \($c) | \($h) | \($r) | \(.eventsPerSec|floor) | \([.windowRuns[].eventsPerSec|floor]|join(" / ")) | \(.rangeSeconds*10|floor/10) | \(.correctness) |"' >> "$summary"
-              done
-            done
-          done
+        run: .github/http-ab/run.sh "${{ matrix.case }}" "${{ matrix.job }}"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: logs
-          path: ${{ runner.temp }}/*.log
+          name: out-${{ matrix.case }}-${{ matrix.job }}
+          path: ${{ runner.temp }}/out

@@ -55,12 +55,11 @@ pub(super) async fn height(http: &HttpClient) -> Result<u64> {
 }
 
 pub(super) async fn query(http: &HttpClient, query: &SolanaQuery) -> Result<QueryOutcome> {
-    let response = http
-        .request(Method::POST, &["query", "arrow"])?
-        .json(query)
-        .send()
-        .await
-        .context("execute http req")?;
+    let response = crate::hypersync_http::trace::send(
+        http.request(Method::POST, &["query", "arrow"])?.json(query),
+    )
+    .await
+    .context("execute http req")?;
     match classify_reply(response).await? {
         Reply::Success(response) => {
             let body = read_body(response).await?;

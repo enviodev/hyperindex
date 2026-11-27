@@ -12,6 +12,7 @@ use hypersync_net_types::hypersync_net_types_capnp::{cached_query_response, quer
 use hypersync_net_types::{ArchiveHeight, Query, RollbackGuard};
 use reqwest::Method;
 
+use crate::hypersync_http::trace::TracedSend;
 use crate::hypersync_http::{
     classify_reply, locate_file, read_files_in_message, read_packed_message, HttpClient, Reply,
 };
@@ -110,13 +111,13 @@ impl Transport {
     }
 
     async fn query_json(&self, query: &Query) -> Result<Attempt> {
-        let response = self
-            .http
-            .request(Method::POST, &["query", "arrow-ipc"])?
-            .json(query)
-            .send()
-            .await
-            .context("execute http req")?;
+        let response = crate::hypersync_http::trace::send(
+            self.http
+                .request(Method::POST, &["query", "arrow-ipc"])?
+                .json(query),
+        )
+        .await
+        .context("execute http req")?;
         attempt_of(classify_reply(response).await?, Root::Plain).await
     }
 
@@ -128,7 +129,7 @@ impl Transport {
                 .http
                 .request(Method::POST, &path)?
                 .body(body)
-                .send()
+                .traced_send()
                 .await
                 .context("execute http req")?;
             match classify_reply(response).await {
@@ -149,7 +150,7 @@ impl Transport {
             .http
             .request(Method::POST, &path)?
             .body(body)
-            .send()
+            .traced_send()
             .await
             .context("execute http req")?;
         attempt_of(classify_reply(response).await?, Root::Plain).await
