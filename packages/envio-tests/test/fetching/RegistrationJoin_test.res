@@ -79,7 +79,7 @@ indexer.onEvent({ contract: "TokenB", event: "TestEvent" }, async () => {});`,
   scenario->Scenario.it(
     "keeps its addresses when one of its contracts registers more",
     ~sources=[{chain: 1337}],
-    ~maxAddrInPartition=2,
+    ~maxAddressesPerGroup=2,
     async (~t, ~indexer as _, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(1000)

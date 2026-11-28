@@ -129,12 +129,12 @@ describe("MockSource.expectItemsQueries", () => {
     ])
   })
 
-  // Two addresses on one contract with `maxAddrInPartition=1` give the chain two
+  // Two addresses on one contract with `maxAddressesPerGroup=1` give the chain two
   // groups, so far from the head two item queries are pending at once.
   scenario->Scenario.it(
     "refuses a reply two pending queries could take, naming the field that tells them apart",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(2000)
@@ -162,7 +162,7 @@ Give each query its own entry, told apart by address:
   scenario->Scenario.it(
     "runs `where` only on the queries an entry's other fields match",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(2000)
@@ -191,7 +191,7 @@ Give each query its own entry, told apart by address:
   scenario->Scenario.it(
     "refuses to reply while a pending query is in no entry, then answers one left pending",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(2000)
@@ -228,7 +228,7 @@ Reply to them in this list, or keep them pending:
   scenario->Scenario.it(
     "sees every request's follow-up before checking for unlisted queries",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(2000)
@@ -296,7 +296,7 @@ Pending:
   scenario->Scenario.it(
     "times out naming a query that may only follow an earlier reply",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(2000)
@@ -326,7 +326,7 @@ The list replies only once every entry matches, but the indexer may send a query
   scenario->Scenario.it(
     "keeps the queries it replied to, in entry order",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(2000)
@@ -361,7 +361,7 @@ The list replies only once every entry matches, but the indexer may send a query
   scenario->Scenario.it(
     "matches a query by an address it covers, in any letter case",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(2000)
@@ -490,7 +490,7 @@ The list replies only once every entry matches, but the indexer may send a query
   scenario->Scenario.it(
     "fetches every group up to the block, not just the first to reach it",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(2000)
@@ -511,7 +511,7 @@ The list replies only once every entry matches, but the indexer may send a query
   scenario->Scenario.it(
     "fetches empty ranges up to a block, one realistic wave at a time",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(2000)
@@ -527,7 +527,7 @@ The list replies only once every entry matches, but the indexer may send a query
   scenario->Scenario.it(
     "builds a reply from the query it matched",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(2000)

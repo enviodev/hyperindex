@@ -148,7 +148,7 @@ describe("Indexing plan: client-side filtering across a rollback", () => {
     "keeps a catch-up the rollback leaves behind, capped at the rollback target, with the contract still client-side",
     ~sources=[{chain: 1337, methods}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       await sourceMock->registerInReorgWindow
@@ -190,7 +190,7 @@ describe("Indexing plan: client-side filtering across a rollback", () => {
     "leaves no catch-up once the rollback puts the address-free need level with it",
     ~sources=[{chain: 1337, methods}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       await sourceMock->registerInReorgWindow

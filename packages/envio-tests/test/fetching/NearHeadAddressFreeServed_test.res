@@ -280,7 +280,7 @@ describe("Near-head address-free reads", () => {
         ~virtualTime=false,
         // One address per partition and per fallback request, so each Pair
         // address takes its own backfill query and its own fallback request.
-        ~maxAddrInPartition=1,
+        ~maxAddressesPerGroup=1,
         async (~indexer, ~source as _) => {
           await indexer->waitForSeen("3-1")
           await indexer.waitUntilReady()
@@ -343,7 +343,7 @@ describe("Near-head address-free reads", () => {
       ~yamlSources=true,
       // A real HyperSync source against a local server: its queries resolve on real I/O.
       ~virtualTime=false,
-      ~maxAddrInPartition=1,
+      ~maxAddressesPerGroup=1,
       async (~indexer, ~source as _) => {
         await indexer->waitForSeen("3-1")
         await indexer.waitUntilReady()

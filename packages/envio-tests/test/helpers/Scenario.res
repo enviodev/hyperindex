@@ -181,12 +181,12 @@ let withMockSources = (config: Config.t, ~sources: array<(int, MockSource.t)>) =
 // can configure belongs in the YAML instead.
 let withInternalOverrides = (
   config: Config.t,
-  ~maxAddrInPartition,
+  ~maxAddressesPerGroup,
   ~clientFilterAddressThreshold,
   ~reorgThresholdReadyTolerance,
 ) => {
   ...config,
-  maxAddrInPartition: maxAddrInPartition->Option.getOr(config.maxAddrInPartition),
+  maxAddressesPerGroup: maxAddressesPerGroup->Option.getOr(config.maxAddressesPerGroup),
   clientFilterAddressThreshold: clientFilterAddressThreshold->Option.getOr(
     config.clientFilterAddressThreshold,
   ),
@@ -212,7 +212,7 @@ let run = async (
   ~startBlockRetry=?,
   ~targetBufferSize=?,
   ~inMemoryObjectsTarget=?,
-  ~maxAddrInPartition=?,
+  ~maxAddressesPerGroup=?,
   ~clientFilterAddressThreshold=?,
   ~reorgThresholdReadyTolerance=?,
   ~holdRealtime=?,
@@ -274,7 +274,7 @@ let run = async (
     (
       yamlSources ? scenario.config : scenario.config->withMockSources(~sources=mocks)
     )->withInternalOverrides(
-      ~maxAddrInPartition,
+      ~maxAddressesPerGroup,
       ~clientFilterAddressThreshold,
       ~reorgThresholdReadyTolerance,
     )
@@ -391,7 +391,7 @@ let it = (
   ~virtualTime=?,
   ~targetBufferSize=?,
   ~inMemoryObjectsTarget=?,
-  ~maxAddrInPartition=?,
+  ~maxAddressesPerGroup=?,
   ~clientFilterAddressThreshold=?,
   ~reorgThresholdReadyTolerance=?,
   ~holdRealtime=?,
@@ -426,7 +426,7 @@ let it = (
           ~virtualTime?,
           ~targetBufferSize?,
           ~inMemoryObjectsTarget?,
-          ~maxAddrInPartition?,
+          ~maxAddressesPerGroup?,
           ~clientFilterAddressThreshold?,
           ~reorgThresholdReadyTolerance?,
           ~holdRealtime?,

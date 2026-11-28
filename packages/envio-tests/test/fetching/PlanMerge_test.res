@@ -67,7 +67,7 @@ describe("Indexing plan: group joins over the indexer loop", () => {
   scenario->Scenario.it(
     "Joins registrations to the open group, and gives one that would overflow it a group of its own",
     ~sources=[{chain: 1337}],
-    ~maxAddrInPartition=3,
+    ~maxAddressesPerGroup=3,
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(10_000)
@@ -128,7 +128,7 @@ describe("Indexing plan: group joins over the indexer loop", () => {
   scenario->Scenario.it(
     "Gives a registration within a catch-up's range a group of its own rather than joining it",
     ~sources=[{chain: 1337}],
-    ~maxAddrInPartition=2,
+    ~maxAddressesPerGroup=2,
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(10_000)
@@ -237,7 +237,7 @@ indexer.contractRegister({ contract: "ContractA", event: "Registered" }, async (
   wildcardScenario->Scenario.it(
     "Keeps the wildcard request apart while registrations get a group of their own",
     ~sources=[{chain: 1337}],
-    ~maxAddrInPartition=2,
+    ~maxAddressesPerGroup=2,
     async (~t, ~indexer as _, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(10_000)

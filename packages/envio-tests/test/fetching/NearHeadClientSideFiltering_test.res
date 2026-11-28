@@ -87,7 +87,7 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
     ~sources=[{chain: 1337}],
     // One address per group, so the three Gravatar addresses take three
     // groups and three queries per block until the switch.
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let processed = []
       let record = (~blockNumber, ~logIndex): MockSource.mockSourceHandler =>
@@ -183,7 +183,7 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
   laggedScenario->Scenario.it(
     "counts the 200 blocks from the head the chain can fetch",
     ~sources=[{chain: 1337}],
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
       // Known head 1000, fetchable head 950.
@@ -225,7 +225,7 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
   scenario->Scenario.it(
     "judges the distance against a head it just learned, not one a response repeats",
     ~sources=[{chain: 1337}],
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
       // Like an RPC source, the responses below repeat the height their query
@@ -267,7 +267,7 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
   twoChainScenario->Scenario.it(
     "switches a chain at its head while another chain is still backfilling",
     ~sources=[{chain: 1337}, {chain: 100}],
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     // Without realtime, a chain at its head polls for new blocks at the
     // reduced interval.
     ~sourceTiming={reducedPollingInterval: 1},
@@ -313,7 +313,7 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
   scenario->Scenario.it(
     "resumes a chain by address until it is back near the head",
     ~sources=[{chain: 1337}],
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       sourceMock.resolveGetHeightOrThrow(300)

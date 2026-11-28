@@ -280,7 +280,7 @@ chains:
     "Proposes a query up to the end block while the buffer is past its target",
     ~sources=[{chain: 1337}],
     ~targetBufferSize=10,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer as _, ~source) => {
       t.expect(
         await proposesPastFullBuffer(
@@ -306,7 +306,7 @@ chains:
     "Proposes an open-ended query while the buffer is past its target",
     ~sources=[{chain: 1337}],
     ~targetBufferSize=10,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer as _, ~source) => {
       t.expect(
         await proposesPastFullBuffer(

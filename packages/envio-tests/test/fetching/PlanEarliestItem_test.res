@@ -163,7 +163,7 @@ describe("Indexing plan: earliest processable item over the indexer loop", () =>
   )->Scenario.it(
     "Processes nothing while another group hasn't fetched the start block",
     ~sources=[{chain: 1337}],
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(10_000)

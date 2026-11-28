@@ -384,7 +384,7 @@ let makeInternal = (
       progressBlockNumber,
       maxReorgDepth,
       shouldRollbackOnReorg: config.shouldRollbackOnReorg,
-      maxAddressesPerGroup: config.maxAddrInPartition,
+      maxAddressesPerGroup: config.maxAddressesPerGroup,
       // Fuel and SVM route through the address store like EVM does, so the
       // address-free path works for them - but their address counts are nowhere
       // near the threshold, so switching would only trade a server-side filter
@@ -426,7 +426,7 @@ let makeInternal = (
     ~addressStore,
     ~chainBuffer,
     ~logger,
-    ~maxAddressesPerRequest=config.maxAddrInPartition,
+    ~maxAddressesPerRequest=config.maxAddressesPerGroup,
     ~onBlockRegistrations,
   )
 

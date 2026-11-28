@@ -341,7 +341,7 @@ describe("Dynamic contract registration", () => {
   scenario->Scenario.it(
     "joins a batch of registrations to the open group until it is full, then starts a new group",
     ~sources,
-    ~maxAddrInPartition=3,
+    ~maxAddressesPerGroup=3,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let queries = await sourceMock->registerInFirstResponse(
@@ -364,7 +364,7 @@ describe("Dynamic contract registration", () => {
   scenario->Scenario.it(
     "keeps each contract's registrations in groups of their own",
     ~sources,
-    ~maxAddrInPartition=3,
+    ~maxAddressesPerGroup=3,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let queries = await sourceMock->registerInFirstResponse(

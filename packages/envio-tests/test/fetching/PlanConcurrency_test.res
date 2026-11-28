@@ -105,7 +105,7 @@ describe("Indexing plan: per-chain concurrency over the indexer loop", () => {
   )->Scenario.it(
     "keeps at most 100 queries in flight while sizing probes by every group in range",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=5_000_000,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
@@ -165,7 +165,7 @@ describe("Indexing plan: per-chain concurrency over the indexer loop", () => {
   )->Scenario.it(
     "keeps a group querying past its pipeline while only the head chunk is still being fetched",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=300_000,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
@@ -238,7 +238,7 @@ describe("Indexing plan: per-chain concurrency over the indexer loop", () => {
   makeScenario(~addressCount=2)->Scenario.it(
     "re-sorts groups when a response overtakes another",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=100_000,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)

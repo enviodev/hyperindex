@@ -735,13 +735,13 @@ describe("Fetching through random replies, registrations, height changes and reo
   // earlier one. https://github.com/enviodev/hyperindex/issues/1810
   [(1, 1, 3), (2, 2, 5), (3, 3, 1000), (4, 1, 5), (106, 1, 3), (121, 1, 1000)]->Array.forEach(((
     seed,
-    maxAddrInPartition,
+    maxAddressesPerGroup,
     clientFilterAddressThreshold,
   )) =>
     scenario->Scenario.it(
       `handles every registered address's logs once and reaches the head (seed ${seed->Int.toString})`,
       ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
-      ~maxAddrInPartition,
+      ~maxAddressesPerGroup,
       ~clientFilterAddressThreshold,
       async (~t, ~indexer, ~source) => await fuzzSeed(~t, ~indexer, ~source=source(1337), ~seed),
     )

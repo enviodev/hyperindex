@@ -53,7 +53,7 @@ type Counter {
 `,
 )
 
-// Two addresses so `maxAddrInPartition=1` lays the chain out in two groups.
+// Two addresses so `maxAddressesPerGroup=1` lays the chain out in two groups.
 let twoPartitionScenario = Scenario.make(
   ~configYaml=`
 name: progress-block-time-partitions
@@ -205,7 +205,7 @@ describe("Progress block time", () => {
   twoPartitionScenario->Scenario.it(
     "keeps the timestamp when a reorg above the progress block leaves it where it is",
     ~sources=[{chain: 1, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
 

@@ -287,7 +287,7 @@ describe("Source failover", () => {
       {chain: 1337, pollingInterval: 50},
       {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
     ],
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~sourceTiming={newBlockStallTimeout: 10, reducedPollingInterval: 1_000},
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
@@ -329,7 +329,7 @@ describe("Source failover", () => {
       {chain: 1337, pollingInterval: 50},
       {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
     ],
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~sourceTiming={reducedPollingInterval: 100},
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)

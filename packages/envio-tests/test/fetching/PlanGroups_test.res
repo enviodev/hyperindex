@@ -181,9 +181,9 @@ indexer.contractRegister({ contract: "Gravatar", event: "Register" }, async ({ e
   )
 
   sameContract->Scenario.it(
-    "fetches static and dynamic addresses of one contract together up to maxAddrInPartition",
+    "fetches static and dynamic addresses of one contract together up to maxAddressesPerGroup",
     ~sources=[{chain: 1337, autoHeight: 1000}],
-    ~maxAddrInPartition=2,
+    ~maxAddressesPerGroup=2,
     async (~t, ~indexer, ~source) => {
       let queries = await restartWithRegistered(
         ~indexer,
@@ -226,9 +226,9 @@ indexer.contractRegister({ contract: "ContractA", event: "Register" }, async ({ 
   )
 
   otherContract->Scenario.it(
-    "gives every address a group of its own past maxAddrInPartition",
+    "gives every address a group of its own past maxAddressesPerGroup",
     ~sources=[{chain: 1337, autoHeight: 1000}],
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let queries = await restartWithRegistered(
         ~indexer,

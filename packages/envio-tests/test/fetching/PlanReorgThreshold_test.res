@@ -165,7 +165,7 @@ describe("Indexing plan: readiness for the reorg threshold", () => {
   twoPartitions->Scenario.it(
     "does not wait for items above the frontier a lagging partition holds back",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~reorgThresholdReadyTolerance=100,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)

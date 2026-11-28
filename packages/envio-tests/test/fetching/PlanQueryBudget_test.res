@@ -162,7 +162,7 @@ describe("Indexing plan: query budget over the indexer loop", () => {
   )->Scenario.it(
     "reserves a page for each probe on a chain with no density, whatever range it covers",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=100_000,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
@@ -185,7 +185,7 @@ describe("Indexing plan: query budget over the indexer loop", () => {
   scenario->Scenario.it(
     "reserves the whole cold budget, not a page, when the budget holds less than one",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=10_000,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
@@ -221,7 +221,7 @@ describe("Indexing plan: query budget over the indexer loop", () => {
   scenario->Scenario.it(
     "spends only the fresh budget beside in-flight reservations, lowest block first, overshooting by one query",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=100_000,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
@@ -289,7 +289,7 @@ describe("Indexing plan: query budget over the indexer loop", () => {
   scenario->Scenario.it(
     "emits one full chunk when the budget is smaller than a chunk",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=100_000,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
@@ -336,7 +336,7 @@ describe("Indexing plan: query budget over the indexer loop", () => {
   scenario->Scenario.it(
     "starts no chunk past the target block and trims the last one to it",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=100_000,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
@@ -379,7 +379,7 @@ describe("Indexing plan: query budget over the indexer loop", () => {
   )->Scenario.it(
     "gates chunk starts at the target block but keeps the last chunk's span up to a far merge block",
     ~sources,
-    ~maxAddrInPartition=2,
+    ~maxAddressesPerGroup=2,
     ~targetBufferSize=10_000,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
@@ -414,7 +414,7 @@ describe("Indexing plan: query budget over the indexer loop", () => {
   scenario->Scenario.it(
     "fills the gap behind a returned chunk even when that chunk holds more items than the budget",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=100_000,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
@@ -491,7 +491,7 @@ describe("Indexing plan: query budget over the indexer loop", () => {
   scenario->Scenario.it(
     "probes from the cold slice for the response landing first, dense first",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=100_000,
     respondInOrder(~denseFirst=true),
   )
@@ -499,7 +499,7 @@ describe("Indexing plan: query budget over the indexer loop", () => {
   scenario->Scenario.it(
     "probes from the cold slice for the response landing first, dense last",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=100_000,
     respondInOrder(~denseFirst=false),
   )

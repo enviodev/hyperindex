@@ -101,7 +101,7 @@ describe("Indexing plan: progress", () => {
   scenario->Scenario.it(
     "stays at the lagging partition's frontier while items wait above it",
     ~sources=[{chain: 1}],
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(1000)

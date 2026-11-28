@@ -130,7 +130,7 @@ describe("Indexing plan: next query order", () => {
   staggeredStarts->Scenario.it(
     "Queries every group behind the head, furthest behind first",
     ~sources=[{chain: 1337}],
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(100_000)
@@ -168,7 +168,7 @@ describe("Indexing plan: next query order", () => {
   scenarioWith(~addressCount=4, ~endBlock="\n    end_block: 11")->Scenario.it(
     "Queries the head in one stream, waits for a block once it reaches it, and stops at the end block",
     ~sources=[{chain: 1337}],
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~onExit=() => exited := true,
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)

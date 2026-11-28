@@ -159,7 +159,7 @@ describe("Indexing plan: groups across a rollback", () => {
   scenario->Scenario.it(
     "Keeps a group behind the rollback target and refetches the one past it with every surviving address",
     ~sources,
-    ~maxAddrInPartition=3,
+    ~maxAddressesPerGroup=3,
     async (~t, ~indexer, ~source) => {
       t.expect(await queriesAfterRollback(~indexer, ~sync=source(1337), ~validUpTo=9802)).toEqual([
         {
@@ -175,7 +175,7 @@ describe("Indexing plan: groups across a rollback", () => {
   scenario->Scenario.it(
     "Drops the addresses registered past the rollback target",
     ~sources,
-    ~maxAddrInPartition=3,
+    ~maxAddressesPerGroup=3,
     async (~t, ~indexer, ~source) => {
       t.expect(await queriesAfterRollback(~indexer, ~sync=source(1337), ~validUpTo=9801)).toEqual([
         {
@@ -190,7 +190,7 @@ describe("Indexing plan: groups across a rollback", () => {
   scenario->Scenario.it(
     "Leaves only the static address once the rollback undoes every registration",
     ~sources,
-    ~maxAddrInPartition=3,
+    ~maxAddressesPerGroup=3,
     async (~t, ~indexer, ~source) => {
       t.expect(await queriesAfterRollback(~indexer, ~sync=source(1337), ~validUpTo=9800)).toEqual([
         {fromBlock: 9801, toBlock: Unbounded, addresses: [staticAddress]},

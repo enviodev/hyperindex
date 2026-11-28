@@ -52,7 +52,7 @@ describe("Client-side address filtering item dedup", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
     // Switch Gravatar to client-side filtering as soon as it has >2 registered addresses.
     ~clientFilterAddressThreshold=2,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
 

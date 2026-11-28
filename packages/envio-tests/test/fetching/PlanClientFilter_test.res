@@ -140,7 +140,7 @@ describe("Indexing plan: client-side address filtering", () => {
     "fetches a contract over the threshold in one address-free query and keeps the other contract server-side",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
       await sourceMock->collapseGravatar
@@ -165,7 +165,7 @@ describe("Indexing plan: client-side address filtering", () => {
     "keeps a contract server-side while its address count is under the threshold",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=10,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
       sourceMock.resolveGetHeightOrThrow(1000)
@@ -201,7 +201,7 @@ describe("Indexing plan: client-side address filtering", () => {
     "leaves the block handler's request out of the switch",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
       sourceMock.resolveGetHeightOrThrow(1000)
@@ -250,7 +250,7 @@ describe("Indexing plan: client-side address filtering", () => {
     ~clientFilterAddressThreshold=2,
     // One address per group would chunk the six addresses into six groups,
     // had they been laid out before the switch.
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
       sourceMock.resolveGetHeightOrThrow(1000)
@@ -269,7 +269,7 @@ describe("Indexing plan: client-side address filtering", () => {
     "strips a client-filtered contract's addresses from a group shared with a server-side contract",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=2,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
       sourceMock.resolveGetHeightOrThrow(1000)
@@ -298,7 +298,7 @@ describe("Indexing plan: client-side address filtering", () => {
     ~sources=[{chain: 1337}],
     // Gravatar's three addresses cross it; NftFactory's two don't.
     ~clientFilterAddressThreshold=2,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
       await sourceMock->collapseGravatar
@@ -342,7 +342,7 @@ describe("Indexing plan: client-side address filtering", () => {
     "processes an event once when a switch widens the address-free selection with a query in flight",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let handled = []
@@ -392,7 +392,7 @@ describe("Indexing plan: client-side address filtering", () => {
     "accepts every chunk of a retired address-free selection until the last one lands",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let handled = []
@@ -442,7 +442,7 @@ describe("Indexing plan: client-side address filtering", () => {
     "accepts a backfill's response after a later switch widens the selection again",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let handled = []
@@ -505,7 +505,7 @@ describe("Indexing plan: client-side address filtering", () => {
     // The config address and one dynamic address stay server-side, one per
     // group; the second dynamic address crosses it.
     ~clientFilterAddressThreshold=2,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let handled = []

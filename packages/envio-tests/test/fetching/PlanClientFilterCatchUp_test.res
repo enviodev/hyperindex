@@ -131,7 +131,7 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
     "catches an address registered behind the address-free frontier up to it, then drops the catch-up",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let handled = []
@@ -194,7 +194,7 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
     "gives each successive registration its own catch-up",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       await sourceMock->collapseGravatar
@@ -238,7 +238,7 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
     "holds a catch-up while the address-free query is open-ended, then bounds it at what that query covered",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=20)
@@ -269,7 +269,7 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
     "bounds a catch-up at a reply that comes back past the head its query went out with",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=20)
@@ -303,7 +303,7 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
     "processes an event both the catch-up and the address-free query fetched once, then drops the catch-up",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let handled = []
@@ -329,7 +329,7 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
     "keeps a catch-up going to its bound after a partial response",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let handled = []
@@ -361,7 +361,7 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
     "catches an address up over the range the address-free query has in flight above its frontier",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       // Registered at 60, above the address-free frontier of 50, but the
@@ -385,7 +385,7 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
     "catches up an address registered past where an address-free query already went out",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
-    ~maxAddrInPartition=10,
+    ~maxAddressesPerGroup=10,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       // The address-free need fetches to the head it knows, 1000, and waits

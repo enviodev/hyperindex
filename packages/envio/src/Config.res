@@ -152,7 +152,7 @@ type t = {
   defaultChain: option<chain>,
   ecosystem: Ecosystem.t,
   enableRawEvents: bool,
-  maxAddrInPartition: int,
+  maxAddressesPerGroup: int,
   // Per-contract registered-address count past which a dynamic contract switches
   // to client-side filtering. Overridable in tests.
   clientFilterAddressThreshold: int,
@@ -756,7 +756,7 @@ let toEnvioInfo = (publicConfigJson: JSON.t): JSON.t => {
 }
 
 let fromPublic = (publicConfigJson: JSON.t, ~env=IndexerEnv.read()) => {
-  let maxAddrInPartition = env.maxPartitionSize
+  let maxAddressesPerGroup = env.maxPartitionSize
   // Parse public config
   let publicConfig = try publicConfigJson->S.parseOrThrow(publicConfigSchema) catch {
   | S.Raised(exn) =>
@@ -1207,11 +1207,11 @@ let fromPublic = (publicConfigJson: JSON.t, ~env=IndexerEnv.read()) => {
     defaultChain: chains->Array.get(0),
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
     ecosystem,
-    maxAddrInPartition,
+    maxAddressesPerGroup,
     // Caps one contract at a fifth of the 100 requests a chain may have out,
     // so a single busy contract can't take every slot whatever the group size.
     clientFilterAddressThreshold: env.clientFilterAddressThreshold->Option.getOr(
-      maxAddrInPartition * 20,
+      maxAddressesPerGroup * 20,
     ),
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     reorgThresholdReadyTolerance: 100,

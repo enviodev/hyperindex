@@ -106,7 +106,7 @@ describe("Indexing plan: response density and source range capacity over the ind
   )->Scenario.it(
     "takes the source range capacity from a probe that stops short of its range",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=100_000,
     async (~t, ~indexer as _, ~source) => {
       let mock = source(1)
@@ -127,7 +127,7 @@ describe("Indexing plan: response density and source range capacity over the ind
   makeScenario()->Scenario.it(
     "takes the source range capacity from a chunk that stops short of its range",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=100_000,
     async (~t, ~indexer as _, ~source) => {
       let mock = source(1)
@@ -163,7 +163,7 @@ describe("Indexing plan: response density and source range capacity over the ind
   makeScenario()->Scenario.it(
     "keeps a first response with no items as a zero density sample",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=100_000,
     async (~t, ~indexer as _, ~source) => {
       // (0 + 200) / 2 = 100 items/block prices a chunk at 1800 items: six
@@ -182,7 +182,7 @@ describe("Indexing plan: response density and source range capacity over the ind
   makeScenario()->Scenario.it(
     "seeds density from the first response",
     ~sources,
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     ~targetBufferSize=100_000,
     async (~t, ~indexer as _, ~source) => {
       // 5000 items over the first probe's 10 blocks. (500 + 100) / 2 = 300

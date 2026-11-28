@@ -70,7 +70,7 @@ describe("Rate-limit time", () => {
     ~sources=[{chain: 1}],
     // One group per address, and far enough from the head to stay in backfill,
     // so two queries are throttled at once.
-    ~maxAddrInPartition=1,
+    ~maxAddressesPerGroup=1,
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(1000)
