@@ -173,7 +173,7 @@ fn covers_what_the_source_reached_and_asks_for_the_rest_again() {
 }
 
 #[test]
-fn a_registered_address_waits_for_the_open_request_then_owes_a_bounded_catch_up() {
+fn a_registered_address_catches_up_toward_the_head_then_ends_where_the_open_request_reached() {
     let mut plan = chain(&[PAIR1], |_| {});
     let started = start(&mut plan, 1000);
     let (slot, generation, ..) = started[1];
@@ -182,13 +182,19 @@ fn a_registered_address_waits_for_the_open_request_then_owes_a_bounded_catch_up(
     let (open_slot, open_generation, ..) = open[0];
 
     register(&mut plan, PAIR2, 10);
-    let held = plan.ready_through_block();
-    complete(&mut plan, open_slot, open_generation, 400);
     let catch_up = plan.needs.len() - 1;
+    let while_open = (
+        plan.needs.to_block[catch_up as usize],
+        start(&mut plan, 1000)
+            .into_iter()
+            .map(|(_, _, needs, from, to)| (needs, from, to))
+            .collect::<Vec<_>>(),
+    );
+    complete(&mut plan, open_slot, open_generation, 400);
 
     assert_eq!(
         (
-            held,
+            while_open,
             addresses_of(&plan, 1),
             addresses_of(&plan, catch_up),
             plan.needs.floor[catch_up as usize],
@@ -196,7 +202,7 @@ fn a_registered_address_waits_for_the_open_request_then_owes_a_bounded_catch_up(
             plan.needs.joins[catch_up as usize],
         ),
         (
-            0,
+            (None, vec![(vec![catch_up], 10, None)]),
             vec![PAIR1.to_string(), PAIR2.to_string()],
             vec![PAIR2.to_string()],
             9,

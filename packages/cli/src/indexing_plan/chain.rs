@@ -201,8 +201,11 @@ impl Requests {
 struct PendingJoin {
     contract: u32,
     ids: Vec<Id>,
-    /// The lowest effective start block among them, which holds the frontier.
+    /// The lowest effective start block among them.
     start_block: i64,
+    /// Their catch-up, fetching toward the head until J is known; its
+    /// coverage holds the frontier meanwhile.
+    catch_up: u32,
 }
 
 /// What the plan has to tell an operator. It decides nothing from these; the
@@ -747,9 +750,6 @@ impl ChainPlan {
         let mut ready = self
             .lowest_covered()
             .map_or(head_cap, |covered| covered.min(head_cap));
-        for join in &self.pending_joins {
-            ready = ready.min(join.start_block - 1);
-        }
         if let Some(&lowest) = self.backlog.first() {
             ready = ready.min(lowest - 1);
         }
@@ -1073,7 +1073,7 @@ impl ChainPlan {
                 .unwrap()
                 .live_ids_of_contract(contract, first_new_id);
             if !ids.is_empty() {
-                self.join(contract, ids);
+                self.join(contract, ids, None);
             }
         }
         Ok(notices)
@@ -1090,15 +1090,26 @@ impl ChainPlan {
     /// What `ids` owe below `through`, the block their forward need has been
     /// asked through.
     fn add_catch_up(&mut self, contract: u32, ids: Vec<Id>, through: i64, joins: u32) {
-        let start_block = self.start_block_of(&ids);
-        if start_block > through {
+        if self.start_block_of(&ids) > through {
             return;
         }
-        let registrations = self.address_events_of(contract);
-        let floor = (start_block - 1).max(self.events_floor(&registrations).unwrap_or(i64::MIN));
         let to_block = match self.config.contract_end_blocks[contract as usize] {
             Some(end) => end.min(through),
             None => through,
+        };
+        let need = self.add_list_need(contract, ids, Some(to_block));
+        self.needs.joins[need as usize] = Some(joins);
+    }
+
+    /// A list need for `ids` from their start, ending at `to_block` or, with
+    /// none, fetching toward the head until it is given one.
+    fn add_list_need(&mut self, contract: u32, ids: Vec<Id>, to_block: Option<i64>) -> u32 {
+        let start_block = self.start_block_of(&ids);
+        let registrations = self.address_events_of(contract);
+        let floor = (start_block - 1).max(self.events_floor(&registrations).unwrap_or(i64::MIN));
+        let to_block = match (to_block, self.config.contract_end_blocks[contract as usize]) {
+            (Some(to_block), _) => Some(to_block),
+            (None, end) => end,
         };
         // An address registered again from an earlier block owes only what
         // lies below its retired entry's block: that entry's needs fetch the rest.
@@ -1121,12 +1132,12 @@ impl ChainPlan {
             },
             floor,
             floor,
-            Some(to_block),
+            to_block,
         );
-        self.needs.joins[need as usize] = Some(joins);
         if let Some(fetched_from) = fetched_from {
-            self.needs.coverage[need as usize].add(fetched_from, to_block);
+            self.needs.coverage[need as usize].add(fetched_from, to_block.unwrap_or(i64::MAX));
         }
+        need
     }
 
     fn new_group(&mut self, contract: u32, ids: Vec<Id>, covered_through: Option<i64>) -> u32 {
@@ -1156,19 +1167,18 @@ impl ChainPlan {
     /// has been asked through, J, and owe one list need for what lies below.
     /// While an open-ended request of that need is out, J isn't known: the join
     /// waits for it, holding the frontier at the addresses' start.
-    fn join(&mut self, contract: u32, ids: Vec<Id>) {
-        let start_block = self.start_block_of(&ids);
+    /// Rule 4. While the need the addresses join has an open-ended request
+    /// out, J is unknown: they wait to join, and their catch-up fetches toward
+    /// the head meanwhile. Once J is known it ends there; what it fetched past
+    /// J is dropped as a duplicate when pages merge.
+    fn join(&mut self, contract: u32, ids: Vec<Id>, open_catch_up: Option<u32>) {
         if self.address_free[contract as usize] {
             let Some(forward) = self.address_free_need[contract as usize] else {
                 return;
             };
             match self.requested_through(forward) {
-                Some(through) => self.add_catch_up(contract, ids, through, forward),
-                None => self.pending_joins.push(PendingJoin {
-                    contract,
-                    ids,
-                    start_block,
-                }),
+                Some(through) => self.owe(contract, ids, through, forward, open_catch_up),
+                None => self.wait_to_join(contract, ids, open_catch_up),
             }
             return;
         }
@@ -1191,23 +1201,57 @@ impl ChainPlan {
             return;
         }
         let Some(through) = self.requested_through(need) else {
-            self.pending_joins.push(PendingJoin {
-                contract,
-                ids,
-                start_block,
-            });
+            self.wait_to_join(contract, ids, open_catch_up);
             return;
         };
         let room = self.config.max_group_size - self.groups.ids[group as usize].len();
         let (joining, rest) = ids.split_at(room.min(ids.len()));
         if !joining.is_empty() {
             self.add_members(group, joining);
-            self.add_catch_up(contract, joining.to_vec(), through, need);
+            self.owe(contract, joining.to_vec(), through, need, open_catch_up);
         }
         if !rest.is_empty() {
             let rest = rest.to_vec();
             let forward = self.add_groups(contract, rest.clone(), Some(through));
-            self.add_catch_up(contract, rest, through, forward);
+            self.owe(contract, rest, through, forward, open_catch_up);
+        }
+    }
+
+    fn wait_to_join(&mut self, contract: u32, ids: Vec<Id>, open_catch_up: Option<u32>) {
+        let catch_up = match open_catch_up {
+            Some(catch_up) => catch_up,
+            None => self.add_list_need(contract, ids.clone(), None),
+        };
+        self.pending_joins.push(PendingJoin {
+            contract,
+            start_block: self.start_block_of(&ids),
+            ids,
+            catch_up,
+        });
+    }
+
+    /// What `ids` owe below `through`: their open catch-up ends there, or a
+    /// new one covers it.
+    fn owe(
+        &mut self,
+        contract: u32,
+        ids: Vec<Id>,
+        through: i64,
+        joins: u32,
+        open_catch_up: Option<u32>,
+    ) {
+        match open_catch_up {
+            Some(catch_up) => {
+                let c = catch_up as usize;
+                let to_block = self.config.contract_end_blocks[contract as usize]
+                    .map_or(through, |end| end.min(through));
+                self.needs.to_block[c] = Some(to_block);
+                self.needs.joins[c] = Some(joins);
+                if self.needs.is_finished(catch_up) {
+                    self.finished_catch_ups.push(catch_up);
+                }
+            }
+            None => self.add_catch_up(contract, ids, through, joins),
         }
     }
 
@@ -1243,7 +1287,7 @@ impl ChainPlan {
         }
         let pending = std::mem::take(&mut self.pending_joins);
         for join in pending {
-            self.join(join.contract, join.ids);
+            self.join(join.contract, join.ids, Some(join.catch_up));
         }
     }
 
