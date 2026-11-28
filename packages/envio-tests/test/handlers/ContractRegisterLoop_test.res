@@ -173,25 +173,33 @@ describe("contractRegister loop", () => {
         ],
       })
       await indexer.getRollbackReadyPromise()
-      sourceMock.drainPendingItemsQueries()
-      await sourceMock.expectItemsQueries([{reply: LeavePending}, {reply: LeavePending}])
-      t.expect(
-        sourceMock.pendingItemsQueries->Array.map(
-          query => (
+      let queryShapes = queries =>
+        queries->Array.map(
+          (query: MockSource.pendingItemsQuery) => (
             query.fromBlock,
             query.toBlock,
             query->MockSource.addresses->Array.map(Address.toString),
           ),
-        ),
-        ~message="550's registration is fetched, from its block and in the group; 620's is not",
-      ).toEqual([
-        (550, Bounded(551), [address(1)->Address.toString]),
-        (
-          552,
-          Unbounded,
-          ["0x2b2f78c5bf6d9c12ee1225d5f374aa91204580c3", address(1)->Address.toString],
-        ),
-      ])
+        )
+      let afterRollback =
+        sourceMock.pendingItemsQueries
+        ->Array.filter(query => query.fromBlock >= 550 && query.fromBlock <= 551)
+        ->queryShapes
+      // The drain answers the group's request up to 551 and the catch-up up
+      // to 550, so the catch-up goes on bounded at 551.
+      sourceMock.drainPendingItemsQueries()
+      await sourceMock.expectItemsQueries([{reply: LeavePending}, {reply: LeavePending}])
+      let staticAddress = "0x2b2f78c5bf6d9c12ee1225d5f374aa91204580c3"
+      t.expect(
+        (afterRollback, sourceMock.pendingItemsQueries->queryShapes),
+        ~message="550's registration catches up from its block toward the head, then is bounded where the group's request reached and joins the group; 620's is not",
+      ).toEqual((
+        [(551, Unbounded, [staticAddress]), (550, Unbounded, [address(1)->Address.toString])],
+        [
+          (552, Unbounded, [staticAddress, address(1)->Address.toString]),
+          (551, Bounded(551), [address(1)->Address.toString]),
+        ],
+      ))
     },
   )
 })

@@ -156,20 +156,36 @@ describe("An address registered below what its contract has fetched", () => {
           }),
         },
       ])
+      // Until it lands, pair2 catches up toward the head.
+      await sync.expectItemsQueries([
+        {address: pair1, fromBlock: 301, reply: LeavePending},
+        {address: pair2, fromBlock: 10, reply: LeavePending},
+        {where: query => query->MockSource.addresses->Array.length == 0, reply: LeavePending},
+      ])
+      let byAddressQueries = () =>
+        sync.pendingItemsQueries
+        ->Array.filter(query => query->MockSource.addresses->Array.length > 0)
+        ->Array.map(query => (query.fromBlock, query.toBlock, query->sortedAddresses))
+      let whileOpen = byAddressQueries()
       await sync.expectItemsQueries([
         {address: pair1, fromBlock: 301, reply: upTo(400)},
+        {address: pair2, fromBlock: 10, reply: LeavePending},
         {where: query => query->MockSource.addresses->Array.length == 0, reply: LeavePending},
       ])
       await sync.expectItemsQueries([
-        {address: pair2, fromBlock: 10, reply: LeavePending},
+        {address: pair2, fromBlock: 10, reply: upTo(200)},
         {address: pair1, fromBlock: 401, reply: LeavePending},
         {where: query => query->MockSource.addresses->Array.length == 0, reply: LeavePending},
       ])
-      t.expect(
-        sync.pendingItemsQueries
-        ->Array.filter(query => query->MockSource.addresses->Array.length > 0)
-        ->Array.map(query => (query.fromBlock, query.toBlock, query->sortedAddresses)),
-      ).toEqual([(10, Bounded(400), [pair2]), (401, Unbounded, [pair1, pair2])])
+      await sync.expectItemsQueries([
+        {address: pair2, fromBlock: 201, reply: LeavePending},
+        {address: pair1, fromBlock: 401, reply: LeavePending},
+        {where: query => query->MockSource.addresses->Array.length == 0, reply: LeavePending},
+      ])
+      t.expect((whileOpen, byAddressQueries())).toEqual((
+        [(301, Unbounded, [pair1]), (10, Unbounded, [pair2])],
+        [(401, Unbounded, [pair1, pair2]), (201, Bounded(400), [pair2])],
+      ))
     },
   )
 })

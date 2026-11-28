@@ -72,8 +72,9 @@ let processedOrder = async (indexer: IndexerRunner.t) =>
 let singleStatic = scenarioWith(~addresses=[staticAddress])
 
 describe("Indexing plan: earliest processable item over the indexer loop", () => {
-  // The registration joins the group once the group's open-ended request out
-  // lands; what lies below that block is the registered address's catch-up.
+  // The registered address catches up toward the head at once, and joins the
+  // group once the group's open-ended request out lands; what lies below that
+  // block is the registered address's catch-up.
   singleStatic->Scenario.it(
     "Processes events below a registration's block while the registered address catches up",
     ~sources=[{chain: 1337}],
@@ -92,17 +93,21 @@ describe("Indexing plan: earliest processable item over the indexer loop", () =>
           }),
         },
       ])
-      await sync.expectItemsQueries([{fromBlock: 11, reply: LeavePending}])
+      await sync.expectItemsQueries([
+        {fromBlock: 11, reply: LeavePending},
+        {address: registeredAddress, fromBlock: 3, toBlock: Unbounded, reply: LeavePending},
+      ])
       await indexer.advanceTime(1000)
       let beforeCatchUp = await processedOrder(indexer)
       await sync.expectItemsQueries([
         {fromBlock: 11, reply: Respond({items: [], latestFetchedBlockNumber: 20})},
+        {address: registeredAddress, fromBlock: 3, reply: LeavePending},
       ])
       await sync.expectItemsQueries([
         {
           address: registeredAddress,
           fromBlock: 3,
-          toBlock: Bounded(20),
+          toBlock: Unbounded,
           reply: Respond({items: [], latestFetchedBlockNumber: 20}),
         },
         {
@@ -134,17 +139,21 @@ describe("Indexing plan: earliest processable item over the indexer loop", () =>
           }),
         },
       ])
-      await sync.expectItemsQueries([{fromBlock: 501, reply: LeavePending}])
+      await sync.expectItemsQueries([
+        {fromBlock: 501, reply: LeavePending},
+        {address: registeredAddress, fromBlock: 2, toBlock: Unbounded, reply: LeavePending},
+      ])
       await indexer.advanceTime(1000)
       let beforeCatchUp = await processedOrder(indexer)
       await sync.expectItemsQueries([
         {fromBlock: 501, reply: Respond({items: [], latestFetchedBlockNumber: 600})},
+        {address: registeredAddress, fromBlock: 2, reply: LeavePending},
       ])
       await sync.expectItemsQueries([
         {
           address: registeredAddress,
           fromBlock: 2,
-          toBlock: Bounded(600),
+          toBlock: Unbounded,
           reply: Respond({items: [], latestFetchedBlockNumber: 600}),
         },
         {

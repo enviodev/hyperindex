@@ -70,8 +70,9 @@ let upTo = latestFetchedBlockNumber => MockSource.Respond({items: [], latestFetc
 
 // Every block below sits past the first query's 9800, inside the reorg
 // threshold, where a rollback can reach. Addresses 1 and 2, registered at
-// blocks 9801 and 9802, join the static address's group at 9900, where its
-// request out at the time ends, and catch up below it; that fills the group.
+// blocks 9801 and 9802, catch up toward the head at once and join the static
+// address's group at 9900, where its request out at the time ends; that fills
+// the group.
 // Address 3, registered at block 9802 by the catch-up, gets a group of its own,
 // fetched to 9802. The group's next response finds 9900 reorged.
 let reachTwoGroups = async (~indexer: IndexerRunner.t, ~sync: MockSource.t) => {
@@ -91,12 +92,15 @@ let reachTwoGroups = async (~indexer: IndexerRunner.t, ~sync: MockSource.t) => {
     },
   ])
   await indexer.waitUntilIdle()
-  await sync.expectItemsQueries([{fromBlock: 9811, reply: upTo(9900)}])
+  await sync.expectItemsQueries([
+    {fromBlock: 9811, reply: upTo(9900)},
+    {address: address1, fromBlock: 9801, reply: LeavePending},
+  ])
   await sync.expectItemsQueries([
     {
       address: address1,
       fromBlock: 9801,
-      toBlock: Bounded(9900),
+      toBlock: Unbounded,
       reply: Respond({
         items: [registering(~blockNumber=9802, ~logIndex=1, ~srcAddress=address1, [address3])],
         latestFetchedBlockNumber: 9900,

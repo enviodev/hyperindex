@@ -5,7 +5,8 @@ open ItemsQueryView.AddressFree
 // the address-free need has requested gets a by-address catch-up over the
 // gap, bounded by the block the address-free need was requested through, and
 // gone once it gets there. While the address-free query is open-ended and out,
-// that block isn't known, so the catch-up waits for it to land.
+// that block isn't known, so the catch-up goes toward the head and is bounded
+// once the query lands.
 let scenario = Scenario.make(
   ~configYaml=`
 name: fetch-state-client-filter-catch-up
@@ -145,23 +146,30 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
         {fromBlock: 6, reply: LeavePending},
       ])
       // The address-free query from 51 goes out before the contractRegister
-      // run registers address 3, so the catch-up waits for it.
+      // run registers address 3, so the catch-up goes toward the head until
+      // that query lands.
       await indexer.waitUntilIdle()
       let whileOpen = sourceMock->pendingQueries
       await sourceMock.expectItemsQueries([
         {fromBlock: 51, where: isAddressFree, reply: upTo(100)},
         {fromBlock: 6, reply: LeavePending},
+        {fromBlock: 20, reply: LeavePending},
       ])
       // The address-free need, having learned its density, goes on in chunks.
       await sourceMock.expectItemsQueries([
-        {fromBlock: 20, reply: LeavePending},
+        {fromBlock: 20, reply: upTo(~items=[handled->eventAt(30)], 60)},
+        {where: isAddressFree, reply: LeavePending},
+        {fromBlock: 6, reply: LeavePending},
+      ])
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 61, reply: LeavePending},
         {where: isAddressFree, reply: LeavePending},
         {fromBlock: 6, reply: LeavePending},
       ])
       let withCatchUp = sourceMock->catchUpQueries
 
       await sourceMock.expectItemsQueries([
-        {fromBlock: 20, reply: upTo(~items=[handled->eventAt(30)], 100)},
+        {fromBlock: 61, reply: upTo(100)},
         {where: isAddressFree, reply: LeavePending},
         {fromBlock: 6, reply: upTo(1000)},
       ])
@@ -182,8 +190,9 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
             addressFreeContracts: [],
           },
           addressFree(51, Unbounded),
+          catchUp(20, Unbounded),
         ],
-        [catchUp(20, Bounded(100))],
+        [catchUp(61, Bounded(100))],
         [30],
         [],
       ))
@@ -210,11 +219,12 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
       await sourceMock.expectItemsQueries([
         {fromBlock: 51, where: isAddressFree, reply: upTo(100)},
         {fromBlock: 6, reply: LeavePending},
+        {fromBlock: 20, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
         {
           fromBlock: 20,
-          toBlock: Bounded(100),
+          toBlock: Unbounded,
           reply: upTo(~items=[registerAt(30, [address(4)])], 40),
         },
         {where: isAddressFree, reply: LeavePending},
@@ -235,7 +245,7 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
   )
 
   scenario->Scenario.it(
-    "holds a catch-up while the address-free query is open-ended, then bounds it at what that query covered",
+    "catches up toward the head while the address-free query is open-ended, then bounds it at what that query covered",
     ~sources=[{chain: 1337}],
     ~clientFilterAddressThreshold=1,
     ~maxAddressesPerGroup=10,
@@ -245,7 +255,10 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
       await indexer.waitUntilIdle()
       let whileOpen = sourceMock->gravatarQueries
 
-      await sourceMock.expectItemsQueries([{fromBlock: 51, where: isAddressFree, reply: upTo(120)}])
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 51, where: isAddressFree, reply: upTo(120)},
+        {fromBlock: 20, reply: LeavePending},
+      ])
       await sourceMock.expectItemsQueries([
         {fromBlock: 20, reply: upTo(40)},
         {fromBlock: 121, where: isAddressFree, reply: LeavePending},
@@ -257,9 +270,9 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
 
       t.expect(
         (whileOpen, sourceMock->gravatarQueries),
-        ~message="no bound is guessed while the address-free query is open-ended; then the catch-up stops at 120",
+        ~message="the catch-up goes toward the head while the address-free query is open-ended; then it stops at 120",
       ).toEqual((
-        [addressFree(51, Unbounded)],
+        [addressFree(51, Unbounded), catchUp(20, Unbounded)],
         [addressFree(121, Unbounded), catchUp(41, Bounded(120))],
       ))
     },
@@ -280,14 +293,19 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
           where: isAddressFree,
           reply: Respond({items: [], latestFetchedBlockNumber: 1100, knownHeight: 1500}),
         },
+        {fromBlock: 20, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
         {fromBlock: 1101, where: isAddressFree, reply: LeavePending},
-        {fromBlock: 20, reply: LeavePending},
+        {fromBlock: 20, reply: upTo(40)},
+        {fromBlock: 1001, address: nftFactoryConfigAddress, reply: LeavePending},
+      ])
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 1101, where: isAddressFree, reply: LeavePending},
+        {fromBlock: 41, reply: LeavePending},
         {fromBlock: 1001, address: nftFactoryConfigAddress, reply: LeavePending},
       ])
       t.expect(sourceMock->pendingQueries).toEqual([
-        catchUp(20, Bounded(1100)),
         {
           fromBlock: 1001,
           toBlock: Unbounded,
@@ -295,6 +313,7 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
           addressFreeContracts: [],
         },
         addressFree(1101, Unbounded),
+        catchUp(41, Bounded(1100)),
       ])
     },
   )
@@ -311,6 +330,7 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
       await indexer.waitUntilIdle()
       await sourceMock.expectItemsQueries([
         {fromBlock: 51, where: isAddressFree, reply: upTo(~items=[handled->eventAt(60)], 120)},
+        {fromBlock: 20, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
         {fromBlock: 20, reply: upTo(~items=[handled->eventAt(60)], 120)},
@@ -335,9 +355,12 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
       let handled = []
       await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=20)
       await indexer.waitUntilIdle()
-      await sourceMock.expectItemsQueries([{fromBlock: 51, where: isAddressFree, reply: upTo(200)}])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 20, toBlock: Bounded(200), reply: upTo(80)},
+        {fromBlock: 51, where: isAddressFree, reply: upTo(200)},
+        {fromBlock: 20, reply: LeavePending},
+      ])
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 20, toBlock: Unbounded, reply: upTo(80)},
         {fromBlock: 201, where: isAddressFree, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
@@ -368,16 +391,24 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
       // address-free query from 51 went out before the address existed.
       await sourceMock->registerWhileAddressFreeQueryIsOpen(~registeredAt=60)
       await indexer.waitUntilIdle()
-      await sourceMock.expectItemsQueries([{fromBlock: 51, where: isAddressFree, reply: upTo(120)}])
+      let whileOpen = sourceMock->gravatarQueries
       await sourceMock.expectItemsQueries([
-        {fromBlock: 121, where: isAddressFree, reply: LeavePending},
+        {fromBlock: 51, where: isAddressFree, reply: upTo(120)},
         {fromBlock: 60, reply: LeavePending},
       ])
-
-      t.expect(sourceMock->gravatarQueries).toEqual([
-        catchUp(60, Bounded(120)),
-        addressFree(121, Unbounded),
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 121, where: isAddressFree, reply: LeavePending},
+        {fromBlock: 60, reply: upTo(80)},
       ])
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 121, where: isAddressFree, reply: LeavePending},
+        {fromBlock: 81, reply: LeavePending},
+      ])
+
+      t.expect((whileOpen, sourceMock->gravatarQueries)).toEqual((
+        [addressFree(51, Unbounded), catchUp(60, Unbounded)],
+        [addressFree(121, Unbounded), catchUp(81, Bounded(120))],
+      ))
     },
   )
 
@@ -398,8 +429,8 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
       ])
       // The config group's query comes back past that head, registering
       // address 3 at 1060. The address-free query from 1001 goes out before
-      // the contractRegister run registers it, so address 3 gets a catch-up
-      // once that query lands.
+      // the contractRegister run registers it, so address 3 catches up toward
+      // the head, bounded once that query lands.
       await sourceMock.expectItemsQueries([
         {
           fromBlock: 6,
@@ -415,16 +446,22 @@ describe("Indexing plan: client-side filtering catch-up requests", () => {
       await sourceMock.expectItemsQueries([
         {fromBlock: 1001, where: isAddressFree, reply: upTo(1500)},
         {fromBlock: 1101, address: nftFactoryConfigAddress, reply: LeavePending},
+        {fromBlock: 1060, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1060, reply: LeavePending},
+        {fromBlock: 1060, reply: upTo(1200)},
+        {fromBlock: 1501, where: isAddressFree, reply: LeavePending},
+        {fromBlock: 1101, address: nftFactoryConfigAddress, reply: LeavePending},
+      ])
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 1201, reply: LeavePending},
         {fromBlock: 1501, where: isAddressFree, reply: LeavePending},
         {fromBlock: 1101, address: nftFactoryConfigAddress, reply: LeavePending},
       ])
 
       t.expect((whileOpen, sourceMock->catchUpQueries)).toEqual((
-        [addressFree(1001, Unbounded)],
-        [catchUp(1060, Bounded(1500))],
+        [addressFree(1001, Unbounded), catchUp(1060, Unbounded)],
+        [catchUp(1201, Bounded(1500))],
       ))
     },
   )

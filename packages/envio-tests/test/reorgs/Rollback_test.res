@@ -1256,16 +1256,18 @@ describe("E2E rollback tests", () => {
         ~message="Shouldn't store dynamic contracts at this point",
       ).toEqual([])
 
-      // The head request out when the addresses registered goes first: their
-      // catch-up waits for it, then reads them from 102 up to where it reached.
+      // The head request is out when the addresses register: their catch-up
+      // reads them from 102 toward the head at once, and is bounded at where
+      // that request reached once it lands.
       await sourceMock.expectItemsQueries([
         {fromBlock: 105, reply: Respond({items: [], latestFetchedBlockNumber: 105})},
+        {fromBlock: 102, reply: LeavePending},
       ])
       await sourceMock.expectItemsQueries(
         [
           {
             MockSource.fromBlock: 102,
-            toBlock: Bounded(105),
+            toBlock: Unbounded,
             retryCount: 0,
             reply: Respond({
               items: [

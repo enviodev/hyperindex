@@ -63,7 +63,8 @@ let upTo = latestFetchedBlockNumber => MockSource.Respond({items: [], latestFetc
 
 describe("Indexing plan: group joins over the indexer loop", () => {
   // The group's open-ended request is out when the registrations land, so
-  // they join once it does, at the block it reports.
+  // they catch up toward the head at once and join once it lands, at the
+  // block it reports.
   scenario->Scenario.it(
     "Joins registrations to the open group, and gives one that would overflow it a group of its own",
     ~sources=[{chain: 1337}],
@@ -83,15 +84,21 @@ describe("Indexing plan: group joins over the indexer loop", () => {
         },
       ])
       await indexer.waitUntilIdle()
-      await sync.expectItemsQueries([{fromBlock: 11, reply: LeavePending}])
+      await sync.expectItemsQueries([
+        {fromBlock: 11, reply: LeavePending},
+        {address: address1, fromBlock: 1, reply: LeavePending},
+      ])
       let afterFirstRegistrations = sync->pendingShapes
 
-      await sync.expectItemsQueries([{fromBlock: 11, reply: upTo(20)}])
+      await sync.expectItemsQueries([
+        {fromBlock: 11, reply: upTo(20)},
+        {address: address1, fromBlock: 1, reply: LeavePending},
+      ])
       await sync.expectItemsQueries([
         {
           address: address1,
           fromBlock: 1,
-          toBlock: Bounded(20),
+          toBlock: Unbounded,
           reply: Respond({
             items: [registering(~blockNumber=2, ~logIndex=1, ~srcAddress=address1, [address3])],
             latestFetchedBlockNumber: 20,
@@ -112,7 +119,10 @@ describe("Indexing plan: group joins over the indexer loop", () => {
         afterFirstRegistrations,
         sync->pendingShapes->Array.slice(~start=0, ~end=2),
       )).toEqual((
-        [{fromBlock: 11, toBlock: Unbounded, addresses: [staticAddress]}],
+        [
+          {fromBlock: 1, toBlock: Unbounded, addresses: [address1, address2]},
+          {fromBlock: 11, toBlock: Unbounded, addresses: [staticAddress]},
+        ],
         [
           {fromBlock: 2, toBlock: Unbounded, addresses: [address3]},
           {
@@ -141,12 +151,15 @@ describe("Indexing plan: group joins over the indexer loop", () => {
         },
       ])
       // The group's next query goes out before the contractRegister run
-      // registers address 1, so the address joins the group at the block that
-      // query reports and catches up below it.
+      // registers address 1, so the address catches up toward the head at
+      // once, and joins the group at the block that query reports.
       await indexer.waitUntilIdle()
-      await sync.expectItemsQueries([{fromBlock: 501, reply: upTo(600)}])
       await sync.expectItemsQueries([
-        {address: address1, fromBlock: 100, toBlock: Bounded(600), reply: LeavePending},
+        {fromBlock: 501, reply: upTo(600)},
+        {address: address1, fromBlock: 100, reply: LeavePending},
+      ])
+      await sync.expectItemsQueries([
+        {address: address1, fromBlock: 100, toBlock: Unbounded, reply: LeavePending},
         {where: query => query.fromBlock > 600, reply: LeavePending},
       ])
       // The group goes on in chunks; its first one shows who is in it.
@@ -156,7 +169,7 @@ describe("Indexing plan: group joins over the indexer loop", () => {
         {
           address: address1,
           fromBlock: 100,
-          toBlock: Bounded(600),
+          toBlock: Unbounded,
           reply: Respond({
             items: [registering(~blockNumber=200, ~srcAddress=address1, [address2])],
             latestFetchedBlockNumber: 400,
@@ -176,7 +189,7 @@ describe("Indexing plan: group joins over the indexer loop", () => {
         sync->pendingShapes->Array.slice(~start=0, ~end=3),
       )).toEqual((
         [
-          {fromBlock: 100, toBlock: Bounded(600), addresses: [address1]},
+          {fromBlock: 100, toBlock: Unbounded, addresses: [address1]},
           {fromBlock: 601, toBlock: Bounded(780), addresses: [address1, staticAddress]},
         ],
         [

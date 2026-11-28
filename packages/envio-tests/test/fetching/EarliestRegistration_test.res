@@ -409,13 +409,15 @@ describe("An address registered for one contract from two blocks", () => {
 
 // The factory's pointer at 1150 gave the child a group of its own, whose
 // request is out when the wildcard one brings the birth at 1110. The earlier
-// registration joins the group at the block that request lands on, 1250, and
-// catches up below it.
+// registration catches up at once over what lies below 1150, which the group's
+// request, still holding the entry from 1150, doesn't fetch; `~catchUp` names
+// that query, left pending, where the contract's start leaves anything below.
 let answerBirthThenChild = async (
   ~indexer: IndexerRunner.t,
   ~source: MockSource.t,
   ~wildcardItems,
   ~childItems,
+  ~catchUp: array<MockSource.expectedItemsQuery>=[],
 ) => {
   await source.expectItemsQueries([
     {
@@ -426,17 +428,20 @@ let answerBirthThenChild = async (
     {where: isFetchingFor(factory, ...), reply: LeavePending},
   ])
   await indexer.waitUntilIdle()
-  await source.expectItemsQueries([
-    {
-      where: isFetchingFor(child, ...),
-      reply: Respond({items: childItems, latestFetchedBlockNumber: 1250}),
-    },
-    {
-      where: isFetchingFor(factory, ...),
-      reply: Respond({items: [], latestFetchedBlockNumber: 1250}),
-    },
-    {where: isAddressFree, reply: LeavePending},
-  ])
+  await source.expectItemsQueries(
+    [
+      {
+        MockSource.toBlock: Unbounded,
+        where: isFetchingFor(child, ...),
+        reply: Respond({items: childItems, latestFetchedBlockNumber: 1250}),
+      },
+      {
+        where: isFetchingFor(factory, ...),
+        reply: Respond({items: [], latestFetchedBlockNumber: 1250}),
+      },
+      {where: isAddressFree, reply: LeavePending},
+    ]->Array.concat(catchUp),
+  )
   await indexer.waitUntilIdle()
 }
 
@@ -464,6 +469,14 @@ describe("A rollback after an address moved to an earlier registration", () => {
       ~source,
       ~wildcardItems=[ping(~blockNumber=1105, child), born(~blockNumber=1110, child)],
       ~childItems=[ping(~blockNumber=1160, child), ping(~blockNumber=1240, child)],
+      ~catchUp=[
+        {
+          fromBlock: 1110,
+          toBlock: Bounded(1149),
+          where: isFetchingFor(child, ...),
+          reply: LeavePending,
+        },
+      ],
     )
     await source.respondUpTo(
       1250,
