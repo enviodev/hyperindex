@@ -138,14 +138,14 @@ let finishWaitingForNewBlock = (
 
 let fetchChain = async (
   state: IndexerState.t,
-  chainId,
-  ~work,
+  ~work: IndexingPlan.chainFetchWork,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
   ~scheduleRollback,
   ~scheduleContractRegister,
 ) => {
+  let chainId = work.chainId
   let chainState = state->IndexerState.getChainState(~chainId)
   if !(state->IndexerState.isResolvingReorg) && !(state->IndexerState.isStopped) {
     let isRealtime = state->IndexerState.isRealtime

@@ -26,10 +26,9 @@ let start = (state: IndexerState.t) => {
         try {
           await state
           ->IndexerState.crossChainState
-          ->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~work) =>
+          ->CrossChainState.checkAndFetch(~dispatchChain=work =>
             ChainFetching.fetchChain(
               state,
-              chainId,
               ~work,
               ~stateId=state->IndexerState.epoch,
               ~scheduleFetch,

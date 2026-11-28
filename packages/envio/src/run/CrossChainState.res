@@ -320,7 +320,7 @@ let reportFinished = (crossChainState: t) =>
 // the chain wait for a new block.
 let checkAndFetch = async (
   crossChainState: t,
-  ~dispatchChain: (~chainId: ChainId.t, ~work: IndexingPlan.chainFetchWork) => promise<unit>,
+  ~dispatchChain: IndexingPlan.chainFetchWork => promise<unit>,
 ) => {
   let ticks = crossChainState.chainIds->Array.map((chainId): IndexingPlan.chainTick => {
     let cs = crossChainState->getChainState(chainId)
@@ -355,7 +355,7 @@ let checkAndFetch = async (
         },
       )
     }
-    dispatchChain(~chainId=work.chainId, ~work)
+    dispatchChain(work)
   })
   ->Promise.all
 }

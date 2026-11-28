@@ -150,7 +150,6 @@ pub(super) fn pack_by_address(
     group: bool,
     cap: usize,
 ) -> (Vec<BuiltLogSelection>, Vec<Vec<BuiltLogSelection>>) {
-    let cap = cap.max(1);
     let groupable = |selection: &BuiltLogSelection| {
         group
             && matches!(selection.emitters, Emitters::Listed(_))

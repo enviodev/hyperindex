@@ -1,5 +1,7 @@
 use std::sync::{Arc, RwLock};
 
+use napi_derive::napi;
+
 use super::coverage::{intersection, union, Coverage, Ranges};
 use crate::address_store::{
     AddressRegistration, AddressStore, Id, StoreInner, VERDICT_ADDED, VERDICT_INVALID,
@@ -205,7 +207,8 @@ struct PendingJoin {
 
 /// What the plan has to tell an operator. It decides nothing from these; the
 /// chain that owns it logs them.
-pub(crate) enum Notice {
+#[napi(discriminant = "kind")]
+pub enum Notice {
     SwitchedToAddressFree {
         contract_name: String,
         address_count: u32,
@@ -216,23 +219,28 @@ pub(crate) enum Notice {
     },
     SkippedInvalidAddress {
         contract_name: String,
-        address: String,
+        contract_address: String,
     },
 }
 
-pub(crate) struct Completion {
+#[napi(object)]
+pub struct Completion {
+    /// The block whose received hash differs from the stored one. With
+    /// rollback on, nothing of the page merged and nothing moved.
     pub mismatch: Option<HashMismatch>,
     pub rows_kept: u32,
     pub registering_block_count: u32,
+    pub notices: Vec<Notice>,
 }
 
 pub(crate) struct ChainConfig {
     pub chain_id: i64,
     pub start_block: i64,
-    pub end_block: Option<i64>,
-    pub block_lag: i64,
+    /// The chain's head at startup; the plan keeps the live values.
+    pub initial_end_block: Option<i64>,
+    pub initial_block_lag: i64,
     pub block_throttle: i64,
-    pub known_height: i64,
+    pub initial_known_height: i64,
     pub progress_block_number: i64,
     pub max_reorg_depth: i64,
     pub should_rollback_on_reorg: bool,
@@ -284,10 +292,6 @@ pub(crate) struct ChainPlan {
     pub buffer: ChainBuffer,
 }
 
-fn store_live_count(store: &Arc<RwLock<StoreInner>>, contract: u32) -> u32 {
-    store.read().unwrap().live_count_of(contract)
-}
-
 /// The one before the earliest block any of the registrations can produce an
 /// item at, or None when one of them is unrestricted.
 fn selection_floor(start_blocks: impl IntoIterator<Item = Option<i64>>) -> Option<i64> {
@@ -307,9 +311,9 @@ impl ChainPlan {
     ) -> Result<(Self, Vec<Notice>), String> {
         let contract_count = store.read().unwrap().contract_names().len();
         let mut plan = Self {
-            known_height: config.known_height,
-            end_block: config.end_block,
-            block_lag: config.block_lag,
+            known_height: config.initial_known_height,
+            end_block: config.initial_end_block,
+            block_lag: config.initial_block_lag,
             needs: Needs::default(),
             groups: Groups::default(),
             requests: Requests::default(),
@@ -514,12 +518,10 @@ impl ChainPlan {
         for (_, contracts) in static_sets {
             self.lay_out_contracts(&store, &contracts, progress);
         }
+        let address_count: u32 = (0..contract_count).map(|c| store.live_count_of(c)).sum();
         drop(store);
 
         if self.needs.len() == 0 && !self.config.has_generated_block_handlers {
-            let address_count: u32 = (0..contract_count)
-                .map(|c| store_live_count(&self.store, c))
-                .sum();
             return Err(format!(
                 "Invalid configuration: Nothing to fetch on chain {}. addresses={address_count}, \
                  onEventRegistrations={}, normalRegistrations={}. Make sure that you provided at \
@@ -542,7 +544,7 @@ impl ChainPlan {
     /// start: a run too far below the next owes a list need up to where the
     /// next starts and joins it there.
     fn lay_out_contracts(&mut self, store: &StoreInner, contracts: &[u32], progress: i64) {
-        let max = self.config.max_group_size.max(1);
+        let max = self.config.max_group_size;
         let mut runs: Vec<(i64, Vec<Id>)> = Vec::new();
         for &contract in contracts {
             let ids = store.live_ids_of_contract(contract, 0);
@@ -996,17 +998,7 @@ impl ChainPlan {
         }
         let first_new_id = self.store.read().unwrap().id_count();
         let verdicts = AddressStore::from_handle(self.store.clone())
-            .register_all(
-                registrations
-                    .iter()
-                    .map(|reg| AddressRegistration {
-                        address: reg.address.clone(),
-                        contract_name: reg.contract_name.clone(),
-                        registration_block: reg.registration_block,
-                    })
-                    .collect(),
-                true,
-            )
+            .register_all(&registrations, true)
             .map_err(|error| error.reason.clone())?;
         let mut registering: Vec<u32> = Vec::new();
         {
@@ -1022,7 +1014,7 @@ impl ChainPlan {
                 if verdict.kind == VERDICT_INVALID {
                     notices.push(Notice::SkippedInvalidAddress {
                         contract_name: reg.contract_name.clone(),
-                        address: reg.address.clone(),
+                        contract_address: reg.address.clone(),
                     });
                 } else if verdict.kind == VERDICT_ADDED && verdict.fetchable {
                     let contract = store
@@ -1142,7 +1134,7 @@ impl ChainPlan {
         let registrations = self.address_events_of(contract);
         let floor = (start_block - 1).max(self.events_floor(&registrations).unwrap_or(i64::MIN));
         let group = self.groups.ids.len() as u32;
-        let sealed = ids.len() >= self.config.max_group_size.max(1);
+        let sealed = ids.len() >= self.config.max_group_size;
         let need = self.add_need(
             What::Logs {
                 registrations,
@@ -1186,7 +1178,7 @@ impl ChainPlan {
         };
         let need = self.groups.need[group as usize];
         if !self.needs.ever_requested[need as usize] {
-            let room = self.config.max_group_size.max(1) - self.groups.ids[group as usize].len();
+            let room = self.config.max_group_size - self.groups.ids[group as usize].len();
             let (joining, rest) = ids.split_at(room.min(ids.len()));
             self.add_members(group, joining);
             let floor = self.needs.floor[need as usize].min(self.start_block_of(joining) - 1);
@@ -1206,7 +1198,7 @@ impl ChainPlan {
             });
             return;
         };
-        let room = self.config.max_group_size.max(1) - self.groups.ids[group as usize].len();
+        let room = self.config.max_group_size - self.groups.ids[group as usize].len();
         let (joining, rest) = ids.split_at(room.min(ids.len()));
         if !joining.is_empty() {
             self.add_members(group, joining);
@@ -1226,7 +1218,7 @@ impl ChainPlan {
         let members = &mut self.groups.ids[group as usize];
         members.extend_from_slice(ids);
         store.sort_in_set_order(members);
-        if members.len() >= self.config.max_group_size.max(1) {
+        if members.len() >= self.config.max_group_size {
             self.groups.sealed[group as usize] = true;
             if let Some(contract) = self.groups.contract[group as usize] {
                 self.open_group[contract as usize] = None;
@@ -1237,7 +1229,7 @@ impl ChainPlan {
     /// New groups for `ids`, from their start or from `covered_through`; all
     /// but the last full. Returns the last one's need.
     fn add_groups(&mut self, contract: u32, ids: Vec<Id>, covered_through: Option<i64>) -> u32 {
-        let max = self.config.max_group_size.max(1);
+        let max = self.config.max_group_size;
         let mut need = 0;
         for chunk in ids.chunks(max) {
             need = self.new_group(contract, chunk.to_vec(), covered_through);
@@ -1298,24 +1290,20 @@ impl ChainPlan {
         latest_fetched_block: i64,
         source: usize,
         reported_known_height: i64,
-    ) -> (Option<Completion>, Vec<Notice>) {
-        let Some(request) = self.requests.take(slot, generation) else {
-            return (None, Vec::new());
-        };
+    ) -> Option<Completion> {
+        let request = self.requests.take(slot, generation)?;
         let merged = self.buffer.merge_page(
             page,
             (reported_known_height - self.config.max_reorg_depth).max(0),
             !self.config.should_rollback_on_reorg,
         );
         if merged.mismatch.is_some() && self.config.should_rollback_on_reorg {
-            return (
-                Some(Completion {
-                    mismatch: merged.mismatch,
-                    rows_kept: merged.rows_kept,
-                    registering_block_count: 0,
-                }),
-                Vec::new(),
-            );
+            return Some(Completion {
+                mismatch: merged.mismatch,
+                rows_kept: merged.rows_kept,
+                registering_block_count: 0,
+                notices: Vec::new(),
+            });
         }
         self.add_to_backlog(&merged.registering_block_numbers);
         let block_registrations: Vec<u32> = if request
@@ -1354,14 +1342,12 @@ impl ChainPlan {
         let notices = self.set_known_height(reported_known_height);
         self.resolve_pending_joins();
         self.reclaim_finished_catch_ups();
-        (
-            Some(Completion {
-                mismatch: merged.mismatch,
-                rows_kept: merged.rows_kept,
-                registering_block_count: merged.registering_block_numbers.len() as u32,
-            }),
+        Some(Completion {
+            mismatch: merged.mismatch,
+            rows_kept: merged.rows_kept,
+            registering_block_count: merged.registering_block_numbers.len() as u32,
             notices,
-        )
+        })
     }
 
     pub fn abandon(&mut self, slot: u32, generation: u32) {
@@ -1375,16 +1361,13 @@ impl ChainPlan {
         self.resolve_pending_joins();
     }
 
-    fn learned_mut(&mut self, request: &Request) -> Option<&mut Learned> {
+    fn learned_mut(&mut self, request: &Request) -> &mut Learned {
         if request.head {
-            Some(&mut self.head_learned)
+            &mut self.head_learned
         } else {
             // A request shared by a need and the one a switch split off from it
             // learns for the first.
-            request
-                .needs
-                .first()
-                .map(|&need| &mut self.needs.learned[need as usize])
+            &mut self.needs.learned[request.needs[0] as usize]
         }
     }
 
@@ -1393,9 +1376,7 @@ impl ChainPlan {
     /// range at least as long as the chunks it sizes.
     fn learn(&mut self, request: &Request, latest_fetched_block: i64, items: u32, source: usize) {
         let known_height = self.known_height;
-        let Some(learned) = self.learned_mut(request) else {
-            return;
-        };
+        let learned = self.learned_mut(request);
         let block_range = latest_fetched_block - request.from_block + 1;
         let observed = f64::from(items) / block_range as f64;
         learned.density = Some(match learned.density {

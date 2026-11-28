@@ -49,5 +49,5 @@ let reportFinished: t => unit
 // Fetch control.
 let checkAndFetch: (
   t,
-  ~dispatchChain: (~chainId: ChainId.t, ~work: IndexingPlan.chainFetchWork) => promise<unit>,
+  ~dispatchChain: IndexingPlan.chainFetchWork => promise<unit>,
 ) => promise<unit>

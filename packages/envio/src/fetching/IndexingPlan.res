@@ -1,6 +1,3 @@
-// Binding to the Rust `IndexingPlan` (`cli/src/indexing_plan/`): per chain,
-// what is needed, what is covered, and the work out. The loop takes work from
-// it and hands back what came of it; it does no IO itself.
 type t
 
 // A request handed out to run against a source, as it was when taken.

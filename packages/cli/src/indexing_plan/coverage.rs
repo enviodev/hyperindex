@@ -25,15 +25,7 @@ impl Coverage {
             self.covered_through = to_block;
         } else {
             self.ahead.push((from_block, to_block));
-            self.ahead.sort_unstable();
-            let mut merged: Ranges = Vec::with_capacity(self.ahead.len());
-            for &(from, to) in &self.ahead {
-                match merged.last_mut() {
-                    Some(last) if from <= last.1 + 1 => last.1 = last.1.max(to),
-                    _ => merged.push((from, to)),
-                }
-            }
-            self.ahead = merged;
+            self.ahead = union(std::mem::take(&mut self.ahead));
         }
         while let Some(&(from, to)) = self.ahead.first() {
             if from > self.covered_through + 1 {

@@ -216,12 +216,12 @@ impl ChainPlan {
             && !behind_generated_block_handlers;
 
         let streams = self.stream_states();
-        let mut reservations: Vec<(i64, i64)> = Vec::new();
-        let mut reserved = 0.;
-        for request in self.requests.in_flight() {
-            reserved += f64::from(request.items_estimate);
-            reservations.push((request.from_block, i64::from(request.items_estimate)));
-        }
+        let reserved = self.reserved();
+        let reservations: Vec<(i64, i64)> = self
+            .requests
+            .in_flight()
+            .map(|request| (request.from_block, i64::from(request.items_estimate)))
+            .collect();
         for stream in &streams {
             // Waits only once every stream reached the head: a response can
             // still move the known height, and a few small streams aren't

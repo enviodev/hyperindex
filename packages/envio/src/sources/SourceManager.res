@@ -539,15 +539,14 @@ let highestKnownHeight = (sourceManager: t) =>
 // and while the fallback answers every wait, nothing else would ever ask it
 // again.
 let holdUntilCaughtUp = (sourceManager: t, sourceState: sourceState) => {
+  let headDistance = Core.getAddon().headDistance()
   let rec hold = (~failedAt) => {
     let subscription = sourceState.feed->HeightFeed.onHeightAbove(
       ~knownHeight=sourceState.feed->HeightFeed.knownHeight,
       ~interval=() => sourceManager.reducedPollingInterval,
       ~pollsBehindStream=true,
       ~onHeight=height =>
-        sourceState.health = if (
-          sourceManager->highestKnownHeight - height <= Core.getAddon().headDistance()
-        ) {
+        sourceState.health = if sourceManager->highestKnownHeight - height <= headDistance {
           Working
         } else {
           // Still held, and still the failure it had: losing it would rank the

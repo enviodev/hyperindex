@@ -34,10 +34,10 @@ fn chain(pairs: &[&str], configure: impl FnOnce(&mut ChainConfig)) -> ChainPlan 
     let mut config = ChainConfig {
         chain_id: 1,
         start_block: 1,
-        end_block: None,
-        block_lag: 0,
+        initial_end_block: None,
+        initial_block_lag: 0,
         block_throttle: 0,
-        known_height: 1000,
+        initial_known_height: 1000,
         progress_block_number: 0,
         max_reorg_depth: 0,
         should_rollback_on_reorg: false,
@@ -104,7 +104,7 @@ fn start(plan: &mut ChainPlan, target_block: i64) -> Vec<Started> {
 
 fn complete(plan: &mut ChainPlan, slot: u32, generation: u32, latest: i64) {
     let page = Page::empty("evm".to_string()).unwrap();
-    let (completion, _) = plan.complete(slot, generation, &page, latest, 0, plan.known_height);
+    let completion = plan.complete(slot, generation, &page, latest, 0, plan.known_height);
     assert!(completion.is_some(), "the request was still out");
 }
 
@@ -297,7 +297,7 @@ fn a_rollback_clips_coverage_drops_requests_and_prunes_addresses() {
     plan.rollback(200);
     let (late_slot, late_generation, ..) = out[0];
     let page = Page::empty("evm".to_string()).unwrap();
-    let (late, _) = plan.complete(late_slot, late_generation, &page, 900, 0, 1000);
+    let late = plan.complete(late_slot, late_generation, &page, 900, 0, 1000);
     assert_eq!(
         (
             late.is_none(),

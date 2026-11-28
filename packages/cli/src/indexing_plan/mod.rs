@@ -1,7 +1,5 @@
-//! The indexing plan: per chain, what is needed, what is covered, and what
-//! work is out, with the work computed from those tables on every tick.
-//! Nothing is merged, split, retired or renumbered. It does no IO and reads no
-//! clock: the loop takes work from it and hands back what came of it.
+//! Does no IO and reads no clock: the loop takes work from the plan and hands
+//! back what came of it.
 
 mod budget;
 mod chain;
@@ -14,12 +12,12 @@ use napi_derive::napi;
 
 use crate::address_store::client_filtered_contracts::ClientFilteredContracts;
 use crate::address_store::{AddressRegistration, AddressSet, AddressStore, Id, RolledBackAddress};
-use crate::chain_buffer::merge::HashMismatch;
 use crate::chain_buffer::page::Page;
 use crate::chain_buffer::ChainBuffer;
 use budget::ChainInput;
 use chain::{
-    Addresses, BlockRegistration, ChainConfig, ChainPlan, EventRegistration, Notice, What,
+    Addresses, BlockRegistration, ChainConfig, ChainPlan, Completion, EventRegistration, Notice,
+    What,
 };
 use pipeline::Planned;
 
@@ -73,49 +71,6 @@ pub struct PlanChainConfig {
     pub is_resumed: bool,
 }
 
-#[napi(discriminant = "kind")]
-pub enum PlanNotice {
-    SwitchedToAddressFree {
-        contract_name: String,
-        address_count: u32,
-        threshold: u32,
-    },
-    WentAddressFreeNearHead {
-        contract_names: Vec<String>,
-    },
-    SkippedInvalidAddress {
-        contract_name: String,
-        contract_address: String,
-    },
-}
-
-fn to_napi_notices(notices: Vec<Notice>) -> Vec<PlanNotice> {
-    notices
-        .into_iter()
-        .map(|notice| match notice {
-            Notice::SwitchedToAddressFree {
-                contract_name,
-                address_count,
-                threshold,
-            } => PlanNotice::SwitchedToAddressFree {
-                contract_name,
-                address_count,
-                threshold,
-            },
-            Notice::WentAddressFreeNearHead { contract_names } => {
-                PlanNotice::WentAddressFreeNearHead { contract_names }
-            }
-            Notice::SkippedInvalidAddress {
-                contract_name,
-                address,
-            } => PlanNotice::SkippedInvalidAddress {
-                contract_name,
-                contract_address: address,
-            },
-        })
-        .collect()
-}
-
 /// What the plan reads of a chain on each tick from the loop.
 #[napi(object)]
 pub struct PlanChainTick {
@@ -130,16 +85,6 @@ pub struct ChainFetchWork {
     /// Nothing to fetch until the chain learns a newer head.
     pub wait_for_new_block: bool,
     pub requests: Vec<FetchRequest>,
-}
-
-#[napi(object)]
-pub struct FetchCompletion {
-    /// The block whose received hash differs from the stored one. With
-    /// rollback on, nothing of the page merged and nothing moved.
-    pub mismatch: Option<HashMismatch>,
-    pub rows_kept: u32,
-    pub registering_block_count: u32,
-    pub notices: Vec<PlanNotice>,
 }
 
 /// What a request selects at one attempt's end block: a registration whose
@@ -213,13 +158,8 @@ impl FetchRequest {
 
     #[napi(js_name = "selection")]
     pub fn selection_view(&self, to_block: Option<i64>) -> FetchRequestSelection {
-        let selection = self.selection(to_block);
         FetchRequestSelection {
-            on_event_registration_indexes: selection
-                .on_event_registration_indexes
-                .iter()
-                .map(|&index| index as u32)
-                .collect(),
+            on_event_registration_indexes: self.event_registrations_at(to_block),
             on_block_registration_indexes: self.block_registrations.clone(),
             on_transaction_registration_indexes: self.transaction_registrations.clone(),
             address_free_contracts: self.address_free_contracts.clone(),
@@ -287,33 +227,36 @@ impl FetchRequest {
 }
 
 impl FetchRequest {
-    pub(crate) fn selection(&self, to_block: Option<i64>) -> RequestSelection {
-        let all: Vec<i64> = self
+    /// The event registrations started by `to_block`.
+    fn event_registrations_at(&self, to_block: Option<i64>) -> Vec<u32> {
+        let in_range: Vec<u32> = self
             .event_registrations
             .iter()
-            .map(|&(index, _)| i64::from(index))
+            .filter(|(_, start_block)| {
+                to_block.is_none_or(|to_block| start_block.is_none_or(|start| start <= to_block))
+            })
+            .map(|&(index, _)| index)
             .collect();
-        let on_event_registration_indexes = match to_block {
-            None => all,
-            Some(to_block) => {
-                let in_range: Vec<i64> = self
-                    .event_registrations
-                    .iter()
-                    .filter(|(_, start_block)| start_block.is_none_or(|start| start <= to_block))
-                    .map(|&(index, _)| i64::from(index))
-                    .collect();
-                // Narrowed to nothing, the request would select no logs and a
-                // source would read it as blocks alone: asked whole, matching
-                // drops what hasn't started.
-                if in_range.is_empty() {
-                    all
-                } else {
-                    in_range
-                }
-            }
-        };
+        // Narrowed to nothing, the request would select no logs and a source
+        // would read it as blocks alone: asked whole, matching drops what
+        // hasn't started.
+        if in_range.is_empty() {
+            self.event_registrations
+                .iter()
+                .map(|&(index, _)| index)
+                .collect()
+        } else {
+            in_range
+        }
+    }
+
+    pub(crate) fn selection(&self, to_block: Option<i64>) -> RequestSelection {
         RequestSelection {
-            on_event_registration_indexes,
+            on_event_registration_indexes: self
+                .event_registrations_at(to_block)
+                .into_iter()
+                .map(i64::from)
+                .collect(),
             on_block_registration_indexes: self
                 .block_registrations
                 .iter()
@@ -468,7 +411,7 @@ impl IndexingPlan {
         config: PlanChainConfig,
         address_store: &AddressStore,
         chain_buffer: &ChainBuffer,
-    ) -> napi::Result<Vec<PlanNotice>> {
+    ) -> napi::Result<Vec<Notice>> {
         let store = address_store.handle();
         let (events, contract_end_blocks) = {
             let store = store.read().unwrap();
@@ -509,14 +452,14 @@ impl IndexingPlan {
         let chain_config = ChainConfig {
             chain_id: config.chain_id,
             start_block: config.start_block,
-            end_block: config.end_block,
-            block_lag: config.block_lag,
+            initial_end_block: config.end_block,
+            initial_block_lag: config.block_lag,
             block_throttle: config.block_throttle,
-            known_height: config.known_height,
+            initial_known_height: config.known_height,
             progress_block_number: config.progress_block_number,
             max_reorg_depth: config.max_reorg_depth,
             should_rollback_on_reorg: config.should_rollback_on_reorg,
-            max_group_size: config.max_addresses_per_group as usize,
+            max_group_size: (config.max_addresses_per_group as usize).max(1),
             address_free_threshold: config.address_free_threshold,
             has_generated_block_handlers: config.has_generated_block_handlers,
             blocks_apart: config.ecosystem == "svm",
@@ -531,7 +474,7 @@ impl IndexingPlan {
         self.chains
             .retain(|existing| existing.config.chain_id != config.chain_id);
         self.chains.push(chain);
-        Ok(to_napi_notices(notices))
+        Ok(notices)
     }
 
     #[napi]
@@ -539,10 +482,8 @@ impl IndexingPlan {
         &mut self,
         chain_id: i64,
         known_height: i64,
-    ) -> napi::Result<Vec<PlanNotice>> {
-        Ok(to_napi_notices(
-            self.chain_mut(chain_id)?.set_known_height(known_height),
-        ))
+    ) -> napi::Result<Vec<Notice>> {
+        Ok(self.chain_mut(chain_id)?.set_known_height(known_height))
     }
 
     #[napi]
@@ -624,22 +565,16 @@ impl IndexingPlan {
         latest_fetched_block_number: i64,
         source_index: u32,
         known_height: i64,
-    ) -> napi::Result<Option<FetchCompletion>> {
+    ) -> napi::Result<Option<Completion>> {
         let chain = self.chain_mut(request.chain_id)?;
-        let (completion, notices) = chain.complete(
+        Ok(chain.complete(
             request.slot,
             request.generation,
             page,
             latest_fetched_block_number,
             source_index as usize,
             known_height,
-        );
-        Ok(completion.map(|completion| FetchCompletion {
-            mismatch: completion.mismatch,
-            rows_kept: completion.rows_kept,
-            registering_block_count: completion.registering_block_count,
-            notices: to_napi_notices(notices),
-        }))
+        ))
     }
 
     /// The request's blocks are missing again, for a later tick to ask for.
@@ -709,11 +644,11 @@ impl IndexingPlan {
         chain_id: i64,
         block_numbers: Vec<i64>,
         registrations: Vec<AddressRegistration>,
-    ) -> napi::Result<Vec<PlanNotice>> {
+    ) -> napi::Result<Vec<Notice>> {
         let chain = self.chain_mut(chain_id)?;
         let notices = chain
             .complete_contract_register_run(&block_numbers, registrations)
             .map_err(napi::Error::from_reason)?;
-        Ok(to_napi_notices(notices))
+        Ok(notices)
     }
 }

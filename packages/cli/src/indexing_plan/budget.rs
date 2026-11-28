@@ -32,7 +32,7 @@ impl ChainPlan {
             .count_items_in_block_range(processing_block + 1, self.ready_through_block())
     }
 
-    fn reserved(&self) -> f64 {
+    pub(super) fn reserved(&self) -> f64 {
         self.requests
             .in_flight()
             .map(|request| f64::from(request.items_estimate))

@@ -567,7 +567,7 @@ impl AddressStore {
         registrations: Vec<AddressRegistration>,
     ) -> napi::Result<Vec<RegistrationVerdict>> {
         Ok(self
-            .register_all(registrations, true)?
+            .register_all(&registrations, true)?
             .into_iter()
             .map(|(verdict, _)| verdict)
             .collect())
@@ -890,7 +890,7 @@ impl AddressStore {
     /// applied. Each verdict comes with the entry its registration retired.
     pub(crate) fn register_all(
         &self,
-        registrations: Vec<AddressRegistration>,
+        registrations: &[AddressRegistration],
         track_unwritten: bool,
     ) -> napi::Result<Vec<(RegistrationVerdict, Option<Id>)>> {
         let mut guard = self.inner.write().unwrap();
@@ -945,7 +945,6 @@ impl RenderedSet {
 /// earlier registration is different: its address is live under the new
 /// entry, so a set holding the retired id still asks for it and matching keeps
 /// its items.
-#[derive(Clone)]
 pub struct AddressSet {
     store: Arc<RwLock<StoreInner>>,
     ids: Arc<[Id]>,
@@ -1070,7 +1069,7 @@ pub(crate) mod test_support {
                 .collect(),
         )
         .unwrap();
-        let registrations = entries
+        let registrations: Vec<AddressRegistration> = entries
             .iter()
             .flat_map(|(name, addresses)| {
                 addresses.iter().map(|address| AddressRegistration {
@@ -1082,7 +1081,7 @@ pub(crate) mod test_support {
                 })
             })
             .collect();
-        for (verdict, _) in store.register_all(registrations, false).unwrap() {
+        for (verdict, _) in store.register_all(&registrations, false).unwrap() {
             assert_eq!(verdict.kind, VERDICT_ADDED, "test fixture address rejected");
         }
         store
